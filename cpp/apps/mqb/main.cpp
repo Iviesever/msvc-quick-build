@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -403,6 +404,15 @@ int main(const int argc, char* argv[]) {
     }
     options.build.sources = sources;
 
+    const unsigned int hardware_threads = std::thread::hardware_concurrency();
+    const std::size_t requested_compile_jobs = options.jobs.value_or(
+        hardware_threads == 0
+            ? std::size_t{1}
+            : static_cast<std::size_t>(hardware_threads));
+    const std::size_t compile_jobs = std::max<std::size_t>(
+        1,
+        std::min(requested_compile_jobs, sources.size()));
+
     auto layout = mqb::ProjectArtifactLayout::create(project_root);
     if (!layout) {
         std::cerr << "error: " << layout.error().message << '\n';
@@ -475,7 +485,9 @@ int main(const int argc, char* argv[]) {
         if (project_config) {
             std::cout << "  config:  " << path_text(project_config->file) << '\n';
         }
-        std::cout << "  cl:      " << path_text(toolchain->identity.compiler) << '\n'
+        std::cout << "  jobs:    " << compile_jobs
+                  << (options.jobs ? "" : " (auto)") << '\n'
+                  << "  cl:      " << path_text(toolchain->identity.compiler) << '\n'
                   << "  link:    " << path_text(toolchain->linker) << '\n';
         for (const auto& source : target_sources) {
             std::cout << "  source:  " << path_text(display_source(project_root, source.source)) << '\n'
@@ -509,6 +521,7 @@ int main(const int argc, char* argv[]) {
         .compiler_options = std::move(compiler_options),
         .link_options = std::move(link_options),
         .working_directory = project_root,
+        .max_parallel_compiles = compile_jobs,
     };
 
     auto result = target_coordinator.run(request);
