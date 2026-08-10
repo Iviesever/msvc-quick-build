@@ -240,6 +240,11 @@ Usage:
   mqb <entry.cpp> [options] [-- program-args...]
   mqb <source.cpp> <more-sources...> [options] [-- program-args...]
 
+Project configuration:
+  MQB searches upward from the invocation directory for the nearest mqb.json.
+  Scalar precedence is: explicit CLI > mqb.json > built-in defaults.
+  Config paths are relative to mqb.json; CLI paths are relative to the invocation directory.
+
 Source selection:
   One positional source       Smart-discover connected ordinary C++ TUs (default)
   Multiple positional sources Build exactly that explicit ordered source set
@@ -247,10 +252,10 @@ Source selection:
   --no-discover               Disable smart discovery for a single source
 
 Options:
-  --debug                  Debug compile/link preset (default)
-  --release                Release compile/link preset
-  --std <20|23|latest>     C++ language standard (default: 23)
-  --x86 | --x64            Target architecture (default: x64)
+  --debug                  Explicitly select Debug compile/link preset
+  --release                Explicitly select Release compile/link preset
+  --std <20|23|latest>     Explicitly select C++ language standard
+  --x86 | --x64            Explicitly select target architecture
   -o, --output <name>      Set target executable name under .mqb/bin/
   --run                    Run the executable after a successful build
   -I <dir>, -I<dir>        Add an include directory
@@ -261,7 +266,7 @@ Options:
   --lib <name>             Link a library (name or explicit path)
   --env <auto|vs|portable> Toolchain selection (default: auto)
   --portable-root <dir>    Add a portable_msvc root candidate
-  -v, --verbose            Show discovery, toolchain, and artifact details
+  -v, --verbose            Show config, discovery, toolchain, and artifact details
   -h, --help               Show this help
   --                       Pass all remaining argv elements to the program
 
