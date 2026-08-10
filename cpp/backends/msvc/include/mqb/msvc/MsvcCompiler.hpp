@@ -13,10 +13,7 @@
 
 namespace mqb::msvc {
 
-struct ModuleReference {
-    std::string logical_name;
-    std::filesystem::path interface_file;
-};
+using ModuleReference = mqb::ModuleReference;
 
 struct CompileInvocation {
     std::filesystem::path source;
