@@ -9,6 +9,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(MQB_BUILD_TESTS "Build MQB tests" ON)
 
 add_subdirectory(core)
+add_subdirectory(process)
+
+if(WIN32)
+    add_subdirectory(platform/windows)
+endif()
+
 add_subdirectory(apps/mqb)
 
 if(MQB_BUILD_TESTS)

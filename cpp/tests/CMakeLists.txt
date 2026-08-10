@@ -1,60 +1,74 @@
 add_executable(mqb_core_tests
     build_request_tests.cpp
 )
-
 target_link_libraries(mqb_core_tests PRIVATE mqb_core)
 target_compile_features(mqb_core_tests PRIVATE cxx_std_23)
 
 add_executable(mqb_build_plan_tests
     build_plan_tests.cpp
 )
-
 target_link_libraries(mqb_build_plan_tests PRIVATE mqb_core)
 target_compile_features(mqb_build_plan_tests PRIVATE cxx_std_23)
 
 add_executable(mqb_build_signature_tests
     build_signature_tests.cpp
 )
-
 target_link_libraries(mqb_build_signature_tests PRIVATE mqb_core)
 target_compile_features(mqb_build_signature_tests PRIVATE cxx_std_23)
 
 add_executable(mqb_dependency_graph_tests
     dependency_graph_tests.cpp
 )
-
 target_link_libraries(mqb_dependency_graph_tests PRIVATE mqb_core)
 target_compile_features(mqb_dependency_graph_tests PRIVATE cxx_std_23)
 
 add_executable(mqb_compile_cache_tests
     compile_cache_tests.cpp
 )
-
 target_link_libraries(mqb_compile_cache_tests PRIVATE mqb_core)
 target_compile_features(mqb_compile_cache_tests PRIVATE cxx_std_23)
 
 add_executable(mqb_build_planner_tests
     build_planner_tests.cpp
 )
-
 target_link_libraries(mqb_build_planner_tests PRIVATE mqb_core)
 target_compile_features(mqb_build_planner_tests PRIVATE cxx_std_23)
 
-if(MSVC)
-    target_compile_options(mqb_core_tests PRIVATE /W4 /permissive-)
-    target_compile_options(mqb_build_plan_tests PRIVATE /W4 /permissive-)
-    target_compile_options(mqb_build_signature_tests PRIVATE /W4 /permissive-)
-    target_compile_options(mqb_dependency_graph_tests PRIVATE /W4 /permissive-)
-    target_compile_options(mqb_compile_cache_tests PRIVATE /W4 /permissive-)
-    target_compile_options(mqb_build_planner_tests PRIVATE /W4 /permissive-)
-else()
-    target_compile_options(mqb_core_tests PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(mqb_build_plan_tests PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(mqb_build_signature_tests PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(mqb_dependency_graph_tests PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(mqb_compile_cache_tests PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(mqb_build_planner_tests PRIVATE -Wall -Wextra -Wpedantic)
+add_executable(mqb_process_model_tests
+    process_model_tests.cpp
+)
+target_link_libraries(mqb_process_model_tests PRIVATE mqb_process)
+target_compile_features(mqb_process_model_tests PRIVATE cxx_std_23)
+
+if(WIN32)
+    add_executable(mqb_windows_command_line_tests
+        windows_command_line_tests.cpp
+    )
+    target_link_libraries(mqb_windows_command_line_tests PRIVATE mqb_platform_windows shell32)
+    target_compile_features(mqb_windows_command_line_tests PRIVATE cxx_std_23)
 endif()
+
+set(MQB_TEST_TARGETS
+    mqb_core_tests
+    mqb_build_plan_tests
+    mqb_build_signature_tests
+    mqb_dependency_graph_tests
+    mqb_compile_cache_tests
+    mqb_build_planner_tests
+    mqb_process_model_tests
+)
+
+if(WIN32)
+    list(APPEND MQB_TEST_TARGETS mqb_windows_command_line_tests)
+endif()
+
+foreach(test_target IN LISTS MQB_TEST_TARGETS)
+    if(MSVC)
+        target_compile_options(${test_target} PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(${test_target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endforeach()
 
 add_test(NAME mqb.core.build_request COMMAND mqb_core_tests)
 add_test(NAME mqb.core.build_plan COMMAND mqb_build_plan_tests)
@@ -62,3 +76,8 @@ add_test(NAME mqb.core.build_signature COMMAND mqb_build_signature_tests)
 add_test(NAME mqb.core.dependency_graph COMMAND mqb_dependency_graph_tests)
 add_test(NAME mqb.core.compile_cache COMMAND mqb_compile_cache_tests)
 add_test(NAME mqb.core.build_planner COMMAND mqb_build_planner_tests)
+add_test(NAME mqb.process.model COMMAND mqb_process_model_tests)
+
+if(WIN32)
+    add_test(NAME mqb.windows.command_line COMMAND mqb_windows_command_line_tests)
+endif()
