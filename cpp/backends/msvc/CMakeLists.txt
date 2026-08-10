@@ -1,5 +1,6 @@
 add_library(mqb_msvc STATIC
     src/MsvcCompiler.cpp
+    src/MsvcSourceDependenciesReader.cpp
     src/MsvcToolchainLocator.cpp
 )
 

@@ -56,12 +56,17 @@ if(WIN32)
     target_link_libraries(mqb_msvc_compiler_arguments_tests PRIVATE mqb_msvc)
     target_compile_features(mqb_msvc_compiler_arguments_tests PRIVATE cxx_std_23)
 
+    add_executable(mqb_msvc_source_dependencies_tests msvc_source_dependencies_tests.cpp)
+    target_link_libraries(mqb_msvc_source_dependencies_tests PRIVATE mqb_msvc)
+    target_compile_features(mqb_msvc_source_dependencies_tests PRIVATE cxx_std_23)
+
     list(APPEND MQB_TEST_TARGETS
         mqb_windows_command_line_tests
         mqb_process_echo_helper
         mqb_windows_process_runner_tests
         mqb_msvc_portable_tests
         mqb_msvc_compiler_arguments_tests
+        mqb_msvc_source_dependencies_tests
     )
 
     if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
@@ -104,6 +109,7 @@ if(WIN32)
     )
     add_test(NAME mqb.msvc.portable COMMAND mqb_msvc_portable_tests)
     add_test(NAME mqb.msvc.compiler_arguments COMMAND mqb_msvc_compiler_arguments_tests)
+    add_test(NAME mqb.msvc.source_dependencies COMMAND mqb_msvc_source_dependencies_tests)
 
     if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
         add_test(NAME mqb.msvc.visual_studio COMMAND mqb_msvc_visual_studio_tests)
