@@ -1,6 +1,6 @@
 # C++ V2 Architecture
 
-This document defines the initial architecture for migrating MSVC Quick Build from the current PowerShell implementation to a typed C++23 core.
+This document defines the architecture for migrating MSVC Quick Build from the current PowerShell implementation to a typed C++23 core.
 
 ## Goals
 
@@ -9,20 +9,6 @@ This document defines the initial architecture for migrating MSVC Quick Build fr
 - Separate planning from execution so build decisions can be tested without launching compilers.
 - Keep MSVC as a backend instead of allowing compiler-specific details to leak into the core model.
 - Make cache invalidation explainable and regression-testable.
-
-## Non-goals for the first milestone
-
-The first C++ milestone does **not** implement:
-
-- `cl.exe` process execution;
-- Visual Studio/MSVC discovery;
-- `/sourceDependencies`;
-- `/scanDependencies` or C++ Modules;
-- incremental cache persistence;
-- linking;
-- parallel compilation.
-
-Those features remain in the PowerShell reference implementation until the corresponding C++ subsystem has tests and a stable interface.
 
 ## Layering
 
@@ -56,7 +42,7 @@ Core may model compiler options and build actions, but MSVC spellings such as `/
 
 ### Rule 2: Planner does not execute processes
 
-The future `BuildPlanner` produces a `BuildPlan`. The executor consumes that plan. This enables `--dry-run`, deterministic unit tests, and rebuild explanations.
+`BuildPlanner` produces a `BuildPlan`. A later executor consumes that plan. This enables `--dry-run`, deterministic unit tests, and rebuild explanations.
 
 ### Rule 3: build correctness beats cache hit rate
 
@@ -78,7 +64,8 @@ The C++ core currently defines:
 - `ToolchainIdentity`;
 - `BuildSignature`;
 - `DependencyGraph`;
-- `CompileCacheEntry`, `FileSnapshot`, and `CompileCacheValidator`.
+- `CompileCacheEntry`, `FileSnapshot`, and `CompileCacheValidator`;
+- `CompilePlanItem` and `BuildPlanner`.
 
 These types replace portions of the dynamic PowerShell context with compile-time checked values before any MSVC process orchestration is migrated.
 
@@ -102,8 +89,6 @@ compile recipe identity ----> BuildSignature
 source/header freshness ----> CompileCacheValidator
 where results are stored ----> Artifact mapping / cache storage
 ```
-
-This separation prevents the compile signature from becoming a second dependency scanner and allows the same cached compiler result to be placed at a different artifact location.
 
 The current signature digest is a deterministic 128-bit non-cryptographic cache fingerprint. It is not a security primitive. The schema string (`mqb.compile.signature.v1`) is part of the digest so future field changes can invalidate old cache entries deliberately.
 
@@ -154,11 +139,32 @@ so topological results always place prerequisites before consumers. The graph fo
 
 The level representation will later map directly to safe parallel module compilation, while `topological_order()` provides a flattened deterministic order for simpler planning and diagnostics.
 
+## Planner boundary
+
+`BuildPlanner` consumes already-resolved `TranslationUnit` values and already-computed cache validation results. It does **not** inspect timestamps, query the filesystem, calculate compiler signatures, or execute processes.
+
+For compile planning it follows this contract:
+
+```text
+CompilePlanItem
+    |
+    +-- reusable cache ------> no action
+    |
+    +-- stale cache ---------> CompileAction
+                                  source
+                                  object artifact
+                                  typed rebuild reasons
+```
+
+A stale translation unit must expose exactly one object artifact. Missing or duplicate object outputs are planning errors rather than implicit guesses. Module translation units may additionally expose an interface artifact; the compile planner still selects the single object artifact for the current `CompileAction` model.
+
+This keeps the planner deterministic and makes the eventual executor intentionally boring: it receives actions, not policy decisions.
+
 ## Migration sequence
 
 1. **Scaffold** — CMake, `mqb_core`, CLI executable, CTest smoke test. ✅
-2. **Pure core** — artifact model, build signatures, build plan, dependency graph, cache validation, then planner. **In progress.**
-3. **Process abstraction** — typed executable + argv + exit result without shell command concatenation.
+2. **Pure core** — artifact model, build signatures, build plan, dependency graph, cache validation, compile planner. ✅
+3. **Process abstraction** — typed executable + argv + exit result without shell command concatenation. **Next.**
 4. **MSVC toolchain backend** — locate toolchain and capture environment.
 5. **Ordinary translation units** — compile and `/sourceDependencies` cache persistence/refresh.
 6. **Link state** — explicit linker signature and link planning.
