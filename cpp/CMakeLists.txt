@@ -16,6 +16,7 @@ endif()
 
 add_subdirectory(core)
 add_subdirectory(process)
+add_subdirectory(json)
 add_subdirectory(config)
 add_subdirectory(discovery)
 
