@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -14,12 +15,16 @@ namespace mqb::cli {
 
 struct Options {
     BuildRequest build;
+    std::optional<BuildConfiguration> configuration_override;
+    std::optional<Architecture> architecture_override;
+    std::optional<CppStandard> standard_override;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;
     std::vector<std::filesystem::path> library_directories;
     std::vector<std::string> libraries;
     msvc::ToolchainPreference toolchain_preference{msvc::ToolchainPreference::automatic};
     std::vector<std::filesystem::path> portable_roots;
+    std::optional<bool> discovery_override;
     bool discover_sources{true};
     bool verbose{false};
     bool show_help{false};

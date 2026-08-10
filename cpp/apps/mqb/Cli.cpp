@@ -31,15 +31,9 @@ require_value(
 
 [[nodiscard]] std::expected<CppStandard, Error>
 parse_standard(const std::string_view value) {
-    if (value == "20" || value == "c++20") {
-        return CppStandard::cpp20;
-    }
-    if (value == "23" || value == "c++23") {
-        return CppStandard::cpp23;
-    }
-    if (value == "latest" || value == "c++latest") {
-        return CppStandard::latest;
-    }
+    if (value == "20" || value == "c++20") return CppStandard::cpp20;
+    if (value == "23" || value == "c++23") return CppStandard::cpp23;
+    if (value == "latest" || value == "c++latest") return CppStandard::latest;
     return std::unexpected(error(
         "unsupported C++ standard '" + std::string{value}
         + "' (expected 20, 23, or latest)"));
@@ -47,15 +41,9 @@ parse_standard(const std::string_view value) {
 
 [[nodiscard]] std::expected<msvc::ToolchainPreference, Error>
 parse_toolchain_preference(const std::string_view value) {
-    if (value == "auto") {
-        return msvc::ToolchainPreference::automatic;
-    }
-    if (value == "vs") {
-        return msvc::ToolchainPreference::visual_studio;
-    }
-    if (value == "portable") {
-        return msvc::ToolchainPreference::portable;
-    }
+    if (value == "auto") return msvc::ToolchainPreference::automatic;
+    if (value == "vs") return msvc::ToolchainPreference::visual_studio;
+    if (value == "portable") return msvc::ToolchainPreference::portable;
     return std::unexpected(error(
         "unsupported toolchain preference '" + std::string{value}
         + "' (expected auto, vs, or portable)"));
@@ -67,9 +55,7 @@ attached_or_next(
     std::size_t& index,
     const std::string_view argument,
     const std::string_view option) {
-    if (argument.size() > option.size()) {
-        return argument.substr(option.size());
-    }
+    if (argument.size() > option.size()) return argument.substr(option.size());
     return require_value(arguments, index, option);
 }
 
@@ -108,8 +94,14 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.verbose = true;
             continue;
         }
+        if (argument == "--discover") {
+            options.discover_sources = true;
+            options.discovery_override = true;
+            continue;
+        }
         if (argument == "--no-discover") {
             options.discover_sources = false;
+            options.discovery_override = false;
             continue;
         }
         if (argument == "--run") {
@@ -130,18 +122,22 @@ parse_arguments(const std::span<const std::string_view> arguments) {
         }
         if (argument == "--debug") {
             options.build.configuration = BuildConfiguration::debug;
+            options.configuration_override = BuildConfiguration::debug;
             continue;
         }
         if (argument == "--release") {
             options.build.configuration = BuildConfiguration::release;
+            options.configuration_override = BuildConfiguration::release;
             continue;
         }
         if (argument == "--x86") {
             options.build.architecture = Architecture::x86;
+            options.architecture_override = Architecture::x86;
             continue;
         }
         if (argument == "--x64") {
             options.build.architecture = Architecture::x64;
+            options.architecture_override = Architecture::x64;
             continue;
         }
         if (argument == "--std") {
@@ -150,6 +146,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto standard = parse_standard(*value);
             if (!standard) return std::unexpected(standard.error());
             options.build.standard = *standard;
+            options.standard_override = *standard;
             continue;
         }
         if (argument == "--env") {
@@ -246,6 +243,7 @@ Usage:
 Source selection:
   One positional source       Smart-discover connected ordinary C++ TUs (default)
   Multiple positional sources Build exactly that explicit ordered source set
+  --discover                  Explicitly enable smart discovery for one source
   --no-discover               Disable smart discovery for a single source
 
 Options:
