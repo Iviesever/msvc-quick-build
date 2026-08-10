@@ -583,6 +583,9 @@ private:
     fs::path vc_tools_root;
     if (captured->vc_tools_root) {
         vc_tools_root = captured->vc_tools_root->lexically_normal();
+        if (vc_tools_root.filename().empty()) {
+            vc_tools_root = vc_tools_root.parent_path();
+        }
     } else {
         const auto fallback = latest_directory(*installation / "VC" / "Tools" / "MSVC");
         if (!fallback) {
@@ -592,6 +595,14 @@ private:
                 *installation));
         }
         vc_tools_root = *fallback;
+    }
+
+    const std::string vc_tools_version = path_to_utf8(vc_tools_root.filename());
+    if (vc_tools_version.empty()) {
+        return std::unexpected(failure(
+            ToolchainErrorCode::visual_studio_environment_failed,
+            "resolved VCToolsInstallDir has no version directory name",
+            vc_tools_root));
     }
 
     const fs::path target = architecture_name(options.target_architecture);
@@ -621,7 +632,7 @@ private:
     return MsvcToolchain{
         .identity = ToolchainIdentity{
             .compiler = compiler,
-            .version = path_to_utf8(vc_tools_root.filename()),
+            .version = vc_tools_version,
             .binary_stamp = std::move(*stamp),
         },
         .linker = linker,
