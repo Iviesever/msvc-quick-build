@@ -36,6 +36,8 @@ std::string_view to_string(const CppStandard value) noexcept {
 
 std::string_view to_string(const BuildReason value) noexcept {
     switch (value) {
+    case BuildReason::missing_cache_entry:
+        return "missing cache entry";
     case BuildReason::missing_output:
         return "missing output";
     case BuildReason::source_changed:

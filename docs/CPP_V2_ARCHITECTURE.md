@@ -18,7 +18,7 @@ The first C++ milestone does **not** implement:
 - Visual Studio/MSVC discovery;
 - `/sourceDependencies`;
 - `/scanDependencies` or C++ Modules;
-- incremental cache reuse;
+- incremental cache persistence;
 - linking;
 - parallel compilation.
 
@@ -37,6 +37,7 @@ Core --------------------------------------------------+
   Project model                                        |
   Dependency graph                                     |
   Build signatures                                     |
+  Cache validation                                     |
   Build planner                                        |
   Build actions                                        |
     |                                                  |
@@ -76,7 +77,8 @@ The C++ core currently defines:
 - `CompilerOptions`;
 - `ToolchainIdentity`;
 - `BuildSignature`;
-- `DependencyGraph`.
+- `DependencyGraph`;
+- `CompileCacheEntry`, `FileSnapshot`, and `CompileCacheValidator`.
 
 These types replace portions of the dynamic PowerShell context with compile-time checked values before any MSVC process orchestration is migrated.
 
@@ -97,13 +99,39 @@ It intentionally excludes dependency timestamps, dependency membership, and arti
 
 ```text
 compile recipe identity ----> BuildSignature
-source/header freshness ----> dependency validation
+source/header freshness ----> CompileCacheValidator
 where results are stored ----> Artifact mapping / cache storage
 ```
 
 This separation prevents the compile signature from becoming a second dependency scanner and allows the same cached compiler result to be placed at a different artifact location.
 
 The current signature digest is a deterministic 128-bit non-cryptographic cache fingerprint. It is not a security primitive. The schema string (`mqb.compile.signature.v1`) is part of the digest so future field changes can invalidate old cache entries deliberately.
+
+## Cache validation boundary
+
+`CompileCacheValidator` is a pure decision component. It does not query the filesystem and does not launch a compiler. The caller supplies immutable `FileSnapshot` values plus optional cached metadata.
+
+A cached object is reusable only when all of the following remain valid:
+
+```text
+cache metadata exists
+        +
+compiler recipe signature matches
+        +
+toolchain identity matches
+        +
+object artifact exists
+        +
+source is not newer than object
+        +
+every cached dependency still exists
+        +
+no cached dependency is newer than object
+```
+
+The dependency list comes from the last successful compiler dependency scan. Missing dependency snapshots are treated conservatively as cache misses. Multiple stale dependencies collapse to one `dependency_changed` reason so diagnostics stay stable.
+
+The validator reports typed `BuildReason` values rather than human-formatted strings. A later planner/CLI layer can therefore implement `mqb explain` without parsing log text.
 
 ## Dependency graph contract
 
@@ -129,10 +157,10 @@ The level representation will later map directly to safe parallel module compila
 ## Migration sequence
 
 1. **Scaffold** — CMake, `mqb_core`, CLI executable, CTest smoke test. ✅
-2. **Pure core** — artifact model, build signatures, build plan, dependency graph, then planner. **In progress.**
+2. **Pure core** — artifact model, build signatures, build plan, dependency graph, cache validation, then planner. **In progress.**
 3. **Process abstraction** — typed executable + argv + exit result without shell command concatenation.
 4. **MSVC toolchain backend** — locate toolchain and capture environment.
-5. **Ordinary translation units** — compile and `/sourceDependencies` cache validation.
+5. **Ordinary translation units** — compile and `/sourceDependencies` cache persistence/refresh.
 6. **Link state** — explicit linker signature and link planning.
 7. **Modules** — P1689 `/scanDependencies`, module graph, IFC/object artifacts.
 8. **Parity** — run PowerShell and C++ implementations against the same E2E fixtures.

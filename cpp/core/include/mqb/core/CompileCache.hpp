@@ -1,0 +1,52 @@
+#pragma once
+
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <vector>
+
+#include "mqb/core/Artifact.hpp"
+#include "mqb/core/BuildSignature.hpp"
+#include "mqb/core/BuildTypes.hpp"
+#include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/ToolchainIdentity.hpp"
+#include "mqb/core/TranslationUnit.hpp"
+
+namespace mqb {
+
+struct FileSnapshot {
+    std::filesystem::path path;
+    bool exists{false};
+    std::filesystem::file_time_type modified{};
+};
+
+struct CompileCacheEntry {
+    std::filesystem::path source;
+    TranslationUnitKind kind{TranslationUnitKind::source};
+    ToolchainIdentity toolchain;
+    BuildSignature signature;
+    Artifact object;
+    std::vector<std::filesystem::path> dependencies;
+};
+
+struct CompileCacheValidation {
+    std::vector<BuildReason> reasons;
+
+    [[nodiscard]] bool reusable() const noexcept {
+        return reasons.empty();
+    }
+};
+
+class CompileCacheValidator {
+public:
+    [[nodiscard]] static CompileCacheValidation validate(
+        const TranslationUnit& current_unit,
+        const ToolchainIdentity& current_toolchain,
+        const CompilerOptions& current_options,
+        const std::optional<CompileCacheEntry>& cached_entry,
+        const FileSnapshot& source_snapshot,
+        const FileSnapshot& object_snapshot,
+        std::span<const FileSnapshot> dependency_snapshots);
+};
+
+} // namespace mqb

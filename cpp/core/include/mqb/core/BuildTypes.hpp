@@ -21,6 +21,7 @@ enum class CppStandard {
 };
 
 enum class BuildReason {
+    missing_cache_entry,
     missing_output,
     source_changed,
     dependency_changed,
