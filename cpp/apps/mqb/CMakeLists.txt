@@ -27,6 +27,7 @@ add_executable(mqb
 target_link_libraries(mqb
     PRIVATE
         mqb_cli
+        mqb_discovery
         mqb_orchestration
         mqb_platform_windows
 )
