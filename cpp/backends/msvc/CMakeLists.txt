@@ -27,3 +27,7 @@ if(MSVC)
 else()
     target_compile_options(mqb_msvc PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+if(MQB_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
