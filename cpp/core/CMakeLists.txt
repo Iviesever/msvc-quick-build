@@ -1,6 +1,7 @@
 add_library(mqb_core STATIC
     src/BuildSignature.cpp
     src/BuildTypes.cpp
+    src/DependencyGraph.cpp
 )
 
 target_include_directories(mqb_core

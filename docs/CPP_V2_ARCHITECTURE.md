@@ -75,7 +75,8 @@ The C++ core currently defines:
 - `Artifact` and `TranslationUnit`;
 - `CompilerOptions`;
 - `ToolchainIdentity`;
-- `BuildSignature`.
+- `BuildSignature`;
+- `DependencyGraph`.
 
 These types replace portions of the dynamic PowerShell context with compile-time checked values before any MSVC process orchestration is migrated.
 
@@ -104,10 +105,31 @@ This separation prevents the compile signature from becoming a second dependency
 
 The current signature digest is a deterministic 128-bit non-cryptographic cache fingerprint. It is not a security primitive. The schema string (`mqb.compile.signature.v1`) is part of the digest so future field changes can invalidate old cache entries deliberately.
 
+## Dependency graph contract
+
+`DependencyGraph` is compiler-agnostic. Scanner/backend code resolves compiler-specific concepts into stable string keys before adding them to the graph.
+
+An edge is expressed as:
+
+```text
+node depends on dependency
+```
+
+so topological results always place prerequisites before consumers. The graph follows these rules:
+
+- nodes must be registered before edges are added;
+- duplicate nodes are errors because they indicate an upstream identity bug;
+- references to missing nodes are errors rather than silently creating placeholders;
+- duplicate edges are idempotent;
+- `topological_levels()` returns deterministic, lexicographically ordered parallel levels;
+- cycles fail explicitly and report the unresolved node set instead of returning a partial build order.
+
+The level representation will later map directly to safe parallel module compilation, while `topological_order()` provides a flattened deterministic order for simpler planning and diagnostics.
+
 ## Migration sequence
 
 1. **Scaffold** — CMake, `mqb_core`, CLI executable, CTest smoke test. ✅
-2. **Pure core** — artifact model, build signatures, build plan, then dependency graph and planner. **In progress.**
+2. **Pure core** — artifact model, build signatures, build plan, dependency graph, then planner. **In progress.**
 3. **Process abstraction** — typed executable + argv + exit result without shell command concatenation.
 4. **MSVC toolchain backend** — locate toolchain and capture environment.
 5. **Ordinary translation units** — compile and `/sourceDependencies` cache validation.
