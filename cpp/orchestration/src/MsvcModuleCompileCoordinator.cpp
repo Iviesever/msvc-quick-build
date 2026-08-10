@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -42,6 +43,42 @@ namespace fs = std::filesystem;
         .provider_source = std::move(provider_source),
         .logical_name = std::move(logical_name),
     };
+}
+
+[[nodiscard]] ModuleCompileError artifact_failure(
+    const ModuleCompileErrorCode code,
+    std::string message,
+    const fs::path& source,
+    const fs::path& artifact) {
+    return ModuleCompileError{
+        .code = code,
+        .message = std::move(message),
+        .source = source,
+        .artifact = artifact,
+    };
+}
+
+[[nodiscard]] std::optional<ModuleCompileError> claim_artifact(
+    std::unordered_set<std::string>& claimed,
+    const fs::path& source,
+    const fs::path& artifact,
+    const std::string_view role) {
+    if (artifact.empty()) {
+        return artifact_failure(
+            ModuleCompileErrorCode::invalid_artifact,
+            "module compile " + std::string{role} + " artifact path is empty",
+            source,
+            artifact);
+    }
+    if (!claimed.emplace(windows_path_key(artifact)).second) {
+        return artifact_failure(
+            ModuleCompileErrorCode::artifact_collision,
+            "module compile " + std::string{role}
+                + " artifact collides with another planned writable artifact",
+            source,
+            artifact);
+    }
+    return std::nullopt;
 }
 
 [[nodiscard]] IncrementalCompileRequest compile_request_for(
@@ -103,13 +140,45 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
 
     std::unordered_map<std::string, std::size_t> source_by_key;
     source_by_key.reserve(request.sources.size());
+    std::unordered_set<std::string> claimed_artifacts;
+    claimed_artifacts.reserve(request.sources.size() * 4u);
+
     for (std::size_t index = 0; index < request.sources.size(); ++index) {
-        const std::string key = windows_path_key(request.sources[index].source);
+        const auto& source = request.sources[index];
+        const std::string key = windows_path_key(source.source);
         if (!source_by_key.emplace(key, index).second) {
             return std::unexpected(failure(
                 ModuleCompileErrorCode::duplicate_source,
                 "module compile request contains the same source more than once",
-                request.sources[index].source));
+                source.source));
+        }
+
+        if (auto error = claim_artifact(
+                claimed_artifacts, source.source, source.artifacts.object, "object")) {
+            return std::unexpected(std::move(*error));
+        }
+        if (auto error = claim_artifact(
+                claimed_artifacts,
+                source.source,
+                source.artifacts.dependencies,
+                "source-dependency metadata")) {
+            return std::unexpected(std::move(*error));
+        }
+        if (auto error = claim_artifact(
+                claimed_artifacts,
+                source.source,
+                source.artifacts.compile_cache,
+                "compile-cache metadata")) {
+            return std::unexpected(std::move(*error));
+        }
+        if (source.kind == TranslationUnitKind::module_interface) {
+            if (auto error = claim_artifact(
+                    claimed_artifacts,
+                    source.source,
+                    source.artifacts.module_interface,
+                    "IFC")) {
+                return std::unexpected(std::move(*error));
+            }
         }
     }
 
