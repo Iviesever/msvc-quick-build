@@ -9,8 +9,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(MQB_BUILD_TESTS "Build MQB tests" ON)
 option(MQB_ENABLE_INSTALLED_MSVC_TESTS "Run tests that require an installed Visual Studio toolchain" OFF)
 
+if(MQB_BUILD_TESTS)
+    include(CTest)
+    enable_testing()
+endif()
+
 add_subdirectory(core)
 add_subdirectory(process)
+add_subdirectory(config)
 add_subdirectory(discovery)
 
 if(WIN32)
@@ -22,8 +28,6 @@ endif()
 add_subdirectory(apps/mqb)
 
 if(MQB_BUILD_TESTS)
-    include(CTest)
-    enable_testing()
     add_subdirectory(tests)
     if(WIN32)
         add_subdirectory(orchestration/tests)
