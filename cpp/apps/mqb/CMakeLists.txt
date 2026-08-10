@@ -22,6 +22,7 @@ target_compile_features(mqb_cli PUBLIC cxx_std_23)
 
 add_executable(mqb
     main.cpp
+    ModuleCliTarget.cpp
 )
 
 target_link_libraries(mqb
