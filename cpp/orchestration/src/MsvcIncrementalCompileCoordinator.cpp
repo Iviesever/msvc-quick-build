@@ -1,5 +1,6 @@
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 
+#include <algorithm>
 #include <array>
 #include <expected>
 #include <filesystem>
@@ -95,6 +96,14 @@ void append_warning(
     }
 }
 
+void add_reason_once(
+    std::vector<BuildReason>& reasons,
+    const BuildReason reason) {
+    if (std::find(reasons.begin(), reasons.end(), reason) == reasons.end()) {
+        reasons.push_back(reason);
+    }
+}
+
 } // namespace
 
 std::expected<IncrementalCompileResult, IncrementalCompileError>
@@ -142,6 +151,10 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         source_snapshot.snapshot,
         output_snapshots,
         dependency_snapshots);
+
+    if (request.force_rebuild) {
+        add_reason_once(result.validation.reasons, BuildReason::explicit_rebuild);
+    }
 
     const std::array<CompilePlanItem, 1> items{
         CompilePlanItem{
