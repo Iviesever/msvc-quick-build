@@ -9,7 +9,6 @@
 #include <utility>
 #include <vector>
 
-#include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildPlanner.hpp"
 #include "mqb/core/CompileCache.hpp"
 #include "mqb/core/CompileCacheFile.hpp"
@@ -88,15 +87,6 @@ struct SnapshotResult {
     };
 }
 
-[[nodiscard]] fs::path first_object_path(const TranslationUnit& unit) {
-    for (const auto& output : unit.outputs) {
-        if (output.kind == ArtifactKind::object) {
-            return output.path;
-        }
-    }
-    return {};
-}
-
 void append_warning(
     std::vector<IncrementalCompileWarning>& warnings,
     std::optional<IncrementalCompileWarning> warning) {
@@ -126,8 +116,13 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
     auto source_snapshot = snapshot_file(request.unit.source);
     append_warning(result.warnings, std::move(source_snapshot.warning));
 
-    auto object_snapshot = snapshot_file(first_object_path(request.unit));
-    append_warning(result.warnings, std::move(object_snapshot.warning));
+    std::vector<FileSnapshot> output_snapshots;
+    output_snapshots.reserve(request.unit.outputs.size());
+    for (const auto& output : request.unit.outputs) {
+        auto output_snapshot = snapshot_file(output.path);
+        append_warning(result.warnings, std::move(output_snapshot.warning));
+        output_snapshots.push_back(std::move(output_snapshot.snapshot));
+    }
 
     std::vector<FileSnapshot> dependency_snapshots;
     if (cached_entry) {
@@ -145,7 +140,7 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         request.options,
         cached_entry,
         source_snapshot.snapshot,
-        object_snapshot.snapshot,
+        output_snapshots,
         dependency_snapshots);
 
     const std::array<CompilePlanItem, 1> items{
