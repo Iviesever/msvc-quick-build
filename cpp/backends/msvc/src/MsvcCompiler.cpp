@@ -31,11 +31,11 @@ namespace fs = std::filesystem;
     case CppStandard::cpp20:
         return "/std:c++20";
     case CppStandard::cpp23:
-        return "/std:c++23";
+        return "/std:c++23preview";
     case CppStandard::latest:
         return "/std:c++latest";
     }
-    return "/std:c++23";
+    return "/std:c++23preview";
 }
 
 void append_configuration_arguments(

@@ -51,7 +51,10 @@ int main() {
         expect(contains(*result, "/Od"), "debug configuration should disable optimization");
         expect(contains(*result, "/MDd"), "debug configuration should select debug DLL CRT");
         expect(contains(*result, "/D_DEBUG"), "debug configuration should define _DEBUG");
-        expect(contains(*result, "/std:c++23"), "C++23 should map to the MSVC standard switch");
+        expect(contains(*result, "/std:c++23preview"),
+               "C++23 should map to MSVC's current C++23 preview switch");
+        expect(!contains(*result, "/std:c++23"),
+               "unsupported /std:c++23 must not be emitted before MSVC implements it");
         expect(contains(*result, "/DUNICODE"), "explicit defines should become /D argv elements");
         expect(contains(*result, "/DFEATURE=7"), "define values should be preserved");
         expect(contains(*result, "/Iinclude"), "include path should become one /I argv element");
@@ -70,6 +73,15 @@ int main() {
         const auto structured_fo = std::find(result->begin(), result->end(), "/Fobuild/my file.obj");
         expect(raw_fo != result->end() && structured_fo != result->end() && raw_fo < structured_fo,
                "structured object routing should win by appearing after a raw /Fo");
+    }
+
+    auto cpp20 = invocation;
+    cpp20.options.standard = mqb::CppStandard::cpp20;
+    cpp20.options.additional_arguments.clear();
+    const auto cpp20_result = mqb::msvc::MsvcCompiler::build_arguments(cpp20);
+    expect(cpp20_result.has_value(), "C++20 compile invocation should be supported");
+    if (cpp20_result) {
+        expect(contains(*cpp20_result, "/std:c++20"), "C++20 should map correctly");
     }
 
     auto release = invocation;
