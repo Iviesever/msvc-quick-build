@@ -36,8 +36,8 @@ struct P1689Rule {
     std::optional<std::filesystem::path> work_directory;
     std::optional<std::filesystem::path> primary_output;
     std::vector<std::filesystem::path> outputs;
-    std::vector<ProvidedModule> provides;
-    std::vector<RequiredModule> requires;
+    std::vector<ProvidedModule> provided_modules;
+    std::vector<RequiredModule> required_modules;
 };
 
 struct P1689Document {
