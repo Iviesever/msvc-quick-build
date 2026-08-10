@@ -183,7 +183,7 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
             request.unit,
             toolchain_.identity,
             request.options),
-        .object = *object,
+        .outputs = request.unit.outputs,
         .dependencies = std::move(cache_dependencies),
     };
 
