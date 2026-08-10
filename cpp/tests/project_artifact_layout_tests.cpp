@@ -41,9 +41,28 @@ int main() {
                "in-project object path should preserve relative source identity");
         expect(src_foo->dependencies == root / ".mqb" / "deps" / "src" / "foo.cpp.json",
                "dependency metadata should preserve relative source identity");
+        expect(src_foo->module_dependencies
+                   == root / ".mqb" / "scan" / "src" / "foo.cpp.json",
+               "module scan metadata should preserve relative source identity");
+        expect(src_foo->module_interface
+                   == root / ".mqb" / "ifc" / "src" / "foo.cpp.ifc",
+               "compiled module interface path should preserve relative source identity");
         expect(src_foo->compile_cache
                    == root / ".mqb" / "cache" / "compile" / "src" / "foo.cpp.mqbcache",
                "compile cache should preserve relative source identity");
+        expect(src_foo->module_dependencies != tests_foo->module_dependencies
+                   && src_foo->module_interface != tests_foo->module_interface,
+               "same-basename module artifacts in different directories must not collide");
+    }
+
+    auto partition = layout->for_source(root / "modules" / "math-part.ixx");
+    expect(partition.has_value(), "module interface source should map to module artifacts");
+    if (partition) {
+        expect(partition->module_interface
+                   == root / ".mqb" / "ifc" / "modules" / "math-part.ixx.ifc",
+               "IFC filename should come from source identity rather than logical module spelling");
+        expect(partition->module_interface.generic_string().find(':') == std::string::npos,
+               "IFC artifact routing must not require logical-name characters such as partition ':'");
     }
 
     auto outside = layout->for_source(fs::path{"D:/vendor/foo.cpp"});
@@ -54,6 +73,9 @@ int main() {
                "external source artifacts should be isolated under .external hash namespace");
         expect(generic.ends_with("/foo.cpp.obj"),
                "external artifact should retain source filename for diagnostics");
+        expect(outside->module_interface.generic_string().find(".mqb/ifc/.external/")
+                   != std::string::npos,
+               "external IFCs should share the stable external-source namespace");
     }
 
     auto target = layout->for_target("demo");
