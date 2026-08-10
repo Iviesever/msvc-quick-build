@@ -1,298 +1,316 @@
-# build — MSVC 快速编译工具
+# MQB — MSVC Quick Build
 
-与 Visual Studio 2026 MSBuild **1:1 对齐** 的 C/C++ 快速编译工具。
+面向 Windows + MSVC 的轻量 C++ 构建工具。目标是让普通 C++ 项目在**不维护 `.sln` / `.vcxproj` / CMakeLists.txt** 的情况下，直接从源文件完成发现、增量编译、模块拓扑、链接和运行。
 
-**没有 `.sln`、`CMakeLists.txt`、`launch.json`，按下 F5 就能编译运行 C/C++。**
-
-您可以选择下载 [**“便携版”编译环境**](https://www.123912.com/s/4Y1ovd-2sbad)（解压完 3.48 G），来代替下载完整的 [Visual Studio](visualstudio.microsoft.com)
-
-> **模块化支持**：原生处理 C++20/23 Modules 及 `import std;`，内置模块缓存。
+> **当前迁移状态**
 >
-> **智能推导**：基于 `#include` 和 `import` 自动爬取并编译依赖文件。
->
-> **对齐 MSBuild**：基于 `msvc_list.json` 支持 Debug/Release 一键切换及数百个 MSVC 原生参数的平替。
->
-> **增量构建**：仅重新编译修改的 `.obj` 与 `.ifc`，代码无变动则直接运行。
+> - `cpp/` 中的 **C++23 V2 (`mqb.exe`)** 已具备可执行的普通 C++ / project-local named modules 构建链，并由 Visual Studio 2026 的真实工具链 E2E 持续验证。
+> - `build.ps1` 仍保留为 **PowerShell Golden Reference / 过渡期稳定入口**。最终安装、发布与默认入口切换尚未完成。
+> - MQB 不再宣称与 MSBuild “1:1 等价”。当前原则是：对已实现的常用 MSVC 编译/链接语义进行显式建模，并用回归测试证明行为。
 
-------
+## C++ V2 现在能做什么
 
-## 文件目录
+- **结构化 MSVC 调用**：直接执行 `cl.exe` / `link.exe`，不通过 shell 拼接命令字符串。
+- **工具链发现**：支持 Visual Studio 与 portable MSVC 路径，工具链身份进入缓存判断。
+- **单入口智能发现**：`mqb main.cpp` 会从项目内 `#include` 和 named `import` 连接关系选择相关 translation units。
+- **Project-local named modules**：支持 `.ixx` / `.cppm` / `.mpp` interface providers，使用 MSVC `/scanDependencies` + P1689 建立真实拓扑。
+- **增量编译**：使用 `/sourceDependencies` 跟踪实际头文件 freshness；编译参数、工具链、模块引用和计划输出参与 compile identity。
+- **IFC 增量正确性**：provider IFC 缺失、provider 重编或引用变化会可靠传导到 consumer。
+- **增量链接**：对象、显式库、linker identity 与 link options 共同决定是否重新链接。
+- **有界并行**：`-j/--jobs` 控制 TU scan/compile 并发；job count 是 execution policy，不污染 build cache identity。
+- **`mqb.json`**：严格、带版本的项目配置，遵循 `explicit CLI > mqb.json > built-in defaults`。
+- **结构化运行参数**：`--run -- arg1 "arg 2"` 保持 argv 边界。
+- **隔离构建产物**：全部 C++ V2 中间产物放在项目 `.mqb/` 下，不在源码目录通配删除 `.obj/.ifc`。
 
-```
-vscode-msvc-quick-build/
-├── cpp/                               # C++23 V2 源码与测试
-├── docs/
-│   └── CPP_V2_ARCHITECTURE.md         # C++ V2 当前架构
-├── install.bat                        # PowerShell 版本安装脚本（过渡期保留）
-├── build.ps1                          # 当前稳定 PowerShell 引擎（Golden Reference）
-└── Microsoft.PowerShell_profile.ps1   # PowerShell profile（注册 build 命令）
-```
+### 当前明确不支持
 
-> C++ V2 正在逐步接管构建系统；在 `mqb.exe` 达到可替代状态之前，`build.ps1` 继续作为稳定用户入口与行为基线。
+以下能力目前**故意 fail closed**，不会为了“看起来能编译”而退回普通 TU 路径：
 
+- C++ header units；
+- external / prebuilt named-module providers；
+- `import std;`；
+- C (`.c`) translation units；
+- 将 C++ V2 宣称为 PowerShell 版本的完整行为替代品。
 
-> **首次使用 PowerShell 脚本？** 需要先在 PowerShell 中执行一次（仅需一次）：
->
-> ```powershell
-> Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-> ```
+这些 Modules 扩展策略跟踪在 Issue #16；每一种能力都会先定义 artifact / ownership / freshness / cache policy，再接真实 MSVC E2E。
 
-## 一键安装
+---
 
+## 构建 `mqb.exe`
 
+要求：
 
-双击 `install.bat`，自动完成以下操作：
-
-1. 部署 `build.ps1` 到 `%USERPROFILE%\bin\`
-2. 部署 PowerShell profile（注册 `build` 命令）
-3. 可选解压 `portable_msvc.zip` 便携版工具链
-
-重启终端，输入 `build`，看到帮助信息即成功。
-
-
-
-## 手动安装
+- Windows；
+- CMake 3.25+；
+- Visual Studio 2026 / MSVC（仓库 CI 当前使用 `Visual Studio 18 2026` generator）；
+- C++23 编译能力。
 
 ```powershell
-Copy-Item "build.ps1" "$HOME\bin\build.ps1" -Force
+cmake -S cpp -B cpp/build -G "Visual Studio 18 2026" -A x64
+cmake --build cpp/build --config Release --target mqb
 ```
 
-并在 PowerShell profile 中添加：
+生成的可执行文件位于：
+
+```text
+cpp/build/apps/mqb/Release/mqb.exe
+```
+
+查看当前 CLI 契约：
 
 ```powershell
-function build { & pwsh.exe -NoProfile -File "$HOME\bin\build.ps1" @args }
+.\cpp\build\apps\mqb\Release\mqb.exe --help
 ```
 
-解压便携版工具链，适用于在没有 VS 的机器上使用。
+### 运行完整测试
+
+普通开发测试：
 
 ```powershell
-# 解压编译器工具链（3.48 G）到 C:\Users\<用户名>\bin\portable_msvc
-Expand-Archive "portable_msvc.zip" "$HOME\bin\portable_msvc" -Force
+cmake -S cpp -B cpp/build -G "Visual Studio 18 2026" -A x64
+cmake --build cpp/build --config Debug --parallel
+ctest --test-dir cpp/build -C Debug --output-on-failure
 ```
 
-------
+启用需要本机 Visual Studio/MSVC 的真实工具链测试：
 
-## 简便使用：VS Code 按 F5 编译运行
+```powershell
+cmake -S cpp -B cpp/build -G "Visual Studio 18 2026" -A x64 `
+  -DMQB_ENABLE_INSTALLED_MSVC_TESTS=ON
+cmake --build cpp/build --config Debug --parallel
+ctest --test-dir cpp/build -C Debug --output-on-failure
+```
 
+主线 CI 会运行后一种配置。
 
+---
 
-`Ctrl+Shift+P` → `Open Keyboard Shortcuts (JSON)` → 添加：
+## C++ V2 Quickstart
+
+下面假设 `mqb.exe` 已在 `PATH` 中；开发阶段也可以直接使用上面的构建输出路径。
+
+### 单文件 / 自动发现
+
+```powershell
+mqb main.cpp --env vs --std latest --run
+```
+
+单个 positional source 默认启用 smart discovery。若 `main.cpp` 通过本地 include/import 连接到其他 C++ TU，MQB 会选择相关源文件再构建。
+
+可以显式关闭：
+
+```powershell
+mqb main.cpp --no-discover
+```
+
+### 多文件精确 source set
+
+```powershell
+mqb main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
+```
+
+多个 positional sources 表示**精确 source set**，不再自动扩大集合。
+
+### 运行时参数
+
+```powershell
+mqb main.cpp --run -- input.txt "hello world" 42
+```
+
+`--` 后的每个参数都按独立 argv 元素传给程序。
+
+### Project-local named modules
+
+例如：
+
+```cpp
+// math.ixx
+export module math;
+export int answer() { return 42; }
+```
+
+```cpp
+// main.cpp
+import math;
+int main() { return answer() == 42 ? 0 : 1; }
+```
+
+只需要：
+
+```powershell
+mqb main.cpp --env vs --std latest --run
+```
+
+smart discovery 会把项目内可达的 `math.ixx` 作为**候选 provider** 加入 source set；真正的 provider 选择、依赖顺序和冲突诊断仍由 `/scanDependencies` 的 P1689 结果决定。
+
+也可以显式指定：
+
+```powershell
+mqb main.cpp math.ixx --env vs --std latest -j 2 -o app --run
+```
+
+未引用的其他 module interface 不会因为存在于项目目录就自动进入目标。
+
+---
+
+## `mqb.json`
+
+C++ V2 使用根目录 `mqb.json`，不是 PowerShell 版本的 `msvc_list.json`。
+
+最小文件：
 
 ```json
 {
-    "key": "f5",
-    "command": "runCommands",
-    "args": {
-        "commands": [
-            "workbench.action.terminal.focus",
-            {
-                "command": "workbench.action.terminal.sendSequence",
-                "args": {
-                    "text": "cd \"${fileDirname}\" ; build \"${fileBasename}\" -std latest -run\u000D"
-                }
-            }
-        ]
-    },
-    "when": "resourceLangId == 'cpp' || resourceLangId == 'c'"
+  "version": 1
 }
 ```
 
-
-
-------
-
-## 详细使用
-
-
-
-### 方法一：命令行（CLI）
-
-```bash
-build main.cpp -run                               # 编译运行
-build main.cpp -std latest -run                   # 指定 C++ 标准
-build main.cpp -config debug -run                 # Debug 配置（1:1 MSBuild）
-build main.cpp -config release -run               # Release 配置
-build *.cpp -o app -std 23 -config release -run   # 多文件 + Release
-build main.cpp mod.ixx -o app -std latest -run    # C++20 Modules
-build solver.c -run -a "input.txt 42"             # 传参运行
-build main.cpp -x86 -run                          # 32 位编译
-build -env vs                                     # 强制使用本机 VS
-```
-
-
-
-### 方法二：配置 `msvc_list.json`
-
-在项目目录创建 `msvc_list.json`，实现**零命令行参数的完整项目配置**。脚本会自动向上查找最多 5 层父目录。CLI 传参会覆盖 JSON 同名字段。
-
-#### 最简配置
-
-```json
-{ "config": "debug" }
-```
-
-一行即可获得完整的 VS Debug 配置（`/Od /MDd /RTC1 /JMC /ZI /GS /sdl ...`）。
-
-#### 完整示例
+示例：
 
 ```json
 {
-    "config": "debug",
-    "std": "latest",
-    "charset": "unicode",
-    "output": "MyApp",
-    "defines": ["WIN32_LEAN_AND_MEAN", "NOMINMAX"],
-    "libs": ["d3d11", "dxgi"],
-    "include": ["../vendor/include"],
-    "libpath": ["../vendor/lib"],
-    "exclude": ["test_*.cpp"]
+  "version": 1,
+  "build": {
+    "configuration": "release",
+    "architecture": "x64",
+    "standard": "latest",
+    "output": "game",
+    "defines": ["GAME_BUILD=1"],
+    "include_dirs": ["include"],
+    "library_dirs": ["third_party/lib"],
+    "libraries": ["codec"]
+  },
+  "discovery": {
+    "enabled": true,
+    "exclude_dirs": ["tests"],
+    "extra_sources": ["src/manual_adapter.cpp"],
+    "exclude_sources": ["src/legacy.cpp"]
+  }
 }
 ```
 
-切 Release 只改一行：`"config": "release"`，或命令行 `build main.cpp -config release -run`。
+MQB 从 invocation directory 向上查找最近的 `mqb.json`；配置文件所在目录成为 project root 和 `.mqb/` 根。
 
-> **数据来源**：所有 config 预设默认值从 VS2026 v180 工具链的 `Microsoft.Cl.Common.props` 和 `Microsoft.Link.Common.props` 官方属性文件提取，与 Visual Studio 项目模板完全一致。
-
----
-
-## 全部参数
-
-> CLI 和 JSON **1 : 1对应**。每个参数既可在命令行中使用，也可写入 `msvc_list.json`。 
->
-> 优先级：**CLI > JSON > config 预设 > 内置默认值**。
-
-| CLI | JSON | 可选值 | 说明 |
-|---|---|---|---|
-| **编译与运行** | | | |
-| `<源文件...>` | — | 文件名 / 通配符 | 源文件（`.c` `.cpp` `.cxx` `.cc` `.ixx`） |
-| `-o` | `"output"` | string | 输出文件名（不含后缀名） |
-| `-type` | `"type"` | `exe` `dll` `static` | 构建目标类型（默认 exe） |
-| `-run` | — | — | 编译成功后自动运行 |
-| `-std` | `"std"` | `14` `17` `20` `23` `latest` | C++ 标准 |
-| `-a` | — | string | 运行时传给程序的命令行参数 |
-| `-x86` | — | — | 编译为 32 位（默认 64 位） |
-| `-env` | — | `vs` `portable` `auto` | 强制指定编译环境 |
-| **路径与依赖** | | | |
-| `-I` | `"include"` | string[] | 头文件包含路径 |
-| `-L` | `"libpath"` | string[] | 库文件搜索路径 |
-| `-libs` | `"libs"` | string[] | 链接库（不含 .lib） |
-| `-D` | `"defines"` | string[] | 预处理器宏定义 |
-| — | `"exclude"` | string[] | 依赖解析时排除的文件通配符 |
-| **工程配置** | | | |
-| `-config` | `"config"` | `debug` `release` | 一键 VS 官方配置预设 |
-| `-optimize` | `"optimize"` | `Od` `O1` `O2` `Ox` | 优化级别 |
-| `-runtime` | `"runtime"` | `MD` `MDd` `MT` `MTd` | 运行库 |
-| `-warnings` | `"warnings"` | `W0` `W1` `W3` `W4` `Wall` | 警告级别 |
-| `-WX` | `"WX"` | bool | 视警告为错误 → `/WX` |
-| `-debug_info` | `"debug_info"` | `off` `Zi` `ZI` `Z7` | 调试信息格式 |
-| `-exceptions` | `"exceptions"` | `EHsc` `EHa` `off` | 异常处理模型 |
-| `-fp` | `"fp"` | `precise` `strict` `fast` | 浮点模型 → `/fp:xxx` |
-| `-charset` | `"charset"` | `unicode` `mbcs` | 字符集宏 → `/DUNICODE` `/D_MBCS` |
-| `-rtc1` | `"rtc1"` | bool | 运行时检查 → `/RTC1` |
-| `-jmc` | `"jmc"` | bool | Just My Code → `/JMC` |
-| `-sdl` | `"sdl"` | bool | 安全检查 → `/GS /sdl` |
-| `-permissive` | `"permissive"` | bool | 严格标准一致性 → `/permissive-` |
-| `-ltcg` | `"ltcg"` | bool | 全程序优化 → `/GL` + `/LTCG` |
-| `-subsystem` | `"subsystem"` | `console` `windows` | 链接器子系统 → `/SUBSYSTEM:xxx` |
-| `-incremental` | `"incremental"` | bool | 增量链接 → `/INCREMENTAL` |
-| `-flags` | `"flags"` | string[] | 追加原始编译器标志（直接透传） |
-| `-link_flags` | `"link_flags"` | string[] | 追加原始链接器标志（直接透传） |
-
-> **别名**：`-o` = `-output`，`-I` = `-include`，`-L` = `-libpath`，`-D` = `-defines`。
-
-### config 预设默认值
-
-| 参数 | debug | release |
-|---|---|---|
-| `optimize` | `Od` | `O2` |
-| `runtime` | `MDd` | `MD` |
-| `debug_info` | `ZI` | `Zi` |
-| `rtc1` | `true` → `/RTC1` | `false` |
-| `jmc` | `true` → `/JMC` | `false` |
-| `ltcg` | `false` | `true` → `/GL /LTCG` |
-| `incremental` | `true` → `/INCREMENTAL` | `false` |
-
-两个预设**共同启用**：`warnings=W3`、`exceptions=EHsc`、`fp=precise`、`sdl=true`、`subsystem=console`。  
-
-两个预设**均不启用**：`permissive`、`WX`、`charset`。
-
-> 使用 `-config` 时还会自动启用 MSBuild 链接标志（`/DEBUG` `/DYNAMICBASE` `/NXCOMPAT` `/MANIFEST` `/MACHINE:X64` 等）并链接 12 个 Windows 默认库（`kernel32` `user32` `gdi32` `winspool` `comdlg32` `advapi32` `shell32` `ole32` `oleaut32` `uuid` `odbc32` `odbccp32`）。
+完整 schema、路径基准、precedence 与 cache 行为见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
 
 ---
 
+## 常用 C++ V2 CLI
 
-## 构建输出
-
-输出格式与 VS2026 IDE 输出面板一致：
-
+```text
+mqb <entry.cpp> [options] [-- program-args...]
+mqb <source.cpp|module.ixx|module.cppm|module.mpp> <more-sources...> [options]
 ```
-1>  正在解析源依赖项: main.cpp, mathlib.ixx
 
-生成开始于 14:30...
-1>------ 已启动生成: 项目: main, 配置: Debug x64 ------
-1>  正在扫描源以查找模块依赖项...
-1>  正在编译...
-1>  mathlib.ixx
-1>  main.cpp
-1>  main -> D:\project\main.exe
-========== 生成: 1 成功，0 失败，0 最新，0 已跳过 ==========
-========== 生成 于 14:30 完成，耗时 1.116 秒 ==========
-```
+常用选项：
+
+| 选项 | 作用 |
+|---|---|
+| `--debug` / `--release` | 选择构建配置 |
+| `--std <20|23|latest>` | 选择 C++ 标准 |
+| `--x86` / `--x64` | 选择目标架构 |
+| `-j, --jobs <N>` | 最大并发 scan/compile 数量 |
+| `-o, --output <name>` | `.mqb/bin/` 下的目标名 |
+| `--run` | 构建成功后运行 |
+| `--discover` / `--no-discover` | 显式打开/关闭单入口 smart discovery |
+| `-I <dir>` | include directory |
+| `-D <value>` | preprocessor definition |
+| `-L <dir>` / `--lib-path <dir>` | library search directory |
+| `-l <name>` / `--lib <name>` | 显式链接库 |
+| `--env <auto|vs|portable>` | 工具链选择 |
+| `--portable-root <dir>` | 增加 portable toolchain root 候选 |
+| `-v, --verbose` | 输出 project/config/toolchain/artifact/pipeline 信息 |
+| `--` | 后续参数原样作为 program argv |
+
+`mqb --help` 是 CLI 的权威即时说明。
 
 ---
 
-## 核心能力
+## `.mqb/` 产物布局
 
-### 源依赖解析
-
-从指定文件出发，BFS 扫描 `#include` 和 `import` 建立双向依赖图，自动发现关联文件：
-
-```
-同一个文件夹下：
-├── main.cpp     ← F5：自动发现 lib.cpp + utils.ixx，一起编译
-├── lib.h
-├── lib.cpp      ← F5：反向追踪到 main.cpp，一起编译
-├── utils.ixx
-└── homework.cpp ← F5：独立文件，只编译自身
+```text
+.mqb/
+├── obj/     # collision-free object files
+├── deps/    # /sourceDependencies metadata
+├── scan/    # /scanDependencies / P1689 metadata
+├── ifc/     # module interface artifacts
+├── cache/   # compile/link cache metadata
+└── bin/     # executable
 ```
 
-### 增量编译
-
-构建管线：`cl /scanDependencies` → `cl /c /interface *.ixx` → `cl /c *.cpp` → `link.exe`
-
-| 层级 | 行为 |
-|------|------|
-| 源码增量 | 完全基于 `/sourceDependencies` 输出的高精度 `.json` 图谱（忽略系统抽象大小写），支持幽灵依赖拦截 |
-| ABI 免疫 | 参数中滤除控制台噪音，结合 `cl.exe` 物理时间戳生成指纹。升级 VS 工具链或修改核心参数自动击穿全盘缓存 |
-| 并发安全 | 按目录哈希动态分组 `/MP` 批处理，彻底物理隔绝多目录下同名源文件（如 `utils.cpp`）并发导致的文件锁与覆盖 |
-| 模块拓扑 | C++20 模块进入二段式防火墙：单进程宏观批处理扫描，消除上千源文件进程创建风暴 |
-| 链接独裁 | 多目标（`exe`/`dll`/`static`）动态路由：静态库模式应用严苛白名单拦截系统库污染，`dll` 模式自动生成重定向指令，提供高可读性 LNK2019 UX 降级反馈 |
-
-### 最佳实践
-
-**强烈建议：不要在 `flags` 或 `link_flags` 中强行注入源文件（`.cpp`/`.c`）或目标文件（`.obj`）。**
-新版引擎支持完整的 BFS 依赖追踪和命令行数组传入。如果您有无法被 `main.cpp` 的 `#include` 触及的独立 C 模块，请直接在命令行将它们作为源码列表显式传入：
-`build dllmain.cpp ../cJSON/*.c -type dll`
-引擎会自动把所有输入文件纳入并发隔离沙盒与时间戳增量追踪网中。
-
-### C++20 Modules
-
-- `.ixx` 模块自动调用 `cl /scanDependencies` 扫描依赖（P1689 JSON）
-- Kahn 算法拓扑排序，按正确顺序编译（无需手动排列）
-- **分层并行编译**：同一拓扑层级的独立模块批量传给 `cl /MP` 并行编译
-- `import std;` / `import std.compat;` 首次编译后自动缓存
-
-### 缓存管理
-
-更新 Visual Studio 后若报错，清除缓存即可：
-
-```powershell
-# （新版架构已内置 ABI 工具链版本追踪，通常升级 VS 后会自动重建缓存，无需手动清理）
-Remove-Item ".\.cache" -Recurse -Force                          # 清理当前项目本地缓存
-```
+源文件身份参与 artifact routing，因此跨目录同 basename TU 不会共用同一个 object/cache 路径。
 
 ---
 
-## 许可证
+## 架构原则
 
-[MIT License](LICENSE)
+C++ V2 的核心链路是：
+
+```text
+CLI / mqb.json
+      ↓
+Source selection / Toolchain discovery
+      ↓
+P1689 module topology (需要时)
+      ↓
+Build identity + incremental validation
+      ↓
+Build plan
+      ↓
+Bounded compile waves
+      ↓
+Incremental link
+      ↓
+Optional run
+```
+
+几个重要边界：
+
+1. **Source discovery 只选候选**，不替代编译器依赖信息。
+2. **`/scanDependencies` 只负责模块拓扑**，不替代 `/sourceDependencies` 的实际头文件 freshness。
+3. **Planner 与 Executor 分离**；Core 不直接知道 `cl.exe` 命令行细节。
+4. **shell text 不是构建模型**；进程使用 executable + argv + environment 的结构化表示。
+5. **缓存命中必须由 build identity + outputs + dependencies 一起证明**，不能只看源码/EXE mtime。
+6. **并行度是执行策略**，改变 `-j` 不应导致 rebuild。
+7. 未定义 artifact/freshness policy 的能力必须 **fail closed**。
+
+更详细的模块边界、缓存和 orchestration 设计见 [`docs/CPP_V2_ARCHITECTURE.md`](docs/CPP_V2_ARCHITECTURE.md)。
+
+---
+
+## PowerShell Golden Reference（过渡期）
+
+根目录以下文件仍保留：
+
+```text
+build.ps1
+install.bat
+Microsoft.PowerShell_profile.ps1
+```
+
+它们属于旧 PowerShell 实现，目前的作用是：
+
+- 保持已有用户的稳定入口；
+- 为 C++ V2 行为迁移提供 Golden Reference；
+- 支撑后续 PowerShell/C++ parity campaign 与最终 cutover。
+
+因此**现在不应把 `install.bat` 理解为 C++ V2 `mqb.exe` 的正式安装器**。C++ V2 的发布、安装与默认入口切换仍是后续迁移里程碑。
+
+旧 `msvc_list.json` / PowerShell 参数体系也不等于 C++ V2 的 `mqb.json` schema；不要混用两套配置契约。
+
+---
+
+## 当前路线
+
+接下来的主要工程方向：
+
+- 完成 Modules 扩展策略：header units、external/prebuilt providers、`import std`；
+- PowerShell ↔ C++ V2 行为 parity campaign；
+- `mqb.exe` 发布/安装/默认入口 cutover；
+- 再逐步删除不再需要的 PowerShell Golden Reference。
+
+当前 Modules 扩展跟踪：Issue #16。
+
+## License
+
+MIT — 见 [`LICENSE`](LICENSE)。
