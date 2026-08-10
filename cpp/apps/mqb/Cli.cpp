@@ -1,10 +1,13 @@
 #include "Cli.hpp"
 
+#include <charconv>
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace mqb::cli {
@@ -37,6 +40,20 @@ parse_standard(const std::string_view value) {
     return std::unexpected(error(
         "unsupported C++ standard '" + std::string{value}
         + "' (expected 20, 23, or latest)"));
+}
+
+[[nodiscard]] std::expected<std::size_t, Error>
+parse_jobs(const std::string_view value) {
+    std::size_t jobs = 0;
+    const char* const begin = value.data();
+    const char* const end = value.data() + value.size();
+    const auto [parsed_end, parse_error] = std::from_chars(begin, end, jobs);
+    if (parse_error != std::errc{} || parsed_end != end || jobs == 0) {
+        return std::unexpected(error(
+            "invalid compile job count '" + std::string{value}
+            + "' (expected a positive integer)"));
+    }
+    return jobs;
 }
 
 [[nodiscard]] std::expected<msvc::ToolchainPreference, Error>
@@ -106,6 +123,28 @@ parse_arguments(const std::span<const std::string_view> arguments) {
         }
         if (argument == "--run") {
             options.build.run_after_build = true;
+            continue;
+        }
+        if (argument == "-j" || argument == "--jobs") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            auto jobs = parse_jobs(*value);
+            if (!jobs) return std::unexpected(jobs.error());
+            options.jobs = *jobs;
+            continue;
+        }
+        if (argument.starts_with("--jobs=")) {
+            auto value = long_equals_value(argument, "--jobs=");
+            if (!value) return std::unexpected(value.error());
+            auto jobs = parse_jobs(*value);
+            if (!jobs) return std::unexpected(jobs.error());
+            options.jobs = *jobs;
+            continue;
+        }
+        if (argument.starts_with("-j") && argument.size() > 2) {
+            auto jobs = parse_jobs(argument.substr(2));
+            if (!jobs) return std::unexpected(jobs.error());
+            options.jobs = *jobs;
             continue;
         }
         if (argument == "-o" || argument == "--output") {
@@ -256,6 +295,7 @@ Options:
   --release                Explicitly select Release compile/link preset
   --std <20|23|latest>     Explicitly select C++ language standard
   --x86 | --x64            Explicitly select target architecture
+  -j, --jobs <N>           Maximum concurrent TU compiles (default: hardware concurrency)
   -o, --output <name>      Set target executable name under .mqb/bin/
   --run                    Run the executable after a successful build
   -I <dir>, -I<dir>        Add an include directory
@@ -270,6 +310,7 @@ Options:
   -h, --help               Show this help
   --                       Pass all remaining argv elements to the program
 
+Compile job count is execution policy only; changing -j does not invalidate build caches.
 Discovery is source selection only. Incremental header freshness continues to use
 MSVC /sourceDependencies metadata.
 
