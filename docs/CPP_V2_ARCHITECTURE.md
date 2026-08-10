@@ -50,6 +50,7 @@ Core                  MSVC backend
 6. **Compile state and link state are independent.** A compile cache hit does not imply a link cache hit, and link-only changes must never force unnecessary compilation.
 7. **A fresh compile is an explicit relink signal.** Linking must not depend solely on filesystem timestamp granularity.
 8. **Source identity is not a basename.** Project artifacts preserve relative source identity; external sources receive a stable hashed namespace, and duplicate object mappings are rejected before execution.
+9. **Run-time argv is not build identity.** `--run` and arguments after `--` are execution state only; changing them must not invalidate compile or link caches.
 
 ## Compile identity and cache freshness
 
@@ -190,6 +191,8 @@ Ordinary cache-load/save failures are surfaced as warnings and conservatively re
 
 `mqb_platform_windows` isolates Windows command-line quoting and the real `CreateProcessW` runner. Tests cover complex argv round-trips, explicit/inherited Unicode environment blocks, separate stdout/stderr capture, non-zero child exit codes, native launch errors, and concurrent draining of large output streams.
 
+The CLI also uses the same structured process boundary for `--run`. Arguments after `--` are preserved as distinct argv elements, including whitespace-containing strings, option-looking strings, and empty arguments. MQB propagates the child exit code exactly; a failure to launch the child remains an MQB error. Captured CRLF is normalized before forwarding through Windows text streams so nested process output does not become `\r\r\n`; lone carriage returns are preserved.
+
 The current runner uses RAII for process/thread/pipe handles. Before final cutover, handle inheritance should be hardened further with `STARTUPINFOEXW` + `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`.
 
 ## MSVC toolchain boundary
@@ -213,13 +216,16 @@ GitHub CI enables installed-MSVC integration tests explicitly; local tests keep 
 
 ## Current CLI milestone
 
-`mqb.exe` now supports an **explicit ordered set of ordinary C++ translation units** (`.cpp`, `.cc`, `.cxx`):
+`mqb.exe` supports an **explicit ordered set of ordinary C++ translation units** (`.cpp`, `.cc`, `.cxx`), target naming, and structured post-build execution:
 
 ```powershell
-mqb main.cpp src/utils.cpp a/helper.cpp b/helper.cpp
+mqb main.cpp src/utils.cpp a/helper.cpp b/helper.cpp -o product
+mqb main.cpp src/utils.cpp -o product --run -- "hello world" --child-option ""
 ```
 
-The first source currently supplies the default target name (`main.cpp` -> `main.exe`). Every source is incrementally validated independently; only stale TUs compile, and all resulting objects feed one independently cached link action.
+The first source supplies the default target name when `-o/--output` is omitted. Every source is incrementally validated independently; only stale TUs compile, and all resulting objects feed one independently cached link action. `-o/--output` selects a validated target filename under `.mqb/bin/`; it is not an arbitrary escape path.
+
+`--run` executes the resulting target through `ProcessSpec`/`CreateProcessW`, not through a shell. The `--` sentinel ends MQB option parsing and passes every remaining argv element to the child verbatim. Run mode and child argv do not participate in build signatures, so changing only execution arguments reuses warm compile/link state.
 
 The real VS2026 E2E suite verifies:
 
@@ -229,9 +235,12 @@ The real VS2026 E2E suite verifies:
 - a header private to one TU rebuilds only that TU;
 - any rebuilt TU explicitly forces relink;
 - the resulting executable behavior changes after the partial rebuild;
-- Debug -> Release invalidates compile and link recipes without source edits.
+- Debug -> Release invalidates compile and link recipes without source edits;
+- custom target naming produces independent executable/link-cache paths;
+- warm `--run` preserves spaced, option-looking, and empty child argv elements;
+- a non-zero child process exit code is propagated exactly.
 
-Not yet exposed in the C++ CLI: automatic source discovery, `-o/--output`, `--run`, user libraries/library paths, project config files, and C++ Modules.
+Not yet exposed in the C++ CLI: automatic source discovery, user libraries/library paths, project config files, and C++ Modules. Translation-unit scheduling is still sequential.
 
 ## Migration sequence
 
@@ -242,10 +251,11 @@ Not yet exposed in the C++ CLI: automatic source discovery, `-o/--output`, `--ru
 5. **Ordinary single TU** — typed compiler arguments, `/sourceDependencies`, cache persistence, real incremental CLI. ✅
 6. **Link state** — independent linker identity/signature/cache/planning/backend/orchestration and executable production. ✅
 7. **Explicit multi-TU target** — project artifact layout, ordered source set, per-TU incremental compile, single incremental link. ✅
-8. **Target UX and discovery** — `-o`, `--run`, libraries, project config, smart source discovery, then parallel compile scheduling.
-9. **Modules** — P1689 `/scanDependencies`, module graph, IFC/object artifacts, `import std`.
-10. **Parity** — run PowerShell and C++ against the same E2E fixtures.
-11. **Cutover** — make `mqb.exe` primary only after parity tests pass.
+8. **Target UX** — `-o/--output`, `--run`, structured `--` argv passthrough, child exit propagation. ✅
+9. **Target discovery and libraries** — resolved library freshness, library search paths, project config, smart source discovery, then parallel compile scheduling.
+10. **Modules** — P1689 `/scanDependencies`, module graph, IFC/object artifacts, `import std`.
+11. **Parity** — run PowerShell and C++ against the same E2E fixtures.
+12. **Cutover** — make `mqb.exe` primary only after parity tests pass.
 
 ## Local build
 
