@@ -282,7 +282,7 @@ int main(const int argc, char* argv[]) {
         });
     }
 
-    const std::string target_name = sources.front().stem().string();
+    const std::string target_name = options.build.output_name.value_or(sources.front().stem().string());
     auto target_artifacts = layout->for_target(target_name);
     if (!target_artifacts) {
         std::cerr << "error: " << target_artifacts.error().message << '\n';
@@ -391,5 +391,24 @@ int main(const int argc, char* argv[]) {
     }
 
     std::cout << "executable: " << path_text(request.target.executable) << '\n';
-    return 0;
+
+    if (!options.build.run_after_build) {
+        return 0;
+    }
+
+    std::cout << "[run] " << path_text(request.target.executable.filename()) << '\n';
+    mqb::process::ProcessSpec run_spec;
+    run_spec.executable = request.target.executable;
+    run_spec.arguments = options.build.run_arguments;
+    run_spec.working_directory = project_root;
+    run_spec.capture_stdout = true;
+    run_spec.capture_stderr = true;
+
+    auto run_result = runner.run(run_spec);
+    if (!run_result) {
+        std::cerr << "error: failed to run executable: " << run_result.error().message << '\n';
+        return 6;
+    }
+    print_process_output(*run_result);
+    return run_result->exit_code;
 }

@@ -82,12 +82,38 @@ parse_arguments(const std::span<const std::string_view> arguments) {
     for (std::size_t index = 0; index < arguments.size(); ++index) {
         const std::string_view argument = arguments[index];
 
+        if (argument == "--") {
+            for (++index; index < arguments.size(); ++index) {
+                options.build.run_arguments.emplace_back(arguments[index]);
+            }
+            break;
+        }
         if (argument == "-h" || argument == "--help") {
             options.show_help = true;
             continue;
         }
         if (argument == "--verbose" || argument == "-v") {
             options.verbose = true;
+            continue;
+        }
+        if (argument == "--run") {
+            options.build.run_after_build = true;
+            continue;
+        }
+        if (argument == "-o" || argument == "--output") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) {
+                return std::unexpected(value.error());
+            }
+            options.build.output_name = std::string{*value};
+            continue;
+        }
+        if (argument.starts_with("--output=")) {
+            const std::string_view value = argument.substr(std::string_view{"--output="}.size());
+            if (value.empty()) {
+                return std::unexpected(error("empty value for --output"));
+            }
+            options.build.output_name = std::string{value};
             continue;
         }
         if (argument == "--debug") {
@@ -170,6 +196,11 @@ parse_arguments(const std::span<const std::string_view> arguments) {
     if (!options.show_help && options.build.sources.empty()) {
         return std::unexpected(error("missing source file"));
     }
+    if (!options.show_help
+        && !options.build.run_after_build
+        && !options.build.run_arguments.empty()) {
+        return std::unexpected(error("arguments after -- require --run"));
+    }
     return options;
 }
 
@@ -177,22 +208,26 @@ std::string_view usage() noexcept {
     return R"(MQB - MSVC Quick Build (C++ V2)
 
 Usage:
-  mqb <source.cpp> [more-sources...] [options]
+  mqb <source.cpp> [more-sources...] [options] [-- program-args...]
 
 Current milestone:
-  Incrementally compile an explicit C++ source set and link one executable.
+  Incrementally compile an explicit C++ source set, link one executable,
+  and optionally run it without shell re-parsing.
 
 Options:
   --debug                  Debug compile/link preset (default)
   --release                Release compile/link preset
   --std <20|23|latest>     C++ language standard (default: 23)
   --x86 | --x64            Target architecture (default: x64)
+  -o, --output <name>      Set target executable name under .mqb/bin/
+  --run                    Run the executable after a successful build
   -I <dir>, -I<dir>        Add an include directory
   -D <value>, -D<value>    Add a preprocessor definition
   --env <auto|vs|portable> Toolchain selection (default: auto)
   --portable-root <dir>    Add a portable_msvc root candidate
   -v, --verbose            Show toolchain and artifact details
   -h, --help               Show this help
+  --                       Pass all remaining argv elements to the program
 
 Generated state:
   .mqb/obj/    collision-free object files
