@@ -1,4 +1,4 @@
-﻿# build — MSVC 快速编译工具
+# build — MSVC 快速编译工具
 
 与 Visual Studio 2026 MSBuild **1:1 对齐** 的 C/C++ 快速编译工具。
 
@@ -166,7 +166,8 @@ build -env vs                                     # 强制使用本机 VS
 |---|---|---|---|
 | **编译与运行** | | | |
 | `<源文件...>` | — | 文件名 / 通配符 | 源文件（`.c` `.cpp` `.cxx` `.cc` `.ixx`） |
-| `-o` | `"output"` | string | 输出文件名（不含 .exe） |
+| `-o` | `"output"` | string | 输出文件名（不含后缀名） |
+| `-type` | `"type"` | `exe` `dll` `static` | 构建目标类型（默认 exe） |
 | `-run` | — | — | 编译成功后自动运行 |
 | `-std` | `"std"` | `14` `17` `20` `23` `latest` | C++ 标准 |
 | `-a` | — | string | 运行时传给程序的命令行参数 |
@@ -262,10 +263,18 @@ build -env vs                                     # 强制使用本机 VS
 
 | 层级 | 行为 |
 |------|------|
-| 模块增量 | .ixx 按时间戳跳过未修改文件，变更自动传播到下游 |
-| 源文件增量 | .cpp 按时间戳跳过未修改文件，模块接口变更时保守重编 |
-| 链接增量 | 所有 .obj 均未变更时跳过 link.exe |
-| std 缓存 | 按编译标志 + 工具链版本号哈希隔离，升级工具链自动失效 |
+| 源码增量 | 完全基于 `/sourceDependencies` 输出的高精度 `.json` 图谱（忽略系统抽象大小写），支持幽灵依赖拦截 |
+| ABI 免疫 | 参数中滤除控制台噪音，结合 `cl.exe` 物理时间戳生成指纹。升级 VS 工具链或修改核心参数自动击穿全盘缓存 |
+| 并发安全 | 按目录哈希动态分组 `/MP` 批处理，彻底物理隔绝多目录下同名源文件（如 `utils.cpp`）并发导致的文件锁与覆盖 |
+| 模块拓扑 | C++20 模块进入二段式防火墙：单进程宏观批处理扫描，消除上千源文件进程创建风暴 |
+| 链接独裁 | 多目标（`exe`/`dll`/`static`）动态路由：静态库模式应用严苛白名单拦截系统库污染，`dll` 模式自动生成重定向指令，提供高可读性 LNK2019 UX 降级反馈 |
+
+### 最佳实践
+
+**强烈建议：不要在 `flags` 或 `link_flags` 中强行注入源文件（`.cpp`/`.c`）或目标文件（`.obj`）。**
+新版引擎支持完整的 BFS 依赖追踪和命令行数组传入。如果您有无法被 `main.cpp` 的 `#include` 触及的独立 C 模块，请直接在命令行将它们作为源码列表显式传入：
+`build dllmain.cpp ../cJSON/*.c -type dll`
+引擎会自动把所有输入文件纳入并发隔离沙盒与时间戳增量追踪网中。
 
 ### C++20 Modules
 
@@ -279,9 +288,8 @@ build -env vs                                     # 强制使用本机 VS
 更新 Visual Studio 后若报错，清除缓存即可：
 
 ```powershell
-Remove-Item "$env:TEMP\msvc_std_module_cache" -Recurse -Force   # std 模块
-Remove-Item "$env:TEMP\msvc_mod_cache" -Recurse -Force          # 用户模块
-Remove-Item "$env:TEMP\msvc_cpp_cache" -Recurse -Force          # 源文件
+# （新版架构已内置 ABI 工具链版本追踪，通常升级 VS 后会自动重建缓存，无需手动清理）
+Remove-Item ".\.cache" -Recurse -Force                          # 清理当前项目本地缓存
 ```
 
 ---

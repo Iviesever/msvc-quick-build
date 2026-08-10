@@ -1,0 +1,23 @@
+# 忽略测试目录
+.worktrees/
+.cache/
+test_compile_out/
+test_out/
+test_out2/
+
+# 编译中间产物和可执行文件
+*.exe
+*.obj
+*.ifc
+*.zip
+
+# IDE 和系统缓存
+.vscode/
+.vs/
+.idea/
+msvc_build_scan_*/
+msvc_std_module_cache/
+
+portable_msvc.zip
+portable_msvc/
+

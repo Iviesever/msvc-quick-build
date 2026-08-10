@@ -26,9 +26,6 @@ param(
     [ValidateSet('debug', 'release')]
     [string]$config,
 
-    [ValidateSet('exe', 'dll', 'static')]
-    [string]$type,
-
     [ValidateSet('unicode', 'mbcs')]
     [string]$charset,
 
@@ -77,75 +74,71 @@ param(
 
 function Show-Help {
     Write-Host ''
-    Write-Host 'build — MSVC 快速编译工具（与 MSBuild 1:1 对齐）' -ForegroundColor Cyan
-    Write-Host '  用法：'
-    Write-Host '    build <源文件...> [选项]'
+    Write-Host 'build �?MSVC 快速编译工具（�?MSBuild 1:1 对齐�? -ForegroundColor Cyan
+    Write-Host '  用法�?
+    Write-Host '    build <源文�?..> [选项]'
     Write-Host ''
-    Write-Host '  基础选项：' -ForegroundColor DarkCyan
-    Write-Host '    -o <名称>          输出文件名（不含后缀名）'
-    Write-Host '    -type <类型>       构建目标类型：exe / dll / static（默认 exe）'
-    Write-Host '    -run               编译成功后自动运行'
-    Write-Host '    -std <版本>        C++ 标准：14 / 17 / 20 / 23 / latest'
+    Write-Host '  基础选项�? -ForegroundColor DarkCyan
+    Write-Host '    -o <名称>          输出文件名（不含 .exe�?
+    Write-Host '    -run               编译成功后自动运�?
+    Write-Host '    -std <版本>        C++ 标准�?4 / 17 / 20 / 23 / latest'
     Write-Host '    -a <参数>          运行时传给程序的参数'
-    Write-Host '    -x86               编译为 32 位（默认 64 位）'
+    Write-Host '    -x86               编译�?32 位（默认 64 位）'
     Write-Host ''
     Write-Host '  路径与依赖：' -ForegroundColor DarkCyan
-    Write-Host '    -I <路径...>       头文件包含路径（别名 -include）'
-    Write-Host '    -L <路径...>       库文件搜索路径（别名 -libpath）'
-    Write-Host '    -libs <库名...>    链接库（不含 .lib）'
-    Write-Host '    -D <宏...>         预处理器宏定义（别名 -defines）'
-    Write-Host '    JSON: "exclude"    依赖解析时排除的文件通配符'
+    Write-Host '    -I <路径...>       头文件包含路径（别名 -include�?
+    Write-Host '    -L <路径...>       库文件搜索路径（别名 -libpath�?
+    Write-Host '    -libs <库名...>    链接库（不含 .lib�?
+    Write-Host '    -D <�?..>         预处理器宏定义（别名 -defines�?
+    Write-Host '    JSON: "exclude"    依赖解析时排除的文件通配�?
     Write-Host ''
-    Write-Host '  工程配置（与 msvc_list.json 1:1 对应，CLI 优先级最高）：' -ForegroundColor DarkCyan
+    Write-Host '  工程配置（与 msvc_list.json 1:1 对应，CLI 优先级最高）�? -ForegroundColor DarkCyan
     Write-Host '    -config <预设>         配置预设：debug / release'
     Write-Host '    -optimize <级别>       优化：Od / O1 / O2 / Ox'
     Write-Host '    -runtime <类型>        运行库：MD / MDd / MT / MTd'
     Write-Host '    -warnings <级别>       警告：W0 / W1 / W3 / W4 / Wall'
-    Write-Host '    -WX                    视警告为错误（/WX）'
+    Write-Host '    -WX                    视警告为错误�?WX�?
     Write-Host '    -debug_info <模式>     调试信息：off / Zi / ZI / Z7'
     Write-Host '    -exceptions <模式>     异常处理：EHsc / EHa / off'
     Write-Host '    -fp <模式>             浮点模型：precise / strict / fast'
-    Write-Host '    -charset <字符集>      字符宏：unicode / mbcs'
-    Write-Host '    -rtc1                  运行时检查（/RTC1）'
-    Write-Host '    -jmc                   Just My Code（/JMC）'
-    Write-Host '    -sdl                   安全开发检查（/GS /sdl）'
-    Write-Host '    -permissive            严格标准一致性（/permissive-）'
-    Write-Host '    -ltcg                  全程序优化（/GL /LTCG）'
-    Write-Host '    -flags <标志...>       追加编译器标志（直接透传）'
+    Write-Host '    -charset <字符�?      字符宏：unicode / mbcs'
+    Write-Host '    -rtc1                  运行时检查（/RTC1�?
+    Write-Host '    -jmc                   Just My Code�?JMC�?
+    Write-Host '    -sdl                   安全开发检查（/GS /sdl�?
+    Write-Host '    -permissive            严格标准一致性（/permissive-�?
+    Write-Host '    -ltcg                  全程序优化（/GL /LTCG�?
+    Write-Host '    -flags <标志...>       追加编译器标志（直接透传�?
     Write-Host ''
     Write-Host '  链接器配置：' -ForegroundColor DarkCyan
-    Write-Host '    -subsystem <子系统>    子系统：console / windows'
-    Write-Host '    -incremental           增量链接（/INCREMENTAL）'
-    Write-Host '    -link_flags <标志...>  追加链接器标志（直接透传）'
+    Write-Host '    -subsystem <子系�?    子系统：console / windows'
+    Write-Host '    -incremental           增量链接�?INCREMENTAL�?
+    Write-Host '    -link_flags <标志...>  追加链接器标志（直接透传�?
     Write-Host ''
-    Write-Host '  环境管理：' -ForegroundColor DarkCyan
+    Write-Host '  环境管理�? -ForegroundColor DarkCyan
     Write-Host '    -env vs                强制使用本机 Visual Studio'
     Write-Host '    -env portable          强制使用便携版工具链'
-    Write-Host '    -env auto              恢复自动检测'
+    Write-Host '    -env auto              恢复自动检�?
     Write-Host ''
-    Write-Host '  示例：' -ForegroundColor DarkCyan
+    Write-Host '  示例�? -ForegroundColor DarkCyan
     Write-Host '    build main.cpp -run                             # 编译运行'
     Write-Host '    build main.cpp -std latest -run                 # 指定 C++ 标准'
     Write-Host '    build main.cpp -config debug -run               # Debug 配置'
     Write-Host '    build main.cpp -config release -run             # Release 配置'
-    Write-Host '    build *.cpp -o app -std 23 -config release -run # 多文件 + Release'
+    Write-Host '    build *.cpp -o app -std 23 -config release -run # 多文�?+ Release'
     Write-Host '    build main.cpp mod.ixx -std latest -run         # C++20 Modules'
     Write-Host '    build solver.c -run -a "input.txt 42"           # 传参运行'
-    Write-Host '    build main.cpp -x86 -run                        # 32 位编译'
-    Write-Host '    build dllmain.cpp -type dll                     # 编译动态链接库 (DLL)'
-    Write-Host '    build math.cpp -type static -config release     # 编译静态库 (LIB)'
+    Write-Host '    build main.cpp -x86 -run                        # 32 位编�?
     Write-Host ''
-    Write-Host '  构建管线：' -ForegroundColor DarkCyan
-    Write-Host '    源依赖解析 → cl /scanDependencies → cl /c /interface *.ixx  '
-    Write-Host '               → cl /c *.cpp → link.exe'
-    Write-Host '    · 从指定文件 BFS 扫描 #include / import，自动发现关联文件'
-    Write-Host '    · 模块拓扑排序 + 分层并行编译（cl /MP）'
-    Write-Host '    · .ixx / .cpp 按时间戳增量编译，.obj 未变更时跳过链接'
+    Write-Host '  构建管线�? -ForegroundColor DarkCyan
+    Write-Host '    源依赖解�?�?cl /scanDependencies �?cl /c /interface *.ixx  '
+    Write-Host '               �?cl /c *.cpp �?link.exe'
+    Write-Host '    · 从指定文�?BFS 扫描 #include / import，自动发现关联文�?
+    Write-Host '    · 模块拓扑排序 + 分层并行编译（cl /MP�?
+    Write-Host '    · .ixx / .cpp 按时间戳增量编译�?obj 未变更时跳过链接'
     Write-Host '    · import std 首次编译后缓存，config 预设自动链接 12 个默认库'
-    Write-Host '    · static 目标使用白名单隔离系统库，dll/exe 目标自动附加 /DLL'
     Write-Host ''
-    Write-Host '  项目配置：在目录创建 msvc_list.json（自动向上查找 5 层），参阅 README' -ForegroundColor DarkGray
-    Write-Host '  支持文件：.c  .cpp  .cxx  .cc  .ixx' -ForegroundColor DarkGray
+    Write-Host '  项目配置：在目录创建 msvc_list.json（自动向上查�?5 层），参�?README' -ForegroundColor DarkGray
+    Write-Host '  支持文件�?c  .cpp  .cxx  .cc  .ixx' -ForegroundColor DarkGray
     Write-Host '  GitHub：https://github.com/Iviesever/vscode-msvc-quick-build' -ForegroundColor DarkGray
     Write-Host ''
 }
@@ -182,7 +175,7 @@ function Find-ProjectConfig([hashtable]$ctx) {
         if (Test-Path $cfgPath) {
             $ctx.Cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
             $ctx.CfgDir = $searchDir
-            Write-Host "1>  正在读取项目文件""msvc_list.json""。" -ForegroundColor DarkGray
+            Write-Host "1>  正在读取项目文件""msvc_list.json""�? -ForegroundColor DarkGray
             break
         }
         $parent = [System.IO.Path]::GetDirectoryName($searchDir)
@@ -193,9 +186,6 @@ function Find-ProjectConfig([hashtable]$ctx) {
     if ($ctx.Cfg -and -not $ctx.Std -and $ctx.Cfg.std) { $ctx.Std = $ctx.Cfg.std }
     if ($ctx.Cfg -and $ctx.Cfg.output -and -not $ctx.Bound.ContainsKey('o')) {
         $ctx.OutputName = $ctx.Cfg.output
-    }
-    if ($ctx.Cfg -and $ctx.Cfg.type -and -not $ctx.Bound.ContainsKey('type')) {
-        $ctx.TargetType = $ctx.Cfg.type
     }
 }
 
@@ -269,10 +259,8 @@ function Find-SmartDeps([hashtable]$ctx) {
 
     $visited = @{}
     $bfsQueue = [System.Collections.Queue]::new()
-    foreach ($f in $ctx.Files) {
-        $bfsQueue.Enqueue($f)
-        $visited[$f] = $true
-    }
+    $bfsQueue.Enqueue($focusedFile)
+    $visited[$focusedFile] = $true
 
     while ($bfsQueue.Count -gt 0) {
         $current = $bfsQueue.Dequeue()
@@ -315,7 +303,7 @@ function Find-SmartDeps([hashtable]$ctx) {
             Write-Host "1>  正在解析源依赖项: $names" -ForegroundColor DarkGray
         } else {
             $first5 = ($ctx.Files | Select-Object -First 5 | ForEach-Object { [System.IO.Path]::GetFileName($_) }) -join ', '
-            Write-Host "1>  正在解析源依赖项: $first5 等 $($ctx.Files.Count) 个文件" -ForegroundColor DarkGray
+            Write-Host "1>  正在解析源依赖项: $first5 �?$($ctx.Files.Count) 个文�? -ForegroundColor DarkGray
         }
     }
 
@@ -337,14 +325,6 @@ function Resolve-Output([hashtable]$ctx) {
             $ctx.OutputName = [System.IO.Path]::GetFileNameWithoutExtension($ctx.IxxFiles[0])
         }
     }
-
-    if (-not $ctx.TargetType) {
-        if ($ctx.Bound.ContainsKey('type')) { $ctx.TargetType = $ctx.Bound['type'] }
-        else { $ctx.TargetType = 'exe' }
-    }
-
-    $ext = if ($ctx.TargetType -eq 'static') { '.lib' } elseif ($ctx.TargetType -eq 'dll') { '.dll' } else { '.exe' }
-    $ctx.Exe = Join-Path $PWD "$($ctx.OutputName)$ext"
 
     $ctx.HasCpp = ($ctx.CppFiles | Where-Object { $_ -match '\.(cpp|cxx|cc)$' }) -or ($ctx.IxxFiles.Count -gt 0)
 }
@@ -398,24 +378,21 @@ function Get-NormalizedDependencySet([string]$JsonFilePath) {
     
     try {
         $json = Get-Content -LiteralPath $JsonFilePath -Raw | ConvertFrom-Json
-        
-        $allDeps = @()
-        if ($null -ne $json.Data.Includes) { $allDeps += $json.Data.Includes }
-        if ($null -ne $json.Data.Source) { $allDeps += $json.Data.Source }
-        
-        foreach ($inc in $allDeps) {
-            $fullPath = [System.IO.Path]::GetFullPath($inc)
-            if (-not (Test-Path -LiteralPath $fullPath)) {
-                # MSVC C1083 /sourceDependencies 乱码修复: 尝试将 UTF8 当作 GBK 误解的乱码还原
-                try {
-                    $bytes = [System.Text.Encoding]::GetEncoding(936).GetBytes($fullPath)
-                    $fixedPath = [System.Text.Encoding]::UTF8.GetString($bytes)
-                    if (Test-Path -LiteralPath $fixedPath) {
-                        $fullPath = $fixedPath
-                    }
-                } catch {}
+        $includes = $json.Data.Includes
+        if ($null -ne $includes) {
+            foreach ($inc in $includes) {
+                $fullPath = [System.IO.Path]::GetFullPath($inc)
+                if (-not (Test-Path -LiteralPath $fullPath)) {
+                    # MSVC C1083 /sourceDependencies 乱码修复: 尝试�?UTF8 当作 GBK 误解的乱码还�?                    try {
+                        $bytes = [System.Text.Encoding]::GetEncoding(936).GetBytes($fullPath)
+                        $fixedPath = [System.Text.Encoding]::UTF8.GetString($bytes)
+                        if (Test-Path -LiteralPath $fixedPath) {
+                            $fullPath = $fixedPath
+                        }
+                    } catch {}
+                }
+                $set.Add($fullPath) | Out-Null
             }
-            $set.Add($fullPath) | Out-Null
         }
     } catch {}
     
@@ -442,7 +419,6 @@ function Invoke-MacroBatchScan([string[]]$SourceFiles, [string]$CacheDir, [strin
     $outLog = Join-Path $CacheDir "scan.log"
 
     $pinfo = [System.Diagnostics.ProcessStartInfo]::new("cmd.exe")
-    $pinfo.WorkingDirectory = $PWD.Path
     $pinfo.UseShellExecute = $false
     $pinfo.CreateNoWindow = $true
 
@@ -460,7 +436,7 @@ function Invoke-MacroBatchScan([string[]]$SourceFiles, [string]$CacheDir, [strin
     if ($p.ExitCode -ne 0) {
         $err = ""
         if (Test-Path $outLog) { $err = Get-Content $outLog -Raw }
-        throw "C++20 Module 宏观批处理扫描失败 (ExitCode: $($p.ExitCode))`n$err"
+        throw "C++20 Module 宏观批处理扫描失�?(ExitCode: $($p.ExitCode))`n$err"
     }
 }
 
@@ -508,7 +484,7 @@ function Initialize-Env([hashtable]$ctx) {
 
     $ctx.IsPortable = ($envPref -ne 'vs') -and (Test-Path $portableBase)
     if ($envPref -eq 'portable' -and -not (Test-Path $portableBase)) {
-        Write-Host 'warning : MSVC_BUILD_ENV=portable 但未找到 portable_msvc，回退到本机 VS' -ForegroundColor Yellow
+        Write-Host 'warning : MSVC_BUILD_ENV=portable 但未找到 portable_msvc，回退到本�?VS' -ForegroundColor Yellow
     }
 
     if ($ctx.IsPortable) {
@@ -553,13 +529,13 @@ function Initialize-Env([hashtable]$ctx) {
 
         if (-not $vsPath) {
             Write-Host 'error : 未找到编译工具集。请安装 Visual Studio 或将 portable_msvc 放入脚本目录' -ForegroundColor Red
-            Write-Host '  安装 VS 或将 portable_msvc 放入脚本同目录 / $HOME\bin\ 下' -ForegroundColor Yellow
+            Write-Host '  安装 VS 或将 portable_msvc 放入脚本同目�?/ $HOME\bin\ �? -ForegroundColor Yellow
             exit 1
         }
 
         $vcvars = Join-Path $vsPath 'VC\Auxiliary\Build\vcvarsall.bat'
         if (-not (Test-Path $vcvars)) {
-            Write-Host 'error : 未找到 vcvarsall.bat' -ForegroundColor Red
+            Write-Host 'error : 未找�?vcvarsall.bat' -ForegroundColor Red
             exit 1
         }
 
@@ -579,7 +555,7 @@ function Initialize-Env([hashtable]$ctx) {
             }
         }
         else {
-            Write-Host "1>  正在初始化编译环境..." -ForegroundColor DarkGray
+            Write-Host "1>  正在初始化编译环�?.." -ForegroundColor DarkGray
             $envDump = cmd.exe /c "`"$vcvars`" $($ctx.Arch) >nul 2>&1 && set"
             $envDump | Set-Content $envCache -Force
             foreach ($line in $envDump) {
@@ -628,7 +604,7 @@ function Build-CompilerFlags([hashtable]$ctx) {
         if ($presets.ContainsKey($cfgConfigSrc)) {
             $preset = $presets[$cfgConfigSrc]
         } else {
-            Write-Host "warning : 未知的配置: $cfgConfigSrc，忽略" -ForegroundColor Yellow
+            Write-Host "warning : 未知的配�? $cfgConfigSrc，忽�? -ForegroundColor Yellow
         }
     }
 
@@ -748,105 +724,61 @@ function Build-CompilerFlags([hashtable]$ctx) {
     $ctx.CfgIncr = $cfgIncr
 }
 
-function Build-LinkerArguments([string]$TargetType, [hashtable]$ConfigCtx) {
-    $args = @()
+function Build-LinkFlags([hashtable]$ctx) {
+    $lf = ''
     $allLibPaths = @()
-    if ($ConfigCtx.Bound.ContainsKey('L') -and $ConfigCtx.Bound.L) { $allLibPaths += $ConfigCtx.Bound.L }
-    if ($ConfigCtx.Cfg -and $ConfigCtx.Cfg.libpath) {
-        foreach ($lp in $ConfigCtx.Cfg.libpath) {
-            if ([System.IO.Path]::IsPathRooted($lp)) { $resolved = $lp } else { $resolved = Join-Path $ConfigCtx.CfgDir $lp }
+    if ($L) { $allLibPaths += $L }
+    if ($ctx.Cfg -and $ctx.Cfg.libpath) {
+        foreach ($lp in $ctx.Cfg.libpath) {
+            if ([System.IO.Path]::IsPathRooted($lp)) { $resolved = $lp } else { $resolved = Join-Path $ctx.CfgDir $lp }
             $allLibPaths += $resolved
         }
     }
 
+    $cfgSubsystem = if ($ctx.Bound.ContainsKey('subsystem')) { $subsystem } elseif ($ctx.Cfg -and $ctx.Cfg.subsystem) { $ctx.Cfg.subsystem } else { $null }
+    $needLink = ($allLibPaths.Count -gt 0) -or $cfgSubsystem -or $ctx.Preset -or ($ctx.Cfg -and $ctx.Cfg.link_flags) -or ($ctx.Bound.ContainsKey('link_flags') -and $link_flags)
+
+    if ($needLink) {
+        $lf = ' /link /NOLOGO /MACHINE:X64 /ERRORREPORT:QUEUE'
+        foreach ($lp in $allLibPaths) { $lf += " /LIBPATH:`"$lp`"" }
+        $actualSubsys = if ($cfgSubsystem) { $cfgSubsystem.ToUpper() } elseif ($ctx.Preset) { 'CONSOLE' } else { $null }
+        if ($actualSubsys) { $lf += " /SUBSYSTEM:$actualSubsys" }
+
+        if ($ctx.Preset) {
+            $exeBase = [System.IO.Path]::ChangeExtension($ctx.Exe, $null).TrimEnd('.')
+            $lf += " /DEBUG /PDB:`"$exeBase.pdb`" /DYNAMICBASE /NXCOMPAT /MANIFEST /manifest:embed /TLBID:1 /IMPLIB:`"$exeBase.lib`""
+            $lf += ' /MANIFESTUAC:"level=''asInvoker'' uiAccess=''false''"'
+            if ($ctx.CfgLtcg -and -not $ctx.IsDebug) {
+                $lf += ' /LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO'
+            }
+            elseif ($ctx.CfgIncr) { $lf += ' /INCREMENTAL' }
+            else                      { $lf += ' /INCREMENTAL:NO' }
+        }
+
+        if ($ctx.Cfg -and $ctx.Cfg.link_flags) {
+            foreach ($f in $ctx.Cfg.link_flags) { $lf += " $f" }
+        }
+        if ($ctx.Bound.ContainsKey('link_flags') -and $link_flags) {
+            foreach ($f in $link_flags) { $lf += " $f" }
+        }
+    }
+
+    $libStr = ''
     $allLibs = @()
-    if ($ConfigCtx.Preset) {
-        $allLibs += @('kernel32.lib','user32.lib','gdi32.lib','winspool.lib','comdlg32.lib','advapi32.lib','shell32.lib','ole32.lib','oleaut32.lib','uuid.lib','odbc32.lib','odbccp32.lib')
+    if ($ctx.Preset) {
+        $allLibs += @('kernel32','user32','gdi32','winspool','comdlg32','advapi32','shell32','ole32','oleaut32','uuid','odbc32','odbccp32')
     }
-    if ($ConfigCtx.Bound.ContainsKey('libs') -and $ConfigCtx.Bound.libs) { 
-        foreach ($lib in $ConfigCtx.Bound.libs) { $allLibs += "$lib.lib" }
-    }
-    if ($ConfigCtx.Cfg -and $ConfigCtx.Cfg.libs) { 
-        foreach ($lib in $ConfigCtx.Cfg.libs) { $allLibs += if ($lib -match '\.lib$') { $lib } else { "$lib.lib" } }
-    }
+    if ($libs) { $allLibs += $libs }
+    if ($ctx.Cfg -and $ctx.Cfg.libs) { $allLibs += $ctx.Cfg.libs }
+    foreach ($lib in $allLibs) { $libStr += " `"$lib.lib`"" }
 
-    if ($TargetType -eq 'static') {
-        $args += "/NOLOGO"
-        $args += "/OUT:`"$($ConfigCtx.Exe)`""
-        $args += "/MACHINE:$($ConfigCtx.Arch.ToUpper())"
-        if ($ConfigCtx.CfgLtcg -and -not $ConfigCtx.IsDebug) {
-            $args += "/LTCG"
-        }
-        
-        if ($allLibs.Count -gt 0 -or $allLibPaths.Count -gt 0) {
-            Write-Host "warning : 构建静态库时发现外部系统库依赖 ($($allLibs.Count) libs, $($allLibPaths.Count) libpaths)。已根据白名单机制将其静默抛弃。" -ForegroundColor Yellow
-        }
-        
-        $whitelist = @("/NOLOGO", "/OUT:", "/LTCG", "/DEF:", "/MACHINE:")
-        $rawFlags = @()
-        if ($ConfigCtx.Cfg -and $ConfigCtx.Cfg.link_flags) { $rawFlags += $ConfigCtx.Cfg.link_flags }
-        if ($ConfigCtx.Bound.ContainsKey('link_flags') -and $ConfigCtx.Bound.link_flags) { $rawFlags += $ConfigCtx.Bound.link_flags }
-        
-        foreach ($f in $rawFlags) {
-            $allowed = $false
-            foreach ($w in $whitelist) {
-                if ($f.ToUpper().StartsWith($w)) { $allowed = $true; break }
-            }
-            if ($allowed) { $args += $f }
-        }
-    } else {
-        $args += "/NOLOGO"
-        $args += "/OUT:`"$($ConfigCtx.Exe)`""
-        $args += "/MACHINE:$($ConfigCtx.Arch.ToUpper())"
-        
-        foreach ($lp in $allLibPaths) { $args += "/LIBPATH:`"$lp`"" }
-        
-        $cfgSubsystem = if ($ConfigCtx.Bound.ContainsKey('subsystem')) { $ConfigCtx.Bound.subsystem } elseif ($ConfigCtx.Cfg -and $ConfigCtx.Cfg.subsystem) { $ConfigCtx.Cfg.subsystem } else { $null }
-        $actualSubsys = if ($cfgSubsystem) { $cfgSubsystem.ToUpper() } elseif ($ConfigCtx.Preset) { 'CONSOLE' } else { $null }
-        if ($actualSubsys) { $args += "/SUBSYSTEM:$actualSubsys" }
-
-        if ($TargetType -eq 'dll') {
-            $args += "/DLL"
-        }
-
-        if ($ConfigCtx.Preset) {
-            $exeBase = [System.IO.Path]::ChangeExtension($ConfigCtx.Exe, $null).TrimEnd('.')
-            $args += "/DEBUG"
-            $args += "/PDB:`"$exeBase.pdb`""
-            $args += "/DYNAMICBASE"
-            $args += "/NXCOMPAT"
-            $args += "/MANIFEST"
-            $args += "/manifest:embed"
-            $args += "/TLBID:1"
-            $args += "/IMPLIB:`"$exeBase.lib`""
-            $args += "/MANIFESTUAC:`"level='asInvoker' uiAccess='false'`""
-            
-            if ($ConfigCtx.CfgLtcg -and -not $ConfigCtx.IsDebug) {
-                $args += "/LTCG"
-                $args += "/OPT:REF"
-                $args += "/OPT:ICF"
-                $args += "/INCREMENTAL:NO"
-            }
-            elseif ($ConfigCtx.CfgIncr) { $args += "/INCREMENTAL" }
-            else { $args += "/INCREMENTAL:NO" }
-        }
-
-        $rawFlags = @()
-        if ($ConfigCtx.Cfg -and $ConfigCtx.Cfg.link_flags) { $rawFlags += $ConfigCtx.Cfg.link_flags }
-        if ($ConfigCtx.Bound.ContainsKey('link_flags') -and $ConfigCtx.Bound.link_flags) { $rawFlags += $ConfigCtx.Bound.link_flags }
-        foreach ($f in $rawFlags) {
-            $args += ($f -replace '^\s*/link\s*', '')
-        }
-        
-        foreach ($lib in $allLibs) { $args += "`"$lib`"" }
-    }
-
-    return $args
+    $ctx.LinkFlags = $lf
+    $ctx.LibFiles  = $libStr
 }
 
 function Compile-Modules([hashtable]$ctx) {
     $script:compileShown = $false
-    Write-Host "1>  正在扫描源以查找模块依赖项..."
+    Write-Host "1>  正在扫描源以查找模块依赖�?.."
     foreach ($f in $ctx.Files) { Write-Host "1>  $([System.IO.Path]::GetFileName($f))" }
 
     $scanDir = Join-Path $env:TEMP "msvc_build_scan_$$"
@@ -944,7 +876,7 @@ function Compile-Modules([hashtable]$ctx) {
                 }
                 
                 if (-not $foundStd) {
-                    Write-Host "error : 未找到 std.ixx: $stdIxx" -ForegroundColor Red
+                    Write-Host "error : 未找�?std.ixx: $stdIxx" -ForegroundColor Red
                     exit 1
                 }
             }
@@ -959,7 +891,7 @@ function Compile-Modules([hashtable]$ctx) {
             if (-not (Test-Path $cacheDir)) { New-Item $cacheDir -ItemType Directory -Force | Out-Null }
             Copy-Item (Join-Path $PWD 'std.obj'), (Join-Path $PWD 'std.ifc') $cacheDir -Force
         }
-        $stdModObjs += $stdObjCached
+        $stdModObjs += 'std.obj'
     }
 
     if ($usesImportStdCompat) {
@@ -991,7 +923,7 @@ function Compile-Modules([hashtable]$ctx) {
                 }
                 
                 if (-not $foundCompat) {
-                    Write-Host "error : 未找到 std.compat.ixx: $compatIxx" -ForegroundColor Red
+                    Write-Host "error : 未找�?std.compat.ixx: $compatIxx" -ForegroundColor Red
                     exit 1
                 }
             }
@@ -1006,7 +938,7 @@ function Compile-Modules([hashtable]$ctx) {
             if (-not (Test-Path $cacheDir)) { New-Item $cacheDir -ItemType Directory -Force | Out-Null }
             Copy-Item (Join-Path $PWD 'std.compat.obj'), (Join-Path $PWD 'std.compat.ifc') $cacheDir -Force
         }
-        $stdModObjs += $compatObjCached
+        $stdModObjs += 'std.compat.obj'
     }
 
     $inDegree = @{}
@@ -1079,15 +1011,15 @@ function Compile-Modules([hashtable]$ctx) {
 
             $needRecompile = $false
             if (-not (Test-Path $cachedObj)) {
-                $needRecompile = $true
+                $needRecompile = $true; Write-Host "Recompile triggered at line $($MyInvocation.ScriptLineNumber)"
             }
             elseif ((Get-Item $ixx).LastWriteTime -gt (Get-Item $cachedObj).LastWriteTime) {
-                $needRecompile = $true
+                $needRecompile = $true; Write-Host "Recompile triggered at line $($MyInvocation.ScriptLineNumber)"
             }
             else {
                 foreach ($dep in $modFileToRequires[$ixx]) {
                     if ($modNameToFile.ContainsKey($dep) -and $recompiled.ContainsKey($modNameToFile[$dep])) {
-                        $needRecompile = $true; break
+                        $needRecompile = $true; Write-Host "Recompile triggered at line $($MyInvocation.ScriptLineNumber)"; break
                     }
                 }
             }
@@ -1130,7 +1062,7 @@ function Compile-Modules([hashtable]$ctx) {
     $modObjs = @()
     $modObjs += $stdModObjs
     foreach ($ixx in $ctx.IxxFiles) {
-        $modObjs += Join-Path $modCacheDir ([System.IO.Path]::ChangeExtension([System.IO.Path]::GetFileName($ixx), '.obj'))
+        $modObjs += [System.IO.Path]::ChangeExtension([System.IO.Path]::GetFileName($ixx), '.obj')
     }
     $ctx.ModObjs = $modObjs
     $ctx.AnyModuleRecompiled = ($recompiled.Count -gt 0)
@@ -1150,7 +1082,7 @@ function Invoke-Compile([hashtable]$ctx) {
         $clPath = (Get-Command cl.exe -ErrorAction SilentlyContinue).Source
     }
     if (-not $clPath -or -not (Test-Path -LiteralPath $clPath)) {
-        throw "无法找到 cl.exe 以生成缓存指纹"
+        throw "无法找到 cl.exe 以生成缓存指�?
     }
     
     $rawArgs = $ctx.BaseFlags -split ' ' | Where-Object { $_ -ne '' }
@@ -1179,24 +1111,24 @@ function Invoke-Compile([hashtable]$ctx) {
         $needRecompile = $false
 
         if (-not (Test-Path -LiteralPath $cachedObj)) {
-            $needRecompile = $true
+            $needRecompile = $true; Write-Host "Recompile triggered at line $($MyInvocation.ScriptLineNumber)"
         }
         elseif ($ctx.AnyModuleRecompiled) {
-            $needRecompile = $true
+            $needRecompile = $true; Write-Host "Recompile triggered at line $($MyInvocation.ScriptLineNumber)"
         }
         else {
             $depSet = Get-NormalizedDependencySet -JsonFilePath $depJsonPath
             if ($depSet.Count -eq 0) {
-                $needRecompile = $true
+                $needRecompile = $true; Write-Host "Recompile triggered at line $($MyInvocation.ScriptLineNumber)"
             } else {
                 $objTime = (Get-Item -LiteralPath $cachedObj).LastWriteTime
                 foreach ($depFile in $depSet) {
                     if (-not (Test-Path -LiteralPath $depFile)) {
-                        $needRecompile = $true
+                        $needRecompile = $true; Write-Host "Recompile triggered at line $($MyInvocation.ScriptLineNumber)"
                         break
                     }
                     if ((Get-Item -LiteralPath $depFile).LastWriteTime -gt $objTime) {
-                        $needRecompile = $true
+                        $needRecompile = $true; Write-Host "Recompile triggered at line $($MyInvocation.ScriptLineNumber)"
                         break
                     }
                 }
@@ -1208,8 +1140,9 @@ function Invoke-Compile([hashtable]$ctx) {
         }
         else {
             $skipped++
+            Copy-Item -LiteralPath $cachedObj -Destination (Join-Path $PWD $objName) -Force
         }
-        $objList += $cachedObj
+        $objList += $objName
     }
 
     if ($toCompile.Count -gt 0) {
@@ -1230,7 +1163,6 @@ function Invoke-Compile([hashtable]$ctx) {
             $cmdLine = "cl /c $($ctx.BaseFlags) /sourceDependencies `"$depDirArg`" /MP $cppList"
             
             $pinfo = [System.Diagnostics.ProcessStartInfo]::new("cmd.exe")
-            $pinfo.WorkingDirectory = $PWD.Path
             $pinfo.UseShellExecute = $false
             $pinfo.CreateNoWindow = $true
             $pinfo.Arguments = "/c `"$cmdLine > `"$outLog`" 2>&1`""
@@ -1252,14 +1184,12 @@ function Invoke-Compile([hashtable]$ctx) {
                 $ctx.BuildSuccess = $false
                 exit 1
             }
-
-            foreach ($cpp in $batchFiles) {
-                $objName = [System.IO.Path]::GetFileNameWithoutExtension($cpp) + '.obj'
-                $localObj = Join-Path $PWD $objName
-                $item = $toCompile | Where-Object { $_.Cpp -eq $cpp } | Select-Object -First 1
-                if ($item -and (Test-Path -LiteralPath $localObj)) {
-                    Copy-Item -LiteralPath $localObj -Destination $item.CachedObj -Force
-                }
+        }
+        
+        foreach ($item in $toCompile) {
+            $localObj = Join-Path $PWD $item.ObjName
+            if (Test-Path -LiteralPath $localObj) { 
+                Copy-Item -LiteralPath $localObj -Destination $item.CachedObj -Force 
             }
         }
     }
@@ -1276,7 +1206,7 @@ function Invoke-Link([hashtable]$ctx) {
         $exeTime = (Get-Item $ctx.Exe).LastWriteTime
         $needRelink = $false
         foreach ($obj in $allObjs) {
-            $objPath = $obj
+            $objPath = Join-Path $PWD $obj
             if ((Test-Path $objPath) -and (Get-Item $objPath).LastWriteTime -gt $exeTime) {
                 $needRelink = $true; break
             }
@@ -1292,24 +1222,12 @@ function Invoke-Link([hashtable]$ctx) {
 
     $objList = ($allObjs | ForEach-Object { "`"$_`"" }) -join ' '
 
-    $linkArgsArray = Build-LinkerArguments -TargetType $ctx.TargetType -ConfigCtx $ctx
-    $linkArgsStr = ($linkArgsArray | ForEach-Object { $_ }) -join ' '
-    
-    $tool = if ($ctx.TargetType -eq 'static') { "lib.exe" } else { "link.exe" }
-    
-    cmd.exe /c "$tool $objList $linkArgsStr" 2>&1 | ForEach-Object { 
-        $s = $_.ToString().Trim()
-        if ($s -match "error|warning" -and $s -notmatch "^Microsoft|^Copyright") { 
-            Write-Host "1>$s" 
-            if ($s -match "LNK2019") {
-                Write-Host "1>  [UX 降级提示] 发生未解析的外部符号 (LNK2019)！" -ForegroundColor Yellow
-                Write-Host "1>  建议检查: 1) 是否漏传了对应的 .lib 文件；2) 若为静态库编译，确保无系统库依赖；3) 头文件与实现是否一致。" -ForegroundColor Yellow
-            }
-        } 
-    }
+    $linkArgs = $ctx.LinkFlags -replace '^\s*/link\s*', ''
 
+    
+    cmd.exe /c "link.exe $objList /OUT:`"$($ctx.Exe)`" $linkArgs$($ctx.LibFiles)" 2>&1 | ForEach-Object { $s = $_.ToString().Trim(); if ($s -match "error|warning" -and $s -notmatch "^Microsoft|^Copyright") { Write-Host "1>$s" } }
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "1>error : $($tool) 失败" -ForegroundColor Red
+        Write-Host '1>error : 链接失败' -ForegroundColor Red
         $ctx.BuildSuccess = $false
         exit 1
     }
@@ -1342,10 +1260,10 @@ if ($setenv) {
     $savePath = Join-Path "$HOME\bin" '.msvc_build_env'
     if ($setenv -eq 'auto') {
         Remove-Item $savePath -Force -ErrorAction SilentlyContinue
-        Write-Host "编译环境已恢复为自动检测。" -ForegroundColor DarkGray
+        Write-Host "编译环境已恢复为自动检测�? -ForegroundColor DarkGray
     } else {
         $setenv | Set-Content $savePath -Force
-        Write-Host "编译环境已设为 ""$setenv""。" -ForegroundColor DarkGray
+        Write-Host "编译环境已设�?""$setenv""�? -ForegroundColor DarkGray
     }
     exit 0
 }
@@ -1376,7 +1294,6 @@ $ctx = @{
     AnyModuleRecompiled = $false
     ModObjs       = @()
     BuildSuccess  = $true
-    TargetType    = $null
 }
 
 $buildTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1387,6 +1304,8 @@ Find-ProjectConfig $ctx
 Find-SmartDeps $ctx
 Resolve-Output     $ctx
 
+$ctx.Exe = Join-Path $PWD "$($ctx.OutputName).exe"
+
 $cfgLabel = if ($ctx.Bound.ContainsKey('config')) { (Get-Culture).TextInfo.ToTitleCase($config) } elseif ($ctx.Cfg -and $ctx.Cfg.config) { (Get-Culture).TextInfo.ToTitleCase($ctx.Cfg.config) } else { '' }
 $archLabel = if ($x86) { 'x86' } else { 'x64' }
 $configDisplay = if ($cfgLabel) { "$cfgLabel $archLabel" } else { $archLabel }
@@ -1395,18 +1314,19 @@ Write-Host ''
 Write-Host "生成开始于 $buildStartTime..."
 
 if (Test-UpToDate $ctx) {
-    Write-Host "========== 生成: 0 成功，0 失败，1 最新，0 已跳过 ==========" -ForegroundColor Green
+    Write-Host "========== 生成: 0 成功�? 失败�? 最新，0 已跳�?==========" -ForegroundColor Green
     $buildTimer.Stop()
     $elapsed = '{0:F3}' -f $buildTimer.Elapsed.TotalSeconds
-    Write-Host "========== 生成 于 $(Get-Date -Format 'HH:mm') 完成，耗时 $elapsed 秒 ==========" -ForegroundColor Green
+    Write-Host "========== 生成 �?$(Get-Date -Format 'HH:mm') 完成，耗时 $elapsed �?==========" -ForegroundColor Green
     if ($run) { Invoke-Run $ctx }
     exit 0
 }
 
 Initialize-Env     $ctx
 Build-CompilerFlags $ctx
+Build-LinkFlags    $ctx
 
-Write-Host "1>------ 已启动生成: 项目: $($ctx.OutputName), 配置: $configDisplay ------" -ForegroundColor DarkCyan
+Write-Host "1>------ 已启动生�? 项目: $($ctx.OutputName), 配置: $configDisplay ------" -ForegroundColor DarkCyan
 
 if ($ctx.IxxFiles.Count -gt 0) {
     Compile-Modules $ctx
@@ -1418,10 +1338,11 @@ Invoke-Link    $ctx
 $buildTimer.Stop()
 $elapsed = '{0:F3}' -f $buildTimer.Elapsed.TotalSeconds
 if ($ctx.BuildSuccess) {
-    Write-Host "========== 生成: 1 成功，0 失败，0 最新，0 已跳过 ==========" -ForegroundColor Green
+    Write-Host "========== 生成: 1 成功�? 失败�? 最新，0 已跳�?==========" -ForegroundColor Green
 } else {
-    Write-Host "========== 生成: 0 成功，1 失败，0 最新，0 已跳过 ==========" -ForegroundColor Red
+    Write-Host "========== 生成: 0 成功�? 失败�? 最新，0 已跳�?==========" -ForegroundColor Red
 }
-Write-Host "========== 生成 于 $(Get-Date -Format 'HH:mm') 完成，耗时 $elapsed 秒 ==========" -ForegroundColor $(if ($ctx.BuildSuccess) { 'Green' } else { 'Red' })
+Write-Host "========== 生成 �?$(Get-Date -Format 'HH:mm') 完成，耗时 $elapsed �?==========" -ForegroundColor $(if ($ctx.BuildSuccess) { 'Green' } else { 'Red' })
 
 if ($ctx.BuildSuccess -and $run) { Invoke-Run $ctx }
+
