@@ -1,4 +1,5 @@
 add_library(mqb_modules STATIC
+    src/ModuleDependencyGraph.cpp
     src/P1689.cpp
 )
 
@@ -9,6 +10,7 @@ target_include_directories(mqb_modules
 
 target_link_libraries(mqb_modules
     PUBLIC
+        mqb_core
         mqb_json
 )
 
