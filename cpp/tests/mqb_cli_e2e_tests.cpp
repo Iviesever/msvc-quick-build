@@ -100,7 +100,7 @@ int main(const int argc, char* argv[]) {
         "#endif\n"
         "int value() { return sample_value + MQB_CLI_TEST; }\n");
 
-    const fs::path object = tree.root / ".mqb" / "obj" / "sample.obj";
+    const fs::path object = tree.root / ".mqb" / "obj" / "sample.cpp.obj";
     const fs::path cache = tree.root / ".mqb" / "cache" / "sample.cpp.mqbcache";
     const fs::path dependencies = tree.root / ".mqb" / "deps" / "sample.cpp.json";
 
@@ -116,7 +116,7 @@ int main(const int argc, char* argv[]) {
         expect(cold->stdout_text.find("[compile]") != std::string::npos,
                "cold build should report a compile action");
     }
-    expect(fs::is_regular_file(object), "cold build should create object artifact");
+    expect(fs::is_regular_file(object), "cold build should create collision-free object artifact");
     expect(fs::is_regular_file(cache), "cold build should persist compile cache");
     expect(fs::is_regular_file(dependencies), "cold build should create sourceDependencies metadata");
 
