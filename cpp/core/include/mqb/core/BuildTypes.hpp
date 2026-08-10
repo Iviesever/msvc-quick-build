@@ -20,8 +20,19 @@ enum class CppStandard {
     latest,
 };
 
+enum class BuildReason {
+    missing_output,
+    source_changed,
+    dependency_changed,
+    toolchain_changed,
+    compiler_options_changed,
+    linker_options_changed,
+    explicit_rebuild,
+};
+
 [[nodiscard]] std::string_view to_string(BuildConfiguration value) noexcept;
 [[nodiscard]] std::string_view to_string(Architecture value) noexcept;
 [[nodiscard]] std::string_view to_string(CppStandard value) noexcept;
+[[nodiscard]] std::string_view to_string(BuildReason value) noexcept;
 
 } // namespace mqb

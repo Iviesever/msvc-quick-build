@@ -34,4 +34,24 @@ std::string_view to_string(const CppStandard value) noexcept {
     return "unknown";
 }
 
+std::string_view to_string(const BuildReason value) noexcept {
+    switch (value) {
+    case BuildReason::missing_output:
+        return "missing output";
+    case BuildReason::source_changed:
+        return "source changed";
+    case BuildReason::dependency_changed:
+        return "dependency changed";
+    case BuildReason::toolchain_changed:
+        return "toolchain changed";
+    case BuildReason::compiler_options_changed:
+        return "compiler options changed";
+    case BuildReason::linker_options_changed:
+        return "linker options changed";
+    case BuildReason::explicit_rebuild:
+        return "explicit rebuild";
+    }
+    return "unknown";
+}
+
 } // namespace mqb
