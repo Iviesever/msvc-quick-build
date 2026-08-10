@@ -8,6 +8,7 @@ add_library(mqb_core STATIC
     src/LinkCache.cpp
     src/LinkCacheFile.cpp
     src/ProjectArtifactLayout.cpp
+    src/TranslationUnitClassifier.cpp
 )
 
 target_include_directories(mqb_core
