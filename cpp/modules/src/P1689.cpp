@@ -3,6 +3,7 @@
 #include <charconv>
 #include <expected>
 #include <filesystem>
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -309,21 +310,21 @@ struct CommonModuleFields {
     if (const auto it = (**object).find("provides"); it != (**object).end()) {
         auto array = require_array(it->second, "rule.provides");
         if (!array) return std::unexpected(array.error());
-        rule.provides.reserve((*array)->size());
+        rule.provided_modules.reserve((*array)->size());
         for (const auto& entry : **array) {
             auto provided = decode_provided(entry);
             if (!provided) return std::unexpected(provided.error());
-            rule.provides.push_back(std::move(*provided));
+            rule.provided_modules.push_back(std::move(*provided));
         }
     }
     if (const auto it = (**object).find("requires"); it != (**object).end()) {
         auto array = require_array(it->second, "rule.requires");
         if (!array) return std::unexpected(array.error());
-        rule.requires.reserve((*array)->size());
+        rule.required_modules.reserve((*array)->size());
         for (const auto& entry : **array) {
             auto required = decode_required(entry);
             if (!required) return std::unexpected(required.error());
-            rule.requires.push_back(std::move(*required));
+            rule.required_modules.push_back(std::move(*required));
         }
     }
     return rule;
