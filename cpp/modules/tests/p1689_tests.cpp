@@ -64,19 +64,19 @@ int main() {
                    "version and revision should be preserved");
             expect(document->rules.size() == 2,
                    "all P1689 rules should be preserved");
-            expect(document->rules[0].provides.size() == 1
-                       && document->rules[0].provides[0].logical_name == "duplicate",
+            expect(document->rules[0].provided_modules.size() == 1
+                       && document->rules[0].provided_modules[0].logical_name == "duplicate",
                    "provided named module should decode");
-            expect(document->rules[0].provides[0].is_interface,
+            expect(document->rules[0].provided_modules[0].is_interface,
                    "provided module should default is-interface to true");
-            expect(document->rules[1].provides[0].logical_name == "another"
-                       && !document->rules[1].provides[0].is_interface,
+            expect(document->rules[1].provided_modules[0].logical_name == "another"
+                       && !document->rules[1].provided_modules[0].is_interface,
                    "explicit is-interface=false should decode");
-            expect(document->rules[1].requires[0].lookup_method == LookupMethod::by_name,
+            expect(document->rules[1].required_modules[0].lookup_method == LookupMethod::by_name,
                    "required named module should default lookup-method to by-name");
-            expect(document->rules[1].requires[1].lookup_method == LookupMethod::include_quote
-                       && document->rules[1].requires[1].unique_on_source_path
-                       && document->rules[1].requires[1].source_path.has_value(),
+            expect(document->rules[1].required_modules[1].lookup_method == LookupMethod::include_quote
+                       && document->rules[1].required_modules[1].unique_on_source_path
+                       && document->rules[1].required_modules[1].source_path.has_value(),
                    "header-unit lookup identity should decode");
         }
     }
