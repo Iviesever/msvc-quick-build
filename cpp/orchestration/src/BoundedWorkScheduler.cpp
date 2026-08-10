@@ -44,6 +44,14 @@ BoundedWorkScheduler::run(
     std::atomic<bool> stop_requested{false};
     std::atomic<bool> callback_threw{false};
 
+    // Quench future dispatch before publishing the stop flag. A worker that
+    // already observed stop_requested == false but has not claimed an index yet
+    // will receive item_count (or greater) and exit without starting new work.
+    const auto request_stop = [&] {
+        next_index.exchange(item_count, std::memory_order_acq_rel);
+        stop_requested.store(true, std::memory_order_release);
+    };
+
     std::vector<std::thread> workers;
     workers.reserve(worker_count);
     for (std::size_t worker_index = 0; worker_index < worker_count; ++worker_index) {
@@ -57,11 +65,11 @@ BoundedWorkScheduler::run(
                 started_count.fetch_add(1, std::memory_order_relaxed);
                 try {
                     if (!work(index)) {
-                        stop_requested.store(true, std::memory_order_release);
+                        request_stop();
                     }
                 } catch (...) {
                     callback_threw.store(true, std::memory_order_release);
-                    stop_requested.store(true, std::memory_order_release);
+                    request_stop();
                 }
             }
         });
