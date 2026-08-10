@@ -11,6 +11,7 @@
 #include <expected>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -66,6 +67,50 @@ private:
     HANDLE handle_{nullptr};
 };
 
+class ProcThreadAttributeList {
+public:
+    ProcThreadAttributeList() = default;
+
+    ~ProcThreadAttributeList() {
+        reset();
+    }
+
+    ProcThreadAttributeList(const ProcThreadAttributeList&) = delete;
+    ProcThreadAttributeList& operator=(const ProcThreadAttributeList&) = delete;
+
+    ProcThreadAttributeList(ProcThreadAttributeList&& other) noexcept
+        : list_(std::exchange(other.list_, nullptr)) {}
+
+    ProcThreadAttributeList& operator=(ProcThreadAttributeList&& other) noexcept {
+        if (this != &other) {
+            reset();
+            list_ = std::exchange(other.list_, nullptr);
+        }
+        return *this;
+    }
+
+    [[nodiscard]] LPPROC_THREAD_ATTRIBUTE_LIST get() const noexcept {
+        return list_;
+    }
+
+    [[nodiscard]] static std::expected<ProcThreadAttributeList, ProcessError>
+    for_handle_list(const std::span<HANDLE> handles);
+
+private:
+    explicit ProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST list) noexcept
+        : list_(list) {}
+
+    void reset() noexcept {
+        if (list_ != nullptr) {
+            ::DeleteProcThreadAttributeList(list_);
+            ::HeapFree(::GetProcessHeap(), 0, list_);
+            list_ = nullptr;
+        }
+    }
+
+    LPPROC_THREAD_ATTRIBUTE_LIST list_{nullptr};
+};
+
 struct PipePair {
     UniqueHandle read;
     UniqueHandle write;
@@ -85,6 +130,59 @@ struct EnvironmentEntry {
         .native_code = native_code,
         .message = std::move(message),
     };
+}
+
+std::expected<ProcThreadAttributeList, ProcessError>
+ProcThreadAttributeList::for_handle_list(const std::span<HANDLE> handles) {
+    if (handles.empty()) {
+        return std::unexpected(error(
+            ProcessErrorCode::invalid_specification,
+            ERROR_INVALID_PARAMETER,
+            "inherited handle whitelist is empty"));
+    }
+
+    SIZE_T bytes = 0;
+    ::InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+    if (bytes == 0) {
+        return std::unexpected(error(
+            ProcessErrorCode::launch_failed,
+            ::GetLastError(),
+            "failed to size process attribute list"));
+    }
+
+    auto* raw = static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(
+        ::HeapAlloc(::GetProcessHeap(), 0, bytes));
+    if (raw == nullptr) {
+        return std::unexpected(error(
+            ProcessErrorCode::launch_failed,
+            ERROR_NOT_ENOUGH_MEMORY,
+            "failed to allocate process attribute list"));
+    }
+
+    if (!::InitializeProcThreadAttributeList(raw, 1, 0, &bytes)) {
+        const DWORD native_code = ::GetLastError();
+        ::HeapFree(::GetProcessHeap(), 0, raw);
+        return std::unexpected(error(
+            ProcessErrorCode::launch_failed,
+            native_code,
+            "InitializeProcThreadAttributeList failed"));
+    }
+
+    ProcThreadAttributeList result{raw};
+    if (!::UpdateProcThreadAttribute(
+            result.get(),
+            0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            handles.data(),
+            handles.size_bytes(),
+            nullptr,
+            nullptr)) {
+        return std::unexpected(error(
+            ProcessErrorCode::launch_failed,
+            ::GetLastError(),
+            "UpdateProcThreadAttribute failed for inherited handle whitelist"));
+    }
+    return result;
 }
 
 [[nodiscard]] bool contains_nul(const std::string_view value) noexcept {
@@ -423,12 +521,18 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
         stderr_pipe.emplace(std::move(*pipe));
     }
 
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
+    STARTUPINFOW basic_startup{};
+    basic_startup.cb = sizeof(basic_startup);
+    STARTUPINFOEXW extended_startup{};
+    extended_startup.StartupInfo.cb = sizeof(extended_startup);
+    LPSTARTUPINFOW startup = &basic_startup;
 
     UniqueHandle child_stdin;
     UniqueHandle child_stdout;
     UniqueHandle child_stderr;
+    std::optional<ProcThreadAttributeList> attribute_list;
+    std::vector<HANDLE> inherited_handles;
+
     const bool use_explicit_standard_handles = spec.capture_stdout || spec.capture_stderr;
     if (use_explicit_standard_handles) {
         auto stdin_handle = inheritable_standard_handle(STD_INPUT_HANDLE, GENERIC_READ);
@@ -452,10 +556,25 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
             child_stderr = std::move(*stderr_handle);
         }
 
-        startup.dwFlags |= STARTF_USESTDHANDLES;
-        startup.hStdInput = child_stdin.get();
-        startup.hStdOutput = spec.capture_stdout ? stdout_pipe->write.get() : child_stdout.get();
-        startup.hStdError = spec.capture_stderr ? stderr_pipe->write.get() : child_stderr.get();
+        auto& startup_info = extended_startup.StartupInfo;
+        startup_info.dwFlags |= STARTF_USESTDHANDLES;
+        startup_info.hStdInput = child_stdin.get();
+        startup_info.hStdOutput = spec.capture_stdout ? stdout_pipe->write.get() : child_stdout.get();
+        startup_info.hStdError = spec.capture_stderr ? stderr_pipe->write.get() : child_stderr.get();
+
+        inherited_handles = {
+            startup_info.hStdInput,
+            startup_info.hStdOutput,
+            startup_info.hStdError,
+        };
+        auto attributes = ProcThreadAttributeList::for_handle_list(inherited_handles);
+        if (!attributes) {
+            return std::unexpected(attributes.error());
+        }
+        attribute_list.emplace(std::move(*attributes));
+        extended_startup.lpAttributeList = attribute_list->get();
+        creation_flags |= EXTENDED_STARTUPINFO_PRESENT;
+        startup = &extended_startup.StartupInfo;
     }
 
     PROCESS_INFORMATION process_info{};
@@ -468,7 +587,7 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
         creation_flags,
         environment_pointer,
         working_directory ? working_directory->c_str() : nullptr,
-        &startup,
+        startup,
         &process_info);
     if (!created) {
         return std::unexpected(error(
