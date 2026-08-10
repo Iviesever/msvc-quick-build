@@ -132,13 +132,29 @@ BuildSignature BuildSignature::for_link(
     const std::filesystem::path& output,
     const LinkerIdentity& linker,
     const LinkOptions& options) {
-    StableHasher hasher;
-    hasher.add_string("mqb.link.signature.v1");
+    return for_link(
+        objects,
+        std::span<const std::filesystem::path>{},
+        output,
+        linker,
+        options);
+}
 
-    // Link input order is intentionally preserved. Although ordinary COFF
-    // objects are often order-insensitive, libraries and future link inputs are
-    // not universally so; signature identity should mirror the requested argv.
+BuildSignature BuildSignature::for_link(
+    const std::span<const std::filesystem::path> objects,
+    const std::span<const std::filesystem::path> resolved_libraries,
+    const std::filesystem::path& output,
+    const LinkerIdentity& linker,
+    const LinkOptions& options) {
+    StableHasher hasher;
+    hasher.add_string("mqb.link.signature.v2");
+
+    // File-input order is intentionally preserved. Library resolution is kept
+    // separate from the requested library recipe, but the exact resolved files
+    // still participate in action identity so a changed search result cannot
+    // silently reuse a link built against a different file.
     hasher.add_paths(objects);
+    hasher.add_paths(resolved_libraries);
     hasher.add_path(output);
 
     hasher.add_path(linker.linker);

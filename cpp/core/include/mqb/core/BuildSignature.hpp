@@ -34,6 +34,13 @@ public:
         const LinkerIdentity& linker,
         const LinkOptions& options);
 
+    [[nodiscard]] static BuildSignature for_link(
+        std::span<const std::filesystem::path> objects,
+        std::span<const std::filesystem::path> resolved_libraries,
+        const std::filesystem::path& output,
+        const LinkerIdentity& linker,
+        const LinkOptions& options);
+
     [[nodiscard]] static BuildSignature from_digest(const SignatureDigest digest) noexcept {
         return BuildSignature{digest};
     }
