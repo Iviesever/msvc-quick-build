@@ -33,7 +33,8 @@ int main() {
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value(), "single source should parse");
         if (parsed) {
-            expect(parsed->build.entry == "main.cpp", "source path should be preserved");
+            expect(parsed->build.sources.size() == 1 && parsed->build.sources.front() == "main.cpp",
+                   "single source should be preserved in ordered source list");
             expect(parsed->build.configuration == mqb::BuildConfiguration::debug,
                    "default configuration should be debug");
             expect(parsed->build.architecture == mqb::Architecture::x64,
@@ -47,7 +48,9 @@ int main() {
 
     {
         const std::vector arguments{
-            "source.cpp"sv,
+            "main.cpp"sv,
+            "src/utils.cpp"sv,
+            "tests/helper.cxx"sv,
             "--release"sv,
             "--std"sv,
             "latest"sv,
@@ -62,8 +65,16 @@ int main() {
             "--verbose"sv,
         };
         auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value(), "full option set should parse");
+        expect(parsed.has_value(), "multi-source option set should parse");
         if (parsed) {
+            expect(parsed->build.sources.size() == 3,
+                   "all explicit sources should be collected");
+            if (parsed->build.sources.size() == 3) {
+                expect(parsed->build.sources[0] == "main.cpp"
+                           && parsed->build.sources[1] == "src/utils.cpp"
+                           && parsed->build.sources[2] == "tests/helper.cxx",
+                       "source order should remain stable for deterministic linking");
+            }
             expect(parsed->build.configuration == mqb::BuildConfiguration::release,
                    "release flag should override default");
             expect(parsed->build.architecture == mqb::Architecture::x86,
@@ -93,12 +104,6 @@ int main() {
         const std::vector arguments{"main.cpp"sv, "--wat"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(!parsed, "unknown options should be rejected");
-    }
-
-    {
-        const std::vector arguments{"a.cpp"sv, "b.cpp"sv};
-        auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(!parsed, "multiple sources should be rejected until multi-TU milestone");
     }
 
     if (failures != 0) {

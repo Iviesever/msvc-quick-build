@@ -11,16 +11,16 @@
 #include <vector>
 
 #include "Cli.hpp"
-#include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/LinkOptions.hpp"
-#include "mqb/core/TranslationUnit.hpp"
+#include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
+#include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 #include "mqb/process/Process.hpp"
 
@@ -54,6 +54,25 @@ absolute_path(const fs::path& path, const std::string_view description) {
         extension.begin(),
         [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return extension == ".cpp" || extension == ".cc" || extension == ".cxx";
+}
+
+[[nodiscard]] bool safe_relative(const fs::path& relative) {
+    if (relative.empty() || relative.is_absolute() || relative == ".") {
+        return false;
+    }
+    for (const auto& component : relative) {
+        if (component == "..") {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] fs::path display_source(
+    const fs::path& project_root,
+    const fs::path& source) {
+    const fs::path relative = source.lexically_relative(project_root);
+    return safe_relative(relative) ? relative : source;
 }
 
 void add_portable_root_if_missing(
@@ -102,7 +121,6 @@ void print_compile_failure(const mqb::orchestration::IncrementalCompileError& er
     if (!error.compile_error) {
         return;
     }
-
     const auto& compile_error = *error.compile_error;
     std::cerr << "  " << compile_error.message << '\n';
     if (compile_error.compiler_error) {
@@ -122,7 +140,6 @@ void print_link_failure(const mqb::orchestration::IncrementalLinkError& error) {
     if (!error.linker_error) {
         return;
     }
-
     const auto& linker_error = *error.linker_error;
     std::cerr << "  " << linker_error.message << '\n';
     if (linker_error.process_result) {
@@ -133,9 +150,40 @@ void print_link_failure(const mqb::orchestration::IncrementalLinkError& error) {
     }
 }
 
-[[nodiscard]] fs::path with_suffix(fs::path path, const std::string_view suffix) {
-    path += std::string{suffix};
-    return path;
+void print_target_failure(const mqb::orchestration::IncrementalTargetError& error) {
+    std::cerr << "error: " << error.message;
+    if (!error.source.empty()) {
+        std::cerr << ": " << path_text(error.source);
+    }
+    std::cerr << '\n';
+    if (error.compile_error) {
+        print_compile_failure(*error.compile_error);
+    }
+    if (error.link_error) {
+        print_link_failure(*error.link_error);
+    }
+}
+
+void print_compile_warnings(
+    const mqb::orchestration::IncrementalCompileResult& result) {
+    for (const auto& warning : result.warnings) {
+        std::cerr << "warning: " << warning.message;
+        if (!warning.path.empty()) {
+            std::cerr << ": " << path_text(warning.path);
+        }
+        std::cerr << '\n';
+    }
+}
+
+void print_link_warnings(
+    const mqb::orchestration::IncrementalLinkResult& result) {
+    for (const auto& warning : result.warnings) {
+        std::cerr << "warning: " << warning.message;
+        if (!warning.path.empty()) {
+            std::cerr << ": " << path_text(warning.path);
+        }
+        std::cerr << '\n';
+    }
 }
 
 } // namespace
@@ -147,11 +195,9 @@ int main(const int argc, char* argv[]) {
         arguments.emplace_back(argv[index]);
     }
 
-    auto parsed = mqb::cli::parse_arguments(
-        std::span<const std::string_view>{arguments});
+    auto parsed = mqb::cli::parse_arguments(std::span<const std::string_view>{arguments});
     if (!parsed) {
-        std::cerr << "error: " << parsed.error().message << "\n\n"
-                  << mqb::cli::usage();
+        std::cerr << "error: " << parsed.error().message << "\n\n" << mqb::cli::usage();
         return 2;
     }
     auto options = std::move(*parsed);
@@ -160,22 +206,43 @@ int main(const int argc, char* argv[]) {
         return 0;
     }
 
-    auto source = absolute_path(options.build.entry, "source file");
-    if (!source) {
-        std::cerr << "error: " << source.error() << '\n';
-        return 2;
-    }
-
     std::error_code error_code;
-    if (!fs::is_regular_file(*source, error_code) || error_code) {
-        std::cerr << "error: source file does not exist: " << path_text(*source) << '\n';
+    fs::path project_root = fs::current_path(error_code);
+    if (error_code) {
+        std::cerr << "error: failed to resolve current project directory: "
+                  << error_code.message() << '\n';
         return 2;
     }
-    if (!supported_source(*source)) {
-        std::cerr << "error: this milestone supports .cpp, .cc, and .cxx files only\n";
-        return 2;
+    project_root = project_root.lexically_normal();
+
+    std::vector<fs::path> sources;
+    sources.reserve(options.build.sources.size());
+    for (const auto& requested_source : options.build.sources) {
+        auto source = absolute_path(requested_source, "source file");
+        if (!source) {
+            std::cerr << "error: " << source.error() << '\n';
+            return 2;
+        }
+        if (!fs::is_regular_file(*source, error_code) || error_code) {
+            std::cerr << "error: source file does not exist: " << path_text(*source) << '\n';
+            return 2;
+        }
+        if (!supported_source(*source)) {
+            std::cerr << "error: only .cpp, .cc, and .cxx sources are supported in this milestone: "
+                      << path_text(*source) << '\n';
+            return 2;
+        }
+        for (const auto& previous : sources) {
+            error_code.clear();
+            if (fs::equivalent(previous, *source, error_code) && !error_code) {
+                std::cerr << "error: source file was provided more than once: "
+                          << path_text(*source) << '\n';
+                return 2;
+            }
+        }
+        sources.push_back(std::move(*source));
     }
-    options.build.entry = *source;
+    options.build.sources = sources;
 
     for (auto& include_directory : options.include_directories) {
         auto resolved = absolute_path(include_directory, "include directory");
@@ -194,26 +261,37 @@ int main(const int argc, char* argv[]) {
         portable_root = std::move(*resolved);
     }
 
-    const fs::path source_directory = source->parent_path();
-    const fs::path artifact_root = source_directory / ".mqb";
+    auto layout = mqb::ProjectArtifactLayout::create(project_root);
+    if (!layout) {
+        std::cerr << "error: " << layout.error().message << '\n';
+        return 2;
+    }
 
-    // Keep the source extension in internal artifact names so sibling files
-    // such as foo.cpp and foo.cxx cannot alias one another.
-    fs::path object_name = source->filename();
-    object_name += ".obj";
-    fs::path executable_name = source->filename();
-    executable_name += ".exe";
+    std::vector<mqb::orchestration::TargetSourceRequest> target_sources;
+    target_sources.reserve(sources.size());
+    for (const auto& source : sources) {
+        auto artifacts = layout->for_source(source);
+        if (!artifacts) {
+            std::cerr << "error: " << artifacts.error().message << ": "
+                      << path_text(source) << '\n';
+            return 2;
+        }
+        target_sources.push_back(mqb::orchestration::TargetSourceRequest{
+            .source = source,
+            .artifacts = std::move(*artifacts),
+        });
+    }
 
-    const fs::path object_file = artifact_root / "obj" / object_name;
-    const fs::path dependency_file = artifact_root / "deps" / with_suffix(source->filename(), ".json");
-    const fs::path compile_cache_file = artifact_root / "cache" / with_suffix(source->filename(), ".mqbcache");
-    const fs::path link_cache_file = artifact_root / "cache" / with_suffix(source->filename(), ".linkcache");
-    const fs::path executable_file = artifact_root / "bin" / executable_name;
+    const std::string target_name = sources.front().stem().string();
+    auto target_artifacts = layout->for_target(target_name);
+    if (!target_artifacts) {
+        std::cerr << "error: " << target_artifacts.error().message << '\n';
+        return 2;
+    }
 
-    add_portable_root_if_missing(options.portable_roots, source_directory / "portable_msvc");
-    const fs::path current_directory = fs::current_path(error_code);
-    if (!error_code) {
-        add_portable_root_if_missing(options.portable_roots, current_directory / "portable_msvc");
+    add_portable_root_if_missing(options.portable_roots, project_root / "portable_msvc");
+    for (const auto& source : sources) {
+        add_portable_root_if_missing(options.portable_roots, source.parent_path() / "portable_msvc");
     }
 
     mqb::platform::windows::WindowsProcessRunner runner;
@@ -241,104 +319,77 @@ int main(const int argc, char* argv[]) {
     compiler_options.defines = std::move(options.defines);
     compiler_options.include_directories = std::move(options.include_directories);
 
-    mqb::TranslationUnit unit;
-    unit.source = *source;
-    unit.kind = mqb::TranslationUnitKind::source;
-    unit.outputs.push_back(mqb::Artifact{
-        .path = object_file,
-        .kind = mqb::ArtifactKind::object,
-    });
+    mqb::LinkOptions link_options;
+    link_options.configuration = options.build.configuration;
+    link_options.architecture = options.build.architecture;
+    link_options.subsystem = mqb::LinkSubsystem::console;
 
     if (options.verbose) {
-        std::cout << "[toolchain] MSVC " << toolchain->identity.version
-                  << " (" << mqb::to_string(options.build.architecture) << ")\n"
-                  << "  cl:         " << path_text(toolchain->identity.compiler) << '\n'
-                  << "  link:       " << path_text(toolchain->linker) << '\n'
-                  << "  obj:        " << path_text(object_file) << '\n'
-                  << "  deps:       " << path_text(dependency_file) << '\n'
-                  << "  cc-cache:   " << path_text(compile_cache_file) << '\n'
-                  << "  link-cache: " << path_text(link_cache_file) << '\n'
-                  << "  exe:        " << path_text(executable_file) << '\n';
+        std::cout << "[target] " << target_name << "\n"
+                  << "  project: " << path_text(project_root) << '\n'
+                  << "  cl:      " << path_text(toolchain->identity.compiler) << '\n'
+                  << "  link:    " << path_text(toolchain->linker) << '\n';
+        for (const auto& source : target_sources) {
+            std::cout << "  source:  " << path_text(display_source(project_root, source.source)) << '\n'
+                      << "    obj:   " << path_text(source.artifacts.object) << '\n'
+                      << "    deps:  " << path_text(source.artifacts.dependencies) << '\n'
+                      << "    cache: " << path_text(source.artifacts.compile_cache) << '\n';
+        }
+        std::cout << "  exe:     " << path_text(target_artifacts->executable) << '\n'
+                  << "  cache:   " << path_text(target_artifacts->link_cache) << '\n';
     }
 
     mqb::msvc::MsvcCompileExecutor compile_executor{*toolchain, runner};
     mqb::orchestration::MsvcIncrementalCompileCoordinator compile_coordinator{
         *toolchain,
         compile_executor};
-    mqb::orchestration::IncrementalCompileRequest compile_request{
-        .unit = std::move(unit),
-        .options = std::move(compiler_options),
-        .cache_file = compile_cache_file,
-        .source_dependencies_file = dependency_file,
-        .working_directory = source_directory,
-    };
-
-    auto compile_result = compile_coordinator.run(compile_request);
-    if (!compile_result) {
-        print_compile_failure(compile_result.error());
-        return 4;
-    }
-
-    for (const auto& warning : compile_result->warnings) {
-        std::cerr << "warning: " << warning.message;
-        if (!warning.path.empty()) {
-            std::cerr << ": " << path_text(warning.path);
-        }
-        std::cerr << '\n';
-    }
-
-    if (compile_result->compiled) {
-        std::cout << "[compile] " << path_text(source->filename());
-        print_reasons(compile_result->validation.reasons);
-        std::cout << '\n';
-        if (compile_result->process) {
-            print_process_output(*compile_result->process);
-        }
-    } else {
-        std::cout << "[up-to-date] " << path_text(source->filename()) << '\n';
-    }
-
-    mqb::LinkOptions link_options;
-    link_options.configuration = options.build.configuration;
-    link_options.architecture = options.build.architecture;
-    link_options.subsystem = mqb::LinkSubsystem::console;
-
     mqb::msvc::MsvcLinker linker{*toolchain, runner};
     mqb::orchestration::MsvcIncrementalLinkCoordinator link_coordinator{*toolchain, linker};
-    mqb::orchestration::IncrementalLinkRequest link_request{
-        .objects = {object_file},
-        .output = executable_file,
-        .options = std::move(link_options),
-        .cache_file = link_cache_file,
-        .working_directory = source_directory,
-        .force_relink = compile_result->compiled,
+    mqb::orchestration::MsvcIncrementalTargetCoordinator target_coordinator{
+        compile_coordinator,
+        link_coordinator};
+
+    const mqb::orchestration::IncrementalTargetRequest request{
+        .sources = std::move(target_sources),
+        .target = std::move(*target_artifacts),
+        .compiler_options = std::move(compiler_options),
+        .link_options = std::move(link_options),
+        .working_directory = project_root,
     };
 
-    auto link_result = link_coordinator.run(link_request);
-    if (!link_result) {
-        print_link_failure(link_result.error());
-        return 5;
+    auto result = target_coordinator.run(request);
+    if (!result) {
+        print_target_failure(result.error());
+        return result.error().code == mqb::orchestration::IncrementalTargetErrorCode::link_failed ? 5 : 4;
     }
 
-    for (const auto& warning : link_result->warnings) {
-        std::cerr << "warning: " << warning.message;
-        if (!warning.path.empty()) {
-            std::cerr << ": " << path_text(warning.path);
+    for (const auto& compile : result->compiles) {
+        print_compile_warnings(compile.result);
+        const fs::path label = display_source(project_root, compile.source);
+        if (compile.result.compiled) {
+            std::cout << "[compile] " << path_text(label);
+            print_reasons(compile.result.validation.reasons);
+            std::cout << '\n';
+            if (compile.result.process) {
+                print_process_output(*compile.result.process);
+            }
+        } else {
+            std::cout << "[up-to-date] " << path_text(label) << '\n';
         }
-        std::cerr << '\n';
     }
 
-    if (link_result->linked) {
-        std::cout << "[link] " << path_text(executable_file.filename());
-        print_reasons(link_result->validation.reasons);
+    print_link_warnings(result->link);
+    if (result->link.linked) {
+        std::cout << "[link] " << path_text(request.target.executable.filename());
+        print_reasons(result->link.validation.reasons);
         std::cout << '\n';
-        if (link_result->process) {
-            print_process_output(*link_result->process);
+        if (result->link.process) {
+            print_process_output(*result->link.process);
         }
     } else {
-        std::cout << "[up-to-date] " << path_text(executable_file.filename()) << '\n';
+        std::cout << "[up-to-date] " << path_text(request.target.executable.filename()) << '\n';
     }
 
-    std::cout << "executable: " << path_text(executable_file) << '\n';
+    std::cout << "executable: " << path_text(request.target.executable) << '\n';
     return 0;
 }

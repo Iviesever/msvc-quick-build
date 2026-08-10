@@ -20,7 +20,7 @@ void expect(const bool condition, const std::string_view message) {
 int main() {
     const mqb::BuildRequest request{};
 
-    expect(request.entry.empty(), "entry should be empty by default");
+    expect(request.sources.empty(), "source list should be empty by default");
     expect(request.configuration == mqb::BuildConfiguration::debug,
            "default configuration should be debug");
     expect(request.architecture == mqb::Architecture::x64,
