@@ -1,5 +1,6 @@
 add_library(mqb_config STATIC
     src/ProjectConfig.cpp
+    src/ProjectOptions.cpp
 )
 
 target_include_directories(mqb_config
