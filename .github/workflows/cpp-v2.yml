@@ -8,7 +8,9 @@ on:
   pull_request:
     paths:
       - 'cpp/**'
+      - 'README.md'
       - 'docs/CPP_V2_ARCHITECTURE.md'
+      - 'docs/MQB_CONFIG.md'
       - '.github/workflows/cpp-v2.yml'
 
 jobs:
