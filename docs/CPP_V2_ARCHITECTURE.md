@@ -17,27 +17,27 @@ This document defines the architecture for migrating MSVC Quick Build from the P
 CLI (mqb.exe)
     |
     v
-Orchestration
-  load -> snapshot -> validate -> plan -> execute -> persist
+Target orchestration
+  N x compile coordinator -> collect objects -> one link coordinator
     |
     +--------------------+
     v                    v
 Core                  MSVC backend
   BuildRequest           MsvcToolchainLocator
   Artifact / TU          MsvcCompiler
-  BuildSignature         MsvcCompileExecutor
-  CompileCache           MsvcLinker
-  LinkCache              /sourceDependencies reader
-  DependencyGraph             |
-  BuildPlanner                v
-    |                    Process abstraction
-    |                      ProcessSpec { executable, argv, cwd, env }
-    |                           |
-    +---------------------------+
-                                v
-                         Windows platform
-                         WindowsProcessRunner
-                         CreateProcessW
+  ProjectArtifactLayout  MsvcCompileExecutor
+  BuildSignature         MsvcLinker
+  CompileCache           /sourceDependencies reader
+  LinkCache                    |
+  DependencyGraph              v
+  BuildPlanner           Process abstraction
+    |                     ProcessSpec { executable, argv, cwd, env }
+    |                          |
+    +--------------------------+
+                               v
+                        Windows platform
+                        WindowsProcessRunner
+                        CreateProcessW
 ```
 
 ## Architectural rules
@@ -49,6 +49,7 @@ Core                  MSVC backend
 5. **UTF-8 at the process abstraction boundary.** Windows converts textual argv/environment data to UTF-16 immediately before `CreateProcessW`.
 6. **Compile state and link state are independent.** A compile cache hit does not imply a link cache hit, and link-only changes must never force unnecessary compilation.
 7. **A fresh compile is an explicit relink signal.** Linking must not depend solely on filesystem timestamp granularity.
+8. **Source identity is not a basename.** Project artifacts preserve relative source identity; external sources receive a stable hashed namespace, and duplicate object mappings are rejected before execution.
 
 ## Compile identity and cache freshness
 
@@ -57,7 +58,7 @@ Core                  MSVC backend
 ```text
 compiler recipe identity ----> BuildSignature
 source/header freshness ------> CompileCacheValidator
-artifact placement -----------> Artifact / cache storage
+artifact placement -----------> ProjectArtifactLayout
 ```
 
 `CompileCacheValidator` is pure and returns typed `BuildReason` values; it does not touch the filesystem or launch a process.
@@ -81,6 +82,37 @@ fresh compile --------------------> force_relink / explicit rebuild
 `LinkerIdentity` stamps `link.exe` independently from `cl.exe`, so a linker update can invalidate only link state. `LinkCacheValidator` distinguishes link-input changes, linker-option changes, toolchain changes, missing output, and explicit relink.
 
 `LinkCacheFile` uses a separate versioned cache format. Broken link metadata can only cause a safe relink; it must never permit reuse of a stale executable.
+
+When user-facing library support is added, resolved library-file freshness must join the link input state. Library names and search paths in the signature alone are not sufficient to detect an updated `.lib` file.
+
+## Project artifact layout
+
+The current explicit-target CLI uses the process working directory as the project root. Sources inside that root preserve their relative path; sources outside it are isolated under `.external/<stable-path-hash>/`.
+
+For example:
+
+```text
+project/
+  main.cpp
+  src/foo.cpp
+  tests/foo.cpp
+  .mqb/
+    obj/
+      main.cpp.obj
+      src/foo.cpp.obj
+      tests/foo.cpp.obj
+    deps/
+      main.cpp.json
+      src/foo.cpp.json
+      tests/foo.cpp.json
+    cache/
+      compile/...
+      link/main.linkcache
+    bin/
+      main.exe
+```
+
+This prevents `src/foo.cpp`, `tests/foo.cpp`, `foo.cpp`, and `foo.cxx` from aliasing one object/cache artifact.
 
 ## Dependency graph and planner
 
@@ -137,6 +169,19 @@ LinkCacheFile
       -> LinkCacheFile::save
 ```
 
+### Incremental target
+
+```text
+ordered source requests
+      -> compile each TU with IncrementalCompileCoordinator
+      -> collect collision-free object artifacts
+      -> any TU compiled? ---- yes ----> force_relink
+      -> IncrementalLinkCoordinator
+      -> one target executable
+```
+
+`MsvcIncrementalTargetCoordinator` currently schedules translation units sequentially. This is deliberate: correctness and stable target semantics are established before parallel scheduling is introduced. Parallel compilation can later replace the scheduling strategy without moving compiler/linker policy into the CLI.
+
 Ordinary cache-load/save failures are surfaced as warnings and conservatively rebuild/relink. Compiler/linker execution failures are build errors.
 
 ## Process boundary
@@ -162,31 +207,31 @@ forced portable --> portable only
 forced VS -------> Visual Studio only
 ```
 
-### Portable track
-
-The locator selects the latest VC Tools and Windows Kit version directories, resolves `cl.exe`, `link.exe`, and `lib.exe` for the requested host/target architecture, creates PATH/INCLUDE/LIB overrides, and stamps the compiler binary for cache identity. Discovery itself launches no subprocess.
-
-### Visual Studio track
-
-The locator first tries the standard `vswhere.exe` location, then known VS 2026/2022 edition directories as a fallback. After finding `vcvarsall.bat`, it captures the initialized environment through an isolated temporary batch wrapper and `cmd.exe /u`, so the environment dump is parsed as UTF-16 rather than depending on the active console code page.
-
-The captured environment is returned as structured name/value overrides; the locator does not mutate MQB's own process environment. `VCToolsInstallDir` is used to resolve the selected compiler/linker/librarian binaries.
+The portable track resolves VC Tools and Windows Kit layout without launching a subprocess. The Visual Studio track uses `vswhere`/fallback discovery and captures `vcvarsall.bat` output through an isolated UTF-16 environment dump. The captured environment is returned as structured overrides rather than mutating MQB's own process environment.
 
 GitHub CI enables installed-MSVC integration tests explicitly; local tests keep those tests opt-in so a portable-only development machine is not forced to have a registered Visual Studio installation.
 
 ## Current CLI milestone
 
-`mqb.exe` currently supports one ordinary C++ translation unit (`.cpp`, `.cc`, `.cxx`) and produces collision-free internal artifacts under a source-local `.mqb/` directory:
+`mqb.exe` now supports an **explicit ordered set of ordinary C++ translation units** (`.cpp`, `.cc`, `.cxx`):
 
-```text
-.mqb/
-  obj/    <source filename>.obj
-  deps/   compiler dependency JSON
-  cache/  compile cache + link cache
-  bin/    <source filename>.exe
+```powershell
+mqb main.cpp src/utils.cpp a/helper.cpp b/helper.cpp
 ```
 
-The CLI composes the incremental compile coordinator followed by the incremental link coordinator. Warm builds can therefore skip both compiler and linker independently, while a fresh compile explicitly forces relink even when filesystem timestamps are ambiguous.
+The first source currently supplies the default target name (`main.cpp` -> `main.exe`). Every source is incrementally validated independently; only stale TUs compile, and all resulting objects feed one independently cached link action.
+
+The real VS2026 E2E suite verifies:
+
+- cold multi-TU compile + link + executable launch;
+- warm build with zero compiler and linker actions;
+- same-basename sources in different directories have distinct artifacts;
+- a header private to one TU rebuilds only that TU;
+- any rebuilt TU explicitly forces relink;
+- the resulting executable behavior changes after the partial rebuild;
+- Debug -> Release invalidates compile and link recipes without source edits.
+
+Not yet exposed in the C++ CLI: automatic source discovery, `-o/--output`, `--run`, user libraries/library paths, project config files, and C++ Modules.
 
 ## Migration sequence
 
@@ -196,10 +241,11 @@ The CLI composes the incremental compile coordinator followed by the incremental
 4. **MSVC toolchain backend** — portable discovery plus `vswhere/vcvarsall` environment capture. ✅
 5. **Ordinary single TU** — typed compiler arguments, `/sourceDependencies`, cache persistence, real incremental CLI. ✅
 6. **Link state** — independent linker identity/signature/cache/planning/backend/orchestration and executable production. ✅
-7. **Multi-TU and target CLI** — source discovery, multiple objects, output naming, libraries, run mode, project-level artifact layout.
-8. **Modules** — P1689 `/scanDependencies`, module graph, IFC/object artifacts, `import std`.
-9. **Parity** — run PowerShell and C++ against the same E2E fixtures.
-10. **Cutover** — make `mqb.exe` primary only after parity tests pass.
+7. **Explicit multi-TU target** — project artifact layout, ordered source set, per-TU incremental compile, single incremental link. ✅
+8. **Target UX and discovery** — `-o`, `--run`, libraries, project config, smart source discovery, then parallel compile scheduling.
+9. **Modules** — P1689 `/scanDependencies`, module graph, IFC/object artifacts, `import std`.
+10. **Parity** — run PowerShell and C++ against the same E2E fixtures.
+11. **Cutover** — make `mqb.exe` primary only after parity tests pass.
 
 ## Local build
 
