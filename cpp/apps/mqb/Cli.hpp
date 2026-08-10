@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -25,6 +26,7 @@ struct Options {
     msvc::ToolchainPreference toolchain_preference{msvc::ToolchainPreference::automatic};
     std::vector<std::filesystem::path> portable_roots;
     std::optional<bool> discovery_override;
+    std::optional<std::size_t> jobs;
     bool discover_sources{true};
     bool verbose{false};
     bool show_help{false};
