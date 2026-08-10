@@ -24,6 +24,7 @@ struct IncrementalCompileRequest {
     std::filesystem::path cache_file;
     std::filesystem::path source_dependencies_file;
     std::optional<std::filesystem::path> working_directory;
+    bool force_rebuild{false};
 };
 
 enum class IncrementalCompileWarningCode {
