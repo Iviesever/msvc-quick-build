@@ -42,6 +42,8 @@ int main() {
             expect(!parsed->configuration_override && !parsed->architecture_override
                        && !parsed->standard_override,
                    "built-in parser defaults must not masquerade as explicit CLI scalar overrides");
+            expect(!parsed->jobs,
+                   "compile job count should remain unset so main can choose hardware concurrency");
             expect(!parsed->build.output_name.has_value(),
                    "output name should remain unset by default");
             expect(!parsed->build.run_after_build,
@@ -92,6 +94,7 @@ int main() {
             "--std"sv,
             "latest"sv,
             "--x86"sv,
+            "-j4"sv,
             "--output"sv,
             "product"sv,
             "--run"sv,
@@ -130,6 +133,8 @@ int main() {
                    "parser keeps discovery policy enabled; main treats multi-source sets as explicit");
             expect(!parsed->discovery_override,
                    "multi-source parsing must not create a discovery override unless requested");
+            expect(parsed->jobs.has_value() && *parsed->jobs == 4,
+                   "attached -j form should preserve explicit compile job count");
             expect(parsed->build.output_name.has_value()
                        && *parsed->build.output_name == "product",
                    "output name should be parsed");
@@ -188,6 +193,8 @@ int main() {
             "--x64"sv,
             "--std"sv,
             "20"sv,
+            "--jobs"sv,
+            "2"sv,
         };
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value(), "explicit built-in-valued options should parse");
@@ -198,6 +205,8 @@ int main() {
                    "explicit --x64 must override a possible x86 project config");
             expect(parsed->standard_override == mqb::CppStandard::cpp20,
                    "explicit --std 20 must override project standard");
+            expect(parsed->jobs.has_value() && *parsed->jobs == 2,
+                   "separate --jobs value should parse");
         }
     }
 
@@ -205,6 +214,7 @@ int main() {
         const std::vector arguments{
             "main.cpp"sv,
             "--output=demo"sv,
+            "--jobs=3"sv,
             "--lib-path=vendor"sv,
             "--lib=foo"sv,
         };
@@ -213,6 +223,8 @@ int main() {
         if (parsed) {
             expect(parsed->build.output_name.has_value() && *parsed->build.output_name == "demo",
                    "attached long output value should be preserved");
+            expect(parsed->jobs.has_value() && *parsed->jobs == 3,
+                   "attached long jobs value should be preserved");
             expect(parsed->library_directories.size() == 1
                        && parsed->library_directories.front() == "vendor",
                    "attached long library path should be preserved");
@@ -222,17 +234,15 @@ int main() {
     }
 
     {
-        const std::vector arguments{"main.cpp"sv, "--run"sv, "--"sv, "--no-discover"sv};
+        const std::vector arguments{"main.cpp"sv, "--run"sv, "--"sv, "--jobs=9"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value(), "options after -- should become program arguments");
         if (parsed) {
-            expect(parsed->discover_sources,
-                   "discovery parsing must stop at --");
-            expect(!parsed->discovery_override,
-                   "option-looking child argv must not create a project override");
+            expect(!parsed->jobs,
+                   "option-looking child argv must not create compile job policy");
             expect(parsed->build.run_arguments.size() == 1
-                       && parsed->build.run_arguments.front() == "--no-discover",
-                   "option-looking argv after -- must be preserved verbatim");
+                       && parsed->build.run_arguments.front() == "--jobs=9",
+                   "job-looking argv after -- must be preserved verbatim");
         }
     }
 
@@ -246,6 +256,24 @@ int main() {
         const std::vector arguments{"main.cpp"sv, "-o"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(!parsed, "missing output value should be rejected");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--jobs"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "missing compile job count should be rejected");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "-j0"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "zero compile job count should be rejected");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--jobs=abc"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "non-numeric compile job count should be rejected");
     }
 
     {
