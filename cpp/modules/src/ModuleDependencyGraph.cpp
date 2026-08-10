@@ -153,9 +153,15 @@ ModuleDependencyGraphBuilder::build(const std::vector<ScannedModuleUnit>& units)
 
             if (provider->second == consumer_index) {
                 // A source may mention its own module identity in scan metadata.
-                // It does not create a useful build-order edge.
+                // It does not create a useful build-order edge or /reference.
                 continue;
             }
+
+            plan.resolved_dependencies.push_back(ResolvedModuleDependency{
+                .consumer_source = units[consumer_index].source,
+                .provider_source = units[provider->second].source,
+                .logical_name = required.logical_name,
+            });
 
             auto dependency = graph.add_dependency(
                 consumer_key,
