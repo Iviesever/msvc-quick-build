@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -25,6 +26,7 @@ struct IncrementalTargetRequest {
     CompilerOptions compiler_options;
     LinkOptions link_options;
     std::filesystem::path working_directory;
+    std::size_t max_parallel_compiles{1};
 };
 
 struct TargetCompileResult {
@@ -34,8 +36,12 @@ struct TargetCompileResult {
 
 enum class IncrementalTargetErrorCode {
     no_sources,
+    invalid_parallelism,
     duplicate_source,
     duplicate_object,
+    duplicate_dependencies,
+    duplicate_compile_cache,
+    scheduling_failed,
     compile_failed,
     link_failed,
 };
