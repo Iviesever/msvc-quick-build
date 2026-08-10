@@ -3,6 +3,7 @@ add_library(mqb_msvc STATIC
     src/MsvcCompiler.cpp
     src/MsvcLibraryResolver.cpp
     src/MsvcLinker.cpp
+    src/MsvcModuleDependencyScanner.cpp
     src/MsvcSourceDependenciesReader.cpp
     src/MsvcToolchainLocator.cpp
 )
@@ -15,6 +16,7 @@ target_include_directories(mqb_msvc
 target_link_libraries(mqb_msvc
     PUBLIC
         mqb_core
+        mqb_modules
         mqb_process
 )
 
