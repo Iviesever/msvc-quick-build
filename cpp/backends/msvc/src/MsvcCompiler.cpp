@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -80,6 +81,38 @@ void append_configuration_arguments(
     return {};
 }
 
+[[nodiscard]] std::expected<void, CompilerError> validate_module_contract(
+    const CompileInvocation& invocation) {
+    if (invocation.kind == TranslationUnitKind::module_interface) {
+        if (!invocation.module_interface_output
+            || invocation.module_interface_output->empty()) {
+            return std::unexpected(invalid_request(
+                "module interface compilation requires a non-empty IFC output path"));
+        }
+    } else if (invocation.module_interface_output) {
+        return std::unexpected(invalid_request(
+            "ordinary source compilation must not request an IFC output"));
+    }
+
+    std::unordered_set<std::string> logical_names;
+    logical_names.reserve(invocation.module_references.size());
+    for (const auto& reference : invocation.module_references) {
+        if (reference.logical_name.empty()) {
+            return std::unexpected(invalid_request(
+                "module reference logical name must not be empty"));
+        }
+        if (reference.interface_file.empty()) {
+            return std::unexpected(invalid_request(
+                "module reference IFC path must not be empty"));
+        }
+        if (!logical_names.emplace(reference.logical_name).second) {
+            return std::unexpected(invalid_request(
+                "duplicate module reference logical name '" + reference.logical_name + "'"));
+        }
+    }
+    return {};
+}
+
 } // namespace
 
 std::expected<std::vector<std::string>, CompilerError>
@@ -93,13 +126,18 @@ MsvcCompiler::build_arguments(const CompileInvocation& invocation) {
     if (invocation.source_dependencies && invocation.source_dependencies->empty()) {
         return std::unexpected(invalid_request("sourceDependencies output path is empty"));
     }
+    auto module_contract = validate_module_contract(invocation);
+    if (!module_contract) {
+        return std::unexpected(module_contract.error());
+    }
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        16
+        20
         + invocation.options.defines.size()
         + invocation.options.include_directories.size()
-        + invocation.options.additional_arguments.size());
+        + invocation.options.additional_arguments.size()
+        + (invocation.module_references.size() * 2));
 
     arguments.emplace_back("/nologo");
     arguments.emplace_back("/c");
@@ -135,13 +173,29 @@ MsvcCompiler::build_arguments(const CompileInvocation& invocation) {
         arguments.push_back(argument);
     }
 
+    // Module inputs and structured outputs are emitted after raw additional
+    // arguments so the BuildPlan remains authoritative over semantic routing.
+    if (invocation.kind == TranslationUnitKind::module_interface) {
+        arguments.emplace_back("/interface");
+        arguments.emplace_back("/TP");
+    }
+
+    for (const auto& reference : invocation.module_references) {
+        arguments.emplace_back("/reference");
+        arguments.push_back(
+            reference.logical_name + "=" + path_to_utf8(reference.interface_file));
+    }
+
+    if (invocation.module_interface_output) {
+        arguments.emplace_back("/ifcOutput");
+        arguments.push_back(path_to_utf8(*invocation.module_interface_output));
+    }
+
     if (invocation.source_dependencies) {
         arguments.emplace_back("/sourceDependencies");
         arguments.push_back(path_to_utf8(*invocation.source_dependencies));
     }
 
-    // Structured artifact routing is appended after raw additional arguments so
-    // a raw /Fo cannot silently redirect the object away from the BuildPlan.
     arguments.push_back("/Fo" + path_to_utf8(invocation.object));
     arguments.push_back(path_to_utf8(invocation.source));
     return arguments;
@@ -164,6 +218,14 @@ MsvcCompiler::compile(const CompileInvocation& invocation) const {
             "sourceDependencies");
         if (!prepared_dependencies) {
             return std::unexpected(prepared_dependencies.error());
+        }
+    }
+    if (invocation.module_interface_output) {
+        auto prepared_interface = prepare_parent_directory(
+            *invocation.module_interface_output,
+            "module interface");
+        if (!prepared_interface) {
+            return std::unexpected(prepared_interface.error());
         }
     }
 
