@@ -1,5 +1,6 @@
 add_library(mqb_orchestration STATIC
     src/MsvcIncrementalCompileCoordinator.cpp
+    src/MsvcIncrementalLinkCoordinator.cpp
 )
 
 target_include_directories(mqb_orchestration
