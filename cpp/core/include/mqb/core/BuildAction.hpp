@@ -18,6 +18,7 @@ struct CompileAction {
 struct LinkAction {
     std::vector<std::filesystem::path> objects;
     std::filesystem::path output;
+    std::vector<std::filesystem::path> libraries;
     std::vector<BuildReason> reasons;
 };
 

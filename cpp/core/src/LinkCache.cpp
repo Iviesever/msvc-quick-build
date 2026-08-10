@@ -53,6 +53,23 @@ void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
     return it == snapshots.end() ? nullptr : &*it;
 }
 
+void validate_freshness(
+    const std::span<const std::filesystem::path> inputs,
+    const std::span<const FileSnapshot> snapshots,
+    const FileSnapshot& output_snapshot,
+    std::vector<BuildReason>& reasons) {
+    for (const auto& input : inputs) {
+        const auto* snapshot = find_snapshot(snapshots, input);
+        if (snapshot == nullptr || !snapshot->exists) {
+            add_reason(reasons, BuildReason::link_inputs_changed);
+            continue;
+        }
+        if (output_snapshot.exists && snapshot->modified > output_snapshot.modified) {
+            add_reason(reasons, BuildReason::link_inputs_changed);
+        }
+    }
+}
+
 } // namespace
 
 LinkCacheValidation LinkCacheValidator::validate(
@@ -63,6 +80,30 @@ LinkCacheValidation LinkCacheValidator::validate(
     const std::optional<LinkCacheEntry>& cached_entry,
     const FileSnapshot& output_snapshot,
     const std::span<const FileSnapshot> object_snapshots,
+    const bool force_relink) {
+    return validate(
+        current_objects,
+        std::span<const std::filesystem::path>{},
+        current_output,
+        current_linker,
+        current_options,
+        cached_entry,
+        output_snapshot,
+        object_snapshots,
+        std::span<const FileSnapshot>{},
+        force_relink);
+}
+
+LinkCacheValidation LinkCacheValidator::validate(
+    const std::span<const std::filesystem::path> current_objects,
+    const std::span<const std::filesystem::path> current_libraries,
+    const std::filesystem::path& current_output,
+    const LinkerIdentity& current_linker,
+    const LinkOptions& current_options,
+    const std::optional<LinkCacheEntry>& cached_entry,
+    const FileSnapshot& output_snapshot,
+    const std::span<const FileSnapshot> object_snapshots,
+    const std::span<const FileSnapshot> library_snapshots,
     const bool force_relink) {
     LinkCacheValidation result;
 
@@ -84,13 +125,16 @@ LinkCacheValidation LinkCacheValidator::validate(
         add_reason(result.reasons, BuildReason::toolchain_changed);
     }
 
-    const bool inputs_match = same_paths(cached.objects, current_objects);
+    const bool object_inputs_match = same_paths(cached.objects, current_objects);
+    const bool library_inputs_match = same_paths(cached.libraries, current_libraries);
+    const bool inputs_match = object_inputs_match && library_inputs_match;
     if (!inputs_match) {
         add_reason(result.reasons, BuildReason::link_inputs_changed);
     }
 
     const auto current_signature = BuildSignature::for_link(
         current_objects,
+        current_libraries,
         current_output,
         current_linker,
         current_options);
@@ -106,16 +150,8 @@ LinkCacheValidation LinkCacheValidator::validate(
         add_reason(result.reasons, BuildReason::missing_output);
     }
 
-    for (const auto& object : current_objects) {
-        const auto* snapshot = find_snapshot(object_snapshots, object);
-        if (snapshot == nullptr || !snapshot->exists) {
-            add_reason(result.reasons, BuildReason::link_inputs_changed);
-            continue;
-        }
-        if (output_snapshot.exists && snapshot->modified > output_snapshot.modified) {
-            add_reason(result.reasons, BuildReason::link_inputs_changed);
-        }
-    }
+    validate_freshness(current_objects, object_snapshots, output_snapshot, result.reasons);
+    validate_freshness(current_libraries, library_snapshots, output_snapshot, result.reasons);
 
     return result;
 }

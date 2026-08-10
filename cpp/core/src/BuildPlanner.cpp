@@ -74,6 +74,13 @@ std::expected<BuildPlan, BuildPlannerError> BuildPlanner::plan_link(
             });
         }
     }
+    for (const auto& library : item.libraries) {
+        if (library.empty()) {
+            return std::unexpected(BuildPlannerError{
+                .code = BuildPlannerErrorCode::missing_link_input,
+            });
+        }
+    }
     if (item.output.empty()) {
         return std::unexpected(BuildPlannerError{
             .code = BuildPlannerErrorCode::missing_link_output,
@@ -83,6 +90,7 @@ std::expected<BuildPlan, BuildPlannerError> BuildPlanner::plan_link(
     plan.actions.emplace_back(LinkAction{
         .objects = item.objects,
         .output = item.output,
+        .libraries = item.libraries,
         .reasons = item.cache_validation.reasons,
     });
     return plan;

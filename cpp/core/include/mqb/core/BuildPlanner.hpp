@@ -34,6 +34,7 @@ struct CompilePlanItem {
 struct LinkPlanItem {
     std::vector<std::filesystem::path> objects;
     std::filesystem::path output;
+    std::vector<std::filesystem::path> libraries;
     LinkCacheValidation cache_validation;
 };
 
