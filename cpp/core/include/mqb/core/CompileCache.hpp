@@ -20,7 +20,7 @@ struct CompileCacheEntry {
     TranslationUnitKind kind{TranslationUnitKind::source};
     ToolchainIdentity toolchain;
     BuildSignature signature;
-    Artifact object;
+    std::vector<Artifact> outputs;
     std::vector<std::filesystem::path> dependencies;
 };
 
