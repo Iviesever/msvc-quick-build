@@ -219,6 +219,37 @@ int main() {
     expect(runner.calls == 1,
            "warm cache hit should not invoke the compiler again");
 
+    auto forced_request = request;
+    forced_request.force_rebuild = true;
+    const auto forced = coordinator.run(forced_request);
+    expect(forced.has_value(), "explicit rebuild request should compile successfully");
+    if (forced) {
+        expect(forced->compiled,
+               "explicit rebuild should execute even when the cache was otherwise reusable");
+        expect(forced->plan.actions.size() == 1,
+               "explicit rebuild should produce exactly one compile action");
+        expect(has_reason(forced->validation, mqb::BuildReason::explicit_rebuild),
+               "explicit rebuild should be visible as explicit_rebuild");
+        expect(!has_reason(forced->validation, mqb::BuildReason::compiler_options_changed),
+               "explicit rebuild must not masquerade as a compile-signature change");
+    }
+    expect(runner.calls == 2,
+           "explicit rebuild should invoke the compiler exactly once");
+
+    const auto warm_after_force = coordinator.run(request);
+    expect(warm_after_force.has_value(),
+           "ordinary warm check after an explicit rebuild should succeed");
+    if (warm_after_force) {
+        expect(!warm_after_force->compiled,
+               "explicit rebuild must not poison the following ordinary cache hit");
+        expect(warm_after_force->validation.reusable(),
+               "cache should be reusable immediately after a successful explicit rebuild");
+        expect(!has_reason(warm_after_force->validation, mqb::BuildReason::explicit_rebuild),
+               "explicit rebuild reason must be request-local rather than persisted");
+    }
+    expect(runner.calls == 2,
+           "post-force ordinary warm hit should not invoke the compiler");
+
     write_text(cache_file, "not an MQB cache file");
     const auto corrupt = coordinator.run(request);
     expect(corrupt.has_value(),
@@ -233,7 +264,7 @@ int main() {
                    mqb::orchestration::IncrementalCompileWarningCode::cache_load_failed),
                "corrupt metadata should remain visible as a cache_load_failed warning");
     }
-    expect(runner.calls == 2,
+    expect(runner.calls == 3,
            "corrupt metadata should invoke the compiler exactly once more");
 
     auto release_request = request;
@@ -248,7 +279,7 @@ int main() {
                    mqb::BuildReason::compiler_options_changed),
                "configuration transition should report compiler_options_changed");
     }
-    expect(runner.calls == 3,
+    expect(runner.calls == 4,
            "configuration transition should invoke the compiler once");
 
     std::error_code ignored;
@@ -264,7 +295,7 @@ int main() {
         expect(failed.error().compile_error.has_value(),
                "coordinator should preserve the backend compile error");
     }
-    expect(runner.calls == 4,
+    expect(runner.calls == 5,
            "failed cold rebuild should still correspond to one compiler launch");
 
     if (failures != 0) {

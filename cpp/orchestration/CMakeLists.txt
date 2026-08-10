@@ -3,6 +3,8 @@ add_library(mqb_orchestration STATIC
     src/MsvcIncrementalCompileCoordinator.cpp
     src/MsvcIncrementalLinkCoordinator.cpp
     src/MsvcIncrementalTargetCoordinator.cpp
+    src/MsvcModuleCompileCoordinator.cpp
+    src/MsvcModuleTargetCoordinator.cpp
 )
 
 target_include_directories(mqb_orchestration
@@ -13,6 +15,7 @@ target_include_directories(mqb_orchestration
 target_link_libraries(mqb_orchestration
     PUBLIC
         mqb_core
+        mqb_modules
         mqb_msvc
         mqb_process
 )

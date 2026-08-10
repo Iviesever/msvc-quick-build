@@ -10,6 +10,8 @@ namespace mqb {
 struct SourceArtifacts {
     std::filesystem::path object;
     std::filesystem::path dependencies;
+    std::filesystem::path module_dependencies;
+    std::filesystem::path module_interface;
     std::filesystem::path compile_cache;
 };
 

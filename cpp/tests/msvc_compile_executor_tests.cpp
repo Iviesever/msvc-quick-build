@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <expected>
 #include <filesystem>
@@ -84,6 +85,25 @@ void write_dependencies(
         + json_escape(path_to_utf8(include))
         + "\"]}}";
     write_text(file, json);
+}
+
+[[nodiscard]] bool has_argument(
+    const mqb::process::ProcessSpec& spec,
+    const std::string_view expected) {
+    return std::find(spec.arguments.begin(), spec.arguments.end(), expected)
+        != spec.arguments.end();
+}
+
+[[nodiscard]] bool has_dependency(
+    const mqb::CompileCacheEntry& entry,
+    const fs::path& expected) {
+    const auto normalized = expected.lexically_normal();
+    return std::find_if(
+        entry.dependencies.begin(),
+        entry.dependencies.end(),
+        [&normalized](const fs::path& value) {
+            return value.lexically_normal() == normalized;
+        }) != entry.dependencies.end();
 }
 
 class RecordingRunner final : public mqb::process::ProcessRunner {
@@ -175,6 +195,8 @@ int main() {
                "cache entry should persist the compile recipe signature");
         expect(runner.last_spec.executable == toolchain.identity.compiler,
                "executor should invoke the discovered compiler directly");
+        expect(!has_argument(runner.last_spec, "/interface"),
+               "ordinary source execution should not accidentally enter module-interface mode");
     }
 
     const fs::path other_source = fixture.path() / "src" / "other.cpp";
@@ -209,6 +231,131 @@ int main() {
         expect(compiler_failure.error().compiler_error.has_value(),
                "executor should preserve the lower-level compiler error");
     }
+
+    runner.next_result = mqb::process::ProcessResult{
+        .exit_code = 0,
+        .stdout_text = "compiled-module",
+    };
+
+    const fs::path module_source = fixture.path() / "modules" / "math.ixx";
+    const fs::path module_object = fixture.path() / "cache" / "math.obj";
+    const fs::path module_ifc = fixture.path() / "cache" / "math.ifc";
+    const fs::path module_dependencies = fixture.path() / "cache" / "math.deps.json";
+    write_text(module_source, "export module math;\n");
+    write_text(module_object, "fake-module-object");
+    write_text(module_ifc, "fake-ifc");
+    write_dependencies(module_dependencies, module_source, header);
+
+    mqb::TranslationUnit module_unit;
+    module_unit.source = module_source;
+    module_unit.kind = mqb::TranslationUnitKind::module_interface;
+    module_unit.outputs = {
+        mqb::Artifact{module_object, mqb::ArtifactKind::object},
+        mqb::Artifact{module_ifc, mqb::ArtifactKind::module_interface},
+    };
+    mqb::msvc::CompileExecutionRequest module_request{
+        .unit = module_unit,
+        .options = options,
+        .source_dependencies_file = module_dependencies,
+        .working_directory = fixture.path(),
+    };
+
+    const auto module_result = executor.execute(module_request);
+    expect(module_result.has_value(),
+           "module-interface execution should preserve object, IFC, and dependency metadata");
+    if (module_result) {
+        expect(module_result->cache_entry.kind == mqb::TranslationUnitKind::module_interface,
+               "provider cache entry should preserve module-interface kind");
+        expect(has_argument(runner.last_spec, "/interface")
+                   && has_argument(runner.last_spec, "/ifcOutput")
+                   && has_argument(runner.last_spec, path_to_utf8(module_ifc)),
+               "executor should route the planned IFC through the compiler invocation");
+        expect(!has_dependency(module_result->cache_entry, module_ifc),
+               "provider must not treat its own generated IFC as an input dependency");
+    }
+
+    fs::remove(module_ifc);
+    const auto missing_ifc = executor.execute(module_request);
+    expect(!missing_ifc.has_value(), "compiler success without planned IFC must fail closed");
+    if (!missing_ifc) {
+        expect(missing_ifc.error().code == mqb::msvc::CompileExecutorErrorCode::output_missing,
+               "missing planned IFC should report output_missing");
+    }
+    write_text(module_ifc, "fake-ifc");
+
+    const fs::path consumer_source = fixture.path() / "src" / "consumer.cpp";
+    const fs::path consumer_object = fixture.path() / "cache" / "consumer.obj";
+    const fs::path consumer_dependencies = fixture.path() / "cache" / "consumer.deps.json";
+    write_text(consumer_source, "import math;\nint use_math();\n");
+    write_text(consumer_object, "fake-consumer-object");
+    write_dependencies(consumer_dependencies, consumer_source, header);
+
+    mqb::TranslationUnit consumer_unit;
+    consumer_unit.source = consumer_source;
+    consumer_unit.kind = mqb::TranslationUnitKind::source;
+    consumer_unit.module_references = {
+        mqb::ModuleReference{
+            .logical_name = "math",
+            .interface_file = module_ifc,
+        },
+    };
+    consumer_unit.outputs = {
+        mqb::Artifact{consumer_object, mqb::ArtifactKind::object},
+    };
+    mqb::msvc::CompileExecutionRequest consumer_request{
+        .unit = consumer_unit,
+        .options = options,
+        .source_dependencies_file = consumer_dependencies,
+        .working_directory = fixture.path(),
+    };
+
+    const auto consumer_result = executor.execute(consumer_request);
+    expect(consumer_result.has_value(),
+           "ordinary consumer should execute with typed module references");
+    if (consumer_result) {
+        const std::string reference = "math=" + path_to_utf8(module_ifc);
+        expect(has_argument(runner.last_spec, "/reference")
+                   && has_argument(runner.last_spec, reference),
+               "consumer compile argv should contain logical-name to IFC mapping");
+        expect(has_dependency(consumer_result->cache_entry, header),
+               "consumer cache should retain compiler-discovered headers");
+        expect(has_dependency(consumer_result->cache_entry, module_ifc),
+               "consumer cache should persist imported IFC as a freshness dependency");
+        expect(consumer_result->cache_entry.dependencies.size() == 2,
+               "consumer cache should store header and IFC without unrelated artifacts");
+    }
+
+    const int calls_before_invalid_contracts = runner.calls;
+    auto missing_ifc_unit = module_unit;
+    missing_ifc_unit.outputs.pop_back();
+    auto missing_ifc_request = module_request;
+    missing_ifc_request.unit = missing_ifc_unit;
+    const auto invalid_module = executor.execute(missing_ifc_request);
+    expect(!invalid_module
+               && invalid_module.error().code == mqb::msvc::CompileExecutorErrorCode::invalid_request,
+           "module interface without planned IFC should fail before launching compiler");
+
+    auto ordinary_with_ifc = consumer_unit;
+    ordinary_with_ifc.outputs.push_back(
+        mqb::Artifact{module_ifc, mqb::ArtifactKind::module_interface});
+    auto ordinary_with_ifc_request = consumer_request;
+    ordinary_with_ifc_request.unit = ordinary_with_ifc;
+    const auto invalid_ordinary = executor.execute(ordinary_with_ifc_request);
+    expect(!invalid_ordinary
+               && invalid_ordinary.error().code == mqb::msvc::CompileExecutorErrorCode::invalid_request,
+           "ordinary source with planned IFC output should fail before compiler launch");
+
+    auto bad_output_unit = consumer_unit;
+    bad_output_unit.outputs.push_back(
+        mqb::Artifact{fixture.path() / "unexpected.exe", mqb::ArtifactKind::executable});
+    auto bad_output_request = consumer_request;
+    bad_output_request.unit = bad_output_unit;
+    const auto invalid_output = executor.execute(bad_output_request);
+    expect(!invalid_output
+               && invalid_output.error().code == mqb::msvc::CompileExecutorErrorCode::invalid_request,
+           "compile plan must reject executable/link artifacts in TU outputs");
+    expect(runner.calls == calls_before_invalid_contracts,
+           "invalid module/output contracts must not launch the compiler");
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

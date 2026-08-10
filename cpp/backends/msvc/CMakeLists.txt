@@ -3,6 +3,7 @@ add_library(mqb_msvc STATIC
     src/MsvcCompiler.cpp
     src/MsvcLibraryResolver.cpp
     src/MsvcLinker.cpp
+    src/MsvcModuleDependencyScanner.cpp
     src/MsvcSourceDependenciesReader.cpp
     src/MsvcToolchainLocator.cpp
 )
@@ -15,6 +16,7 @@ target_include_directories(mqb_msvc
 target_link_libraries(mqb_msvc
     PUBLIC
         mqb_core
+        mqb_modules
         mqb_process
 )
 
@@ -24,4 +26,8 @@ if(MSVC)
     target_compile_options(mqb_msvc PRIVATE /W4 /permissive-)
 else()
     target_compile_options(mqb_msvc PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(MQB_BUILD_TESTS)
+    add_subdirectory(tests)
 endif()

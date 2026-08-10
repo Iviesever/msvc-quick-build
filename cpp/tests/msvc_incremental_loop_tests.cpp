@@ -91,6 +91,16 @@ void write_text(const fs::path& path, const std::string_view text) {
     return snapshots;
 }
 
+[[nodiscard]] std::vector<mqb::FileSnapshot> snapshot_outputs(
+    const mqb::TranslationUnit& unit) {
+    std::vector<mqb::FileSnapshot> snapshots;
+    snapshots.reserve(unit.outputs.size());
+    for (const auto& output : unit.outputs) {
+        snapshots.push_back(snapshot(output.path));
+    }
+    return snapshots;
+}
+
 [[nodiscard]] bool has_reason(
     const mqb::CompileCacheValidation& validation,
     const mqb::BuildReason reason) {
@@ -115,7 +125,7 @@ void write_text(const fs::path& path, const std::string_view text) {
     const mqb::CompilerOptions& options,
     const std::optional<mqb::CompileCacheEntry>& cached) {
     const auto source_snapshot = snapshot(unit.source);
-    const auto object_snapshot = snapshot(unit.outputs.front().path);
+    const auto output_snapshots = snapshot_outputs(unit);
     const std::vector<mqb::FileSnapshot> dependency_snapshots = cached
         ? snapshot_all(cached->dependencies)
         : std::vector<mqb::FileSnapshot>{};
@@ -126,7 +136,7 @@ void write_text(const fs::path& path, const std::string_view text) {
         options,
         cached,
         source_snapshot,
-        object_snapshot,
+        output_snapshots,
         dependency_snapshots);
 }
 

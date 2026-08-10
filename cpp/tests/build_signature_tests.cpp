@@ -108,8 +108,48 @@ int main() {
 
     auto module_unit = unit;
     module_unit.kind = mqb::TranslationUnitKind::module_interface;
-    expect(mqb::BuildSignature::for_compile(module_unit, toolchain, options) != baseline,
-           "translation-unit kind should participate in the signature");
+    module_unit.outputs.push_back(mqb::Artifact{
+        .path = "build/ifc/main.ifc",
+        .kind = mqb::ArtifactKind::module_interface,
+    });
+    const auto module_baseline = mqb::BuildSignature::for_compile(module_unit, toolchain, options);
+    expect(module_baseline != baseline,
+           "translation-unit kind and module output state should participate in the signature");
+
+    auto moved_ifc = module_unit;
+    moved_ifc.outputs.back().path = "another-ifc/main.ifc";
+    expect(mqb::BuildSignature::for_compile(moved_ifc, toolchain, options) != module_baseline,
+           "planned compiled-module output path should participate in provider identity");
+
+    auto consumer = unit;
+    consumer.module_references = {
+        mqb::ModuleReference{.logical_name = "math", .interface_file = "ifc/math.ifc"},
+    };
+    const auto consumer_baseline = mqb::BuildSignature::for_compile(consumer, toolchain, options);
+    expect(consumer_baseline != baseline,
+           "module references should participate in consumer recipe identity");
+
+    auto renamed_reference = consumer;
+    renamed_reference.module_references[0].logical_name = "math2";
+    expect(mqb::BuildSignature::for_compile(renamed_reference, toolchain, options)
+               != consumer_baseline,
+           "module logical-name mapping should participate in consumer identity");
+
+    auto moved_reference = consumer;
+    moved_reference.module_references[0].interface_file = "ifc/other-math.ifc";
+    expect(mqb::BuildSignature::for_compile(moved_reference, toolchain, options)
+               != consumer_baseline,
+           "referenced IFC path should participate in consumer identity");
+
+    auto reordered_references = consumer;
+    reordered_references.module_references.push_back(
+        mqb::ModuleReference{.logical_name = "stats", .interface_file = "ifc/stats.ifc"});
+    const auto two_references = mqb::BuildSignature::for_compile(
+        reordered_references, toolchain, options);
+    std::swap(reordered_references.module_references[0], reordered_references.module_references[1]);
+    expect(mqb::BuildSignature::for_compile(reordered_references, toolchain, options)
+               != two_references,
+           "ordered module-reference routing should be stable build identity");
 
     auto dependency_only_change = unit;
     dependency_only_change.dependencies.emplace_back("include/transitive.hpp");
@@ -119,7 +159,7 @@ int main() {
     auto output_only_change = unit;
     output_only_change.outputs.front().path = std::filesystem::path{"another-cache/main.obj"};
     expect(mqb::BuildSignature::for_compile(output_only_change, toolchain, options) == baseline,
-           "artifact placement should not change compiler recipe identity");
+           "ordinary object placement should not change compiler recipe identity");
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

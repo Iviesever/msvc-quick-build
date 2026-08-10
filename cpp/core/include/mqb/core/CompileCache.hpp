@@ -40,7 +40,7 @@ public:
         const CompilerOptions& current_options,
         const std::optional<CompileCacheEntry>& cached_entry,
         const FileSnapshot& source_snapshot,
-        const FileSnapshot& object_snapshot,
+        std::span<const FileSnapshot> output_snapshots,
         std::span<const FileSnapshot> dependency_snapshots);
 };
 

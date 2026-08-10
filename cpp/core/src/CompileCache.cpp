@@ -42,6 +42,18 @@ void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
     return it == snapshots.end() ? nullptr : &*it;
 }
 
+[[nodiscard]] const Artifact* find_artifact(
+    const TranslationUnit& unit,
+    const ArtifactKind kind) {
+    const auto it = std::find_if(
+        unit.outputs.begin(),
+        unit.outputs.end(),
+        [kind](const Artifact& artifact) {
+            return artifact.kind == kind;
+        });
+    return it == unit.outputs.end() ? nullptr : &*it;
+}
+
 } // namespace
 
 CompileCacheValidation CompileCacheValidator::validate(
@@ -50,15 +62,27 @@ CompileCacheValidation CompileCacheValidator::validate(
     const CompilerOptions& current_options,
     const std::optional<CompileCacheEntry>& cached_entry,
     const FileSnapshot& source_snapshot,
-    const FileSnapshot& object_snapshot,
+    const std::span<const FileSnapshot> output_snapshots,
     const std::span<const FileSnapshot> dependency_snapshots) {
     CompileCacheValidation result;
 
+    const Artifact* current_object = find_artifact(current_unit, ArtifactKind::object);
+    const FileSnapshot* object_snapshot = current_object == nullptr
+        ? nullptr
+        : find_snapshot(output_snapshots, current_object->path);
+
+    const auto validate_outputs = [&] {
+        for (const auto& output : current_unit.outputs) {
+            const auto* snapshot = find_snapshot(output_snapshots, output.path);
+            if (snapshot == nullptr || !snapshot->exists) {
+                add_reason(result.reasons, BuildReason::missing_output);
+            }
+        }
+    };
+
     if (!cached_entry) {
         add_reason(result.reasons, BuildReason::missing_cache_entry);
-        if (!object_snapshot.exists) {
-            add_reason(result.reasons, BuildReason::missing_output);
-        }
+        validate_outputs();
         return result;
     }
 
@@ -82,13 +106,18 @@ CompileCacheValidation CompileCacheValidator::validate(
         add_reason(result.reasons, BuildReason::compiler_options_changed);
     }
 
-    if (!object_snapshot.exists) {
+    if (current_object == nullptr
+        || !same_path(cached.object.path, current_object->path)
+        || cached.object.kind != ArtifactKind::object) {
         add_reason(result.reasons, BuildReason::missing_output);
     }
+    validate_outputs();
 
     if (!source_snapshot.exists) {
         add_reason(result.reasons, BuildReason::source_changed);
-    } else if (object_snapshot.exists && source_snapshot.modified > object_snapshot.modified) {
+    } else if (object_snapshot != nullptr
+               && object_snapshot->exists
+               && source_snapshot.modified > object_snapshot->modified) {
         add_reason(result.reasons, BuildReason::source_changed);
     }
 
@@ -99,7 +128,9 @@ CompileCacheValidation CompileCacheValidator::validate(
             continue;
         }
 
-        if (object_snapshot.exists && snapshot->modified > object_snapshot.modified) {
+        if (object_snapshot != nullptr
+            && object_snapshot->exists
+            && snapshot->modified > object_snapshot->modified) {
             add_reason(result.reasons, BuildReason::dependency_changed);
         }
     }

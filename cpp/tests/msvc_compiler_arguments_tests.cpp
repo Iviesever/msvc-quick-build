@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/TranslationUnit.hpp"
 #include "mqb/msvc/MsvcCompiler.hpp"
 
 namespace {
@@ -64,6 +65,8 @@ int main() {
         expect(contains(*result, "/Iinclude"), "include path should become one /I argv element");
         expect(contains(*result, "/Ivendor include"), "include path with spaces should remain one argv element");
         expect(contains(*result, "/sourceDependencies"), "dependency output should enable /sourceDependencies");
+        expect(!contains(*result, "/interface") && !contains(*result, "/ifcOutput"),
+               "ordinary source compilation should not emit module-interface switches");
 
         expect(result->size() >= 2, "argv should end with object routing and source");
         if (result->size() >= 2) {
@@ -108,6 +111,78 @@ int main() {
                "dependency switch should be omitted when no output path was requested");
     }
 
+    {
+        auto module = invocation;
+        module.source = "modules/math.ixx";
+        module.object = "build/modules/math.ixx.obj";
+        module.source_dependencies = "deps/modules/math.ixx.json";
+        module.kind = mqb::TranslationUnitKind::module_interface;
+        module.module_interface_output = "ifc/modules/math.ixx.ifc";
+        module.module_references = {
+            mqb::msvc::ModuleReference{
+                .logical_name = "base",
+                .interface_file = "ifc/base.ixx.ifc",
+            },
+        };
+        module.options.additional_arguments = {
+            "/ifcOutput",
+            "ignored.ifc",
+            "/Foignored-module.obj",
+        };
+
+        const auto module_result = mqb::msvc::MsvcCompiler::build_arguments(module);
+        expect(module_result.has_value(), "module interface invocation should produce argv");
+        if (module_result) {
+            expect(contains(*module_result, "/interface") && contains(*module_result, "/TP"),
+                   "module interface should use explicit /interface and /TP mode");
+            expect(contains(*module_result, "/reference"),
+                   "module imports should use MSVC /reference mapping");
+            expect(contains(*module_result, "base=ifc/base.ixx.ifc"),
+                   "module reference should preserve logical-name to IFC mapping");
+            expect(contains(*module_result, "/ifcOutput"),
+                   "module interface should route its IFC explicitly");
+            expect(contains(*module_result, "ifc/modules/math.ixx.ifc"),
+                   "structured IFC path should be present");
+
+            const auto raw_ifc = std::find(module_result->begin(), module_result->end(), "ignored.ifc");
+            const auto planned_ifc = std::find(
+                module_result->begin(), module_result->end(), "ifc/modules/math.ixx.ifc");
+            const auto raw_fo = std::find(
+                module_result->begin(), module_result->end(), "/Foignored-module.obj");
+            const auto planned_fo = std::find(
+                module_result->begin(), module_result->end(), "/Fobuild/modules/math.ixx.obj");
+            expect(raw_ifc != module_result->end()
+                       && planned_ifc != module_result->end()
+                       && raw_ifc < planned_ifc,
+                   "structured IFC routing should follow raw /ifcOutput arguments");
+            expect(raw_fo != module_result->end()
+                       && planned_fo != module_result->end()
+                       && raw_fo < planned_fo,
+                   "structured module object routing should follow raw /Fo arguments");
+            expect(module_result->back() == "modules/math.ixx",
+                   "module source should remain the final argv element");
+        }
+    }
+
+    {
+        auto consumer = invocation;
+        consumer.module_references = {
+            mqb::msvc::ModuleReference{
+                .logical_name = "math",
+                .interface_file = "ifc/math.ixx.ifc",
+            },
+        };
+        consumer.options.additional_arguments.clear();
+        auto consumer_result = mqb::msvc::MsvcCompiler::build_arguments(consumer);
+        expect(consumer_result.has_value(), "ordinary source may consume named module IFC references");
+        if (consumer_result) {
+            expect(!contains(*consumer_result, "/interface") && !contains(*consumer_result, "/ifcOutput"),
+                   "module-consuming ordinary source must remain an ordinary compile");
+            expect(contains(*consumer_result, "math=ifc/math.ixx.ifc"),
+                   "ordinary consumer should map imported module name to IFC path");
+        }
+    }
+
     auto invalid = invocation;
     invalid.source.clear();
     const auto invalid_result = mqb::msvc::MsvcCompiler::build_arguments(invalid);
@@ -115,6 +190,47 @@ int main() {
     if (!invalid_result) {
         expect(invalid_result.error().code == mqb::msvc::CompilerErrorCode::invalid_request,
                "invalid invocation should report invalid_request");
+    }
+
+    {
+        auto missing_ifc = invocation;
+        missing_ifc.kind = mqb::TranslationUnitKind::module_interface;
+        auto invalid_module = mqb::msvc::MsvcCompiler::build_arguments(missing_ifc);
+        expect(!invalid_module
+                   && invalid_module.error().code == mqb::msvc::CompilerErrorCode::invalid_request,
+               "module interface without IFC output should fail before launching cl.exe");
+    }
+
+    {
+        auto ordinary_ifc = invocation;
+        ordinary_ifc.module_interface_output = "unexpected.ifc";
+        auto invalid_ordinary = mqb::msvc::MsvcCompiler::build_arguments(ordinary_ifc);
+        expect(!invalid_ordinary
+                   && invalid_ordinary.error().code == mqb::msvc::CompilerErrorCode::invalid_request,
+               "ordinary source must not request an IFC output");
+    }
+
+    {
+        auto duplicate_reference = invocation;
+        duplicate_reference.module_references = {
+            mqb::msvc::ModuleReference{.logical_name = "M", .interface_file = "one.ifc"},
+            mqb::msvc::ModuleReference{.logical_name = "M", .interface_file = "two.ifc"},
+        };
+        auto invalid_reference = mqb::msvc::MsvcCompiler::build_arguments(duplicate_reference);
+        expect(!invalid_reference
+                   && invalid_reference.error().code == mqb::msvc::CompilerErrorCode::invalid_request,
+               "duplicate logical module references should fail closed");
+    }
+
+    {
+        auto empty_reference = invocation;
+        empty_reference.module_references = {
+            mqb::msvc::ModuleReference{.logical_name = "", .interface_file = "one.ifc"},
+        };
+        auto invalid_reference = mqb::msvc::MsvcCompiler::build_arguments(empty_reference);
+        expect(!invalid_reference
+                   && invalid_reference.error().code == mqb::msvc::CompilerErrorCode::invalid_request,
+               "empty logical module reference should fail validation");
     }
 
     if (failures != 0) {
