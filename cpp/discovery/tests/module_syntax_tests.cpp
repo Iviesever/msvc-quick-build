@@ -91,6 +91,18 @@ int main() {
 
     {
         const auto syntax = ModuleSyntaxParser::parse(
+            "int prior_code = 0; /* crosses a physical line\n"
+            "and ends before a directive */ #define FAKE import macro.after_comment;\n"
+            "export module real;\n"
+            "import actual;\n");
+        expect(syntax.declared_module == "real",
+               "a multiline block comment must reset preprocessing-line state");
+        expect(syntax.imported_modules == std::vector<std::string>({"actual"}),
+               "directive text after a multiline block comment must remain ignored");
+    }
+
+    {
+        const auto syntax = ModuleSyntaxParser::parse(
             "export module app;\n"
             "import dep;\n"
             "import dep;\n"

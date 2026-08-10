@@ -163,7 +163,18 @@ struct Token {
         }
         if (ch == '/' && next == '*') {
             const std::size_t close = text.find("*/", index + 2);
-            index = close == std::string_view::npos ? text.size() : close + 2;
+            const std::size_t comment_end = close == std::string_view::npos
+                ? text.size()
+                : close + 2;
+            const std::string_view comment = text.substr(index, comment_end - index);
+            if (comment.find('\n') != std::string_view::npos
+                || comment.find('\r') != std::string_view::npos) {
+                // A block comment is preprocessing whitespace. If it crosses a
+                // physical line boundary, code before the comment must not make
+                // a following `#` look like mid-line code on the new line.
+                line_has_code = false;
+            }
+            index = comment_end;
             continue;
         }
 
