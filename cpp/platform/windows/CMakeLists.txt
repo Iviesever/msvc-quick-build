@@ -1,5 +1,6 @@
 add_library(mqb_platform_windows STATIC
     src/CommandLine.cpp
+    src/WindowsProcessRunner.cpp
 )
 
 target_include_directories(mqb_platform_windows

@@ -40,14 +40,6 @@ add_executable(mqb_process_model_tests
 target_link_libraries(mqb_process_model_tests PRIVATE mqb_process)
 target_compile_features(mqb_process_model_tests PRIVATE cxx_std_23)
 
-if(WIN32)
-    add_executable(mqb_windows_command_line_tests
-        windows_command_line_tests.cpp
-    )
-    target_link_libraries(mqb_windows_command_line_tests PRIVATE mqb_platform_windows shell32)
-    target_compile_features(mqb_windows_command_line_tests PRIVATE cxx_std_23)
-endif()
-
 set(MQB_TEST_TARGETS
     mqb_core_tests
     mqb_build_plan_tests
@@ -59,7 +51,28 @@ set(MQB_TEST_TARGETS
 )
 
 if(WIN32)
-    list(APPEND MQB_TEST_TARGETS mqb_windows_command_line_tests)
+    add_executable(mqb_windows_command_line_tests
+        windows_command_line_tests.cpp
+    )
+    target_link_libraries(mqb_windows_command_line_tests PRIVATE mqb_platform_windows shell32)
+    target_compile_features(mqb_windows_command_line_tests PRIVATE cxx_std_23)
+
+    add_executable(mqb_process_echo_helper
+        process_echo_helper.cpp
+    )
+    target_compile_features(mqb_process_echo_helper PRIVATE cxx_std_23)
+
+    add_executable(mqb_windows_process_runner_tests
+        windows_process_runner_tests.cpp
+    )
+    target_link_libraries(mqb_windows_process_runner_tests PRIVATE mqb_platform_windows)
+    target_compile_features(mqb_windows_process_runner_tests PRIVATE cxx_std_23)
+
+    list(APPEND MQB_TEST_TARGETS
+        mqb_windows_command_line_tests
+        mqb_process_echo_helper
+        mqb_windows_process_runner_tests
+    )
 endif()
 
 foreach(test_target IN LISTS MQB_TEST_TARGETS)
@@ -80,4 +93,8 @@ add_test(NAME mqb.process.model COMMAND mqb_process_model_tests)
 
 if(WIN32)
     add_test(NAME mqb.windows.command_line COMMAND mqb_windows_command_line_tests)
+    add_test(
+        NAME mqb.windows.process_runner
+        COMMAND mqb_windows_process_runner_tests $<TARGET_FILE:mqb_process_echo_helper>
+    )
 endif()

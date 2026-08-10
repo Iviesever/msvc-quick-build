@@ -1,161 +1,99 @@
 # C++ V2 Architecture
 
-This document defines the architecture for migrating MSVC Quick Build from the current PowerShell implementation to a typed C++23 core.
+This document defines the architecture for migrating MSVC Quick Build from the PowerShell implementation to a typed C++23 build tool.
 
 ## Goals
 
-- Preserve the current PowerShell implementation as the behavioral reference while C++ V2 is incomplete.
-- Build a typed core before porting MSVC-specific process orchestration.
-- Separate planning from execution so build decisions can be tested without launching compilers.
-- Keep MSVC as a backend instead of allowing compiler-specific details to leak into the core model.
+- Keep the PowerShell implementation as the behavioral reference until parity is proven.
+- Separate build policy from compiler/process execution.
+- Keep MSVC-specific spellings out of the core model.
 - Make cache invalidation explainable and regression-testable.
+- Treat paths and argv as structured data rather than shell command strings.
 
-## Layering
+## Layers
 
 ```text
 CLI (mqb.exe)
     |
     v
-BuildRequest
+Core
+  BuildRequest
+  Artifact / TranslationUnit
+  BuildSignature
+  CompileCacheValidator
+  DependencyGraph
+  BuildPlanner -> BuildPlan / BuildAction
     |
     v
-Core --------------------------------------------------+
-  Project model                                        |
-  Dependency graph                                     |
-  Build signatures                                     |
-  Cache validation                                     |
-  Build planner                                        |
-  Build actions                                        |
-    |                                                  |
-    +-------------------- typed boundary --------------+
-                           |
-                           v
-                    Process abstraction
-                    executable + argv + cwd + env
-                           |
-                           v
-                    Platform process runner
-                           |
-                           v
-                    MSVC backend
-                    Toolchain discovery
-                    Dependency scanners
-                    Compiler / linker invocation
+Process abstraction
+  ProcessSpec { executable, argv, cwd, env }
+  ProcessRunner -> expected<ProcessResult, ProcessError>
+    |
+    v
+Platform implementation
+  WindowsProcessRunner / CreateProcessW
+    |
+    v
+MSVC backend
+  toolchain discovery
+  cl.exe / link.exe argument builders
+  /sourceDependencies
+  /scanDependencies
 ```
 
-### Rule 1: Core does not know `cl.exe`
+## Architectural rules
 
-Core may model compiler options and build actions, but MSVC spellings such as `/O2`, `/MD`, `/scanDependencies`, and `/MACHINE:X64` belong in the MSVC backend.
+1. **Core does not know `cl.exe`.** MSVC options such as `/O2`, `/MD`, `/scanDependencies`, and `/MACHINE:X64` belong to the backend.
+2. **Planner does not execute.** `BuildPlanner` consumes resolved inputs and cache decisions and only creates typed actions.
+3. **Correctness beats cache hit rate.** Uncertain cache state rebuilds.
+4. **No internal shell command API.** Executable and argv remain separate until the final platform adapter.
+5. **UTF-8 at the process abstraction boundary.** Windows converts textual argv/environment data to UTF-16 immediately before `CreateProcessW`.
 
-### Rule 2: Planner does not execute processes
+## Compile identity and cache freshness
 
-`BuildPlanner` produces a `BuildPlan`. An executor consumes that plan. This enables `--dry-run`, deterministic unit tests, and rebuild explanations.
+`BuildSignature::for_compile` models the compiler recipe identity. Its versioned v1 fingerprint includes normalized source identity, translation-unit kind, toolchain identity, configuration, architecture, language standard, ordered defines, ordered include paths, and ordered extra compiler arguments.
 
-### Rule 3: build correctness beats cache hit rate
-
-A false cache miss wastes time. A false cache hit can silently produce stale binaries. Any uncertain cache state must rebuild.
-
-### Rule 4: paths and process arguments are structured values
-
-Internal APIs use `std::filesystem::path`. The process model stores executable and argv as separate values; shell command strings are not accepted as an internal API.
-
-## Typed core model
-
-The C++ core currently defines:
-
-- `BuildConfiguration`, `Architecture`, and `CppStandard`;
-- `BuildRequest`;
-- typed `BuildAction` variants and `BuildPlan`;
-- `Artifact` and `TranslationUnit`;
-- `CompilerOptions`;
-- `ToolchainIdentity`;
-- `BuildSignature`;
-- `DependencyGraph`;
-- `CompileCacheEntry`, `FileSnapshot`, and `CompileCacheValidator`;
-- `CompilePlanItem` and `BuildPlanner`.
-
-These types replace portions of the dynamic PowerShell context with compile-time checked values before any MSVC process orchestration is migrated.
-
-## Compile signature boundary
-
-`BuildSignature::for_compile` represents the **compiler recipe identity** for one translation unit. The current v1 schema includes:
-
-- normalized source path;
-- translation-unit kind;
-- compiler path, version, and backend-provided binary stamp;
-- build configuration and target architecture;
-- C++ language standard;
-- ordered preprocessor definitions;
-- ordered include search paths;
-- ordered additional compiler arguments.
-
-It intentionally excludes dependency timestamps, dependency membership, and artifact output paths:
+Dependency membership/timestamps and artifact locations are intentionally outside that fingerprint:
 
 ```text
-compile recipe identity ----> BuildSignature
+compiler recipe identity ----> BuildSignature
 source/header freshness ----> CompileCacheValidator
-where results are stored ----> Artifact mapping / cache storage
+artifact placement ----------> Artifact / cache storage
 ```
 
-The signature digest is a deterministic 128-bit non-cryptographic cache fingerprint. It is not a security primitive. The schema string (`mqb.compile.signature.v1`) participates in the digest so field changes can deliberately invalidate old cache entries.
+`CompileCacheValidator` is pure. It receives file snapshots and cached metadata and returns typed `BuildReason` values. It never touches the filesystem or launches a process.
 
-## Cache validation boundary
+## Dependency graph
 
-`CompileCacheValidator` is a pure decision component. It does not query the filesystem and does not launch a compiler. The caller supplies immutable `FileSnapshot` values plus optional cached metadata.
+`DependencyGraph` stores `node depends on dependency` edges. Nodes must exist before edges are added. Duplicate nodes and missing references are errors, duplicate edges are idempotent, topological levels are deterministic, and cycles fail explicitly with the unresolved node set.
 
-A cached object is reusable only when all of the following remain valid:
-
-```text
-cache metadata exists
-        +
-compiler recipe signature matches
-        +
-toolchain identity matches
-        +
-object artifact exists
-        +
-source is not newer than object
-        +
-every cached dependency still exists
-        +
-no cached dependency is newer than object
-```
-
-The validator reports typed `BuildReason` values. A later CLI can implement `mqb explain` without parsing log text.
-
-## Dependency graph contract
-
-`DependencyGraph` is compiler-agnostic. Scanner/backend code resolves compiler-specific concepts into stable string keys before adding them to the graph.
-
-An edge means `node depends on dependency`, so topological results place prerequisites before consumers. Duplicate nodes and missing nodes are errors, duplicate edges are idempotent, topological levels are deterministic, and cycles fail explicitly rather than returning partial build orders.
+These levels will later map to safe parallel module compilation.
 
 ## Planner boundary
 
-`BuildPlanner` consumes already-resolved `TranslationUnit` values and already-computed cache validation results. It does **not** inspect timestamps, query the filesystem, calculate signatures, or execute processes.
+For compile planning:
 
 ```text
 CompilePlanItem
-    |
     +-- reusable cache ------> no action
-    |
     +-- stale cache ---------> CompileAction
                                   source
-                                  object artifact
+                                  one object artifact
                                   typed rebuild reasons
 ```
 
-A stale translation unit must expose exactly one object artifact. Missing or duplicate object outputs are planning errors rather than implicit guesses.
+A stale translation unit with zero or multiple object artifacts is a planning error. The executor therefore receives actions rather than policy decisions.
 
 ## Process boundary
 
-`mqb_process` introduces the platform-neutral process contract:
+`mqb_process` defines a platform-neutral contract:
 
 ```text
 ProcessSpec
   executable: filesystem::path
-  arguments: vector<string>      // argv[1..], never one shell string
+  arguments: vector<string>       // argv[1..]
   working_directory: optional path
-  environment: structured name/value overrides
+  environment: name/value overrides
   inherit_environment: bool
   capture_stdout/stderr: bool
 
@@ -163,27 +101,34 @@ ProcessRunner::run(ProcessSpec)
   -> expected<ProcessResult, ProcessError>
 ```
 
-Text in `ProcessSpec` is UTF-8 by convention. Platform runners are responsible for converting it to native encodings.
+On Windows, `CreateProcessW` forces argv back into one mutable command-line buffer. That conversion is isolated in `mqb_platform_windows` and tested separately: complex arguments are encoded using Microsoft-compatible backslash/quote rules and round-tripped through `CommandLineToArgvW`.
 
-On Windows, `CreateProcessW` is an awkward platform boundary because the API receives a single mutable command-line buffer. MQB therefore keeps argv structured until the final Windows adapter. `mqb_platform_windows` owns the Microsoft-compatible argument quoting algorithm and is tested by round-tripping complex arguments through `CommandLineToArgvW`.
+`WindowsProcessRunner` then provides the real launch layer. It currently handles:
 
-This gives the project one explicit place for Windows quoting rules instead of allowing compiler commands such as `"cl ..."` to be assembled throughout the codebase.
+- UTF-8 argv/environment conversion to UTF-16;
+- inherited or explicitly isolated Unicode environment blocks;
+- working directory;
+- stdout and stderr capture through separate pipes;
+- concurrent pipe draining so large compiler diagnostics cannot deadlock the child;
+- child exit codes as data rather than launch failures;
+- native Windows error codes for launch/wait/I/O failures;
+- RAII ownership of process, thread, and pipe handles.
+
+Before final cutover we should harden inherited-handle isolation with `STARTUPINFOEXW` + `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`; the current runner limits handles it creates but still uses `bInheritHandles=TRUE` while captured streams are active.
 
 ## Migration sequence
 
-1. **Scaffold** — CMake, `mqb_core`, CLI executable, CTest smoke test. ✅
-2. **Pure core** — artifact model, signatures, build plan, dependency graph, cache validation, compile planner. ✅
-3. **Process abstraction** — typed process spec plus platform argument encoding, then real Win32 runner. **In progress.**
-4. **MSVC toolchain backend** — locate toolchain and capture environment.
-5. **Ordinary translation units** — compile and `/sourceDependencies` cache persistence/refresh.
+1. **Scaffold** — CMake, `mqb_core`, CLI executable, CTest. ✅
+2. **Pure core** — artifacts, signatures, plan model, dependency graph, cache validation, compile planner. ✅
+3. **Process abstraction** — typed process spec, Windows quoting, real Win32 runner. **In progress / verification.**
+4. **MSVC toolchain backend** — discover toolchain and capture the VS environment. **Next after Phase 3 is green.**
+5. **Ordinary translation units** — compile plus `/sourceDependencies` cache refresh/persistence.
 6. **Link state** — explicit linker signature and link planning.
 7. **Modules** — P1689 `/scanDependencies`, module graph, IFC/object artifacts.
-8. **Parity** — run PowerShell and C++ implementations against the same E2E fixtures.
-9. **Cutover** — make `mqb.exe` the primary entry point only after parity tests pass.
+8. **Parity** — run PowerShell and C++ against the same E2E fixtures.
+9. **Cutover** — make `mqb.exe` primary only after parity tests pass.
 
-## Build locally
-
-From the repository root:
+## Local build
 
 ```powershell
 cmake -S cpp -B cpp/build -G Ninja
@@ -191,4 +136,4 @@ cmake --build cpp/build
 ctest --test-dir cpp/build --output-on-failure
 ```
 
-A Visual Studio CMake generator may be used instead of Ninja; the core and process model are generator-independent.
+The GitHub Windows CI currently uses the Visual Studio 2026 CMake generator.
