@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -24,19 +25,26 @@ struct SnapshotResult {
     std::optional<IncrementalCompileWarning> warning;
 };
 
+[[nodiscard]] SnapshotResult missing_snapshot(const fs::path& path) {
+    return SnapshotResult{
+        .snapshot = FileSnapshot{
+            .path = path,
+            .exists = false,
+        },
+    };
+}
+
 [[nodiscard]] SnapshotResult snapshot_file(const fs::path& path) {
     if (path.empty()) {
-        return SnapshotResult{
-            .snapshot = FileSnapshot{
-                .path = path,
-                .exists = false,
-            },
-        };
+        return missing_snapshot(path);
     }
 
     std::error_code error_code;
-    const bool exists = fs::is_regular_file(path, error_code);
+    const fs::file_status status = fs::status(path, error_code);
     if (error_code) {
+        if (error_code == std::errc::no_such_file_or_directory) {
+            return missing_snapshot(path);
+        }
         return SnapshotResult{
             .snapshot = FileSnapshot{
                 .path = path,
@@ -49,17 +57,15 @@ struct SnapshotResult {
             },
         };
     }
-    if (!exists) {
-        return SnapshotResult{
-            .snapshot = FileSnapshot{
-                .path = path,
-                .exists = false,
-            },
-        };
+    if (!fs::is_regular_file(status)) {
+        return missing_snapshot(path);
     }
 
     const auto modified = fs::last_write_time(path, error_code);
     if (error_code) {
+        if (error_code == std::errc::no_such_file_or_directory) {
+            return missing_snapshot(path);
+        }
         return SnapshotResult{
             .snapshot = FileSnapshot{
                 .path = path,

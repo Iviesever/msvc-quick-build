@@ -58,6 +58,25 @@ void append_configuration_arguments(
     }
 }
 
+[[nodiscard]] std::expected<void, CompilerError> prepare_parent_directory(
+    const fs::path& output,
+    const std::string_view description) {
+    const fs::path parent = output.parent_path();
+    if (parent.empty()) {
+        return {};
+    }
+
+    std::error_code error_code;
+    fs::create_directories(parent, error_code);
+    if (error_code) {
+        return std::unexpected(CompilerError{
+            .code = CompilerErrorCode::output_prepare_failed,
+            .message = "failed to prepare " + std::string{description} + " output directory",
+        });
+    }
+    return {};
+}
+
 } // namespace
 
 std::expected<std::vector<std::string>, CompilerError>
@@ -130,6 +149,19 @@ MsvcCompiler::compile(const CompileInvocation& invocation) const {
     auto arguments = build_arguments(invocation);
     if (!arguments) {
         return std::unexpected(arguments.error());
+    }
+
+    auto prepared_object = prepare_parent_directory(invocation.object, "object");
+    if (!prepared_object) {
+        return std::unexpected(prepared_object.error());
+    }
+    if (invocation.source_dependencies) {
+        auto prepared_dependencies = prepare_parent_directory(
+            *invocation.source_dependencies,
+            "sourceDependencies");
+        if (!prepared_dependencies) {
+            return std::unexpected(prepared_dependencies.error());
+        }
     }
 
     process::ProcessSpec spec;

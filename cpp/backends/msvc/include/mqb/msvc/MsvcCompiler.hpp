@@ -22,6 +22,7 @@ struct CompileInvocation {
 
 enum class CompilerErrorCode {
     invalid_request,
+    output_prepare_failed,
     process_failed,
     compilation_failed,
 };
