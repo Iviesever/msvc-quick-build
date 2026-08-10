@@ -11,6 +11,7 @@ option(MQB_ENABLE_INSTALLED_MSVC_TESTS "Run tests that require an installed Visu
 
 add_subdirectory(core)
 add_subdirectory(process)
+add_subdirectory(discovery)
 
 if(WIN32)
     add_subdirectory(platform/windows)
