@@ -257,8 +257,10 @@ int main() {
                && cold->plan.resolved_dependencies.front().provider_source == module_source
                && cold->plan.resolved_dependencies.front().consumer_source == consumer_source,
            "real P1689 scan should resolve consumer import math to math.ixx");
-    expect_compile_state(
-        *cold, module_source, consumer_source, true, true, true, "cold build");
+    if (!expect_compile_state(
+            *cold, module_source, consumer_source, true, true, true, "cold build")) {
+        return 1;
+    }
     expect(fs::is_regular_file(module_artifacts->module_interface),
            "cold module target should produce planned IFC");
     if (!run_executable(runner, target_artifacts->executable, root)) return 1;
@@ -270,8 +272,10 @@ int main() {
         print_target_error(warm.error());
         return 1;
     }
-    expect_compile_state(
-        *warm, module_source, consumer_source, false, false, false, "warm build");
+    if (!expect_compile_state(
+            *warm, module_source, consumer_source, false, false, false, "warm build")) {
+        return 1;
+    }
     if (!run_executable(runner, target_artifacts->executable, root)) return 1;
 
     // 3. Provider source mutation: make source.mtime deterministically newer
@@ -298,14 +302,16 @@ int main() {
         print_target_error(provider_changed.error());
         return 1;
     }
-    expect_compile_state(
-        *provider_changed,
-        module_source,
-        consumer_source,
-        true,
-        true,
-        true,
-        "provider source mutation");
+    if (!expect_compile_state(
+            *provider_changed,
+            module_source,
+            consumer_source,
+            true,
+            true,
+            true,
+            "provider source mutation")) {
+        return 1;
+    }
     const auto* changed_consumer = find_compile(*provider_changed, consumer_source);
     if (changed_consumer) {
         expect(has_reason(*changed_consumer, mqb::BuildReason::explicit_rebuild),
@@ -332,14 +338,16 @@ int main() {
         print_target_error(stable_again.error());
         return 1;
     }
-    expect_compile_state(
-        *stable_again,
-        module_source,
-        consumer_source,
-        false,
-        false,
-        false,
-        "post-mutation warm build");
+    if (!expect_compile_state(
+            *stable_again,
+            module_source,
+            consumer_source,
+            false,
+            false,
+            false,
+            "post-mutation warm build")) {
+        return 1;
+    }
 
     // 4. IFC-only loss: object and source remain untouched. Provider must
     // rebuild because a planned output is missing; consumer must rebuild via
@@ -356,14 +364,16 @@ int main() {
         print_target_error(missing_ifc.error());
         return 1;
     }
-    expect_compile_state(
-        *missing_ifc,
-        module_source,
-        consumer_source,
-        true,
-        true,
-        true,
-        "missing IFC repair");
+    if (!expect_compile_state(
+            *missing_ifc,
+            module_source,
+            consumer_source,
+            true,
+            true,
+            true,
+            "missing IFC repair")) {
+        return 1;
+    }
     const auto* repaired_provider = find_compile(*missing_ifc, module_source);
     const auto* repaired_consumer = find_compile(*missing_ifc, consumer_source);
     if (repaired_provider) {
