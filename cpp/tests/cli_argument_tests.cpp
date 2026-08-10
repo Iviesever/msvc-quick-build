@@ -35,6 +35,8 @@ int main() {
         if (parsed) {
             expect(parsed->build.sources.size() == 1 && parsed->build.sources.front() == "main.cpp",
                    "single source should be preserved in ordered source list");
+            expect(parsed->discover_sources,
+                   "single-source smart discovery should be enabled by default");
             expect(!parsed->build.output_name.has_value(),
                    "output name should remain unset by default");
             expect(!parsed->build.run_after_build,
@@ -52,6 +54,13 @@ int main() {
             expect(parsed->toolchain_preference == mqb::msvc::ToolchainPreference::automatic,
                    "default toolchain preference should be automatic");
         }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--no-discover"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value() && !parsed->discover_sources,
+               "--no-discover should disable single-source smart discovery");
     }
 
     {
@@ -97,6 +106,8 @@ int main() {
                            && parsed->build.sources[2] == "tests/helper.cxx",
                        "source order should remain stable for deterministic linking");
             }
+            expect(parsed->discover_sources,
+                   "parser keeps discovery policy enabled; main treats multi-source sets as explicit");
             expect(parsed->build.output_name.has_value()
                        && *parsed->build.output_name == "product",
                    "output name should be parsed");
@@ -163,13 +174,14 @@ int main() {
     }
 
     {
-        const std::vector arguments{"main.cpp"sv, "--run"sv, "--"sv, "-lnot-a-library"sv};
+        const std::vector arguments{"main.cpp"sv, "--run"sv, "--"sv, "--no-discover"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value(), "options after -- should become program arguments");
         if (parsed) {
-            expect(parsed->libraries.empty(), "library parsing must stop at --");
+            expect(parsed->discover_sources,
+                   "discovery parsing must stop at --");
             expect(parsed->build.run_arguments.size() == 1
-                       && parsed->build.run_arguments.front() == "-lnot-a-library",
+                       && parsed->build.run_arguments.front() == "--no-discover",
                    "option-looking argv after -- must be preserved verbatim");
         }
     }

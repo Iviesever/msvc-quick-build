@@ -79,7 +79,8 @@ long_equals_value(
     const std::string_view prefix) {
     const std::string_view value = argument.substr(prefix.size());
     if (value.empty()) {
-        return std::unexpected(error("empty value for " + std::string{prefix.substr(0, prefix.size() - 1)}));
+        return std::unexpected(error(
+            "empty value for " + std::string{prefix.substr(0, prefix.size() - 1)}));
     }
     return value;
 }
@@ -105,6 +106,10 @@ parse_arguments(const std::span<const std::string_view> arguments) {
         }
         if (argument == "--verbose" || argument == "-v") {
             options.verbose = true;
+            continue;
+        }
+        if (argument == "--no-discover") {
+            options.discover_sources = false;
             continue;
         }
         if (argument == "--run") {
@@ -235,11 +240,13 @@ std::string_view usage() noexcept {
     return R"(MQB - MSVC Quick Build (C++ V2)
 
 Usage:
-  mqb <source.cpp> [more-sources...] [options] [-- program-args...]
+  mqb <entry.cpp> [options] [-- program-args...]
+  mqb <source.cpp> <more-sources...> [options] [-- program-args...]
 
-Current milestone:
-  Incrementally compile an explicit C++ source set, resolve exact library files,
-  link one executable, and optionally run it without shell re-parsing.
+Source selection:
+  One positional source       Smart-discover connected ordinary C++ TUs (default)
+  Multiple positional sources Build exactly that explicit ordered source set
+  --no-discover               Disable smart discovery for a single source
 
 Options:
   --debug                  Debug compile/link preset (default)
@@ -256,9 +263,12 @@ Options:
   --lib <name>             Link a library (name or explicit path)
   --env <auto|vs|portable> Toolchain selection (default: auto)
   --portable-root <dir>    Add a portable_msvc root candidate
-  -v, --verbose            Show toolchain and artifact details
+  -v, --verbose            Show discovery, toolchain, and artifact details
   -h, --help               Show this help
   --                       Pass all remaining argv elements to the program
+
+Discovery is source selection only. Incremental header freshness continues to use
+MSVC /sourceDependencies metadata.
 
 Generated state:
   .mqb/obj/    collision-free object files
