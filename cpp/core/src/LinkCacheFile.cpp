@@ -25,10 +25,10 @@ namespace fs = std::filesystem;
 
 constexpr std::array<std::uint8_t, 8> magic{
     'M', 'Q', 'B', 'L', 'I', 'N', 'K', 'C'};
-constexpr std::uint32_t format_version = 1;
+constexpr std::uint32_t format_version = 2;
 constexpr std::size_t max_cache_file_size = 64u * 1024u * 1024u;
 constexpr std::uint32_t max_string_size = 4u * 1024u * 1024u;
-constexpr std::uint32_t max_object_count = 100000u;
+constexpr std::uint32_t max_link_input_count = 100000u;
 
 [[nodiscard]] LinkCacheFileError make_error(
     const LinkCacheFileErrorCode code,
@@ -172,16 +172,61 @@ private:
     std::size_t offset_{};
 };
 
-[[nodiscard]] std::expected<std::vector<std::uint8_t>, LinkCacheFileError>
-serialize(const fs::path& file, const LinkCacheEntry& entry) {
-    if (entry.objects.size() > max_object_count) {
+[[nodiscard]] bool input_count_valid(const std::size_t size) {
+    return size <= max_link_input_count
+        && size <= std::numeric_limits<std::uint32_t>::max();
+}
+
+[[nodiscard]] std::expected<void, LinkCacheFileError>
+write_paths(
+    BinaryWriter& writer,
+    const fs::path& file,
+    const std::span<const fs::path> paths,
+    const std::string_view description) {
+    if (!input_count_valid(paths.size())) {
         return std::unexpected(make_error(
             LinkCacheFileErrorCode::file_write_failed,
             file,
             0,
-            "link input count exceeds cache safety limit"));
+            std::string{description} + " count exceeds cache safety limit"));
     }
 
+    writer.write_u32(static_cast<std::uint32_t>(paths.size()));
+    for (const auto& path : paths) {
+        if (!writer.write_path(path)) {
+            return std::unexpected(make_error(
+                LinkCacheFileErrorCode::file_write_failed,
+                file,
+                0,
+                std::string{description} + " path is too long for cache format"));
+        }
+    }
+    return {};
+}
+
+[[nodiscard]] std::expected<std::vector<fs::path>, LinkCacheFileError>
+read_paths(
+    BinaryReader& reader,
+    const std::string_view description) {
+    auto count = reader.read_u32();
+    if (!count) return std::unexpected(count.error());
+    if (*count > max_link_input_count) {
+        return std::unexpected(reader.corrupt(
+            std::string{description} + " count exceeds safety limit"));
+    }
+
+    std::vector<fs::path> paths;
+    paths.reserve(*count);
+    for (std::uint32_t index = 0; index < *count; ++index) {
+        auto path = reader.read_path();
+        if (!path) return std::unexpected(path.error());
+        paths.push_back(std::move(*path));
+    }
+    return paths;
+}
+
+[[nodiscard]] std::expected<std::vector<std::uint8_t>, LinkCacheFileError>
+serialize(const fs::path& file, const LinkCacheEntry& entry) {
     BinaryWriter writer;
     writer.write_bytes(magic);
     writer.write_u32(format_version);
@@ -206,16 +251,11 @@ serialize(const fs::path& file, const LinkCacheEntry& entry) {
             "link output path is too long for cache format"));
     }
 
-    writer.write_u32(static_cast<std::uint32_t>(entry.objects.size()));
-    for (const auto& object : entry.objects) {
-        if (!writer.write_path(object)) {
-            return std::unexpected(make_error(
-                LinkCacheFileErrorCode::file_write_failed,
-                file,
-                0,
-                "link input path is too long for cache format"));
-        }
-    }
+    auto objects = write_paths(writer, file, entry.objects, "object input");
+    if (!objects) return std::unexpected(objects.error());
+    auto libraries = write_paths(writer, file, entry.libraries, "library input");
+    if (!libraries) return std::unexpected(libraries.error());
+
     return writer.bytes();
 }
 
@@ -259,7 +299,6 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     auto signature_high = reader.read_u64();
     auto signature_low = reader.read_u64();
     auto output = reader.read_path();
-    auto object_count = reader.read_u32();
 
     if (!linker) return std::unexpected(linker.error());
     if (!linker_version) return std::unexpected(linker_version.error());
@@ -267,18 +306,12 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     if (!signature_high) return std::unexpected(signature_high.error());
     if (!signature_low) return std::unexpected(signature_low.error());
     if (!output) return std::unexpected(output.error());
-    if (!object_count) return std::unexpected(object_count.error());
-    if (*object_count > max_object_count) {
-        return std::unexpected(reader.corrupt("link input count exceeds safety limit"));
-    }
 
-    std::vector<fs::path> objects;
-    objects.reserve(*object_count);
-    for (std::uint32_t index = 0; index < *object_count; ++index) {
-        auto object = reader.read_path();
-        if (!object) return std::unexpected(object.error());
-        objects.push_back(std::move(*object));
-    }
+    auto objects = read_paths(reader, "object input");
+    if (!objects) return std::unexpected(objects.error());
+    auto libraries = read_paths(reader, "library input");
+    if (!libraries) return std::unexpected(libraries.error());
+
     if (!reader.at_end()) {
         return std::unexpected(reader.corrupt("unexpected trailing bytes in link cache file"));
     }
@@ -293,8 +326,9 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
             .high = *signature_high,
             .low = *signature_low,
         }),
-        .objects = std::move(objects),
+        .objects = std::move(*objects),
         .output = std::move(*output),
+        .libraries = std::move(*libraries),
     };
 }
 

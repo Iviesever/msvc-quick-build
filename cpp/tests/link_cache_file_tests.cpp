@@ -43,6 +43,7 @@ int main() {
     fs::create_directories(tree.root);
 
     const std::vector<fs::path> objects{"obj/main.cpp.obj", "obj/math.cpp.obj"};
+    const std::vector<fs::path> libraries{"vendor/math.lib", "vendor/codec.lib"};
     const fs::path output{"bin/app.exe"};
     const mqb::LinkerIdentity linker{
         .linker = "C:/msvc/link.exe",
@@ -50,13 +51,16 @@ int main() {
         .binary_stamp = "stamp-a",
     };
     mqb::LinkOptions options;
-    options.libraries = {"user32.lib"};
-    const auto signature = mqb::BuildSignature::for_link(objects, output, linker, options);
+    options.library_directories = {"vendor"};
+    options.libraries = {"math.lib", "codec.lib"};
+    const auto signature = mqb::BuildSignature::for_link(
+        objects, libraries, output, linker, options);
     const mqb::LinkCacheEntry entry{
         .linker = linker,
         .signature = signature,
         .objects = objects,
         .output = output,
+        .libraries = libraries,
     };
 
     const fs::path file = tree.root / "cache" / "app.linkcache";
@@ -73,9 +77,26 @@ int main() {
         expect((*loaded)->linker.version == linker.version, "linker version should round-trip");
         expect((*loaded)->linker.binary_stamp == linker.binary_stamp, "linker stamp should round-trip");
         expect((*loaded)->signature == signature, "link signature should round-trip");
-        expect((*loaded)->objects == objects, "link inputs should round-trip");
+        expect((*loaded)->objects == objects, "object inputs should round-trip");
+        expect((*loaded)->libraries == libraries, "resolved library inputs should round-trip");
         expect((*loaded)->output == output, "link output should round-trip");
     }
+
+    {
+        std::fstream stream{file, std::ios::binary | std::ios::in | std::ios::out};
+        stream.seekp(8, std::ios::beg);
+        const char old_version[4]{1, 0, 0, 0};
+        stream.write(old_version, 4);
+    }
+    const auto old_version = mqb::LinkCacheFile::load(file);
+    expect(!old_version.has_value(), "older link-cache format should be rejected safely");
+    if (!old_version) {
+        expect(old_version.error().code == mqb::LinkCacheFileErrorCode::unsupported_version,
+               "old cache version should report unsupported_version");
+    }
+
+    const auto restored_after_version = mqb::LinkCacheFile::save(file, entry);
+    expect(restored_after_version.has_value(), "link cache should upgrade by safe replacement");
 
     {
         std::fstream stream{file, std::ios::binary | std::ios::in | std::ios::out};
