@@ -9,7 +9,11 @@
 namespace mqb::orchestration {
 
 MsvcTargetPipeline MsvcTargetRouter::select_pipeline(
-    const std::span<const RoutedTargetSourceRequest> sources) noexcept {
+    const std::span<const RoutedTargetSourceRequest> sources,
+    const bool force_named_modules) noexcept {
+    if (force_named_modules) {
+        return MsvcTargetPipeline::named_modules;
+    }
     const bool has_module_interface = std::any_of(
         sources.begin(),
         sources.end(),
@@ -23,7 +27,9 @@ MsvcTargetPipeline MsvcTargetRouter::select_pipeline(
 
 std::expected<RoutedTargetResult, RoutedTargetError>
 MsvcTargetRouter::run(const RoutedTargetRequest& request) const {
-    const MsvcTargetPipeline pipeline = select_pipeline(request.sources);
+    const MsvcTargetPipeline pipeline = select_pipeline(
+        request.sources,
+        request.force_named_modules);
 
     if (pipeline == MsvcTargetPipeline::ordinary) {
         std::vector<TargetSourceRequest> sources;

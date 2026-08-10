@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cctype>
 #include <expected>
 #include <filesystem>
 #include <iostream>
@@ -20,6 +19,7 @@
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/LinkOptions.hpp"
 #include "mqb/core/ProjectArtifactLayout.hpp"
+#include "mqb/core/TranslationUnitClassifier.hpp"
 #include "mqb/discovery/SourceDiscovery.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
@@ -57,16 +57,7 @@ absolute_path_from(
 }
 
 [[nodiscard]] bool supported_source(const fs::path& source) {
-    if (mqb::cli::is_module_interface_source(source)) {
-        return true;
-    }
-    std::string extension = source.extension().string();
-    std::transform(
-        extension.begin(),
-        extension.end(),
-        extension.begin(),
-        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return extension == ".cpp" || extension == ".cc" || extension == ".cxx";
+    return mqb::is_translation_unit_path(source);
 }
 
 [[nodiscard]] bool safe_relative(const fs::path& relative) {
@@ -281,7 +272,7 @@ int main(const int argc, char* argv[]) {
             return 2;
         }
         if (!supported_source(*source)) {
-            std::cerr << "error: only .cpp, .cc, .cxx, and .ixx sources are supported: "
+            std::cerr << "error: only .cpp, .cc, .cxx, .ixx, .cppm, and .mpp sources are supported: "
                       << path_text(*source) << '\n';
             return 2;
         }
@@ -365,6 +356,7 @@ int main(const int argc, char* argv[]) {
     options.libraries = effective.libraries;
 
     std::vector<fs::path> sources = requested_sources;
+    bool discovery_requires_module_pipeline = false;
     if (options.discover_sources
         && requested_sources.size() == 1
         && !mqb::cli::is_module_interface_source(requested_sources.front())) {
@@ -399,6 +391,7 @@ int main(const int argc, char* argv[]) {
             }
             std::cerr << '\n';
         }
+        discovery_requires_module_pipeline = discovered->requires_module_pipeline;
         sources = std::move(discovered->sources);
         if (sources.size() > 1 || options.verbose) {
             std::cout << "[discover] " << sources.size() << " translation units";
@@ -485,7 +478,7 @@ int main(const int argc, char* argv[]) {
     link_options.library_directories = std::move(options.library_directories);
     link_options.libraries = std::move(options.libraries);
 
-    const bool module_target = std::any_of(
+    const bool module_target = discovery_requires_module_pipeline || std::any_of(
         target_sources.begin(),
         target_sources.end(),
         [](const mqb::orchestration::TargetSourceRequest& source) {
@@ -505,6 +498,7 @@ int main(const int argc, char* argv[]) {
                 .target_name = target_name,
                 .max_parallel_jobs = compile_jobs,
                 .jobs_explicit = options.jobs.has_value(),
+                .force_named_modules = discovery_requires_module_pipeline,
                 .verbose = options.verbose,
                 .run_after_build = options.build.run_after_build,
                 .run_arguments = std::move(options.build.run_arguments),

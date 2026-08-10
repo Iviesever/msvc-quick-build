@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -15,20 +16,25 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/TranslationUnitClassifier.hpp"
+#include "mqb/discovery/ModuleSyntax.hpp"
+
 namespace mqb::discovery {
 namespace {
 
 namespace fs = std::filesystem;
 
 enum class FileKind {
-    source,
+    translation_unit,
     header,
 };
 
 struct FileRecord {
     fs::path path;
     FileKind kind{FileKind::header};
+    std::optional<TranslationUnitKind> translation_unit_kind;
     std::vector<std::string> local_includes;
+    NamedModuleSyntax module_syntax;
     bool defines_main{false};
 };
 
@@ -60,11 +66,6 @@ struct FileRecord {
     return ascii_lower(path.extension().string());
 }
 
-[[nodiscard]] bool source_extension(const fs::path& path) {
-    const std::string extension = extension_lower(path);
-    return extension == ".cpp" || extension == ".cc" || extension == ".cxx";
-}
-
 [[nodiscard]] bool header_extension(const fs::path& path) {
     const std::string extension = extension_lower(path);
     return extension == ".h"
@@ -75,8 +76,8 @@ struct FileRecord {
         || extension == ".ipp";
 }
 
-[[nodiscard]] bool indexed_extension(const fs::path& path) {
-    return source_extension(path) || header_extension(path);
+[[nodiscard]] bool indexed_path(const fs::path& path) {
+    return is_translation_unit_path(path) || header_extension(path);
 }
 
 [[nodiscard]] bool default_excluded_directory(const fs::path& path) {
@@ -357,15 +358,35 @@ void add_undirected_edge(
     if (error_code
         || !fs::is_regular_file(absolute, error_code)
         || error_code
-        || !source_extension(absolute)
+        || !is_translation_unit_path(absolute)
         || !inside_root(root, absolute)) {
         return std::unexpected(failure(
             ErrorCode::invalid_correction,
             requested,
             std::string{description}
-                + " must be an existing ordinary C++ source inside the project root"));
+                + " must be an existing supported C++ translation unit inside the project root"));
     }
     return absolute;
+}
+
+[[nodiscard]] bool ordinary_translation_unit(const FileRecord& file) {
+    return file.kind == FileKind::translation_unit
+        && file.translation_unit_kind == TranslationUnitKind::source;
+}
+
+[[nodiscard]] bool module_interface_translation_unit(const FileRecord& file) {
+    return file.kind == FileKind::translation_unit
+        && file.translation_unit_kind == TranslationUnitKind::module_interface;
+}
+
+[[nodiscard]] std::string ownership_key(const fs::path& path) {
+    return path_key(path.parent_path() / path.stem());
+}
+
+[[nodiscard]] bool file_requires_module_pipeline(const FileRecord& file) {
+    return module_interface_translation_unit(file)
+        || file.module_syntax.declared_module.has_value()
+        || !file.module_syntax.imported_modules.empty();
 }
 
 } // namespace
@@ -385,12 +406,12 @@ SourceDiscovery::discover(const Request& request) {
     if (error_code
         || !fs::is_regular_file(entry, error_code)
         || error_code
-        || !source_extension(entry)
+        || !is_translation_unit_path(entry)
         || !inside_root(root, entry)) {
         return std::unexpected(failure(
             ErrorCode::invalid_entry,
             request.entry,
-            "source discovery entry must be an ordinary C++ source inside the project root"));
+            "source discovery entry must be a supported C++ translation unit inside the project root"));
     }
 
     std::vector<fs::path> excluded_directories;
@@ -451,8 +472,9 @@ SourceDiscovery::discover(const Request& request) {
                     *source,
                     text.error()));
             }
+            const auto source_kind = classify_translation_unit_path(*source);
             const std::string comment_free = strip_comments_preserve_literals(*text);
-            if (contains_main(comment_free)) {
+            if (source_kind == TranslationUnitKind::source && contains_main(comment_free)) {
                 return std::unexpected(failure(
                     ErrorCode::invalid_correction,
                     *source,
@@ -496,7 +518,7 @@ SourceDiscovery::discover(const Request& request) {
             continue;
         }
         error_code.clear();
-        if (!item.is_regular_file(error_code) || error_code || !indexed_extension(item.path())) {
+        if (!item.is_regular_file(error_code) || error_code || !indexed_path(item.path())) {
             error_code.clear();
             continue;
         }
@@ -507,12 +529,19 @@ SourceDiscovery::discover(const Request& request) {
             error_code.clear();
             continue;
         }
-        record.kind = source_extension(record.path) ? FileKind::source : FileKind::header;
+        record.translation_unit_kind = classify_translation_unit_path(record.path);
+        record.kind = record.translation_unit_kind
+            ? FileKind::translation_unit
+            : FileKind::header;
 
         if (auto text = read_text(record.path)) {
             const std::string comment_free = strip_comments_preserve_literals(*text);
             record.local_includes = parse_local_includes(comment_free);
-            record.defines_main = record.kind == FileKind::source && contains_main(comment_free);
+            if (record.kind == FileKind::translation_unit) {
+                record.module_syntax = ModuleSyntaxParser::parse(*text);
+                record.defines_main = ordinary_translation_unit(record)
+                    && contains_main(comment_free);
+            }
         } else {
             result.warnings.push_back(Warning{
                 .code = WarningCode::file_read_failed,
@@ -546,6 +575,7 @@ SourceDiscovery::discover(const Request& request) {
     }
 
     std::vector<std::vector<std::size_t>> adjacency(files.size());
+
     for (std::size_t file_index = 0; file_index < files.size(); ++file_index) {
         const auto& file = files[file_index];
         for (const auto& include : file.local_includes) {
@@ -566,19 +596,52 @@ SourceDiscovery::discover(const Request& request) {
         }
     }
 
-    constexpr std::string_view source_extensions[]{".cpp", ".cc", ".cxx"};
-    for (std::size_t file_index = 0; file_index < files.size(); ++file_index) {
-        const auto& file = files[file_index];
-        if (file.kind != FileKind::header) {
+    std::unordered_map<std::string, std::vector<std::size_t>> ordinary_sources_by_owner;
+    for (std::size_t index = 0; index < files.size(); ++index) {
+        if (ordinary_translation_unit(files[index])) {
+            ordinary_sources_by_owner[ownership_key(files[index].path)].push_back(index);
+        }
+    }
+    for (std::size_t index = 0; index < files.size(); ++index) {
+        if (files[index].kind != FileKind::header) continue;
+        const auto owners = ordinary_sources_by_owner.find(ownership_key(files[index].path));
+        if (owners == ordinary_sources_by_owner.end()) continue;
+        for (const std::size_t owner : owners->second) {
+            add_undirected_edge(adjacency, index, owner);
+        }
+    }
+
+    std::unordered_map<std::string, std::vector<std::size_t>> interface_providers;
+    std::unordered_map<std::string, std::vector<std::size_t>> declared_module_units;
+    for (std::size_t index = 0; index < files.size(); ++index) {
+        if (files[index].kind != FileKind::translation_unit
+            || !files[index].module_syntax.declared_module) {
             continue;
         }
-        for (const auto extension : source_extensions) {
-            fs::path sibling = file.path;
-            sibling.replace_extension(extension);
-            const auto found = index_by_path.find(path_key(sibling));
-            if (found != index_by_path.end()) {
-                add_undirected_edge(adjacency, file_index, found->second);
+        const std::string& logical_name = *files[index].module_syntax.declared_module;
+        declared_module_units[logical_name].push_back(index);
+        if (module_interface_translation_unit(files[index])) {
+            interface_providers[logical_name].push_back(index);
+        }
+    }
+
+    for (std::size_t index = 0; index < files.size(); ++index) {
+        if (files[index].kind != FileKind::translation_unit) continue;
+        for (const auto& imported : files[index].module_syntax.imported_modules) {
+            const auto providers = interface_providers.find(imported);
+            if (providers == interface_providers.end()) continue;
+            for (const std::size_t provider : providers->second) {
+                add_undirected_edge(adjacency, index, provider);
             }
+        }
+    }
+
+    for (const auto& [logical_name, units] : declared_module_units) {
+        static_cast<void>(logical_name);
+        if (units.size() < 2) continue;
+        const std::size_t first = units.front();
+        for (std::size_t offset = 1; offset < units.size(); ++offset) {
+            add_undirected_edge(adjacency, first, units[offset]);
         }
     }
 
@@ -597,9 +660,9 @@ SourceDiscovery::discover(const Request& request) {
             visited[next] = true;
 
             const bool second_main = next != entry_index
-                && files[next].kind == FileKind::source
+                && ordinary_translation_unit(files[next])
                 && files[next].defines_main;
-            const bool excluded_source = files[next].kind == FileKind::source
+            const bool excluded_source = files[next].kind == FileKind::translation_unit
                 && excluded_source_keys.contains(path_key(files[next].path));
             if (!second_main && !excluded_source) {
                 queue.push_back(next);
@@ -608,10 +671,12 @@ SourceDiscovery::discover(const Request& request) {
     }
 
     for (std::size_t index = 0; index < files.size(); ++index) {
-        if (!visited[index] || files[index].kind != FileKind::source) {
+        if (!visited[index] || files[index].kind != FileKind::translation_unit) {
             continue;
         }
-        if (files[index].path != entry && files[index].defines_main) {
+        if (files[index].path != entry
+            && ordinary_translation_unit(files[index])
+            && files[index].defines_main) {
             continue;
         }
         if (excluded_source_keys.contains(path_key(files[index].path))) {
@@ -640,6 +705,15 @@ SourceDiscovery::discover(const Request& request) {
     const auto entry_position = std::find(result.sources.begin(), result.sources.end(), entry);
     if (entry_position != result.sources.end() && entry_position != result.sources.begin()) {
         std::rotate(result.sources.begin(), entry_position, entry_position + 1);
+    }
+
+    for (const auto& source : result.sources) {
+        const auto selected = index_by_path.find(path_key(source));
+        if (selected != index_by_path.end()
+            && file_requires_module_pipeline(files[selected->second])) {
+            result.requires_module_pipeline = true;
+            break;
+        }
     }
 
     if (result.sources.empty() || result.sources.front() != entry) {

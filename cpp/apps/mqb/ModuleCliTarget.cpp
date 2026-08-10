@@ -214,6 +214,7 @@ int run_module_target(
         .link_options = std::move(request.link_options),
         .working_directory = request.project_root,
         .max_parallel_jobs = request.max_parallel_jobs,
+        .force_named_modules = request.force_named_modules,
     };
     auto result = router.run(target_request);
     if (!result) {

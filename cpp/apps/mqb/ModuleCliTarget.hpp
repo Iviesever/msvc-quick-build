@@ -27,6 +27,7 @@ struct ModuleCliTargetRequest {
     std::string target_name;
     std::size_t max_parallel_jobs{1};
     bool jobs_explicit{false};
+    bool force_named_modules{false};
     bool verbose{false};
     bool run_after_build{false};
     std::vector<std::string> run_arguments;

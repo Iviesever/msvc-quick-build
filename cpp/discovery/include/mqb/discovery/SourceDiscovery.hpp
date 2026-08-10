@@ -44,6 +44,10 @@ struct Result {
     std::vector<std::filesystem::path> sources;
     std::size_t indexed_files{};
     std::vector<Warning> warnings;
+    // True when at least one selected translation unit contains module syntax
+    // that requires the P1689/module pipeline, even if discovery found no local
+    // interface provider (for example `import external.module;`).
+    bool requires_module_pipeline{false};
 };
 
 class SourceDiscovery {

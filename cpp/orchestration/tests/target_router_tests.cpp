@@ -40,6 +40,9 @@ int main() {
         expect(
             MsvcTargetRouter::select_pipeline(sources) == MsvcTargetPipeline::ordinary,
             "ordinary-only source sets must preserve the existing target pipeline");
+        expect(
+            MsvcTargetRouter::select_pipeline(sources, true) == MsvcTargetPipeline::named_modules,
+            "discovery must be able to force the module pipeline for import-only ordinary sources");
     }
 
     {
@@ -67,6 +70,9 @@ int main() {
         expect(
             MsvcTargetRouter::select_pipeline(sources) == MsvcTargetPipeline::ordinary,
             "empty routing input should defer validation to the ordinary target contract");
+        expect(
+            MsvcTargetRouter::select_pipeline(sources, true) == MsvcTargetPipeline::named_modules,
+            "explicit fail-closed routing must take precedence over inferred source kinds");
     }
 
     if (failures != 0) {

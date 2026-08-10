@@ -1,4 +1,5 @@
 add_library(mqb_discovery STATIC
+    src/ModuleSyntax.cpp
     src/SourceDiscovery.cpp
 )
 
@@ -7,6 +8,7 @@ target_include_directories(mqb_discovery
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+target_link_libraries(mqb_discovery PRIVATE mqb_core)
 target_compile_features(mqb_discovery PUBLIC cxx_std_23)
 
 if(MSVC)
