@@ -164,7 +164,9 @@ int main(const int argc, char* argv[]) {
     const fs::path source_directory = source->parent_path();
     const fs::path artifact_root = source_directory / ".mqb";
 
-    fs::path object_name = source->stem();
+    // Keep the source extension in internal artifact names so sibling files
+    // such as foo.cpp and foo.cxx cannot alias the same cached object.
+    fs::path object_name = source->filename();
     object_name += ".obj";
     const fs::path object_file = artifact_root / "obj" / object_name;
     const fs::path dependency_file = artifact_root / "deps" / with_suffix(source->filename(), ".json");
