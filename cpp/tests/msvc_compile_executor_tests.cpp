@@ -106,6 +106,20 @@ void write_dependencies(
         }) != entry.dependencies.end();
 }
 
+[[nodiscard]] bool has_output(
+    const mqb::CompileCacheEntry& entry,
+    const fs::path& expected,
+    const mqb::ArtifactKind kind) {
+    const auto normalized = expected.lexically_normal();
+    return std::find_if(
+        entry.outputs.begin(),
+        entry.outputs.end(),
+        [&normalized, kind](const mqb::Artifact& output) {
+            return output.kind == kind
+                && output.path.lexically_normal() == normalized;
+        }) != entry.outputs.end();
+}
+
 class RecordingRunner final : public mqb::process::ProcessRunner {
 public:
     std::expected<mqb::process::ProcessResult, mqb::process::ProcessError>
@@ -180,7 +194,9 @@ int main() {
     if (result) {
         expect(result->process.exit_code == 0, "execution result should preserve compiler process result");
         expect(result->cache_entry.source == source, "cache entry should preserve translation-unit source");
-        expect(result->cache_entry.object.path == object, "cache entry should preserve planned object artifact");
+        expect(result->cache_entry.outputs.size() == 1
+                   && has_output(result->cache_entry, object, mqb::ArtifactKind::object),
+               "ordinary cache entry should preserve exactly the planned object output");
         expect(result->cache_entry.toolchain.compiler == toolchain.identity.compiler,
                "cache entry should preserve compiler identity path");
         expect(result->cache_entry.toolchain.version == toolchain.identity.version,
@@ -266,6 +282,10 @@ int main() {
     if (module_result) {
         expect(module_result->cache_entry.kind == mqb::TranslationUnitKind::module_interface,
                "provider cache entry should preserve module-interface kind");
+        expect(module_result->cache_entry.outputs.size() == 2
+                   && has_output(module_result->cache_entry, module_object, mqb::ArtifactKind::object)
+                   && has_output(module_result->cache_entry, module_ifc, mqb::ArtifactKind::module_interface),
+               "provider cache entry should preserve both planned object and IFC outputs");
         expect(has_argument(runner.last_spec, "/interface")
                    && has_argument(runner.last_spec, "/ifcOutput")
                    && has_argument(runner.last_spec, path_to_utf8(module_ifc)),
@@ -317,6 +337,9 @@ int main() {
         expect(has_argument(runner.last_spec, "/reference")
                    && has_argument(runner.last_spec, reference),
                "consumer compile argv should contain logical-name to IFC mapping");
+        expect(consumer_result->cache_entry.outputs.size() == 1
+                   && has_output(consumer_result->cache_entry, consumer_object, mqb::ArtifactKind::object),
+               "consumer cache entry should preserve only its own object as a planned output");
         expect(has_dependency(consumer_result->cache_entry, header),
                "consumer cache should retain compiler-discovered headers");
         expect(has_dependency(consumer_result->cache_entry, module_ifc),
