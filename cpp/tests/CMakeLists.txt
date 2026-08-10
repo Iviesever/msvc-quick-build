@@ -174,7 +174,7 @@ if(WIN32)
         add_test(NAME mqb.msvc.link_integration COMMAND mqb_msvc_link_integration_tests)
         add_test(NAME mqb.msvc.incremental_loop COMMAND mqb_msvc_incremental_loop_tests)
         add_test(
-            NAME mqb.cli.single_tu_e2e
+            NAME mqb.cli.target_e2e
             COMMAND mqb_cli_e2e_tests $<TARGET_FILE:mqb>
         )
     endif()
