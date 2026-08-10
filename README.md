@@ -20,16 +20,15 @@
 
 ```
 vscode-msvc-quick-build/
-├── test_cpp23/                        # 测试构建
-|     ├─ math.ixx
-|     └─ main.cpp
-├── install.bat                        # 一键安装脚本（双击运行）
-├── build.ps1                          # 核心编译引擎
-├── Microsoft.PowerShell_profile.ps1   # PowerShell profile（注册 build 命令）
-└── portable_msvc.zip                  # 便携版 MSVC 编译环境（可选）
+├── cpp/                               # C++23 V2 源码与测试
+├── docs/
+│   └── CPP_V2_ARCHITECTURE.md         # C++ V2 当前架构
+├── install.bat                        # PowerShell 版本安装脚本（过渡期保留）
+├── build.ps1                          # 当前稳定 PowerShell 引擎（Golden Reference）
+└── Microsoft.PowerShell_profile.ps1   # PowerShell profile（注册 build 命令）
 ```
 
-
+> C++ V2 正在逐步接管构建系统；在 `mqb.exe` 达到可替代状态之前，`build.ps1` 继续作为稳定用户入口与行为基线。
 
 
 > **首次使用 PowerShell 脚本？** 需要先在 PowerShell 中执行一次（仅需一次）：
