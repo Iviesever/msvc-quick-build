@@ -5,10 +5,11 @@ This document defines the architecture for migrating MSVC Quick Build from the P
 ## Goals
 
 - Keep the PowerShell implementation as the behavioral reference until parity is proven.
-- Separate build policy from compiler/process execution.
+- Separate build policy from compiler/linker/process execution.
 - Keep MSVC-specific spellings out of the core model.
-- Make cache invalidation explainable and regression-testable.
+- Make compile and link cache invalidation explainable and regression-testable.
 - Treat paths and argv as structured data rather than shell command strings.
+- Prefer a conservative rebuild/relink over reusing uncertain artifacts.
 
 ## Layers
 
@@ -16,39 +17,38 @@ This document defines the architecture for migrating MSVC Quick Build from the P
 CLI (mqb.exe)
     |
     v
-Core
-  BuildRequest
-  Artifact / TranslationUnit
-  BuildSignature
-  CompileCacheValidator
-  DependencyGraph
-  BuildPlanner -> BuildPlan / BuildAction
+Orchestration
+  load -> snapshot -> validate -> plan -> execute -> persist
     |
-    v
-Process abstraction
-  ProcessSpec { executable, argv, cwd, env }
-  ProcessRunner -> expected<ProcessResult, ProcessError>
-    |
-    v
-Platform implementation
-  WindowsProcessRunner / CreateProcessW
-    |
-    v
-MSVC backend
-  MsvcToolchainLocator
-  portable_msvc layout | vswhere -> vcvarsall -> environment
-  cl.exe / link.exe argument builders (next)
-  /sourceDependencies (later)
-  /scanDependencies (later)
+    +--------------------+
+    v                    v
+Core                  MSVC backend
+  BuildRequest           MsvcToolchainLocator
+  Artifact / TU          MsvcCompiler
+  BuildSignature         MsvcCompileExecutor
+  CompileCache           MsvcLinker
+  LinkCache              /sourceDependencies reader
+  DependencyGraph             |
+  BuildPlanner                v
+    |                    Process abstraction
+    |                      ProcessSpec { executable, argv, cwd, env }
+    |                           |
+    +---------------------------+
+                                v
+                         Windows platform
+                         WindowsProcessRunner
+                         CreateProcessW
 ```
 
 ## Architectural rules
 
-1. **Core does not know `cl.exe`.** MSVC flags belong to the backend.
+1. **Core does not know `cl.exe` or `link.exe`.** MSVC switches and schemas belong to the backend.
 2. **Planner does not execute.** `BuildPlanner` only creates typed actions.
-3. **Correctness beats cache hit rate.** Uncertain cache state rebuilds.
-4. **No internal shell command API.** Executable and argv remain separate until a platform adapter absolutely requires another representation.
+3. **Correctness beats cache hit rate.** Uncertain cache state rebuilds or relinks.
+4. **No internal shell command API.** Executable and argv remain separate until the Windows adapter builds the `CreateProcessW` command line.
 5. **UTF-8 at the process abstraction boundary.** Windows converts textual argv/environment data to UTF-16 immediately before `CreateProcessW`.
+6. **Compile state and link state are independent.** A compile cache hit does not imply a link cache hit, and link-only changes must never force unnecessary compilation.
+7. **A fresh compile is an explicit relink signal.** Linking must not depend solely on filesystem timestamp granularity.
 
 ## Compile identity and cache freshness
 
@@ -56,11 +56,31 @@ MSVC backend
 
 ```text
 compiler recipe identity ----> BuildSignature
-source/header freshness ----> CompileCacheValidator
-artifact placement ----------> Artifact / cache storage
+source/header freshness ------> CompileCacheValidator
+artifact placement -----------> Artifact / cache storage
 ```
 
 `CompileCacheValidator` is pure and returns typed `BuildReason` values; it does not touch the filesystem or launch a process.
+
+`CompileCacheFile` persists compile metadata in a versioned binary format. Missing metadata is a normal cold-cache condition; corrupt/truncated/unsupported metadata is rejected and conservatively rebuilt.
+
+## Link identity and cache freshness
+
+Linking has its own state machine rather than piggybacking on object timestamps.
+
+```text
+ordered object inputs --------+
+link.exe identity ------------+
+link options -----------------+--> BuildSignature::for_link
+output identity --------------+
+
+output/object freshness ----------> LinkCacheValidator
+fresh compile --------------------> force_relink / explicit rebuild
+```
+
+`LinkerIdentity` stamps `link.exe` independently from `cl.exe`, so a linker update can invalidate only link state. `LinkCacheValidator` distinguishes link-input changes, linker-option changes, toolchain changes, missing output, and explicit relink.
+
+`LinkCacheFile` uses a separate versioned cache format. Broken link metadata can only cause a safe relink; it must never permit reuse of a stale executable.
 
 ## Dependency graph and planner
 
@@ -77,7 +97,47 @@ CompilePlanItem
                                   typed rebuild reasons
 ```
 
-The executor therefore receives actions rather than policy decisions.
+For link planning:
+
+```text
+LinkPlanItem
+    +-- reusable cache ------> no action
+    +-- stale cache ---------> LinkAction
+                                  ordered object inputs
+                                  executable output
+                                  typed relink reasons
+```
+
+Executors therefore receive actions rather than policy decisions.
+
+## Orchestration
+
+The application-facing coordinators compose existing policy/backend pieces without owning their algorithms.
+
+### Incremental compile
+
+```text
+CompileCacheFile
+      -> file snapshots
+      -> CompileCacheValidator
+      -> BuildPlanner::plan_compile
+      -> MsvcCompileExecutor
+      -> /sourceDependencies reader
+      -> CompileCacheFile::save
+```
+
+### Incremental link
+
+```text
+LinkCacheFile
+      -> output/object snapshots
+      -> LinkCacheValidator
+      -> BuildPlanner::plan_link
+      -> MsvcLinker
+      -> LinkCacheFile::save
+```
+
+Ordinary cache-load/save failures are surfaced as warnings and conservatively rebuild/relink. Compiler/linker execution failures are build errors.
 
 ## Process boundary
 
@@ -112,19 +172,34 @@ The locator first tries the standard `vswhere.exe` location, then known VS 2026/
 
 The captured environment is returned as structured name/value overrides; the locator does not mutate MQB's own process environment. `VCToolsInstallDir` is used to resolve the selected compiler/linker/librarian binaries.
 
-GitHub CI enables an installed-MSVC integration test explicitly; local tests keep that test opt-in so a portable-only development machine is not forced to have a registered Visual Studio installation.
+GitHub CI enables installed-MSVC integration tests explicitly; local tests keep those tests opt-in so a portable-only development machine is not forced to have a registered Visual Studio installation.
+
+## Current CLI milestone
+
+`mqb.exe` currently supports one ordinary C++ translation unit (`.cpp`, `.cc`, `.cxx`) and produces collision-free internal artifacts under a source-local `.mqb/` directory:
+
+```text
+.mqb/
+  obj/    <source filename>.obj
+  deps/   compiler dependency JSON
+  cache/  compile cache + link cache
+  bin/    <source filename>.exe
+```
+
+The CLI composes the incremental compile coordinator followed by the incremental link coordinator. Warm builds can therefore skip both compiler and linker independently, while a fresh compile explicitly forces relink even when filesystem timestamps are ambiguous.
 
 ## Migration sequence
 
 1. **Scaffold** — CMake, `mqb_core`, CLI executable, CTest. ✅
-2. **Pure core** — artifacts, signatures, plan model, dependency graph, cache validation, compile planner. ✅
+2. **Pure core** — artifacts, signatures, plan model, dependency graph, compile cache validation/planning. ✅
 3. **Process abstraction** — typed process spec, Windows quoting, Win32 runner. ✅
-4. **MSVC toolchain backend** — portable discovery plus `vswhere/vcvarsall` environment capture. **In progress / verification.**
-5. **Ordinary translation units** — typed compiler arguments, compile execution, `/sourceDependencies`, cache persistence/refresh.
-6. **Link state** — explicit linker signature and link planning.
-7. **Modules** — P1689 `/scanDependencies`, module graph, IFC/object artifacts.
-8. **Parity** — run PowerShell and C++ against the same E2E fixtures.
-9. **Cutover** — make `mqb.exe` primary only after parity tests pass.
+4. **MSVC toolchain backend** — portable discovery plus `vswhere/vcvarsall` environment capture. ✅
+5. **Ordinary single TU** — typed compiler arguments, `/sourceDependencies`, cache persistence, real incremental CLI. ✅
+6. **Link state** — independent linker identity/signature/cache/planning/backend/orchestration and executable production. ✅
+7. **Multi-TU and target CLI** — source discovery, multiple objects, output naming, libraries, run mode, project-level artifact layout.
+8. **Modules** — P1689 `/scanDependencies`, module graph, IFC/object artifacts, `import std`.
+9. **Parity** — run PowerShell and C++ against the same E2E fixtures.
+10. **Cutover** — make `mqb.exe` primary only after parity tests pass.
 
 ## Local build
 
@@ -134,10 +209,10 @@ cmake --build cpp/build
 ctest --test-dir cpp/build --output-on-failure
 ```
 
-To opt into the installed Visual Studio integration test:
+To opt into tests that require a registered Visual Studio installation:
 
 ```powershell
 cmake -S cpp -B cpp/build -DMQB_ENABLE_INSTALLED_MSVC_TESTS=ON
 ```
 
-GitHub Windows CI currently uses the Visual Studio 2026 CMake generator and enables that integration test.
+GitHub Windows CI currently uses the Visual Studio 2026 CMake generator and enables those integration tests.
