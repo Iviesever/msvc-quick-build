@@ -52,18 +52,31 @@ if(WIN32)
     target_link_libraries(mqb_msvc_portable_tests PRIVATE mqb_msvc)
     target_compile_features(mqb_msvc_portable_tests PRIVATE cxx_std_23)
 
+    add_executable(mqb_msvc_compiler_arguments_tests msvc_compiler_arguments_tests.cpp)
+    target_link_libraries(mqb_msvc_compiler_arguments_tests PRIVATE mqb_msvc)
+    target_compile_features(mqb_msvc_compiler_arguments_tests PRIVATE cxx_std_23)
+
     list(APPEND MQB_TEST_TARGETS
         mqb_windows_command_line_tests
         mqb_process_echo_helper
         mqb_windows_process_runner_tests
         mqb_msvc_portable_tests
+        mqb_msvc_compiler_arguments_tests
     )
 
     if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
         add_executable(mqb_msvc_visual_studio_tests msvc_visual_studio_tests.cpp)
         target_link_libraries(mqb_msvc_visual_studio_tests PRIVATE mqb_msvc mqb_platform_windows)
         target_compile_features(mqb_msvc_visual_studio_tests PRIVATE cxx_std_23)
-        list(APPEND MQB_TEST_TARGETS mqb_msvc_visual_studio_tests)
+
+        add_executable(mqb_msvc_compile_integration_tests msvc_compile_integration_tests.cpp)
+        target_link_libraries(mqb_msvc_compile_integration_tests PRIVATE mqb_msvc mqb_platform_windows)
+        target_compile_features(mqb_msvc_compile_integration_tests PRIVATE cxx_std_23)
+
+        list(APPEND MQB_TEST_TARGETS
+            mqb_msvc_visual_studio_tests
+            mqb_msvc_compile_integration_tests
+        )
     endif()
 endif()
 
@@ -90,8 +103,10 @@ if(WIN32)
         COMMAND mqb_windows_process_runner_tests $<TARGET_FILE:mqb_process_echo_helper>
     )
     add_test(NAME mqb.msvc.portable COMMAND mqb_msvc_portable_tests)
+    add_test(NAME mqb.msvc.compiler_arguments COMMAND mqb_msvc_compiler_arguments_tests)
 
     if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
         add_test(NAME mqb.msvc.visual_studio COMMAND mqb_msvc_visual_studio_tests)
+        add_test(NAME mqb.msvc.compile_integration COMMAND mqb_msvc_compile_integration_tests)
     endif()
 endif()

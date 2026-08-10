@@ -1,0 +1,151 @@
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string_view>
+
+#include "mqb/core/CompilerOptions.hpp"
+#include "mqb/msvc/MsvcCompiler.hpp"
+#include "mqb/msvc/MsvcToolchainLocator.hpp"
+#include "mqb/platform/windows/WindowsProcessRunner.hpp"
+
+namespace {
+
+namespace fs = std::filesystem;
+int failures = 0;
+
+void expect(const bool condition, const std::string_view message) {
+    if (!condition) {
+        ++failures;
+        std::cerr << "FAIL: " << message << '\n';
+    }
+}
+
+class TemporaryDirectory {
+public:
+    TemporaryDirectory() {
+        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
+        path_ = fs::temp_directory_path() / ("mqb compile integration " + std::to_string(tick));
+        fs::create_directories(path_);
+    }
+
+    ~TemporaryDirectory() {
+        std::error_code ignored;
+        fs::remove_all(path_, ignored);
+    }
+
+    [[nodiscard]] const fs::path& path() const noexcept { return path_; }
+
+private:
+    fs::path path_;
+};
+
+void write_text(const fs::path& path, const std::string_view text) {
+    fs::create_directories(path.parent_path());
+    std::ofstream file{path, std::ios::binary | std::ios::trunc};
+    file.write(text.data(), static_cast<std::streamsize>(text.size()));
+}
+
+} // namespace
+
+int main() {
+    mqb::platform::windows::WindowsProcessRunner runner;
+    mqb::msvc::MsvcToolchainLocator locator{runner};
+
+    mqb::msvc::DiscoveryOptions discovery;
+    discovery.preference = mqb::msvc::ToolchainPreference::visual_studio;
+    discovery.target_architecture = mqb::Architecture::x64;
+    discovery.host_architecture = mqb::Architecture::x64;
+
+    const auto toolchain = locator.discover(discovery);
+    expect(toolchain.has_value(), "installed MSVC toolchain should be discoverable for compile integration");
+    if (!toolchain) {
+        std::cerr << "toolchain error: " << toolchain.error().message << '\n';
+        return 1;
+    }
+
+    TemporaryDirectory fixture;
+    const fs::path include_dir = fixture.path() / "include dir";
+    const fs::path source = fixture.path() / "source dir" / "main file.cpp";
+    const fs::path object = fixture.path() / "object dir" / "main file.obj";
+    const fs::path dependency_json = fixture.path() / "dependency dir" / "main file.json";
+
+    fs::create_directories(object.parent_path());
+    fs::create_directories(dependency_json.parent_path());
+    write_text(
+        include_dir / "answer.hpp",
+        "#pragma once\n#define MQB_HEADER_VALUE 35\n");
+    write_text(
+        source,
+        "#include \"answer.hpp\"\n"
+        "#ifndef MQB_DEFINE\n#error MQB_DEFINE missing\n#endif\n"
+        "static_assert(MQB_DEFINE == 7);\n"
+        "static_assert(MQB_HEADER_VALUE == 35);\n"
+        "int mqb_answer() { return MQB_DEFINE + MQB_HEADER_VALUE; }\n");
+
+    mqb::CompilerOptions options;
+    options.configuration = mqb::BuildConfiguration::debug;
+    options.architecture = mqb::Architecture::x64;
+    options.standard = mqb::CppStandard::cpp23;
+    options.defines = {"MQB_DEFINE=7"};
+    options.include_directories = {include_dir};
+
+    mqb::msvc::CompileInvocation invocation;
+    invocation.source = source;
+    invocation.object = object;
+    invocation.source_dependencies = dependency_json;
+    invocation.options = options;
+    invocation.working_directory = fixture.path();
+
+    mqb::msvc::MsvcCompiler compiler{*toolchain, runner};
+    const auto compile_result = compiler.compile(invocation);
+    expect(compile_result.has_value(), "real cl.exe invocation should compile the fixture successfully");
+    if (!compile_result) {
+        std::cerr << "compiler error: " << compile_result.error().message << '\n';
+        if (compile_result.error().process_result) {
+            std::cerr << compile_result.error().process_result->stdout_text;
+            std::cerr << compile_result.error().process_result->stderr_text;
+        }
+    } else {
+        expect(compile_result->exit_code == 0, "successful compile should preserve exit code 0");
+        expect(fs::is_regular_file(object), "cl.exe should create the requested object artifact");
+        expect(fs::is_regular_file(dependency_json),
+               "/sourceDependencies should create the requested JSON artifact");
+        std::error_code error_code;
+        expect(fs::file_size(dependency_json, error_code) > 0 && !error_code,
+               "source dependency JSON should not be empty");
+    }
+
+    const fs::path broken_source = fixture.path() / "source dir" / "broken.cpp";
+    const fs::path broken_object = fixture.path() / "object dir" / "broken.obj";
+    write_text(broken_source, "int broken( { return 0; }\n");
+
+    auto broken_invocation = invocation;
+    broken_invocation.source = broken_source;
+    broken_invocation.object = broken_object;
+    broken_invocation.source_dependencies.reset();
+    const auto broken_result = compiler.compile(broken_invocation);
+    expect(!broken_result.has_value(), "syntax error should be surfaced as compilation_failed");
+    if (!broken_result) {
+        expect(broken_result.error().code == mqb::msvc::CompilerErrorCode::compilation_failed,
+               "compiler non-zero exit should be distinct from process launch failure");
+        expect(broken_result.error().process_result.has_value(),
+               "compile failure should preserve diagnostics and child exit code");
+        if (broken_result.error().process_result) {
+            expect(broken_result.error().process_result->exit_code != 0,
+                   "compile failure should preserve non-zero cl.exe exit code");
+            expect(
+                !broken_result.error().process_result->stdout_text.empty()
+                    || !broken_result.error().process_result->stderr_text.empty(),
+                "compile failure should preserve compiler diagnostics");
+        }
+    }
+
+    if (failures != 0) {
+        std::cerr << failures << " test(s) failed\n";
+        return 1;
+    }
+
+    std::cout << "mqb_msvc_compile_integration_tests passed\n";
+    return 0;
+}
