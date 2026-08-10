@@ -26,6 +26,10 @@ add_executable(mqb_build_planner_tests build_planner_tests.cpp)
 target_link_libraries(mqb_build_planner_tests PRIVATE mqb_core)
 target_compile_features(mqb_build_planner_tests PRIVATE cxx_std_23)
 
+add_executable(mqb_link_state_tests link_state_tests.cpp)
+target_link_libraries(mqb_link_state_tests PRIVATE mqb_core)
+target_compile_features(mqb_link_state_tests PRIVATE cxx_std_23)
+
 add_executable(mqb_process_model_tests process_model_tests.cpp)
 target_link_libraries(mqb_process_model_tests PRIVATE mqb_process)
 target_compile_features(mqb_process_model_tests PRIVATE cxx_std_23)
@@ -38,6 +42,7 @@ set(MQB_TEST_TARGETS
     mqb_compile_cache_tests
     mqb_compile_cache_file_tests
     mqb_build_planner_tests
+    mqb_link_state_tests
     mqb_process_model_tests
 )
 
@@ -125,6 +130,7 @@ add_test(NAME mqb.core.dependency_graph COMMAND mqb_dependency_graph_tests)
 add_test(NAME mqb.core.compile_cache COMMAND mqb_compile_cache_tests)
 add_test(NAME mqb.core.compile_cache_file COMMAND mqb_compile_cache_file_tests)
 add_test(NAME mqb.core.build_planner COMMAND mqb_build_planner_tests)
+add_test(NAME mqb.core.link_state COMMAND mqb_link_state_tests)
 add_test(NAME mqb.process.model COMMAND mqb_process_model_tests)
 
 if(WIN32)

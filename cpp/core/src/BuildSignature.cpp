@@ -55,7 +55,7 @@ public:
         }
     }
 
-    void add_paths(const std::vector<std::filesystem::path>& values) noexcept {
+    void add_paths(const std::span<const std::filesystem::path> values) noexcept {
         add_u64(static_cast<std::uint64_t>(values.size()));
         for (const auto& value : values) {
             add_path(value);
@@ -105,9 +105,6 @@ BuildSignature BuildSignature::for_compile(
     const ToolchainIdentity& toolchain,
     const CompilerOptions& options) {
     StableHasher hasher;
-
-    // Version the schema explicitly. Adding/removing signature fields must bump
-    // this token so old cache entries cannot alias the new representation.
     hasher.add_string("mqb.compile.signature.v1");
 
     // Dependencies and output paths are deliberately excluded. Dependency
@@ -125,6 +122,34 @@ BuildSignature BuildSignature::for_compile(
     hasher.add_enum(options.standard);
     hasher.add_strings(options.defines);
     hasher.add_paths(options.include_directories);
+    hasher.add_strings(options.additional_arguments);
+
+    return BuildSignature{hasher.finish()};
+}
+
+BuildSignature BuildSignature::for_link(
+    const std::span<const std::filesystem::path> objects,
+    const std::filesystem::path& output,
+    const LinkerIdentity& linker,
+    const LinkOptions& options) {
+    StableHasher hasher;
+    hasher.add_string("mqb.link.signature.v1");
+
+    // Link input order is intentionally preserved. Although ordinary COFF
+    // objects are often order-insensitive, libraries and future link inputs are
+    // not universally so; signature identity should mirror the requested argv.
+    hasher.add_paths(objects);
+    hasher.add_path(output);
+
+    hasher.add_path(linker.linker);
+    hasher.add_string(linker.version);
+    hasher.add_string(linker.binary_stamp);
+
+    hasher.add_enum(options.configuration);
+    hasher.add_enum(options.architecture);
+    hasher.add_enum(options.subsystem);
+    hasher.add_paths(options.library_directories);
+    hasher.add_strings(options.libraries);
     hasher.add_strings(options.additional_arguments);
 
     return BuildSignature{hasher.finish()};

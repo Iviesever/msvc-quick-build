@@ -9,16 +9,11 @@
 #include "mqb/core/BuildSignature.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/FileSnapshot.hpp"
 #include "mqb/core/ToolchainIdentity.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 
 namespace mqb {
-
-struct FileSnapshot {
-    std::filesystem::path path;
-    bool exists{false};
-    std::filesystem::file_time_type modified{};
-};
 
 struct CompileCacheEntry {
     std::filesystem::path source;

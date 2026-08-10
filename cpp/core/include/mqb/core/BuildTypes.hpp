@@ -27,6 +27,7 @@ enum class BuildReason {
     dependency_changed,
     toolchain_changed,
     compiler_options_changed,
+    link_inputs_changed,
     linker_options_changed,
     explicit_rebuild,
 };
