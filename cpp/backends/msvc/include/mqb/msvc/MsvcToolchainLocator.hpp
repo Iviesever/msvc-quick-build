@@ -1,0 +1,71 @@
+#pragma once
+
+#include <expected>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "mqb/core/BuildTypes.hpp"
+#include "mqb/core/ToolchainIdentity.hpp"
+#include "mqb/process/Process.hpp"
+
+namespace mqb::msvc {
+
+enum class ToolchainSource {
+    visual_studio,
+    portable,
+};
+
+enum class ToolchainPreference {
+    automatic,
+    visual_studio,
+    portable,
+};
+
+struct DiscoveryOptions {
+    Architecture target_architecture{Architecture::x64};
+    Architecture host_architecture{Architecture::x64};
+    ToolchainPreference preference{ToolchainPreference::automatic};
+    std::vector<std::filesystem::path> portable_roots;
+    std::optional<std::filesystem::path> vswhere_path;
+    std::optional<std::filesystem::path> cmd_path;
+};
+
+struct MsvcToolchain {
+    ToolchainIdentity identity;
+    std::filesystem::path linker;
+    std::filesystem::path librarian;
+    std::filesystem::path vc_tools_root;
+    ToolchainSource source{ToolchainSource::visual_studio};
+    std::vector<process::EnvironmentVariable> environment;
+};
+
+enum class ToolchainErrorCode {
+    toolchain_not_found,
+    invalid_portable_layout,
+    visual_studio_environment_failed,
+    compiler_not_found,
+    process_failed,
+    invalid_environment_output,
+};
+
+struct ToolchainError {
+    ToolchainErrorCode code{ToolchainErrorCode::toolchain_not_found};
+    std::filesystem::path path;
+    std::string message;
+    std::optional<process::ProcessError> process_error;
+};
+
+class MsvcToolchainLocator {
+public:
+    explicit MsvcToolchainLocator(process::ProcessRunner& runner) : runner_(runner) {}
+
+    [[nodiscard]] std::expected<MsvcToolchain, ToolchainError>
+    discover(const DiscoveryOptions& options) const;
+
+private:
+    process::ProcessRunner& runner_;
+};
+
+} // namespace mqb::msvc
