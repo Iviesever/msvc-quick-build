@@ -20,6 +20,7 @@ struct Options {
     std::vector<std::string> libraries;
     msvc::ToolchainPreference toolchain_preference{msvc::ToolchainPreference::automatic};
     std::vector<std::filesystem::path> portable_roots;
+    bool discover_sources{true};
     bool verbose{false};
     bool show_help{false};
 };

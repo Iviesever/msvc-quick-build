@@ -199,7 +199,7 @@ int main(const int argc, char* argv[]) {
     const fs::path mqb_executable{argv[1]};
     const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
     TempTree tree{
-        .root = fs::temp_directory_path() / ("mqb_cli_library_e2e_" + std::to_string(unique)),
+        .root = fs::temp_directory_path() / ("mqb_cli_discovery_e2e_" + std::to_string(unique)),
     };
     fs::create_directories(tree.root);
 
@@ -210,7 +210,7 @@ int main(const int argc, char* argv[]) {
     discovery.host_architecture = mqb::Architecture::x64;
     discovery.preference = mqb::msvc::ToolchainPreference::visual_studio;
     auto toolchain = locator.discover(discovery);
-    expect(toolchain.has_value(), "VS2026 toolchain should be discoverable for library E2E");
+    expect(toolchain.has_value(), "VS2026 toolchain should be discoverable for discovery E2E");
     if (!toolchain) {
         std::cerr << "toolchain discovery failed: " << toolchain.error().message << '\n';
         return 1;
@@ -223,8 +223,13 @@ int main(const int argc, char* argv[]) {
     const fs::path utils_header = include_dir / "utils.hpp";
     const fs::path main_source = tree.root / "main.cpp";
     const fs::path utils_source = tree.root / "src" / "utils.cpp";
+    const fs::path helper_a_header = tree.root / "a" / "helper.hpp";
     const fs::path helper_a = tree.root / "a" / "helper.cpp";
+    const fs::path helper_b_header = tree.root / "b" / "helper.hpp";
     const fs::path helper_b = tree.root / "b" / "helper.cpp";
+    const fs::path other_main = tree.root / "tests" / "other_main.cpp";
+    const fs::path unrelated = tree.root / "unrelated.cpp";
+    const fs::path generated = tree.root / "build" / "generated.cpp";
 
     auto initial_library = build_static_library(runner, *toolchain, tree.root, library_dir, 100);
     expect(initial_library.has_value(), "initial static library fixture should build");
@@ -240,17 +245,31 @@ int main(const int argc, char* argv[]) {
         "#include \"utils.hpp\"\n"
         "#include \"value.hpp\"\n"
         "int util_value() { return configured_value; }\n");
-    write_text(helper_a, "int helper_a() { return 10; }\n");
-    write_text(helper_b, "int helper_b() { return 20; }\n");
+    write_text(helper_a_header, "#pragma once\nint helper_a();\n");
+    write_text(
+        helper_a,
+        "// Deliberately no include: sibling header ownership should discover this TU.\n"
+        "int helper_a() { return 10; }\n");
+    write_text(helper_b_header, "#pragma once\nint helper_b();\n");
+    write_text(helper_b, "#include \"helper.hpp\"\nint helper_b() { return 20; }\n");
+    write_text(
+        other_main,
+        "#include \"../include/utils.hpp\"\n"
+        "int main() { return util_value(); }\n");
+    write_text(unrelated, "int unrelated() { return 999; }\n");
+    write_text(
+        generated,
+        "#include \"../include/utils.hpp\"\n"
+        "int generated() { return util_value(); }\n");
     write_text(
         main_source,
         "#include <cstdio>\n"
         "#include \"utils.hpp\"\n"
+        "#include \"a/helper.hpp\"\n"
+        "#include \"b/helper.hpp\"\n"
         "#ifndef MQB_CLI_TEST\n"
         "#error MQB_CLI_TEST must be defined\n"
         "#endif\n"
-        "int helper_a();\n"
-        "int helper_b();\n"
         "int library_value();\n"
         "int main(int argc, char** argv) {\n"
         "    std::printf(\"mqb-multi=%d\\n\", util_value() + helper_a() + helper_b() + library_value() + MQB_CLI_TEST);\n"
@@ -261,65 +280,77 @@ int main(const int argc, char* argv[]) {
         "    return 0;\n"
         "}\n");
 
-    const std::vector<fs::path> sources{main_source, utils_source, helper_a, helper_b};
+    const std::vector<fs::path> entry_only{main_source};
     const fs::path main_object = tree.root / ".mqb" / "obj" / "main.cpp.obj";
     const fs::path utils_object = tree.root / ".mqb" / "obj" / "src" / "utils.cpp.obj";
     const fs::path helper_a_object = tree.root / ".mqb" / "obj" / "a" / "helper.cpp.obj";
     const fs::path helper_b_object = tree.root / ".mqb" / "obj" / "b" / "helper.cpp.obj";
+    const fs::path other_main_object = tree.root / ".mqb" / "obj" / "tests" / "other_main.cpp.obj";
+    const fs::path unrelated_object = tree.root / ".mqb" / "obj" / "unrelated.cpp.obj";
+    const fs::path generated_object = tree.root / ".mqb" / "obj" / "build" / "generated.cpp.obj";
     const fs::path executable = tree.root / ".mqb" / "bin" / "product.exe";
     const fs::path link_cache = tree.root / ".mqb" / "cache" / "link" / "product.linkcache";
     const std::vector<std::string> target_arguments{
         "-o", "product", "-L", path_text(library_dir), "-l", "math"};
 
-    auto cold = run_mqb(runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
-    expect(cold.has_value(), "cold library target invocation should launch");
+    auto cold = run_mqb(runner, mqb_executable, tree.root, entry_only, include_dir, target_arguments);
+    expect(cold.has_value(), "cold smart-discovery invocation should launch");
     if (cold) {
         if (cold->exit_code != 0) dump_failure(*cold);
-        expect(cold->exit_code == 0, "cold library target build should succeed");
+        expect(cold->exit_code == 0, "cold smart-discovery build should succeed");
+        expect(contains_output_line(cold->stdout_text, "[discover] 4 translation units"),
+               "single entry should discover exactly four target TUs");
         expect(cold->stdout_text.find("[compile] main.cpp") != std::string::npos,
-               "cold build should compile main.cpp");
+               "cold build should compile entry main.cpp");
         expect(cold->stdout_text.find("[compile] src/utils.cpp") != std::string::npos,
-               "cold build should compile nested utils.cpp");
+               "cold build should discover and compile utils.cpp");
         expect(cold->stdout_text.find("[compile] a/helper.cpp") != std::string::npos,
-               "cold build should compile first same-basename helper");
+               "cold build should discover helper A through sibling header ownership");
         expect(cold->stdout_text.find("[compile] b/helper.cpp") != std::string::npos,
-               "cold build should compile second same-basename helper");
+               "cold build should discover helper B through include graph");
+        expect(cold->stdout_text.find("other_main.cpp") == std::string::npos,
+               "reachable second main must not enter target output");
+        expect(cold->stdout_text.find("unrelated.cpp") == std::string::npos,
+               "disconnected source must not enter target output");
+        expect(cold->stdout_text.find("generated.cpp") == std::string::npos,
+               "default build-directory source must not enter target output");
         expect(cold->stdout_text.find("[link] product.exe") != std::string::npos,
                "cold build should link custom target with static library");
     }
 
-    expect(fs::is_regular_file(main_object), "main object should use project-level layout");
-    expect(fs::is_regular_file(utils_object), "nested object should preserve relative source path");
-    expect(fs::is_regular_file(helper_a_object), "first helper object should exist");
-    expect(fs::is_regular_file(helper_b_object), "second helper object should exist independently");
-    expect(helper_a_object != helper_b_object,
-           "same-basename sources from different directories must have different artifacts");
-    expect(fs::is_regular_file(executable), "library target should create product.exe");
-    expect(fs::is_regular_file(link_cache), "library target should persist link cache");
+    expect(fs::is_regular_file(main_object), "entry object should exist");
+    expect(fs::is_regular_file(utils_object), "discovered nested object should exist");
+    expect(fs::is_regular_file(helper_a_object), "discovered helper A object should exist");
+    expect(fs::is_regular_file(helper_b_object), "discovered helper B object should exist");
+    expect(!fs::exists(other_main_object), "second-main object must not be produced");
+    expect(!fs::exists(unrelated_object), "disconnected source object must not be produced");
+    expect(!fs::exists(generated_object), "excluded build source object must not be produced");
+    expect(fs::is_regular_file(executable), "smart-discovered target should create product.exe");
+    expect(fs::is_regular_file(link_cache), "smart-discovered target should persist link cache");
 
     auto cold_run = run_executable(runner, executable, tree.root);
-    expect(cold_run.has_value(), "cold-built library target should launch");
+    expect(cold_run.has_value(), "cold-built smart-discovered target should launch");
     if (cold_run) {
         expect(cold_run->exit_code == 0, "cold-built executable should return zero");
         expect(cold_run->stdout_text.find("mqb-multi=172") != std::string::npos,
-               "cold-built executable should consume initial math.lib behavior");
+               "cold-built executable should consume discovered TUs and initial math.lib behavior");
     }
 
-    auto warm = run_mqb(runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
-    expect(warm.has_value(), "warm library target invocation should launch");
+    auto warm = run_mqb(runner, mqb_executable, tree.root, entry_only, include_dir, target_arguments);
+    expect(warm.has_value(), "warm smart-discovery invocation should launch");
     if (warm) {
         if (warm->exit_code != 0) dump_failure(*warm);
-        expect(warm->exit_code == 0, "warm library target build should succeed");
+        expect(warm->exit_code == 0, "warm smart-discovery build should succeed");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] main.cpp"),
                "warm build should skip main.cpp");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] src/utils.cpp"),
-               "warm build should skip utils.cpp");
+               "warm build should skip discovered utils.cpp");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] a/helper.cpp"),
-               "warm build should skip helper A");
+               "warm build should skip discovered helper A");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] b/helper.cpp"),
-               "warm build should skip helper B");
+               "warm build should skip discovered helper B");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] product.exe"),
-               "warm build should reuse executable while library is unchanged");
+               "warm build should reuse executable while sources/library are unchanged");
     }
 
     std::vector<std::string> run_arguments = target_arguments;
@@ -327,13 +358,13 @@ int main(const int argc, char* argv[]) {
         run_arguments.end(),
         {"--run", "--", "hello world", "--child-option", "", "a b c"});
     auto run_with_args = run_mqb(
-        runner, mqb_executable, tree.root, sources, include_dir, run_arguments);
+        runner, mqb_executable, tree.root, entry_only, include_dir, run_arguments);
     expect(run_with_args.has_value(), "warm --run invocation should launch");
     if (run_with_args) {
         if (run_with_args->exit_code != 0) dump_failure(*run_with_args);
         expect(run_with_args->exit_code == 0, "warm --run should return child success code");
         expect(contains_output_line(run_with_args->stdout_text, "[up-to-date] product.exe"),
-               "--run should still reuse warm library link state");
+               "--run should still reuse warm link state");
         expect(contains_output_line(run_with_args->stdout_text, "[run] product.exe"),
                "--run should report the launched target");
         expect(contains_output_line(run_with_args->stdout_text, "argc=5"),
@@ -365,7 +396,7 @@ int main(const int argc, char* argv[]) {
     }
 
     auto library_changed = run_mqb(
-        runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
+        runner, mqb_executable, tree.root, entry_only, include_dir, target_arguments);
     expect(library_changed.has_value(), "library-only change invocation should launch");
     if (library_changed) {
         if (library_changed->exit_code != 0) dump_failure(*library_changed);
@@ -373,7 +404,7 @@ int main(const int argc, char* argv[]) {
         expect(contains_output_line(library_changed->stdout_text, "[up-to-date] main.cpp"),
                "library-only change must not recompile main.cpp");
         expect(contains_output_line(library_changed->stdout_text, "[up-to-date] src/utils.cpp"),
-               "library-only change must not recompile utils.cpp");
+               "library-only change must not recompile discovered utils.cpp");
         expect(contains_output_line(library_changed->stdout_text, "[up-to-date] a/helper.cpp"),
                "library-only change must not recompile helper A");
         expect(contains_output_line(library_changed->stdout_text, "[up-to-date] b/helper.cpp"),
@@ -412,17 +443,17 @@ int main(const int argc, char* argv[]) {
     }
 
     auto header_changed = run_mqb(
-        runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
-    expect(header_changed.has_value(), "header-change target invocation should launch");
+        runner, mqb_executable, tree.root, entry_only, include_dir, target_arguments);
+    expect(header_changed.has_value(), "header-change smart-discovery invocation should launch");
     if (header_changed) {
         if (header_changed->exit_code != 0) dump_failure(*header_changed);
         expect(header_changed->exit_code == 0, "header-change build should succeed");
         expect(contains_output_line(header_changed->stdout_text, "[up-to-date] main.cpp"),
                "header private to utils.cpp must not rebuild main.cpp");
         expect(header_changed->stdout_text.find("[compile] src/utils.cpp") != std::string::npos,
-               "header private to utils.cpp should rebuild utils.cpp");
+               "header private to utils.cpp should rebuild only discovered utils.cpp");
         expect(header_changed->stdout_text.find("dependency changed") != std::string::npos,
-               "partial rebuild should remain explainable");
+               "partial rebuild should remain explainable through compiler dependency metadata");
         expect(contains_output_line(header_changed->stdout_text, "[up-to-date] a/helper.cpp"),
                "unrelated helper A should remain cached");
         expect(contains_output_line(header_changed->stdout_text, "[up-to-date] b/helper.cpp"),
@@ -451,13 +482,13 @@ int main(const int argc, char* argv[]) {
     std::vector<std::string> release_arguments = target_arguments;
     release_arguments.push_back("--release");
     auto release = run_mqb(
-        runner, mqb_executable, tree.root, sources, include_dir, release_arguments);
-    expect(release.has_value(), "release target invocation should launch");
+        runner, mqb_executable, tree.root, entry_only, include_dir, release_arguments);
+    expect(release.has_value(), "release smart-discovery invocation should launch");
     if (release) {
         if (release->exit_code != 0) dump_failure(*release);
         expect(release->exit_code == 0, "release target build should succeed");
         expect(release->stdout_text.find("compiler options changed") != std::string::npos,
-               "Debug to Release should invalidate compile recipes");
+               "Debug to Release should invalidate discovered TU compile recipes");
         expect(release->stdout_text.find("[link] product.exe") != std::string::npos,
                "Debug to Release should relink target with static library");
         expect(release->stdout_text.find("linker options changed") != std::string::npos,
@@ -465,11 +496,11 @@ int main(const int argc, char* argv[]) {
     }
 
     auto release_run = run_executable(runner, executable, tree.root);
-    expect(release_run.has_value(), "release library target should launch");
+    expect(release_run.has_value(), "release smart-discovered target should launch");
     if (release_run) {
         expect(release_run->exit_code == 0, "release executable should return zero");
         expect(release_run->stdout_text.find("mqb-multi=174") != std::string::npos,
-               "release executable should preserve current library behavior");
+               "release executable should preserve current discovered/library behavior");
     }
 
     const fs::path exit_source = tree.root / "exit7.cpp";

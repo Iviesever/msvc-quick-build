@@ -15,6 +15,7 @@
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/LinkOptions.hpp"
 #include "mqb/core/ProjectArtifactLayout.hpp"
+#include "mqb/discovery/SourceDiscovery.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
@@ -66,6 +67,12 @@ absolute_path(const fs::path& path, const std::string_view description) {
         }
     }
     return true;
+}
+
+[[nodiscard]] bool inside_project(
+    const fs::path& project_root,
+    const fs::path& path) {
+    return safe_relative(path.lexically_normal().lexically_relative(project_root.lexically_normal()));
 }
 
 [[nodiscard]] fs::path display_source(
@@ -238,8 +245,8 @@ int main(const int argc, char* argv[]) {
     }
     project_root = project_root.lexically_normal();
 
-    std::vector<fs::path> sources;
-    sources.reserve(options.build.sources.size());
+    std::vector<fs::path> requested_sources;
+    requested_sources.reserve(options.build.sources.size());
     for (const auto& requested_source : options.build.sources) {
         auto source = absolute_path(requested_source, "source file");
         if (!source) {
@@ -255,7 +262,7 @@ int main(const int argc, char* argv[]) {
                       << path_text(*source) << '\n';
             return 2;
         }
-        for (const auto& previous : sources) {
+        for (const auto& previous : requested_sources) {
             error_code.clear();
             if (fs::equivalent(previous, *source, error_code) && !error_code) {
                 std::cerr << "error: source file was provided more than once: "
@@ -263,9 +270,8 @@ int main(const int argc, char* argv[]) {
                 return 2;
             }
         }
-        sources.push_back(std::move(*source));
+        requested_sources.push_back(std::move(*source));
     }
-    options.build.sources = sources;
 
     for (auto& include_directory : options.include_directories) {
         auto resolved = absolute_path(include_directory, "include directory");
@@ -292,6 +298,44 @@ int main(const int argc, char* argv[]) {
         portable_root = std::move(*resolved);
     }
 
+    std::vector<fs::path> sources = requested_sources;
+    if (options.discover_sources && requested_sources.size() == 1) {
+        const fs::path& entry = requested_sources.front();
+        const fs::path discovery_root = inside_project(project_root, entry)
+            ? project_root
+            : entry.parent_path();
+        const mqb::discovery::Request discovery_request{
+            .project_root = discovery_root,
+            .entry = entry,
+            .include_directories = options.include_directories,
+        };
+        auto discovered = mqb::discovery::SourceDiscovery::discover(discovery_request);
+        if (!discovered) {
+            std::cerr << "error: source discovery failed: " << discovered.error().message;
+            if (!discovered.error().path.empty()) {
+                std::cerr << ": " << path_text(discovered.error().path);
+            }
+            std::cerr << '\n';
+            return 2;
+        }
+        for (const auto& warning : discovered->warnings) {
+            std::cerr << "warning: source discovery: " << warning.message;
+            if (!warning.path.empty()) {
+                std::cerr << ": " << path_text(warning.path);
+            }
+            std::cerr << '\n';
+        }
+        sources = std::move(discovered->sources);
+        if (sources.size() > 1 || options.verbose) {
+            std::cout << "[discover] " << sources.size() << " translation units";
+            if (options.verbose) {
+                std::cout << " from " << discovered->indexed_files << " indexed C/C++ files";
+            }
+            std::cout << '\n';
+        }
+    }
+    options.build.sources = sources;
+
     auto layout = mqb::ProjectArtifactLayout::create(project_root);
     if (!layout) {
         std::cerr << "error: " << layout.error().message << '\n';
@@ -313,7 +357,7 @@ int main(const int argc, char* argv[]) {
         });
     }
 
-    const std::string target_name = options.build.output_name.value_or(sources.front().stem().string());
+    const std::string target_name = options.build.output_name.value_or(requested_sources.front().stem().string());
     auto target_artifacts = layout->for_target(target_name);
     if (!target_artifacts) {
         std::cerr << "error: " << target_artifacts.error().message << '\n';
@@ -327,13 +371,13 @@ int main(const int argc, char* argv[]) {
 
     mqb::platform::windows::WindowsProcessRunner runner;
     mqb::msvc::MsvcToolchainLocator locator{runner};
-    mqb::msvc::DiscoveryOptions discovery;
-    discovery.target_architecture = options.build.architecture;
-    discovery.host_architecture = mqb::Architecture::x64;
-    discovery.preference = options.toolchain_preference;
-    discovery.portable_roots = options.portable_roots;
+    mqb::msvc::DiscoveryOptions toolchain_discovery;
+    toolchain_discovery.target_architecture = options.build.architecture;
+    toolchain_discovery.host_architecture = mqb::Architecture::x64;
+    toolchain_discovery.preference = options.toolchain_preference;
+    toolchain_discovery.portable_roots = options.portable_roots;
 
-    auto toolchain = locator.discover(discovery);
+    auto toolchain = locator.discover(toolchain_discovery);
     if (!toolchain) {
         std::cerr << "error: " << toolchain.error().message;
         if (!toolchain.error().path.empty()) {
