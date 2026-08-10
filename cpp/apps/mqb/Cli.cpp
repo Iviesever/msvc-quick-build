@@ -277,7 +277,7 @@ std::string_view usage() noexcept {
 
 Usage:
   mqb <entry.cpp> [options] [-- program-args...]
-  mqb <source.cpp> <more-sources...> [options] [-- program-args...]
+  mqb <source.cpp> <more-sources...|module.ixx...> [options] [-- program-args...]
 
 Project configuration:
   MQB searches upward from the invocation directory for the nearest mqb.json.
@@ -287,15 +287,20 @@ Project configuration:
 Source selection:
   One positional source       Smart-discover connected ordinary C++ TUs (default)
   Multiple positional sources Build exactly that explicit ordered source set
-  --discover                  Explicitly enable smart discovery for one source
-  --no-discover               Disable smart discovery for a single source
+  Explicit .ixx source(s)     Route the explicit target through P1689 named-module scanning
+  --discover                  Explicitly enable smart discovery for one ordinary source
+  --no-discover               Disable smart discovery for a single ordinary source
+
+Named-module provider sources are explicit in this milestone; automatic provider discovery
+from an ordinary entry source remains a follow-up. Header units, external/prebuilt providers,
+and import std continue to fail closed in the module pipeline.
 
 Options:
   --debug                  Explicitly select Debug compile/link preset
   --release                Explicitly select Release compile/link preset
   --std <20|23|latest>     Explicitly select C++ language standard
   --x86 | --x64            Explicitly select target architecture
-  -j, --jobs <N>           Maximum concurrent TU compiles (default: hardware concurrency)
+  -j, --jobs <N>           Maximum concurrent TU scans/compiles (default: hardware concurrency)
   -o, --output <name>      Set target executable name under .mqb/bin/
   --run                    Run the executable after a successful build
   -I <dir>, -I<dir>        Add an include directory
@@ -310,13 +315,15 @@ Options:
   -h, --help               Show this help
   --                       Pass all remaining argv elements to the program
 
-Compile job count is execution policy only; changing -j does not invalidate build caches.
+Job count is execution policy only; changing -j does not invalidate build caches.
 Discovery is source selection only. Incremental header freshness continues to use
-MSVC /sourceDependencies metadata.
+MSVC /sourceDependencies metadata; /scanDependencies is module topology only.
 
 Generated state:
   .mqb/obj/    collision-free object files
   .mqb/deps/   compiler dependency metadata
+  .mqb/scan/   module dependency scan metadata
+  .mqb/ifc/    module interface artifacts
   .mqb/cache/  compile and link cache metadata
   .mqb/bin/    linked executable
 )";

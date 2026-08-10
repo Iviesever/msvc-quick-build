@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Cli.hpp"
+#include "ModuleCliTarget.hpp"
 #include "mqb/config/ProjectConfig.hpp"
 #include "mqb/config/ProjectOptions.hpp"
 #include "mqb/core/BuildTypes.hpp"
@@ -56,6 +57,9 @@ absolute_path_from(
 }
 
 [[nodiscard]] bool supported_source(const fs::path& source) {
+    if (mqb::cli::is_module_interface_source(source)) {
+        return true;
+    }
     std::string extension = source.extension().string();
     std::transform(
         extension.begin(),
@@ -277,7 +281,7 @@ int main(const int argc, char* argv[]) {
             return 2;
         }
         if (!supported_source(*source)) {
-            std::cerr << "error: only .cpp, .cc, and .cxx sources are supported in this milestone: "
+            std::cerr << "error: only .cpp, .cc, .cxx, and .ixx sources are supported: "
                       << path_text(*source) << '\n';
             return 2;
         }
@@ -361,7 +365,9 @@ int main(const int argc, char* argv[]) {
     options.libraries = effective.libraries;
 
     std::vector<fs::path> sources = requested_sources;
-    if (options.discover_sources && requested_sources.size() == 1) {
+    if (options.discover_sources
+        && requested_sources.size() == 1
+        && !mqb::cli::is_module_interface_source(requested_sources.front())) {
         const fs::path& entry = requested_sources.front();
         const bool project_scoped = inside_project(project_root, entry);
         const fs::path discovery_root = project_scoped
@@ -478,6 +484,34 @@ int main(const int argc, char* argv[]) {
     link_options.subsystem = mqb::LinkSubsystem::console;
     link_options.library_directories = std::move(options.library_directories);
     link_options.libraries = std::move(options.libraries);
+
+    const bool module_target = std::any_of(
+        target_sources.begin(),
+        target_sources.end(),
+        [](const mqb::orchestration::TargetSourceRequest& source) {
+            return mqb::cli::is_module_interface_source(source.source);
+        });
+    if (module_target) {
+        return mqb::cli::run_module_target(
+            mqb::cli::ModuleCliTargetRequest{
+                .sources = std::move(target_sources),
+                .target = std::move(*target_artifacts),
+                .compiler_options = std::move(compiler_options),
+                .link_options = std::move(link_options),
+                .project_root = project_root,
+                .config_file = project_config
+                    ? std::optional<fs::path>{project_config->file}
+                    : std::nullopt,
+                .target_name = target_name,
+                .max_parallel_jobs = compile_jobs,
+                .jobs_explicit = options.jobs.has_value(),
+                .verbose = options.verbose,
+                .run_after_build = options.build.run_after_build,
+                .run_arguments = std::move(options.build.run_arguments),
+            },
+            *toolchain,
+            runner);
+    }
 
     if (options.verbose) {
         std::cout << "[target] " << target_name << "\n"

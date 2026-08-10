@@ -143,6 +143,10 @@ if(WIN32)
         target_link_libraries(mqb_parallel_cli_e2e_tests PRIVATE mqb_platform_windows)
         target_compile_features(mqb_parallel_cli_e2e_tests PRIVATE cxx_std_23)
 
+        add_executable(mqb_module_cli_e2e_tests mqb_module_cli_e2e_tests.cpp)
+        target_link_libraries(mqb_module_cli_e2e_tests PRIVATE mqb_platform_windows)
+        target_compile_features(mqb_module_cli_e2e_tests PRIVATE cxx_std_23)
+
         list(APPEND MQB_TEST_TARGETS
             mqb_msvc_visual_studio_tests
             mqb_msvc_compile_integration_tests
@@ -151,6 +155,7 @@ if(WIN32)
             mqb_cli_e2e_tests
             mqb_project_config_e2e_tests
             mqb_parallel_cli_e2e_tests
+            mqb_module_cli_e2e_tests
         )
     endif()
 endif()
@@ -206,6 +211,10 @@ if(WIN32)
         add_test(
             NAME mqb.cli.parallel_e2e
             COMMAND mqb_parallel_cli_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.module_e2e
+            COMMAND mqb_module_cli_e2e_tests $<TARGET_FILE:mqb>
         )
     endif()
 endif()
