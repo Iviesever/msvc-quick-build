@@ -61,8 +61,8 @@ int main() {
         expect(partition->module_interface
                    == root / ".mqb" / "ifc" / "modules" / "math-part.ixx.ifc",
                "IFC filename should come from source identity rather than logical module spelling");
-        expect(partition->module_interface.generic_string().find(':') == std::string::npos,
-               "IFC artifact routing must not require logical-name characters such as partition ':'");
+        expect(partition->module_interface.filename().generic_string().find(':') == std::string::npos,
+               "IFC filename must not require logical-name characters such as partition ':'");
     }
 
     auto outside = layout->for_source(fs::path{"D:/vendor/foo.cpp"});
