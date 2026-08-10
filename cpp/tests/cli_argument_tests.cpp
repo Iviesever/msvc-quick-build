@@ -41,6 +41,8 @@ int main() {
                    "run mode should remain disabled by default");
             expect(parsed->build.run_arguments.empty(),
                    "run argument list should remain empty by default");
+            expect(parsed->library_directories.empty() && parsed->libraries.empty(),
+                   "library inputs should be empty by default");
             expect(parsed->build.configuration == mqb::BuildConfiguration::debug,
                    "default configuration should be debug");
             expect(parsed->build.architecture == mqb::Architecture::x64,
@@ -71,6 +73,12 @@ int main() {
             "-Iinclude dir"sv,
             "-D"sv,
             "VALUE=42"sv,
+            "-Lvendor libs"sv,
+            "--lib-path"sv,
+            "other libs"sv,
+            "-lmath"sv,
+            "--lib"sv,
+            "codec.lib"sv,
             "--verbose"sv,
             "--"sv,
             "hello world"sv,
@@ -103,6 +111,19 @@ int main() {
                            && parsed->build.run_arguments[3] == "a b c",
                        "run argv must preserve spaces, leading dashes, and empty arguments");
             }
+            expect(parsed->library_directories.size() == 2,
+                   "all library search directories should be collected");
+            if (parsed->library_directories.size() == 2) {
+                expect(parsed->library_directories[0] == "vendor libs"
+                           && parsed->library_directories[1] == "other libs",
+                       "library search directory order should be preserved");
+            }
+            expect(parsed->libraries.size() == 2,
+                   "all requested libraries should be collected");
+            if (parsed->libraries.size() == 2) {
+                expect(parsed->libraries[0] == "math" && parsed->libraries[1] == "codec.lib",
+                       "requested library order should be preserved");
+            }
             expect(parsed->build.configuration == mqb::BuildConfiguration::release,
                    "release flag should override default");
             expect(parsed->build.architecture == mqb::Architecture::x86,
@@ -122,24 +143,33 @@ int main() {
     }
 
     {
-        const std::vector arguments{"main.cpp"sv, "--output=demo"sv};
+        const std::vector arguments{
+            "main.cpp"sv,
+            "--output=demo"sv,
+            "--lib-path=vendor"sv,
+            "--lib=foo"sv,
+        };
         auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value(), "attached long output form should parse");
+        expect(parsed.has_value(), "attached long forms should parse");
         if (parsed) {
             expect(parsed->build.output_name.has_value() && *parsed->build.output_name == "demo",
                    "attached long output value should be preserved");
+            expect(parsed->library_directories.size() == 1
+                       && parsed->library_directories.front() == "vendor",
+                   "attached long library path should be preserved");
+            expect(parsed->libraries.size() == 1 && parsed->libraries.front() == "foo",
+                   "attached long library value should be preserved");
         }
     }
 
     {
-        const std::vector arguments{"main.cpp"sv, "--run"sv, "--"sv, "--release"sv};
+        const std::vector arguments{"main.cpp"sv, "--run"sv, "--"sv, "-lnot-a-library"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value(), "options after -- should become program arguments");
         if (parsed) {
-            expect(parsed->build.configuration == mqb::BuildConfiguration::debug,
-                   "MQB option parsing must stop at --");
+            expect(parsed->libraries.empty(), "library parsing must stop at --");
             expect(parsed->build.run_arguments.size() == 1
-                       && parsed->build.run_arguments.front() == "--release",
+                       && parsed->build.run_arguments.front() == "-lnot-a-library",
                    "option-looking argv after -- must be preserved verbatim");
         }
     }
@@ -154,6 +184,18 @@ int main() {
         const std::vector arguments{"main.cpp"sv, "-o"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(!parsed, "missing output value should be rejected");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "-L"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "missing library directory should be rejected");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "-l"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "missing library name should be rejected");
     }
 
     {

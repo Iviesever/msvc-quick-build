@@ -149,6 +149,17 @@ void print_compile_failure(const mqb::orchestration::IncrementalCompileError& er
 
 void print_link_failure(const mqb::orchestration::IncrementalLinkError& error) {
     std::cerr << "error: " << error.message << '\n';
+    if (error.library_resolution_error) {
+        const auto& resolution = *error.library_resolution_error;
+        std::cerr << "  " << resolution.message;
+        if (!resolution.library.empty()) {
+            std::cerr << ": " << resolution.library;
+        }
+        if (!resolution.path.empty()) {
+            std::cerr << " (" << path_text(resolution.path) << ')';
+        }
+        std::cerr << '\n';
+    }
     if (!error.linker_error) {
         return;
     }
@@ -264,6 +275,14 @@ int main(const int argc, char* argv[]) {
         }
         include_directory = std::move(*resolved);
     }
+    for (auto& library_directory : options.library_directories) {
+        auto resolved = absolute_path(library_directory, "library directory");
+        if (!resolved) {
+            std::cerr << "error: " << resolved.error() << '\n';
+            return 2;
+        }
+        library_directory = std::move(*resolved);
+    }
     for (auto& portable_root : options.portable_roots) {
         auto resolved = absolute_path(portable_root, "portable toolchain root");
         if (!resolved) {
@@ -335,6 +354,8 @@ int main(const int argc, char* argv[]) {
     link_options.configuration = options.build.configuration;
     link_options.architecture = options.build.architecture;
     link_options.subsystem = mqb::LinkSubsystem::console;
+    link_options.library_directories = std::move(options.library_directories);
+    link_options.libraries = std::move(options.libraries);
 
     if (options.verbose) {
         std::cout << "[target] " << target_name << "\n"
@@ -346,6 +367,12 @@ int main(const int argc, char* argv[]) {
                       << "    obj:   " << path_text(source.artifacts.object) << '\n'
                       << "    deps:  " << path_text(source.artifacts.dependencies) << '\n'
                       << "    cache: " << path_text(source.artifacts.compile_cache) << '\n';
+        }
+        for (const auto& directory : link_options.library_directories) {
+            std::cout << "  libpath: " << path_text(directory) << '\n';
+        }
+        for (const auto& library : link_options.libraries) {
+            std::cout << "  lib:     " << library << '\n';
         }
         std::cout << "  exe:     " << path_text(target_artifacts->executable) << '\n'
                   << "  cache:   " << path_text(target_artifacts->link_cache) << '\n';

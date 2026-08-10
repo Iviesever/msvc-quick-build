@@ -73,6 +73,17 @@ attached_or_next(
     return require_value(arguments, index, option);
 }
 
+[[nodiscard]] std::expected<std::string_view, Error>
+long_equals_value(
+    const std::string_view argument,
+    const std::string_view prefix) {
+    const std::string_view value = argument.substr(prefix.size());
+    if (value.empty()) {
+        return std::unexpected(error("empty value for " + std::string{prefix.substr(0, prefix.size() - 1)}));
+    }
+    return value;
+}
+
 } // namespace
 
 std::expected<Options, Error>
@@ -102,18 +113,14 @@ parse_arguments(const std::span<const std::string_view> arguments) {
         }
         if (argument == "-o" || argument == "--output") {
             auto value = require_value(arguments, index, argument);
-            if (!value) {
-                return std::unexpected(value.error());
-            }
+            if (!value) return std::unexpected(value.error());
             options.build.output_name = std::string{*value};
             continue;
         }
         if (argument.starts_with("--output=")) {
-            const std::string_view value = argument.substr(std::string_view{"--output="}.size());
-            if (value.empty()) {
-                return std::unexpected(error("empty value for --output"));
-            }
-            options.build.output_name = std::string{value};
+            auto value = long_equals_value(argument, "--output=");
+            if (!value) return std::unexpected(value.error());
+            options.build.output_name = std::string{*value};
             continue;
         }
         if (argument == "--debug") {
@@ -134,56 +141,76 @@ parse_arguments(const std::span<const std::string_view> arguments) {
         }
         if (argument == "--std") {
             auto value = require_value(arguments, index, argument);
-            if (!value) {
-                return std::unexpected(value.error());
-            }
+            if (!value) return std::unexpected(value.error());
             auto standard = parse_standard(*value);
-            if (!standard) {
-                return std::unexpected(standard.error());
-            }
+            if (!standard) return std::unexpected(standard.error());
             options.build.standard = *standard;
             continue;
         }
         if (argument == "--env") {
             auto value = require_value(arguments, index, argument);
-            if (!value) {
-                return std::unexpected(value.error());
-            }
+            if (!value) return std::unexpected(value.error());
             auto preference = parse_toolchain_preference(*value);
-            if (!preference) {
-                return std::unexpected(preference.error());
-            }
+            if (!preference) return std::unexpected(preference.error());
             options.toolchain_preference = *preference;
             continue;
         }
         if (argument == "--portable-root") {
             auto value = require_value(arguments, index, argument);
-            if (!value) {
-                return std::unexpected(value.error());
-            }
+            if (!value) return std::unexpected(value.error());
             options.portable_roots.emplace_back(std::string{*value});
+            continue;
+        }
+        if (argument == "--lib-path") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            options.library_directories.emplace_back(std::string{*value});
+            continue;
+        }
+        if (argument.starts_with("--lib-path=")) {
+            auto value = long_equals_value(argument, "--lib-path=");
+            if (!value) return std::unexpected(value.error());
+            options.library_directories.emplace_back(std::string{*value});
+            continue;
+        }
+        if (argument == "--lib") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            options.libraries.emplace_back(*value);
+            continue;
+        }
+        if (argument.starts_with("--lib=")) {
+            auto value = long_equals_value(argument, "--lib=");
+            if (!value) return std::unexpected(value.error());
+            options.libraries.emplace_back(*value);
             continue;
         }
         if (argument == "-I" || argument.starts_with("-I")) {
             auto value = attached_or_next(arguments, index, argument, "-I");
-            if (!value) {
-                return std::unexpected(value.error());
-            }
-            if (value->empty()) {
-                return std::unexpected(error("empty include directory"));
-            }
+            if (!value) return std::unexpected(value.error());
+            if (value->empty()) return std::unexpected(error("empty include directory"));
             options.include_directories.emplace_back(std::string{*value});
             continue;
         }
         if (argument == "-D" || argument.starts_with("-D")) {
             auto value = attached_or_next(arguments, index, argument, "-D");
-            if (!value) {
-                return std::unexpected(value.error());
-            }
-            if (value->empty()) {
-                return std::unexpected(error("empty preprocessor define"));
-            }
+            if (!value) return std::unexpected(value.error());
+            if (value->empty()) return std::unexpected(error("empty preprocessor define"));
             options.defines.emplace_back(*value);
+            continue;
+        }
+        if (argument == "-L" || argument.starts_with("-L")) {
+            auto value = attached_or_next(arguments, index, argument, "-L");
+            if (!value) return std::unexpected(value.error());
+            if (value->empty()) return std::unexpected(error("empty library directory"));
+            options.library_directories.emplace_back(std::string{*value});
+            continue;
+        }
+        if (argument == "-l" || argument.starts_with("-l")) {
+            auto value = attached_or_next(arguments, index, argument, "-l");
+            if (!value) return std::unexpected(value.error());
+            if (value->empty()) return std::unexpected(error("empty library name"));
+            options.libraries.emplace_back(*value);
             continue;
         }
         if (!argument.empty() && argument.front() == '-') {
@@ -211,8 +238,8 @@ Usage:
   mqb <source.cpp> [more-sources...] [options] [-- program-args...]
 
 Current milestone:
-  Incrementally compile an explicit C++ source set, link one executable,
-  and optionally run it without shell re-parsing.
+  Incrementally compile an explicit C++ source set, resolve exact library files,
+  link one executable, and optionally run it without shell re-parsing.
 
 Options:
   --debug                  Debug compile/link preset (default)
@@ -223,6 +250,10 @@ Options:
   --run                    Run the executable after a successful build
   -I <dir>, -I<dir>        Add an include directory
   -D <value>, -D<value>    Add a preprocessor definition
+  -L <dir>, -L<dir>        Add a library search directory
+  --lib-path <dir>         Add a library search directory
+  -l <name>, -l<name>      Link a library ('.lib' is optional)
+  --lib <name>             Link a library (name or explicit path)
   --env <auto|vs|portable> Toolchain selection (default: auto)
   --portable-root <dir>    Add a portable_msvc root candidate
   -v, --verbose            Show toolchain and artifact details
