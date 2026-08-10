@@ -65,21 +65,49 @@ A false cache miss wastes time. A false cache hit can silently produce stale bin
 
 Internal APIs use `std::filesystem::path`. Shell command strings are not used as the process model; executable path and argument vectors remain separate values.
 
-## Initial typed model
+## Typed core model
 
-The first commit introduces:
+The C++ core currently defines:
 
-- `BuildConfiguration`;
-- `Architecture`;
-- `CppStandard`;
-- `BuildRequest`.
+- `BuildConfiguration`, `Architecture`, and `CppStandard`;
+- `BuildRequest`;
+- typed `BuildAction` variants and `BuildPlan`;
+- `Artifact` and `TranslationUnit`;
+- `CompilerOptions`;
+- `ToolchainIdentity`;
+- `BuildSignature`.
 
-These replace the first small portion of the dynamic PowerShell context with compile-time checked C++ types.
+These types replace portions of the dynamic PowerShell context with compile-time checked values before any MSVC process orchestration is migrated.
+
+## Compile signature boundary
+
+`BuildSignature::for_compile` represents the **compiler recipe identity** for one translation unit. The current v1 schema includes:
+
+- normalized source path;
+- translation-unit kind;
+- compiler path, version, and backend-provided binary stamp;
+- build configuration and target architecture;
+- C++ language standard;
+- ordered preprocessor definitions;
+- ordered include search paths;
+- ordered additional compiler arguments.
+
+It intentionally excludes dependency timestamps, dependency membership, and artifact output paths. Those belong to separate concerns:
+
+```text
+compile recipe identity ----> BuildSignature
+source/header freshness ----> dependency validation
+where results are stored ----> Artifact mapping / cache storage
+```
+
+This separation prevents the compile signature from becoming a second dependency scanner and allows the same cached compiler result to be placed at a different artifact location.
+
+The current signature digest is a deterministic 128-bit non-cryptographic cache fingerprint. It is not a security primitive. The schema string (`mqb.compile.signature.v1`) is part of the digest so future field changes can invalidate old cache entries deliberately.
 
 ## Migration sequence
 
-1. **Scaffold** — CMake, `mqb_core`, CLI executable, CTest smoke test.
-2. **Pure core** — build signatures, dependency graph, artifact model, build plan.
+1. **Scaffold** — CMake, `mqb_core`, CLI executable, CTest smoke test. ✅
+2. **Pure core** — artifact model, build signatures, build plan, then dependency graph and planner. **In progress.**
 3. **Process abstraction** — typed executable + argv + exit result without shell command concatenation.
 4. **MSVC toolchain backend** — locate toolchain and capture environment.
 5. **Ordinary translation units** — compile and `/sourceDependencies` cache validation.
