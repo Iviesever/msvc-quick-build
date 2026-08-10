@@ -14,10 +14,13 @@
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/LinkOptions.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
+#include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
+#include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 #include "mqb/process/Process.hpp"
 
@@ -80,6 +83,20 @@ void print_process_output(const mqb::process::ProcessResult& process) {
     }
 }
 
+void print_reasons(const std::vector<mqb::BuildReason>& reasons) {
+    if (reasons.empty()) {
+        return;
+    }
+    std::cout << " [";
+    for (std::size_t index = 0; index < reasons.size(); ++index) {
+        if (index != 0) {
+            std::cout << ", ";
+        }
+        std::cout << mqb::to_string(reasons[index]);
+    }
+    std::cout << ']';
+}
+
 void print_compile_failure(const mqb::orchestration::IncrementalCompileError& error) {
     std::cerr << "error: " << error.message << '\n';
     if (!error.compile_error) {
@@ -97,6 +114,22 @@ void print_compile_failure(const mqb::orchestration::IncrementalCompileError& er
     }
     if (compile_error.dependency_error) {
         std::cerr << "  " << compile_error.dependency_error->message << '\n';
+    }
+}
+
+void print_link_failure(const mqb::orchestration::IncrementalLinkError& error) {
+    std::cerr << "error: " << error.message << '\n';
+    if (!error.linker_error) {
+        return;
+    }
+
+    const auto& linker_error = *error.linker_error;
+    std::cerr << "  " << linker_error.message << '\n';
+    if (linker_error.process_result) {
+        print_process_output(*linker_error.process_result);
+    }
+    if (linker_error.process_error) {
+        std::cerr << "  " << linker_error.process_error->message << '\n';
     }
 }
 
@@ -165,12 +198,17 @@ int main(const int argc, char* argv[]) {
     const fs::path artifact_root = source_directory / ".mqb";
 
     // Keep the source extension in internal artifact names so sibling files
-    // such as foo.cpp and foo.cxx cannot alias the same cached object.
+    // such as foo.cpp and foo.cxx cannot alias one another.
     fs::path object_name = source->filename();
     object_name += ".obj";
+    fs::path executable_name = source->filename();
+    executable_name += ".exe";
+
     const fs::path object_file = artifact_root / "obj" / object_name;
     const fs::path dependency_file = artifact_root / "deps" / with_suffix(source->filename(), ".json");
-    const fs::path cache_file = artifact_root / "cache" / with_suffix(source->filename(), ".mqbcache");
+    const fs::path compile_cache_file = artifact_root / "cache" / with_suffix(source->filename(), ".mqbcache");
+    const fs::path link_cache_file = artifact_root / "cache" / with_suffix(source->filename(), ".linkcache");
+    const fs::path executable_file = artifact_root / "bin" / executable_name;
 
     add_portable_root_if_missing(options.portable_roots, source_directory / "portable_msvc");
     const fs::path current_directory = fs::current_path(error_code);
@@ -214,29 +252,34 @@ int main(const int argc, char* argv[]) {
     if (options.verbose) {
         std::cout << "[toolchain] MSVC " << toolchain->identity.version
                   << " (" << mqb::to_string(options.build.architecture) << ")\n"
-                  << "  cl:    " << path_text(toolchain->identity.compiler) << '\n'
-                  << "  obj:   " << path_text(object_file) << '\n'
-                  << "  deps:  " << path_text(dependency_file) << '\n'
-                  << "  cache: " << path_text(cache_file) << '\n';
+                  << "  cl:         " << path_text(toolchain->identity.compiler) << '\n'
+                  << "  link:       " << path_text(toolchain->linker) << '\n'
+                  << "  obj:        " << path_text(object_file) << '\n'
+                  << "  deps:       " << path_text(dependency_file) << '\n'
+                  << "  cc-cache:   " << path_text(compile_cache_file) << '\n'
+                  << "  link-cache: " << path_text(link_cache_file) << '\n'
+                  << "  exe:        " << path_text(executable_file) << '\n';
     }
 
-    mqb::msvc::MsvcCompileExecutor executor{*toolchain, runner};
-    mqb::orchestration::MsvcIncrementalCompileCoordinator coordinator{*toolchain, executor};
-    mqb::orchestration::IncrementalCompileRequest request{
+    mqb::msvc::MsvcCompileExecutor compile_executor{*toolchain, runner};
+    mqb::orchestration::MsvcIncrementalCompileCoordinator compile_coordinator{
+        *toolchain,
+        compile_executor};
+    mqb::orchestration::IncrementalCompileRequest compile_request{
         .unit = std::move(unit),
         .options = std::move(compiler_options),
-        .cache_file = cache_file,
+        .cache_file = compile_cache_file,
         .source_dependencies_file = dependency_file,
         .working_directory = source_directory,
     };
 
-    auto result = coordinator.run(request);
-    if (!result) {
-        print_compile_failure(result.error());
+    auto compile_result = compile_coordinator.run(compile_request);
+    if (!compile_result) {
+        print_compile_failure(compile_result.error());
         return 4;
     }
 
-    for (const auto& warning : result->warnings) {
+    for (const auto& warning : compile_result->warnings) {
         std::cerr << "warning: " << warning.message;
         if (!warning.path.empty()) {
             std::cerr << ": " << path_text(warning.path);
@@ -244,26 +287,58 @@ int main(const int argc, char* argv[]) {
         std::cerr << '\n';
     }
 
-    if (result->compiled) {
+    if (compile_result->compiled) {
         std::cout << "[compile] " << path_text(source->filename());
-        if (!result->validation.reasons.empty()) {
-            std::cout << " [";
-            for (std::size_t index = 0; index < result->validation.reasons.size(); ++index) {
-                if (index != 0) {
-                    std::cout << ", ";
-                }
-                std::cout << mqb::to_string(result->validation.reasons[index]);
-            }
-            std::cout << ']';
-        }
+        print_reasons(compile_result->validation.reasons);
         std::cout << '\n';
-        if (result->process) {
-            print_process_output(*result->process);
+        if (compile_result->process) {
+            print_process_output(*compile_result->process);
         }
     } else {
         std::cout << "[up-to-date] " << path_text(source->filename()) << '\n';
     }
 
-    std::cout << "object: " << path_text(object_file) << '\n';
+    mqb::LinkOptions link_options;
+    link_options.configuration = options.build.configuration;
+    link_options.architecture = options.build.architecture;
+    link_options.subsystem = mqb::LinkSubsystem::console;
+
+    mqb::msvc::MsvcLinker linker{*toolchain, runner};
+    mqb::orchestration::MsvcIncrementalLinkCoordinator link_coordinator{*toolchain, linker};
+    mqb::orchestration::IncrementalLinkRequest link_request{
+        .objects = {object_file},
+        .output = executable_file,
+        .options = std::move(link_options),
+        .cache_file = link_cache_file,
+        .working_directory = source_directory,
+        .force_relink = compile_result->compiled,
+    };
+
+    auto link_result = link_coordinator.run(link_request);
+    if (!link_result) {
+        print_link_failure(link_result.error());
+        return 5;
+    }
+
+    for (const auto& warning : link_result->warnings) {
+        std::cerr << "warning: " << warning.message;
+        if (!warning.path.empty()) {
+            std::cerr << ": " << path_text(warning.path);
+        }
+        std::cerr << '\n';
+    }
+
+    if (link_result->linked) {
+        std::cout << "[link] " << path_text(executable_file.filename());
+        print_reasons(link_result->validation.reasons);
+        std::cout << '\n';
+        if (link_result->process) {
+            print_process_output(*link_result->process);
+        }
+    } else {
+        std::cout << "[up-to-date] " << path_text(executable_file.filename()) << '\n';
+    }
+
+    std::cout << "executable: " << path_text(executable_file) << '\n';
     return 0;
 }

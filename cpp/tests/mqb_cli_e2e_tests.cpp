@@ -68,6 +68,24 @@ run_mqb(
     return std::move(*result);
 }
 
+[[nodiscard]] std::expected<mqb::process::ProcessResult, std::string>
+run_executable(
+    mqb::platform::windows::WindowsProcessRunner& runner,
+    const fs::path& executable,
+    const fs::path& working_directory) {
+    mqb::process::ProcessSpec spec;
+    spec.executable = executable;
+    spec.working_directory = working_directory;
+    spec.capture_stdout = true;
+    spec.capture_stderr = true;
+    auto result = runner.run(spec);
+    if (!result) {
+        return std::unexpected(
+            "failed to launch generated executable: " + result.error().message);
+    }
+    return std::move(*result);
+}
+
 void dump_failure(const mqb::process::ProcessResult& result) {
     std::cerr << "exit: " << result.exit_code << '\n'
               << "stdout:\n" << result.stdout_text << '\n'
@@ -94,15 +112,21 @@ int main(const int argc, char* argv[]) {
     write_text(header, "#pragma once\ninline constexpr int sample_value = 41;\n");
     write_text(
         source,
+        "#include <cstdio>\n"
         "#include \"sample.hpp\"\n"
         "#ifndef MQB_CLI_TEST\n"
         "#error MQB_CLI_TEST must be defined\n"
         "#endif\n"
-        "int value() { return sample_value + MQB_CLI_TEST; }\n");
+        "int main() {\n"
+        "    std::printf(\"mqb-cli-e2e=%d\\n\", sample_value + MQB_CLI_TEST);\n"
+        "    return 0;\n"
+        "}\n");
 
     const fs::path object = tree.root / ".mqb" / "obj" / "sample.cpp.obj";
-    const fs::path cache = tree.root / ".mqb" / "cache" / "sample.cpp.mqbcache";
+    const fs::path compile_cache = tree.root / ".mqb" / "cache" / "sample.cpp.mqbcache";
+    const fs::path link_cache = tree.root / ".mqb" / "cache" / "sample.cpp.linkcache";
     const fs::path dependencies = tree.root / ".mqb" / "deps" / "sample.cpp.json";
+    const fs::path executable = tree.root / ".mqb" / "bin" / "sample.cpp.exe";
 
     mqb::platform::windows::WindowsProcessRunner runner;
 
@@ -113,12 +137,24 @@ int main(const int argc, char* argv[]) {
             dump_failure(*cold);
         }
         expect(cold->exit_code == 0, "cold build should succeed");
-        expect(cold->stdout_text.find("[compile]") != std::string::npos,
+        expect(cold->stdout_text.find("[compile] sample.cpp") != std::string::npos,
                "cold build should report a compile action");
+        expect(cold->stdout_text.find("[link] sample.cpp.exe") != std::string::npos,
+               "cold build should report a link action");
     }
     expect(fs::is_regular_file(object), "cold build should create collision-free object artifact");
-    expect(fs::is_regular_file(cache), "cold build should persist compile cache");
+    expect(fs::is_regular_file(compile_cache), "cold build should persist compile cache");
+    expect(fs::is_regular_file(link_cache), "cold build should persist link cache");
     expect(fs::is_regular_file(dependencies), "cold build should create sourceDependencies metadata");
+    expect(fs::is_regular_file(executable), "cold build should create executable artifact");
+
+    auto first_run = run_executable(runner, executable, tree.root);
+    expect(first_run.has_value(), "cold-built executable should launch");
+    if (first_run) {
+        expect(first_run->exit_code == 0, "cold-built executable should return zero");
+        expect(first_run->stdout_text.find("mqb-cli-e2e=42") != std::string::npos,
+               "cold-built executable should contain freshly compiled behavior");
+    }
 
     auto warm = run_mqb(runner, mqb_executable, tree.root, source);
     expect(warm.has_value(), "warm invocation should launch");
@@ -127,8 +163,10 @@ int main(const int argc, char* argv[]) {
             dump_failure(*warm);
         }
         expect(warm->exit_code == 0, "warm build should succeed");
-        expect(warm->stdout_text.find("[up-to-date]") != std::string::npos,
+        expect(warm->stdout_text.find("[up-to-date] sample.cpp\n") != std::string::npos,
                "warm build should reuse the cached object");
+        expect(warm->stdout_text.find("[up-to-date] sample.cpp.exe") != std::string::npos,
+               "warm build should reuse the cached executable");
     }
 
     std::error_code error_code;
@@ -147,10 +185,22 @@ int main(const int argc, char* argv[]) {
             dump_failure(*header_changed);
         }
         expect(header_changed->exit_code == 0, "header-change build should succeed");
-        expect(header_changed->stdout_text.find("[compile]") != std::string::npos,
+        expect(header_changed->stdout_text.find("[compile] sample.cpp") != std::string::npos,
                "header change should trigger compilation");
         expect(header_changed->stdout_text.find("dependency changed") != std::string::npos,
                "header change should be explained as dependency changed");
+        expect(header_changed->stdout_text.find("[link] sample.cpp.exe") != std::string::npos,
+               "fresh compilation should force executable relink");
+        expect(header_changed->stdout_text.find("explicit rebuild") != std::string::npos,
+               "forced relink should be explainable independently of timestamp granularity");
+    }
+
+    auto changed_run = run_executable(runner, executable, tree.root);
+    expect(changed_run.has_value(), "relinked executable should launch");
+    if (changed_run) {
+        expect(changed_run->exit_code == 0, "relinked executable should return zero");
+        expect(changed_run->stdout_text.find("mqb-cli-e2e=43") != std::string::npos,
+               "relinked executable must observe the changed header, not stale object state");
     }
 
     error_code.clear();
@@ -168,8 +218,10 @@ int main(const int argc, char* argv[]) {
             dump_failure(*warm_again);
         }
         expect(warm_again->exit_code == 0, "second warm build should succeed");
-        expect(warm_again->stdout_text.find("[up-to-date]") != std::string::npos,
+        expect(warm_again->stdout_text.find("[up-to-date] sample.cpp\n") != std::string::npos,
                "rebuilt object should become reusable again");
+        expect(warm_again->stdout_text.find("[up-to-date] sample.cpp.exe") != std::string::npos,
+               "relinked executable should become reusable again");
     }
 
     auto release = run_mqb(
@@ -184,10 +236,22 @@ int main(const int argc, char* argv[]) {
             dump_failure(*release);
         }
         expect(release->exit_code == 0, "release build should succeed");
-        expect(release->stdout_text.find("[compile]") != std::string::npos,
+        expect(release->stdout_text.find("[compile] sample.cpp") != std::string::npos,
                "Debug to Release should trigger compilation without source edits");
         expect(release->stdout_text.find("compiler options changed") != std::string::npos,
-               "configuration invalidation should be explained as compiler options changed");
+               "compile configuration invalidation should remain explainable");
+        expect(release->stdout_text.find("[link] sample.cpp.exe") != std::string::npos,
+               "Debug to Release should also relink the executable");
+        expect(release->stdout_text.find("linker options changed") != std::string::npos,
+               "link configuration invalidation should remain explainable");
+    }
+
+    auto release_run = run_executable(runner, executable, tree.root);
+    expect(release_run.has_value(), "release executable should launch");
+    if (release_run) {
+        expect(release_run->exit_code == 0, "release executable should return zero");
+        expect(release_run->stdout_text.find("mqb-cli-e2e=43") != std::string::npos,
+               "release executable should preserve current program behavior");
     }
 
     if (failures != 0) {
