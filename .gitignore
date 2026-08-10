@@ -5,6 +5,10 @@ test_compile_out/
 test_out/
 test_out2/
 
+# C++ V2 out-of-source builds
+/cpp/build/
+/cpp/out/
+
 # 编译中间产物和可执行文件
 *.exe
 *.obj

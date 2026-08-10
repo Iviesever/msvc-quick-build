@@ -1,0 +1,14 @@
+add_executable(mqb_core_tests
+    build_request_tests.cpp
+)
+
+target_link_libraries(mqb_core_tests PRIVATE mqb_core)
+target_compile_features(mqb_core_tests PRIVATE cxx_std_23)
+
+if(MSVC)
+    target_compile_options(mqb_core_tests PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(mqb_core_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(NAME mqb.core.build_request COMMAND mqb_core_tests)
