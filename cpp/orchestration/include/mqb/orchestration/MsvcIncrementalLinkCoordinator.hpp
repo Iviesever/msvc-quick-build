@@ -1,0 +1,77 @@
+#pragma once
+
+#include <expected>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "mqb/core/BuildPlan.hpp"
+#include "mqb/core/BuildPlanner.hpp"
+#include "mqb/core/LinkCache.hpp"
+#include "mqb/core/LinkCacheFile.hpp"
+#include "mqb/core/LinkOptions.hpp"
+#include "mqb/msvc/MsvcLinker.hpp"
+#include "mqb/msvc/MsvcToolchainLocator.hpp"
+#include "mqb/process/Process.hpp"
+
+namespace mqb::orchestration {
+
+struct IncrementalLinkRequest {
+    std::vector<std::filesystem::path> objects;
+    std::filesystem::path output;
+    LinkOptions options;
+    std::filesystem::path cache_file;
+    std::optional<std::filesystem::path> working_directory;
+    bool force_relink{false};
+};
+
+enum class IncrementalLinkWarningCode {
+    cache_load_failed,
+    cache_save_failed,
+    file_snapshot_failed,
+};
+
+struct IncrementalLinkWarning {
+    IncrementalLinkWarningCode code{IncrementalLinkWarningCode::file_snapshot_failed};
+    std::filesystem::path path;
+    std::string message;
+};
+
+enum class IncrementalLinkErrorCode {
+    linker_identity_failed,
+    planning_failed,
+    link_failed,
+};
+
+struct IncrementalLinkError {
+    IncrementalLinkErrorCode code{IncrementalLinkErrorCode::planning_failed};
+    std::string message;
+    std::optional<BuildPlannerError> planner_error;
+    std::optional<msvc::LinkerError> linker_error;
+};
+
+struct IncrementalLinkResult {
+    LinkCacheValidation validation;
+    BuildPlan plan;
+    bool linked{false};
+    std::optional<process::ProcessResult> process;
+    std::vector<IncrementalLinkWarning> warnings;
+};
+
+class MsvcIncrementalLinkCoordinator {
+public:
+    MsvcIncrementalLinkCoordinator(
+        const msvc::MsvcToolchain& toolchain,
+        msvc::MsvcLinker& linker)
+        : toolchain_(toolchain), linker_(linker) {}
+
+    [[nodiscard]] std::expected<IncrementalLinkResult, IncrementalLinkError>
+    run(const IncrementalLinkRequest& request) const;
+
+private:
+    const msvc::MsvcToolchain& toolchain_;
+    msvc::MsvcLinker& linker_;
+};
+
+} // namespace mqb::orchestration
