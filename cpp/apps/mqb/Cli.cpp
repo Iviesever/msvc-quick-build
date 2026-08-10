@@ -185,19 +185,25 @@ Usage:
   mqb <source.cpp> [options]
 
 Current milestone:
-  Incremental compilation of one C++ translation unit to .mqb/obj/.
+  Incrementally compile and link one C++ translation unit into .mqb/bin/.
 
 Options:
-  --debug                 Debug compiler preset (default)
-  --release               Release compiler preset
-  --std <20|23|latest>    C++ language standard (default: 23)
-  --x86 | --x64           Target architecture (default: x64)
-  -I <dir>, -I<dir>       Add an include directory
-  -D <value>, -D<value>   Add a preprocessor definition
+  --debug                  Debug compile/link preset (default)
+  --release                Release compile/link preset
+  --std <20|23|latest>     C++ language standard (default: 23)
+  --x86 | --x64            Target architecture (default: x64)
+  -I <dir>, -I<dir>        Add an include directory
+  -D <value>, -D<value>    Add a preprocessor definition
   --env <auto|vs|portable> Toolchain selection (default: auto)
-  --portable-root <dir>   Add a portable_msvc root candidate
-  -v, --verbose           Show toolchain and artifact details
-  -h, --help              Show this help
+  --portable-root <dir>    Add a portable_msvc root candidate
+  -v, --verbose            Show toolchain and artifact details
+  -h, --help               Show this help
+
+Generated state:
+  .mqb/obj/    object files
+  .mqb/deps/   compiler dependency metadata
+  .mqb/cache/  compile and link cache metadata
+  .mqb/bin/    linked executables
 )";
 }
 
