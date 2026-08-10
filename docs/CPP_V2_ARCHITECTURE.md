@@ -5,11 +5,11 @@ This document defines the architecture for migrating MSVC Quick Build from the P
 ## Goals
 
 - Keep the PowerShell implementation as the behavioral reference until parity is proven.
-- Separate source selection, build policy, compiler/linker execution, and process execution.
+- Separate source selection, build policy, dependency topology, compiler/linker execution, and process execution.
 - Keep MSVC-specific spellings out of the core model.
 - Make compile and link cache invalidation explainable and regression-testable.
 - Treat paths and argv as structured data rather than shell command strings.
-- Prefer a conservative rebuild/relink over reusing uncertain artifacts.
+- Prefer a conservative rebuild/relink or an explicit unsupported error over reusing uncertain artifacts.
 
 ## Layers
 
@@ -24,28 +24,35 @@ CLI (mqb.exe)
     |      ordinary C++ candidate-TU selection
     |
     v
-Target orchestration
+Ordinary target orchestration
   bounded parallel N x compile coordinator -> ordered results -> one link coordinator
+
+Named-module orchestration (internal milestone API; not public CLI wiring yet)
+  parallel /scanDependencies
+      -> P1689R5 typed model
+      -> resolved provider graph + compile levels
+      -> level-barrier bounded compile waves
+      -> one incremental link coordinator
     |
-    +--------------------+
-    v                    v
-Core                  MSVC backend
-  BuildRequest           MsvcToolchainLocator
-  Artifact / TU          MsvcCompiler
-  ProjectArtifactLayout  MsvcCompileExecutor
-  BuildSignature         MsvcLibraryResolver
-  CompileCache           MsvcLinker
-  LinkCache              /sourceDependencies reader
-  DependencyGraph              |
-  BuildPlanner                 v
-    |                    Process abstraction
-    |                    ProcessSpec { executable, argv, cwd, env }
-    |                          |
-    +--------------------------+
-                               v
-                        Windows platform
-                        WindowsProcessRunner
-                        CreateProcessW
+    +--------------------+--------------------+
+    v                    v                    v
+Core                  Modules              MSVC backend
+  BuildRequest           P1689 parser          MsvcToolchainLocator
+  Artifact / TU          provider graph        MsvcCompiler
+  ProjectArtifactLayout  compile levels        MsvcCompileExecutor
+  BuildSignature                               MsvcModuleDependencyScanner
+  CompileCache                                 MsvcLibraryResolver
+  LinkCache                                    MsvcLinker
+  DependencyGraph                              /sourceDependencies reader
+  BuildPlanner                                       |
+    |                                                v
+    +----------------------------------------> Process abstraction
+                                              ProcessSpec { executable, argv, cwd, env }
+                                                    |
+                                                    v
+                                             Windows platform
+                                             WindowsProcessRunner
+                                             CreateProcessW
 ```
 
 ## Architectural rules
@@ -57,11 +64,15 @@ Core                  MSVC backend
 5. **UTF-8 at the process abstraction boundary.** Windows converts textual argv/environment data to UTF-16 immediately before `CreateProcessW`.
 6. **Compile state and link state are independent.** A compile cache hit does not imply a link cache hit, and link-only changes must never force unnecessary compilation.
 7. **A fresh compile is an explicit relink signal.** Linking must not depend solely on filesystem timestamp granularity.
-8. **Source identity is not a basename.** Project artifacts preserve relative source identity; external sources receive a stable hashed namespace, and duplicate object mappings are rejected before execution.
-9. **Run-time argv is not build identity.** `--run` and arguments after `--` are execution state only; changing them must not invalidate compile or link caches.
-10. **Discovery is not dependency freshness.** Smart discovery chooses candidate translation units; MSVC `/sourceDependencies` remains the authority for header freshness.
-11. **Configuration is typed policy, not shell text.** `mqb.json` decodes into optional typed overrides before MSVC arguments are produced.
-12. **Compile parallelism is execution policy, not build identity.** `-j/--jobs` controls how many ordinary TUs may execute concurrently; changing it must not invalidate compile or link caches.
+8. **Source identity is not a basename.** Project artifacts preserve relative source identity; external sources receive a stable hashed namespace.
+9. **Writable artifacts are exclusive.** Module target preflight rejects empty or colliding object, dependency, scan, IFC, compile-cache, executable, and link-cache paths before external processes start.
+10. **Run-time argv is not build identity.** `--run` and arguments after `--` are execution state only; changing them must not invalidate compile or link caches.
+11. **Discovery is not dependency freshness.** Smart discovery chooses candidate translation units; MSVC `/sourceDependencies` remains the authority for header freshness after compilation.
+12. **Configuration is typed policy, not shell text.** `mqb.json` decodes into optional typed overrides before MSVC arguments are produced.
+13. **Parallelism is execution policy, not build identity.** Job counts must not invalidate compile or link caches.
+14. **Module topology and header freshness are different data.** `/scanDependencies` determines pre-compile module ordering; `/sourceDependencies` remains the post-compile freshness source for headers.
+15. **Provider selection has one owner.** `ModuleDependencyGraphBuilder` resolves named-module providers once; orchestration consumes those exact resolved edges for `/reference` wiring and downstream rebuild propagation.
+16. **Unsupported module requirements fail closed.** Header units and unresolved external/prebuilt named modules are never silently ignored.
 
 ## Project configuration
 
@@ -83,46 +94,44 @@ built-in defaults
         <- explicitly supplied CLI scalar options
 ```
 
-The CLI parser therefore tracks whether `--debug`, `--release`, `--x86`, `--x64`, `--std`, `--discover`, and `--no-discover` were actually supplied. Parser defaults must never accidentally override project configuration.
-
-List-like build inputs are additive and deterministic: project-config entries appear first, then CLI entries. This currently applies to defines, include directories, library directories, and libraries.
-
-The v1 schema and examples are documented in `docs/MQB_CONFIG.md`. Unknown fields, duplicate JSON keys, wrong field types, malformed JSON, and unsupported schema versions are rejected instead of guessed.
+List-like build inputs are additive and deterministic: project-config entries appear first, then CLI entries. The v1 schema and examples are documented in `docs/MQB_CONFIG.md`. Unknown fields, duplicate JSON keys, wrong field types, malformed JSON, and unsupported schema versions are rejected instead of guessed.
 
 ## Smart ordinary-C++ discovery
 
 With one positional source, MQB smart-discovers the connected ordinary-C++ target by default. Multiple positional sources remain an explicit ordered source set. `--no-discover` disables discovery; `--discover` explicitly enables it and can override project configuration.
 
-Discovery uses:
+Discovery uses quoted `#include "..."` connectivity, configured include directories, same-basename ownership, deterministic traversal, built-in directory exclusions, and project-config corrections. A reachable non-entry source defining `main(...)` is a traversal barrier. Explicitly excluded sources and directories are also traversal barriers.
 
-- quoted `#include "..."` connectivity;
-- configured include directories;
-- same-basename ownership such as `foo.hpp <-> foo.cpp/.cc/.cxx`;
-- deterministic traversal from the entry TU;
-- built-in directory exclusions (`.mqb`, `.git`, `.vs`, `build`, `out`, `cmake-build-*`);
-- project-config `exclude_dirs`, `extra_sources`, and `exclude_sources` exact-path corrections.
+Discovery output only selects ordinary TUs. Incremental header invalidation continues to use compiler-emitted `/sourceDependencies` metadata.
 
-A reachable non-entry source defining `main(...)` is a traversal barrier, not merely a final-result filter. An explicitly excluded source is also a traversal barrier, so a test/tool TU cannot bridge the graph into a private subgraph. Configured excluded directories are pruned before graph construction. Explicit extra sources may add disconnected ordinary TUs but may not define another `main()`.
-
-Discovery output only selects TUs. Incremental header invalidation continues to use compiler-emitted `/sourceDependencies` metadata.
+The named-module target pipeline added in the Modules milestone is currently an internal orchestration API. Public `mqb.exe` source discovery/CLI routing has not yet been switched to that pipeline.
 
 ## Compile identity and cache freshness
 
-`BuildSignature::for_compile` models the versioned compiler recipe identity: source/unit identity, compiler identity, configuration, architecture, language standard, ordered defines, ordered include paths, and ordered extra arguments.
+`BuildSignature::for_compile` models the versioned compiler recipe identity. Compile signature v3 includes:
+
+- source and translation-unit kind;
+- compiler identity;
+- configuration, architecture, and language standard;
+- ordered defines, include paths, and extra compiler arguments;
+- ordered typed module references (`logical-name -> IFC path`);
+- for a module interface unit, the planned IFC output path.
+
+Ordinary object placement remains outside recipe identity. Module IFC placement is different: a provider's planned IFC path is part of the recipe because consumers reference that exact interface artifact.
 
 ```text
 compiler recipe identity ----> BuildSignature
-source/header freshness ------> CompileCacheValidator
+source/header/IFC freshness --> CompileCacheValidator
 artifact placement -----------> ProjectArtifactLayout
 ```
 
-`CompileCacheValidator` is pure and returns typed `BuildReason` values; it does not touch the filesystem or launch a process.
+`CompileCacheValidator` is pure and returns typed `BuildReason` values; it does not touch the filesystem or launch a process. It validates all planned compile outputs, not only the object. Therefore a provider with an existing object but a missing IFC is stale.
+
+Consumer cache metadata records imported IFC files alongside compiler-discovered header dependencies. A provider that actually recompiles in the current module wave also propagates an explicit downstream rebuild signal, preventing timestamp-granularity races from producing a false consumer hit.
 
 `CompileCacheFile` persists compile metadata in a versioned binary format. Missing metadata is a normal cold-cache condition; corrupt/truncated/unsupported metadata is rejected and conservatively rebuilt.
 
-A config-only change that alters effective compiler options therefore changes compile identity even when no source timestamp changes.
-
-Ordinary Debug and Release compilation use MSVC `/Z7`, keeping compiler debug information inside each TU's object instead of sharing a compiler PDB between concurrent `cl.exe` processes. Final link debug information remains a linker concern. The compile signature recipe was version-bumped when this policy changed so old `/Zi` cache entries are conservatively rebuilt once.
+Ordinary Debug and Release compilation use MSVC `/Z7`, keeping compiler debug information inside each TU's object instead of sharing a compiler PDB between concurrent `cl.exe` processes.
 
 ## Link identity and cache freshness
 
@@ -139,69 +148,105 @@ output/object/library freshness ---> LinkCacheValidator
 fresh compile ---------------------> force_relink
 ```
 
-`LinkerIdentity` stamps `link.exe` independently from `cl.exe`, so a linker update can invalidate only link state.
-
-User-requested libraries are resolved deterministically to exact `.lib` files before invoking `link.exe`. Link cache v2 persists the resolved library inputs, so updating a `.lib` can trigger compile-0/link-1 invalidation. Library names/search paths are recipe state; the resolved files themselves are freshness inputs.
+`LinkerIdentity` stamps `link.exe` independently from `cl.exe`. User-requested libraries are resolved deterministically to exact `.lib` files before invoking `link.exe`; link-cache metadata persists those resolved inputs.
 
 Current boundary: explicitly requested libraries are tracked precisely. Indirect `/DEFAULTLIB` dependencies embedded in objects or libraries are still resolved by `link.exe` and are not claimed as fully tracked transitive link inputs.
 
 ## Project artifact layout
 
-Without `mqb.json`, the invocation directory is the project root. With `mqb.json`, its directory becomes the project root even when MQB is launched from a nested directory.
+Without `mqb.json`, the invocation directory is the project root. With `mqb.json`, its directory becomes the project root. Sources inside the root preserve relative source identity; sources outside it are isolated under `.external/<stable-path-hash>/`.
 
-Sources inside the root preserve relative identity; sources outside it are isolated under `.external/<stable-path-hash>/`.
+For a source such as `src/foo.cpp` or `modules/math.ixx`, the layout owns separate namespaces:
 
 ```text
 project/
-  mqb.json
-  main.cpp
-  src/foo.cpp
   .mqb/
-    obj/
-      main.cpp.obj
-      src/foo.cpp.obj
-    deps/
-      main.cpp.json
-      src/foo.cpp.json
+    obj/     <source-key>.obj
+    deps/    <source-key>.json
+    scan/    <source-key>.json
+    ifc/     <source-key>.ifc
     cache/
-      compile/...
-      link/main.linkcache
+      compile/<source-key>.mqbcache
+      link/<target>.linkcache
     bin/
-      main.exe
+      <target>.exe
 ```
 
-This prevents same-basename sources in different directories from aliasing one object/cache artifact.
+IFCs are keyed by source identity rather than logical module spelling. This avoids Windows filename problems such as partition `:` characters and avoids same-basename collisions. The module target coordinator additionally validates global writable-artifact exclusivity before scanning.
 
-## Dependency graph and planner
+## Dependency graphs and planning
 
 `DependencyGraph` stores `node depends on dependency` edges. It rejects duplicate/missing nodes, makes duplicate edges idempotent, returns deterministic topological levels, and fails cycles explicitly.
 
-For compile planning:
+`ModuleDependencyGraphBuilder` consumes typed P1689 rules and produces one `ModuleDependencyPlan` containing:
 
 ```text
-CompilePlanItem
-    +-- reusable cache ------> no action
-    +-- stale cache ---------> CompileAction
-                                  source
-                                  exactly one object artifact
-                                  typed rebuild reasons
+compile_levels
+resolved_dependencies {
+    consumer_source,
+    provider_source,
+    logical_name
+}
+unresolved_requirements
 ```
 
-For link planning:
+Named-provider selection prefers the unique `is-interface=true` provider when same-name module units exist. Multiple interface providers fail explicitly. Header-unit identity remains typed but unresolved until the dedicated header-unit milestone.
+
+The exact resolved dependency edges are reused for both compile ordering and MSVC `/reference logical-name=ifc` wiring. Orchestration does not run a second provider-selection algorithm.
+
+## Named-module MSVC pipeline
+
+The current implemented module pipeline supports the internal named-module-interface -> named-consumer path:
 
 ```text
-LinkPlanItem
-    +-- reusable cache ------> no action
-    +-- stale cache ---------> LinkAction
-                                  ordered object inputs
-                                  ordered resolved libraries
-                                  executable output
-                                  typed relink reasons
+selected source requests
+      -> preflight all writable artifacts
+      -> bounded parallel MsvcModuleDependencyScanner
+             cl.exe /scanDependencies <per-source P1689 JSON>
+      -> exactly one P1689 rule per one-source scan
+      -> ModuleDependencyGraphBuilder
+             provider resolution
+             deterministic topological compile levels
+      -> MsvcModuleCompileCoordinator
+             for each level:
+                 bounded parallel incremental compile
+                 module interface: /interface /TP /ifcOutput
+                 consumer: /reference logical-name=<planned-ifc>
+             barrier between levels
+             provider compiled this run -> downstream explicit_rebuild
+      -> MsvcIncrementalLinkCoordinator
+             any TU compiled -> force_relink
+      -> target executable
 ```
 
-Executors therefore receive actions rather than policy decisions.
+`/scanDependencies` is topology-only; it does not produce `.obj` or `.ifc`. The real compile remains responsible for `/sourceDependencies`, object output, and IFC output.
 
-## Orchestration
+Warm module target builds currently repeat topology scanning. The proven cache guarantee is **compile 0 / link 0**, not scan 0. Scan-result caching is a future optimization and must not change build identity semantics.
+
+### Current module capability boundary
+
+Supported and regression-tested in this milestone:
+
+- P1689R5 parsing and strict schema validation;
+- internal named-module interface providers;
+- named consumers resolved to exact provider sources;
+- source-identity IFC routing;
+- bounded same-level parallelism with dependency-level barriers;
+- module-aware compile signatures and cache freshness;
+- downstream rebuild propagation when a provider recompiles;
+- incremental final linking;
+- real VS2026 provider/consumer executable E2E.
+
+Not yet supported by `MsvcModuleTargetCoordinator`:
+
+- header units;
+- unresolved external/prebuilt named-module providers;
+- `import std` (currently appears as an unresolved external named module and fails closed);
+- public CLI/source-discovery routing into the module target coordinator.
+
+The P1689 model can represent more cases than the current execution policy accepts. That is intentional: parsing a requirement is not permission to compile it incorrectly.
+
+## Ordinary orchestration
 
 ### Incremental compile
 
@@ -215,6 +260,8 @@ CompileCacheFile
       -> CompileCacheFile::save
 ```
 
+`force_rebuild` is a request-local execution signal represented by `BuildReason::explicit_rebuild`. It does not enter the compile signature and is not persisted into the cache.
+
 ### Incremental link
 
 ```text
@@ -227,7 +274,7 @@ LinkCacheFile
       -> LinkCacheFile::save
 ```
 
-### Incremental target
+### Ordinary incremental target
 
 ```text
 ordered source requests
@@ -235,31 +282,22 @@ ordered source requests
       -> BoundedWorkScheduler(max_parallel_compiles)
       -> parallel IncrementalCompileCoordinator per ordinary TU
       -> join every in-flight compile
-      -> scan attempts in original source order
-      -> any compile failure? ---- yes ----> report lowest source index; never link
+      -> deterministic failure selection
       -> collect collision-free objects in original source order
       -> any TU compiled? -------- yes ----> force_relink
       -> IncrementalLinkCoordinator
       -> one target executable
 ```
 
-`MsvcIncrementalTargetCoordinator` performs bounded ordinary-TU compilation. `-j/--jobs` selects the maximum concurrency; if omitted, the CLI starts from hardware concurrency and clamps it to the selected TU count. `-j1` preserves the sequential execution mode for debugging. Parallelism does not participate in compile or link signatures.
-
-The scheduler assigns indices monotonically and at most once, joins all work that was already assigned, and publishes a stop request when a callback fails. Stop publication also quenches the dispatch counter so a worker that observed an older stop flag but had not yet claimed an index cannot start later work. Target results are reassembled in source order, and concurrent compile failures deterministically surface the lowest source index among recorded failures.
-
-Ordinary cache-load/save failures are surfaced as warnings and conservatively rebuild/relink. Compiler/linker execution failures are build errors.
+The scheduler assigns indices monotonically and at most once, joins all work that was already assigned, and quenches dispatch after stop publication. Target results are reassembled in source order.
 
 ## Process boundary
 
 `mqb_process` defines a platform-neutral `ProcessSpec` with executable, argv, working directory, structured environment overrides, inheritance choice, and stdout/stderr capture controls.
 
-`mqb_platform_windows` isolates Windows command-line quoting and the real `CreateProcessW` runner. Tests cover complex argv round-trips, Unicode environment blocks, separate stdout/stderr capture, non-zero child exit codes, native launch errors, concurrent draining of large output streams, and concurrent use of one runner instance.
+`mqb_platform_windows` isolates Windows command-line quoting and the real `CreateProcessW` runner. Captured child processes use `STARTUPINFOEXW` with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, so unrelated pipe handles from concurrent compiler launches are not inherited by sibling children.
 
-`--run` uses the same structured process boundary. Arguments after `--` remain distinct argv elements, including whitespace-containing strings, option-looking strings, and empty arguments. Run mode and child argv do not participate in build signatures.
-
-Captured CRLF is normalized before forwarding through Windows text streams so nested output does not become `\r\r\n`; lone carriage returns are preserved.
-
-Captured child processes use `STARTUPINFOEXW` with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`. Only that child's explicit stdin/stdout/stderr handles are inheritable through `CreateProcessW`; unrelated pipe handles from concurrent compiler launches are not exposed to sibling children. Non-capture launches continue to use no inherited handles.
+`--run` uses the same structured process boundary. Arguments after `--` remain distinct argv elements and do not participate in build signatures.
 
 ## MSVC toolchain boundary
 
@@ -267,53 +305,29 @@ Captured child processes use `STARTUPINFOEXW` with `PROC_THREAD_ATTRIBUTE_HANDLE
 
 GitHub CI enables installed-MSVC integration tests explicitly; local tests keep them opt-in.
 
+## Current verification milestone
+
+The VS2026 PR suite now contains **46 registered CTest cases**. It verifies ordinary CLI behavior plus the new module backend/orchestration path.
+
+Among the real installed-MSVC cases are:
+
+- ordinary single/multi-TU compile and incremental link behavior;
+- same-directory four-TU cold `-j4` and warm `-j1`, proving job count is not build identity;
+- real `/scanDependencies` P1689 output before IFCs exist;
+- real module provider IFC creation and consumer `/reference` compilation;
+- full named-module target cold build and executable launch;
+- warm named-module target with compile 0 / link 0;
+- provider-source mutation causing provider + consumer + link rebuild;
+- provider IFC deletion with source/object otherwise warm, causing provider + consumer + link repair;
+- artifact collision/empty-artifact validation before any external process starts.
+
+The named-module target E2E uses the installed Visual Studio 2026 compiler and linker, not a fake process runner.
+
 ## Current CLI milestone
 
-Examples:
+The public `mqb.exe` CLI currently owns the ordinary-C++ path: project config, smart ordinary source discovery, bounded `-j/--jobs` compilation, independent link caching, library resolution, and structured `--run` argv.
 
-```powershell
-# One entry: smart discovery
-mqb main.cpp
-
-# Explicit source set
-mqb main.cpp src/utils.cpp a/helper.cpp b/helper.cpp -o product
-
-# Bound ordinary-TU compilation to four concurrent jobs
-mqb main.cpp --jobs 4
-
-# Force sequential compile scheduling without changing build identity
-mqb main.cpp -j1
-
-# Exact static library request
-mqb main.cpp -L "vendor libs" -l math
-
-# Structured run argv
-mqb main.cpp --run -- "hello world" --child-option ""
-```
-
-When an `mqb.json` is found, effective build/discovery options are resolved before toolchain discovery and artifact planning.
-
-The real VS2026 suite now verifies, among other cases:
-
-- single-entry smart discovery plus same-basename artifact isolation;
-- second-entry traversal barriers and project discovery corrections;
-- warm compile/link reuse;
-- private-header partial rebuild through `/sourceDependencies`;
-- Debug/Release recipe invalidation without source edits;
-- exact static-library resolution and library-only relink;
-- custom output names and independent link-cache identities;
-- structured `--run` argv and child exit propagation;
-- upward `mqb.json` lookup from a nested working directory;
-- config-relative include/library paths and config-root artifact placement;
-- config-only define changes invalidating compile recipes;
-- explicit CLI scalar overrides winning over project config while config list inputs remain available;
-- three-way bounded scheduler concurrency, stop/join semantics, and deterministic target failure selection;
-- same-directory four-TU real MSVC cold build with `-j4`;
-- warm reuse of those exact artifacts under `-j1`, proving job count is not build identity.
-
-The current VS2026 PR suite contains 35 registered CTest cases, including real target, project-config, and parallel CLI E2E tests.
-
-Not yet implemented in the C++ V2 path: C++ Modules/P1689/IFC handling. PowerShell/C++ behavioral parity and final cutover also remain future gates.
+The named-module pipeline described above is implemented and integration-tested behind typed orchestration APIs, but it is **not yet wired into the public CLI/source-discovery path**. Therefore this document does not claim that the C++ V2 CLI has reached full Modules parity with the PowerShell tool.
 
 ## Migration sequence
 
@@ -329,9 +343,10 @@ Not yet implemented in the C++ V2 path: C++ Modules/P1689/IFC handling. PowerShe
 10. **Smart source discovery** — single-entry graph selection, secondary-entry barriers, corrections. ✅
 11. **Project config v1** — upward `mqb.json`, typed schema, path semantics, CLI precedence, config E2E. ✅
 12. **Parallel ordinary-TU scheduling** — bounded concurrency with deterministic reporting/failure semantics. ✅
-13. **Modules** — P1689 `/scanDependencies`, module graph, IFC/object artifacts, `import std`.
-14. **Parity** — run PowerShell and C++ against the same E2E fixtures.
-15. **Cutover** — make `mqb.exe` primary only after parity tests pass.
+13. **Named Modules core/orchestration** — P1689 scan, provider graph, IFC artifacts, module-aware cache, dependency waves, incremental link, real VS2026 E2E. ✅
+14. **Modules expansion/UX** — public CLI routing, module-aware source selection, header units, external/prebuilt provider policy, `import std`.
+15. **Parity** — run PowerShell and C++ against the same E2E fixtures.
+16. **Cutover** — make `mqb.exe` primary only after parity tests pass.
 
 ## Local build
 
