@@ -24,6 +24,10 @@ public:
         const ToolchainIdentity& toolchain,
         const CompilerOptions& options);
 
+    [[nodiscard]] static BuildSignature from_digest(const SignatureDigest digest) noexcept {
+        return BuildSignature{digest};
+    }
+
     [[nodiscard]] const SignatureDigest& digest() const noexcept {
         return digest_;
     }
