@@ -1,7 +1,10 @@
+#include <barrier>
 #include <filesystem>
+#include <future>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 #include "mqb/process/Process.hpp"
@@ -99,6 +102,52 @@ int main(const int argc, char** argv) {
                "large stdout payload should be captured completely");
         expect(flood_result->stderr_text.size() == payload_size,
                "large stderr payload should be captured completely");
+    }
+
+    {
+        constexpr int launch_count = 12;
+        std::barrier start_gate{launch_count};
+        std::vector<std::future<std::expected<mqb::process::ProcessResult, mqb::process::ProcessError>>>
+            launches;
+        launches.reserve(launch_count);
+
+        for (int index = 0; index < launch_count; ++index) {
+            launches.push_back(std::async(
+                std::launch::async,
+                [&runner, &start_gate, helper, index] {
+                    mqb::process::ProcessSpec concurrent;
+                    concurrent.executable = helper;
+                    concurrent.arguments = {"concurrent-" + std::to_string(index)};
+                    concurrent.environment = {
+                        mqb::process::EnvironmentVariable{
+                            "MQB_TEST_ENV",
+                            "env-" + std::to_string(index)},
+                    };
+                    start_gate.arrive_and_wait();
+                    return runner.run(concurrent);
+                }));
+        }
+
+        for (int index = 0; index < launch_count; ++index) {
+            auto concurrent = launches[static_cast<std::size_t>(index)].get();
+            expect(concurrent.has_value(),
+                   "same WindowsProcessRunner instance should support concurrent launches");
+            if (!concurrent) {
+                continue;
+            }
+            expect(concurrent->exit_code == 23,
+                   "concurrent child exit code should remain isolated");
+            expect(contains(
+                       concurrent->stdout_text,
+                       "ARG=[concurrent-" + std::to_string(index) + "]"),
+                   "concurrent stdout capture should belong to the correct child");
+            expect(contains(
+                       concurrent->stdout_text,
+                       "ENV=[env-" + std::to_string(index) + "]"),
+                   "concurrent environment blocks should remain isolated");
+            expect(contains(concurrent->stderr_text, "STDERR-MARKER"),
+                   "concurrent stderr capture should complete independently");
+        }
     }
 
     mqb::process::ProcessSpec empty_executable;
