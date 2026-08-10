@@ -5,7 +5,6 @@
 #include <iostream>
 #include <optional>
 #include <string_view>
-#include <thread>
 #include <vector>
 
 #include "mqb/core/Artifact.hpp"
@@ -269,9 +268,19 @@ int main() {
     expect(warm_plan.has_value() && warm_plan->empty(),
            "unchanged warm build should produce zero compile actions");
 
-    // 3. Header mutation: dependency snapshot becomes newer than object.
-    std::this_thread::sleep_for(std::chrono::milliseconds{1100});
+    // 3. Header mutation: explicitly construct dependency.mtime > object.mtime.
+    const auto object_before_header_change = snapshot(object);
+    expect(object_before_header_change.exists,
+           "header invalidation fixture requires an existing object timestamp");
     write_text(header, "#pragma once\n#define HEADER_VALUE 6\n");
+    std::error_code timestamp_error;
+    fs::last_write_time(
+        header,
+        object_before_header_change.modified + std::chrono::seconds{2},
+        timestamp_error);
+    expect(!timestamp_error,
+           "test should be able to set a deterministic newer header timestamp");
+
     cached = load_cache_or_none(cache_file);
     const auto header_validation = validate_current(unit, toolchain, debug_options, cached);
     expect(!header_validation.reusable(), "header modification must invalidate the cached object");
@@ -293,6 +302,20 @@ int main() {
             runner)) {
         return 1;
     }
+
+    // The test intentionally moved the header timestamp into the future to make
+    // invalidation deterministic. Move the rebuilt object beyond it as well so
+    // the post-rebuild freshness assertion does not depend on wall-clock timing.
+    const auto header_after_rebuild = snapshot(header);
+    expect(header_after_rebuild.exists,
+           "rebuilt freshness fixture requires the header timestamp");
+    timestamp_error.clear();
+    fs::last_write_time(
+        object,
+        header_after_rebuild.modified + std::chrono::seconds{1},
+        timestamp_error);
+    expect(!timestamp_error,
+           "test should be able to set a deterministic newer object timestamp");
 
     cached = load_cache_or_none(cache_file);
     const auto refreshed_validation = validate_current(unit, toolchain, debug_options, cached);
