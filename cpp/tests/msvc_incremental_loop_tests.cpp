@@ -179,7 +179,7 @@ void write_text(const fs::path& path, const std::string_view text) {
         .kind = unit.kind,
         .toolchain = toolchain.identity,
         .signature = mqb::BuildSignature::for_compile(unit, toolchain.identity, options),
-        .object = unit.outputs.front(),
+        .outputs = unit.outputs,
         .dependencies = dependencies->includes,
     };
 

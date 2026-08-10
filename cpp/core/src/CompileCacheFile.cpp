@@ -9,6 +9,7 @@
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -27,9 +28,10 @@ namespace fs = std::filesystem;
 
 constexpr std::array<std::uint8_t, 8> magic{
     'M', 'Q', 'B', 'C', 'A', 'C', 'H', 'E'};
-constexpr std::uint32_t format_version = 1;
+constexpr std::uint32_t format_version = 2;
 constexpr std::size_t max_cache_file_size = 64u * 1024u * 1024u;
 constexpr std::uint32_t max_string_size = 4u * 1024u * 1024u;
+constexpr std::uint32_t max_output_count = 100000u;
 constexpr std::uint32_t max_dependency_count = 100000u;
 
 [[nodiscard]] CompileCacheFileError make_error(
@@ -200,6 +202,20 @@ private:
 
 [[nodiscard]] std::expected<std::vector<std::uint8_t>, CompileCacheFileError>
 serialize(const fs::path& file, const CompileCacheEntry& entry) {
+    if (entry.outputs.empty()) {
+        return std::unexpected(make_error(
+            CompileCacheFileErrorCode::file_write_failed,
+            file,
+            0,
+            "compile cache entry must contain at least one planned output"));
+    }
+    if (entry.outputs.size() > max_output_count) {
+        return std::unexpected(make_error(
+            CompileCacheFileErrorCode::file_write_failed,
+            file,
+            0,
+            "output count exceeds cache format safety limit"));
+    }
     if (entry.dependencies.size() > max_dependency_count) {
         return std::unexpected(make_error(
             CompileCacheFileErrorCode::file_write_failed,
@@ -234,14 +250,24 @@ serialize(const fs::path& file, const CompileCacheEntry& entry) {
     writer.write_u64(entry.signature.digest().high);
     writer.write_u64(entry.signature.digest().low);
 
-    if (!writer.write_path(entry.object.path)) {
-        return std::unexpected(make_error(
-            CompileCacheFileErrorCode::file_write_failed,
-            file,
-            0,
-            "object path is too long for cache format"));
+    writer.write_u32(static_cast<std::uint32_t>(entry.outputs.size()));
+    for (const auto& output : entry.outputs) {
+        if (output.path.empty()) {
+            return std::unexpected(make_error(
+                CompileCacheFileErrorCode::file_write_failed,
+                file,
+                0,
+                "compile cache output path must not be empty"));
+        }
+        if (!writer.write_path(output.path)) {
+            return std::unexpected(make_error(
+                CompileCacheFileErrorCode::file_write_failed,
+                file,
+                0,
+                "output path is too long for cache format"));
+        }
+        writer.write_u32(static_cast<std::uint32_t>(output.kind));
     }
-    writer.write_u32(static_cast<std::uint32_t>(entry.object.kind));
 
     writer.write_u32(static_cast<std::uint32_t>(entry.dependencies.size()));
     for (const auto& dependency : entry.dependencies) {
@@ -304,9 +330,7 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     auto binary_stamp = reader.read_string();
     auto signature_high = reader.read_u64();
     auto signature_low = reader.read_u64();
-    auto object_path = reader.read_path();
-    auto object_kind_value = reader.read_u32();
-    auto dependency_count = reader.read_u32();
+    auto output_count = reader.read_u32();
 
     if (!source) return std::unexpected(source.error());
     if (!kind_value) return std::unexpected(kind_value.error());
@@ -315,16 +339,36 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     if (!binary_stamp) return std::unexpected(binary_stamp.error());
     if (!signature_high) return std::unexpected(signature_high.error());
     if (!signature_low) return std::unexpected(signature_low.error());
-    if (!object_path) return std::unexpected(object_path.error());
-    if (!object_kind_value) return std::unexpected(object_kind_value.error());
-    if (!dependency_count) return std::unexpected(dependency_count.error());
+    if (!output_count) return std::unexpected(output_count.error());
 
     if (!valid_translation_unit_kind(*kind_value)) {
         return std::unexpected(reader.corrupt("invalid translation-unit kind in cache file"));
     }
-    if (!valid_artifact_kind(*object_kind_value)) {
-        return std::unexpected(reader.corrupt("invalid artifact kind in cache file"));
+    if (*output_count == 0 || *output_count > max_output_count) {
+        return std::unexpected(reader.corrupt("output count is outside the supported safety range"));
     }
+
+    std::vector<Artifact> outputs;
+    outputs.reserve(*output_count);
+    for (std::uint32_t index = 0; index < *output_count; ++index) {
+        auto output_path = reader.read_path();
+        auto output_kind_value = reader.read_u32();
+        if (!output_path) return std::unexpected(output_path.error());
+        if (!output_kind_value) return std::unexpected(output_kind_value.error());
+        if (output_path->empty()) {
+            return std::unexpected(reader.corrupt("compile cache output path is empty"));
+        }
+        if (!valid_artifact_kind(*output_kind_value)) {
+            return std::unexpected(reader.corrupt("invalid artifact kind in cache file"));
+        }
+        outputs.push_back(Artifact{
+            .path = std::move(*output_path),
+            .kind = static_cast<ArtifactKind>(*output_kind_value),
+        });
+    }
+
+    auto dependency_count = reader.read_u32();
+    if (!dependency_count) return std::unexpected(dependency_count.error());
     if (*dependency_count > max_dependency_count) {
         return std::unexpected(reader.corrupt("dependency count exceeds safety limit"));
     }
@@ -355,10 +399,7 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
             .high = *signature_high,
             .low = *signature_low,
         }),
-        .object = Artifact{
-            .path = std::move(*object_path),
-            .kind = static_cast<ArtifactKind>(*object_kind_value),
-        },
+        .outputs = std::move(outputs),
         .dependencies = std::move(dependencies),
     };
 }

@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <optional>
 #include <span>
-#include <string_view>
 
 namespace mqb {
 namespace {
@@ -21,6 +20,12 @@ namespace {
     return same_path(left.compiler, right.compiler)
         && left.version == right.version
         && left.binary_stamp == right.binary_stamp;
+}
+
+[[nodiscard]] bool same_artifact(
+    const Artifact& left,
+    const Artifact& right) {
+    return left.kind == right.kind && same_path(left.path, right.path);
 }
 
 void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
@@ -42,16 +47,49 @@ void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
     return it == snapshots.end() ? nullptr : &*it;
 }
 
-[[nodiscard]] const Artifact* find_artifact(
+[[nodiscard]] bool same_outputs(
+    const std::vector<Artifact>& cached,
+    const std::vector<Artifact>& current) {
+    if (cached.size() != current.size()) {
+        return false;
+    }
+
+    std::vector<bool> matched(cached.size(), false);
+    for (const auto& current_output : current) {
+        bool found = false;
+        for (std::size_t index = 0; index < cached.size(); ++index) {
+            if (!matched[index] && same_artifact(cached[index], current_output)) {
+                matched[index] = true;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] std::optional<std::filesystem::file_time_type>
+oldest_output_time(
     const TranslationUnit& unit,
-    const ArtifactKind kind) {
-    const auto it = std::find_if(
-        unit.outputs.begin(),
-        unit.outputs.end(),
-        [kind](const Artifact& artifact) {
-            return artifact.kind == kind;
-        });
-    return it == unit.outputs.end() ? nullptr : &*it;
+    const std::span<const FileSnapshot> output_snapshots) {
+    if (unit.outputs.empty()) {
+        return std::nullopt;
+    }
+
+    std::optional<std::filesystem::file_time_type> oldest;
+    for (const auto& output : unit.outputs) {
+        const FileSnapshot* snapshot = find_snapshot(output_snapshots, output.path);
+        if (snapshot == nullptr || !snapshot->exists) {
+            return std::nullopt;
+        }
+        if (!oldest || snapshot->modified < *oldest) {
+            oldest = snapshot->modified;
+        }
+    }
+    return oldest;
 }
 
 } // namespace
@@ -66,15 +104,14 @@ CompileCacheValidation CompileCacheValidator::validate(
     const std::span<const FileSnapshot> dependency_snapshots) {
     CompileCacheValidation result;
 
-    const Artifact* current_object = find_artifact(current_unit, ArtifactKind::object);
-    const FileSnapshot* object_snapshot = current_object == nullptr
-        ? nullptr
-        : find_snapshot(output_snapshots, current_object->path);
-
     const auto validate_outputs = [&] {
+        if (current_unit.outputs.empty()) {
+            add_reason(result.reasons, BuildReason::missing_output);
+            return;
+        }
         for (const auto& output : current_unit.outputs) {
             const auto* snapshot = find_snapshot(output_snapshots, output.path);
-            if (snapshot == nullptr || !snapshot->exists) {
+            if (output.path.empty() || snapshot == nullptr || !snapshot->exists) {
                 add_reason(result.reasons, BuildReason::missing_output);
             }
         }
@@ -106,18 +143,15 @@ CompileCacheValidation CompileCacheValidator::validate(
         add_reason(result.reasons, BuildReason::compiler_options_changed);
     }
 
-    if (current_object == nullptr
-        || !same_path(cached.object.path, current_object->path)
-        || cached.object.kind != ArtifactKind::object) {
+    if (!same_outputs(cached.outputs, current_unit.outputs)) {
         add_reason(result.reasons, BuildReason::missing_output);
     }
     validate_outputs();
 
+    const auto freshness_anchor = oldest_output_time(current_unit, output_snapshots);
     if (!source_snapshot.exists) {
         add_reason(result.reasons, BuildReason::source_changed);
-    } else if (object_snapshot != nullptr
-               && object_snapshot->exists
-               && source_snapshot.modified > object_snapshot->modified) {
+    } else if (freshness_anchor && source_snapshot.modified > *freshness_anchor) {
         add_reason(result.reasons, BuildReason::source_changed);
     }
 
@@ -128,9 +162,7 @@ CompileCacheValidation CompileCacheValidator::validate(
             continue;
         }
 
-        if (object_snapshot != nullptr
-            && object_snapshot->exists
-            && snapshot->modified > object_snapshot->modified) {
+        if (freshness_anchor && snapshot->modified > *freshness_anchor) {
             add_reason(result.reasons, BuildReason::dependency_changed);
         }
     }
