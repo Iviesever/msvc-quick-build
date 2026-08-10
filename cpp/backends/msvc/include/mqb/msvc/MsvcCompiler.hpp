@@ -7,15 +7,24 @@
 #include <vector>
 
 #include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/TranslationUnit.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/process/Process.hpp"
 
 namespace mqb::msvc {
 
+struct ModuleReference {
+    std::string logical_name;
+    std::filesystem::path interface_file;
+};
+
 struct CompileInvocation {
     std::filesystem::path source;
     std::filesystem::path object;
     std::optional<std::filesystem::path> source_dependencies;
+    TranslationUnitKind kind{TranslationUnitKind::source};
+    std::optional<std::filesystem::path> module_interface_output;
+    std::vector<ModuleReference> module_references;
     CompilerOptions options;
     std::optional<std::filesystem::path> working_directory;
 };
