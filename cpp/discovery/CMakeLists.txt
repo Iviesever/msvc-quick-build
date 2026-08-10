@@ -1,4 +1,5 @@
 add_library(mqb_discovery STATIC
+    src/ModuleSyntax.cpp
     src/SourceDiscovery.cpp
 )
 
