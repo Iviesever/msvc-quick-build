@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include "mqb/core/Artifact.hpp"
@@ -12,10 +13,16 @@ enum class TranslationUnitKind {
     module_interface,
 };
 
+struct ModuleReference {
+    std::string logical_name;
+    std::filesystem::path interface_file;
+};
+
 struct TranslationUnit {
     std::filesystem::path source;
     TranslationUnitKind kind{TranslationUnitKind::source};
     std::vector<std::filesystem::path> dependencies;
+    std::vector<ModuleReference> module_references;
     std::vector<Artifact> outputs;
 };
 
