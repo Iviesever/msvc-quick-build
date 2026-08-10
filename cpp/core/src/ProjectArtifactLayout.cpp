@@ -117,6 +117,8 @@ ProjectArtifactLayout::for_source(const fs::path& source) const {
     return SourceArtifacts{
         .object = append_suffix(artifact_root_ / "obj" / key, ".obj"),
         .dependencies = append_suffix(artifact_root_ / "deps" / key, ".json"),
+        .module_dependencies = append_suffix(artifact_root_ / "scan" / key, ".json"),
+        .module_interface = append_suffix(artifact_root_ / "ifc" / key, ".ifc"),
         .compile_cache = append_suffix(
             artifact_root_ / "cache" / "compile" / key,
             ".mqbcache"),
