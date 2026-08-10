@@ -1,6 +1,7 @@
 # 忽略测试目录
 .worktrees/
 .cache/
+.mqb/
 test_compile_out/
 test_out/
 test_out2/
