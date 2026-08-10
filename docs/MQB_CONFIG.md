@@ -76,14 +76,38 @@ All path-valued config entries are resolved relative to the directory containing
 |---|---|---|
 | `enabled` | boolean | enable or disable single-entry smart source discovery |
 | `exclude_dirs` | string array | exact project directories to prune before discovery graph construction |
-| `extra_sources` | string array | exact ordinary C++ TUs to add even when disconnected from the entry graph |
-| `exclude_sources` | string array | exact ordinary C++ TUs to exclude and treat as traversal barriers |
+| `extra_sources` | string array | exact supported C++ translation units to add even when disconnected from the entry graph |
+| `exclude_sources` | string array | exact supported C++ translation units to exclude and treat as traversal barriers |
+
+Supported C++ translation-unit extensions in the current V2 source classifier are:
+
+```text
+ordinary source:   .cpp .cc .cxx
+module interface:  .ixx .cppm .mpp
+```
 
 Version 1 intentionally uses exact paths rather than a glob language. This keeps correction semantics deterministic while the discovery model is still being stabilized.
 
-An `extra_sources` entry may not define another `main()`. The entry TU itself may not be excluded. A source may not appear in both `extra_sources` and `exclude_sources`.
+An ordinary `extra_sources` entry may not define another `main()`. The entry TU itself may not be excluded. A source may not appear in both `extra_sources` and `exclude_sources`.
 
 Built-in directory exclusions such as `.mqb`, `.git`, `.vs`, `build`, `out`, and `cmake-build-*` remain active in addition to configured exclusions.
+
+### Named modules and discovery
+
+Project-local named modules do **not** require a separate v1 config section.
+
+For a single ordinary entry such as:
+
+```cpp
+import math;
+int main() { return answer(); }
+```
+
+smart discovery may select a reachable local `.ixx/.cppm/.mpp` provider candidate. Discovery does not decide which candidate is authoritative; MSVC `/scanDependencies` P1689 metadata remains responsible for provider selection, dependency ordering, ambiguity/cycle diagnostics, and unresolved requirements.
+
+If a selected source contains named-module syntax but no supported local provider is found, the target still routes through the module pipeline and fails closed. It does not silently fall back to an ordinary compile.
+
+Header units, external/prebuilt providers, and `import std` do not yet have execution/artifact policy and remain unsupported.
 
 ## Precedence
 
@@ -121,7 +145,7 @@ This applies to defines, include directories, library directories, and libraries
 There are two intentional relative-path bases:
 
 ```text
-CLI relative paths     -> invocation directory
+CLI relative paths      -> invocation directory
 mqb.json relative paths -> mqb.json directory
 ```
 
@@ -159,13 +183,28 @@ to:
 "defines": ["VALUE=2"]
 ```
 
-changes compiler recipe identity and recompiles the affected TUs even if no source file timestamp changed.
+changes compiler recipe identity and recompiles affected TUs even if no source file timestamp changed.
 
-Likewise, library names/search paths affect link recipe identity, while the exact resolved `.lib` files are separately tracked as link freshness inputs.
+Likewise, library names/search paths affect link recipe identity, while exact resolved `.lib` files are separately tracked as link freshness inputs.
+
+For named modules, compile identity also includes typed module references and planned module-interface output identity. Imported IFC files participate in consumer freshness validation, and a missing provider IFC invalidates the provider's cached compile outputs.
+
+## Parallelism
+
+`-j/--jobs` is intentionally **not** a v1 config field. It is execution policy only:
+
+```powershell
+mqb main.cpp -j 8
+```
+
+Changing the job count does not alter compile or link signatures and therefore must not invalidate an otherwise reusable build cache.
 
 ## Current boundaries
 
-- Project configuration does not yet define C++ Module/IFC policy; Modules are a later milestone.
-- Parallel translation-unit scheduling is not yet part of v1 config.
+- v1 config has no header-unit, external/prebuilt module-provider, or `import std` policy.
+- v1 config does not store parallel job count.
 - `exclude_dirs`, `extra_sources`, and `exclude_sources` are exact paths, not globs.
-- Explicit user libraries are freshness-tracked; indirect `/DEFAULTLIB` transitive dependencies are not yet claimed as fully tracked.
+- Explicit user libraries are freshness-tracked; indirect `/DEFAULTLIB` transitive dependencies are not claimed as fully tracked.
+- C++ V2 currently classifies C++ translation units only; `.c` is not supported by the V2 source classifier.
+
+For the broader build/module/cache architecture, see [`CPP_V2_ARCHITECTURE.md`](CPP_V2_ARCHITECTURE.md).
