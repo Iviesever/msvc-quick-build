@@ -70,6 +70,12 @@ target_link_libraries(mqb_module_target_validation_tests
 )
 target_compile_features(mqb_module_target_validation_tests PRIVATE cxx_std_23)
 
+add_executable(mqb_target_router_tests
+    target_router_tests.cpp
+)
+target_link_libraries(mqb_target_router_tests PRIVATE mqb_orchestration)
+target_compile_features(mqb_target_router_tests PRIVATE cxx_std_23)
+
 foreach(test_target IN ITEMS
     mqb_orchestration_incremental_tests
     mqb_orchestration_incremental_link_tests
@@ -78,6 +84,7 @@ foreach(test_target IN ITEMS
     mqb_module_compile_coordinator_tests
     mqb_module_target_coordinator_tests
     mqb_module_target_validation_tests
+    mqb_target_router_tests
 )
     if(MSVC)
         target_compile_options(${test_target} PRIVATE /W4 /permissive-)
@@ -119,6 +126,11 @@ add_test(
 add_test(
     NAME mqb.orchestration.module_target_validation
     COMMAND mqb_module_target_validation_tests
+)
+
+add_test(
+    NAME mqb.orchestration.target_router
+    COMMAND mqb_target_router_tests
 )
 
 if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
