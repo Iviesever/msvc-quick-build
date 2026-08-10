@@ -55,4 +55,37 @@ std::expected<BuildPlan, BuildPlannerError> BuildPlanner::plan_compile(
     return plan;
 }
 
+std::expected<BuildPlan, BuildPlannerError> BuildPlanner::plan_link(
+    const LinkPlanItem& item) {
+    BuildPlan plan;
+    if (item.cache_validation.reusable()) {
+        return plan;
+    }
+
+    if (item.objects.empty()) {
+        return std::unexpected(BuildPlannerError{
+            .code = BuildPlannerErrorCode::missing_link_input,
+        });
+    }
+    for (const auto& object : item.objects) {
+        if (object.empty()) {
+            return std::unexpected(BuildPlannerError{
+                .code = BuildPlannerErrorCode::missing_link_input,
+            });
+        }
+    }
+    if (item.output.empty()) {
+        return std::unexpected(BuildPlannerError{
+            .code = BuildPlannerErrorCode::missing_link_output,
+        });
+    }
+
+    plan.actions.emplace_back(LinkAction{
+        .objects = item.objects,
+        .output = item.output,
+        .reasons = item.cache_validation.reasons,
+    });
+    return plan;
+}
+
 } // namespace mqb

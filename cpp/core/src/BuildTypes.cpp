@@ -48,6 +48,8 @@ std::string_view to_string(const BuildReason value) noexcept {
         return "toolchain changed";
     case BuildReason::compiler_options_changed:
         return "compiler options changed";
+    case BuildReason::link_inputs_changed:
+        return "link inputs changed";
     case BuildReason::linker_options_changed:
         return "linker options changed";
     case BuildReason::explicit_rebuild:

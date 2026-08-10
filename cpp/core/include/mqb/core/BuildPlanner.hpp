@@ -8,6 +8,7 @@
 
 #include "mqb/core/BuildPlan.hpp"
 #include "mqb/core/CompileCache.hpp"
+#include "mqb/core/LinkCache.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 
 namespace mqb {
@@ -15,6 +16,8 @@ namespace mqb {
 enum class BuildPlannerErrorCode {
     missing_object_output,
     multiple_object_outputs,
+    missing_link_input,
+    missing_link_output,
 };
 
 struct BuildPlannerError {
@@ -28,10 +31,19 @@ struct CompilePlanItem {
     CompileCacheValidation cache_validation;
 };
 
+struct LinkPlanItem {
+    std::vector<std::filesystem::path> objects;
+    std::filesystem::path output;
+    LinkCacheValidation cache_validation;
+};
+
 class BuildPlanner {
 public:
     [[nodiscard]] static std::expected<BuildPlan, BuildPlannerError> plan_compile(
         std::span<const CompilePlanItem> items);
+
+    [[nodiscard]] static std::expected<BuildPlan, BuildPlannerError> plan_link(
+        const LinkPlanItem& item);
 };
 
 } // namespace mqb

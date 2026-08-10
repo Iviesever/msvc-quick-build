@@ -1,9 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
+#include <span>
 #include <string>
 
 #include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/LinkOptions.hpp"
+#include "mqb/core/LinkerIdentity.hpp"
 #include "mqb/core/ToolchainIdentity.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 
@@ -23,6 +27,12 @@ public:
         const TranslationUnit& unit,
         const ToolchainIdentity& toolchain,
         const CompilerOptions& options);
+
+    [[nodiscard]] static BuildSignature for_link(
+        std::span<const std::filesystem::path> objects,
+        const std::filesystem::path& output,
+        const LinkerIdentity& linker,
+        const LinkOptions& options);
 
     [[nodiscard]] static BuildSignature from_digest(const SignatureDigest digest) noexcept {
         return BuildSignature{digest};
