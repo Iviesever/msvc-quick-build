@@ -37,6 +37,11 @@ int main() {
                    "single source should be preserved in ordered source list");
             expect(parsed->discover_sources,
                    "single-source smart discovery should be enabled by default");
+            expect(!parsed->discovery_override,
+                   "default discovery policy must not masquerade as an explicit CLI override");
+            expect(!parsed->configuration_override && !parsed->architecture_override
+                       && !parsed->standard_override,
+                   "built-in parser defaults must not masquerade as explicit CLI scalar overrides");
             expect(!parsed->build.output_name.has_value(),
                    "output name should remain unset by default");
             expect(!parsed->build.run_after_build,
@@ -61,6 +66,21 @@ int main() {
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value() && !parsed->discover_sources,
                "--no-discover should disable single-source smart discovery");
+        if (parsed) {
+            expect(parsed->discovery_override.has_value() && !*parsed->discovery_override,
+                   "--no-discover must be recorded as an explicit false project override");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--discover"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value() && parsed->discover_sources,
+               "--discover should explicitly enable smart discovery");
+        if (parsed) {
+            expect(parsed->discovery_override.has_value() && *parsed->discovery_override,
+                   "--discover must be recorded as an explicit true project override");
+        }
     }
 
     {
@@ -108,6 +128,8 @@ int main() {
             }
             expect(parsed->discover_sources,
                    "parser keeps discovery policy enabled; main treats multi-source sets as explicit");
+            expect(!parsed->discovery_override,
+                   "multi-source parsing must not create a discovery override unless requested");
             expect(parsed->build.output_name.has_value()
                        && *parsed->build.output_name == "product",
                    "output name should be parsed");
@@ -137,10 +159,16 @@ int main() {
             }
             expect(parsed->build.configuration == mqb::BuildConfiguration::release,
                    "release flag should override default");
+            expect(parsed->configuration_override == mqb::BuildConfiguration::release,
+                   "release flag must be recorded as an explicit project override");
             expect(parsed->build.architecture == mqb::Architecture::x86,
                    "x86 flag should be parsed");
+            expect(parsed->architecture_override == mqb::Architecture::x86,
+                   "x86 flag must be recorded as an explicit project override");
             expect(parsed->build.standard == mqb::CppStandard::latest,
                    "latest standard should be parsed");
+            expect(parsed->standard_override == mqb::CppStandard::latest,
+                   "--std must be recorded as an explicit project override");
             expect(parsed->toolchain_preference == mqb::msvc::ToolchainPreference::portable,
                    "portable toolchain preference should be parsed");
             expect(parsed->portable_roots.size() == 1,
@@ -150,6 +178,26 @@ int main() {
             expect(parsed->defines.size() == 1 && parsed->defines.front() == "VALUE=42",
                    "separate define value should be collected");
             expect(parsed->verbose, "verbose flag should be parsed");
+        }
+    }
+
+    {
+        const std::vector arguments{
+            "main.cpp"sv,
+            "--debug"sv,
+            "--x64"sv,
+            "--std"sv,
+            "20"sv,
+        };
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "explicit built-in-valued options should parse");
+        if (parsed) {
+            expect(parsed->configuration_override == mqb::BuildConfiguration::debug,
+                   "explicit --debug must override a possible release project config");
+            expect(parsed->architecture_override == mqb::Architecture::x64,
+                   "explicit --x64 must override a possible x86 project config");
+            expect(parsed->standard_override == mqb::CppStandard::cpp20,
+                   "explicit --std 20 must override project standard");
         }
     }
 
@@ -180,6 +228,8 @@ int main() {
         if (parsed) {
             expect(parsed->discover_sources,
                    "discovery parsing must stop at --");
+            expect(!parsed->discovery_override,
+                   "option-looking child argv must not create a project override");
             expect(parsed->build.run_arguments.size() == 1
                        && parsed->build.run_arguments.front() == "--no-discover",
                    "option-looking argv after -- must be preserved verbatim");
