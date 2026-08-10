@@ -8,6 +8,8 @@
 #include <string_view>
 #include <type_traits>
 
+#include "mqb/core/Artifact.hpp"
+
 namespace mqb {
 namespace {
 
@@ -62,6 +64,29 @@ public:
         }
     }
 
+    void add_module_references(const std::vector<ModuleReference>& references) noexcept {
+        add_u64(static_cast<std::uint64_t>(references.size()));
+        for (const auto& reference : references) {
+            add_string(reference.logical_name);
+            add_path(reference.interface_file);
+        }
+    }
+
+    void add_module_outputs(const std::vector<Artifact>& outputs) noexcept {
+        std::uint64_t count = 0;
+        for (const auto& output : outputs) {
+            if (output.kind == ArtifactKind::module_interface) {
+                ++count;
+            }
+        }
+        add_u64(count);
+        for (const auto& output : outputs) {
+            if (output.kind == ArtifactKind::module_interface) {
+                add_path(output.path);
+            }
+        }
+    }
+
     [[nodiscard]] SignatureDigest finish() const noexcept {
         return SignatureDigest{
             .high = avalanche(primary_),
@@ -105,13 +130,17 @@ BuildSignature BuildSignature::for_compile(
     const ToolchainIdentity& toolchain,
     const CompilerOptions& options) {
     StableHasher hasher;
-    hasher.add_string("mqb.compile.signature.v2");
+    hasher.add_string("mqb.compile.signature.v3");
 
-    // Dependencies and output paths are deliberately excluded. Dependency
-    // freshness is validated separately, while output locations are artifact
-    // placement rather than compiler recipe identity.
+    // Header dependency membership remains freshness-only state. Ordinary
+    // object placement also remains outside recipe identity. Module references
+    // are different: their logical-name -> compiled-interface mapping affects
+    // import resolution, and a provider's planned interface-file output path is
+    // consumed semantically by downstream translation units.
     hasher.add_path(unit.source);
     hasher.add_enum(unit.kind);
+    hasher.add_module_references(unit.module_references);
+    hasher.add_module_outputs(unit.outputs);
 
     hasher.add_path(toolchain.compiler);
     hasher.add_string(toolchain.version);
