@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/BuildTypes.hpp"
+#include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 #include "mqb/process/Process.hpp"
 
@@ -67,6 +69,12 @@ struct TempTree {
     }
 };
 
+void dump_failure(const mqb::process::ProcessResult& result) {
+    std::cerr << "exit: " << result.exit_code << '\n'
+              << "stdout:\n" << result.stdout_text << '\n'
+              << "stderr:\n" << result.stderr_text << '\n';
+}
+
 [[nodiscard]] std::expected<mqb::process::ProcessResult, std::string>
 run_mqb(
     mqb::platform::windows::WindowsProcessRunner& runner,
@@ -113,10 +121,71 @@ run_executable(
     return std::move(*result);
 }
 
-void dump_failure(const mqb::process::ProcessResult& result) {
-    std::cerr << "exit: " << result.exit_code << '\n'
-              << "stdout:\n" << result.stdout_text << '\n'
-              << "stderr:\n" << result.stderr_text << '\n';
+[[nodiscard]] std::expected<void, std::string>
+build_static_library(
+    mqb::platform::windows::WindowsProcessRunner& runner,
+    const mqb::msvc::MsvcToolchain& toolchain,
+    const fs::path& working_directory,
+    const fs::path& library_directory,
+    const int value) {
+    const fs::path source = library_directory / "math_library.cpp";
+    const fs::path object = library_directory / "math_library.obj";
+    const fs::path library = library_directory / "math.lib";
+    fs::create_directories(library_directory);
+    write_text(
+        source,
+        "int library_value() { return " + std::to_string(value) + "; }\n");
+
+    mqb::process::ProcessSpec compile;
+    compile.executable = toolchain.identity.compiler;
+    compile.arguments = {
+        "/nologo",
+        "/c",
+        "/Zl",
+        "/Fo:" + path_text(object),
+        path_text(source),
+    };
+    compile.working_directory = working_directory;
+    compile.environment = toolchain.environment;
+    compile.inherit_environment = true;
+    compile.capture_stdout = true;
+    compile.capture_stderr = true;
+    auto compiled = runner.run(compile);
+    if (!compiled) {
+        return std::unexpected("failed to launch cl.exe for static library: " + compiled.error().message);
+    }
+    if (compiled->exit_code != 0) {
+        dump_failure(*compiled);
+        return std::unexpected("cl.exe failed while building static library fixture");
+    }
+
+    std::error_code remove_error;
+    fs::remove(library, remove_error);
+
+    mqb::process::ProcessSpec archive;
+    archive.executable = toolchain.librarian;
+    archive.arguments = {
+        "/NOLOGO",
+        "/OUT:" + path_text(library),
+        path_text(object),
+    };
+    archive.working_directory = working_directory;
+    archive.environment = toolchain.environment;
+    archive.inherit_environment = true;
+    archive.capture_stdout = true;
+    archive.capture_stderr = true;
+    auto archived = runner.run(archive);
+    if (!archived) {
+        return std::unexpected("failed to launch lib.exe: " + archived.error().message);
+    }
+    if (archived->exit_code != 0) {
+        dump_failure(*archived);
+        return std::unexpected("lib.exe failed while building static library fixture");
+    }
+    if (!fs::is_regular_file(library)) {
+        return std::unexpected("lib.exe did not produce math.lib");
+    }
+    return {};
 }
 
 } // namespace
@@ -130,17 +199,39 @@ int main(const int argc, char* argv[]) {
     const fs::path mqb_executable{argv[1]};
     const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
     TempTree tree{
-        .root = fs::temp_directory_path() / ("mqb_cli_target_ux_" + std::to_string(unique)),
+        .root = fs::temp_directory_path() / ("mqb_cli_library_e2e_" + std::to_string(unique)),
     };
     fs::create_directories(tree.root);
 
+    mqb::platform::windows::WindowsProcessRunner runner;
+    mqb::msvc::MsvcToolchainLocator locator{runner};
+    mqb::msvc::DiscoveryOptions discovery;
+    discovery.target_architecture = mqb::Architecture::x64;
+    discovery.host_architecture = mqb::Architecture::x64;
+    discovery.preference = mqb::msvc::ToolchainPreference::visual_studio;
+    auto toolchain = locator.discover(discovery);
+    expect(toolchain.has_value(), "VS2026 toolchain should be discoverable for library E2E");
+    if (!toolchain) {
+        std::cerr << "toolchain discovery failed: " << toolchain.error().message << '\n';
+        return 1;
+    }
+
     const fs::path include_dir = tree.root / "include";
+    const fs::path library_dir = tree.root / "vendor libs";
+    const fs::path library_file = library_dir / "math.lib";
     const fs::path value_header = include_dir / "value.hpp";
     const fs::path utils_header = include_dir / "utils.hpp";
     const fs::path main_source = tree.root / "main.cpp";
     const fs::path utils_source = tree.root / "src" / "utils.cpp";
     const fs::path helper_a = tree.root / "a" / "helper.cpp";
     const fs::path helper_b = tree.root / "b" / "helper.cpp";
+
+    auto initial_library = build_static_library(runner, *toolchain, tree.root, library_dir, 100);
+    expect(initial_library.has_value(), "initial static library fixture should build");
+    if (!initial_library) {
+        std::cerr << initial_library.error() << '\n';
+        return 1;
+    }
 
     write_text(value_header, "#pragma once\ninline constexpr int configured_value = 41;\n");
     write_text(utils_header, "#pragma once\nint util_value();\n");
@@ -160,8 +251,9 @@ int main(const int argc, char* argv[]) {
         "#endif\n"
         "int helper_a();\n"
         "int helper_b();\n"
+        "int library_value();\n"
         "int main(int argc, char** argv) {\n"
-        "    std::printf(\"mqb-multi=%d\\n\", util_value() + helper_a() + helper_b() + MQB_CLI_TEST);\n"
+        "    std::printf(\"mqb-multi=%d\\n\", util_value() + helper_a() + helper_b() + library_value() + MQB_CLI_TEST);\n"
         "    std::printf(\"argc=%d\\n\", argc);\n"
         "    for (int i = 1; i < argc; ++i) {\n"
         "        std::printf(\"arg%d=<%s>\\n\", i, argv[i]);\n"
@@ -176,15 +268,14 @@ int main(const int argc, char* argv[]) {
     const fs::path helper_b_object = tree.root / ".mqb" / "obj" / "b" / "helper.cpp.obj";
     const fs::path executable = tree.root / ".mqb" / "bin" / "product.exe";
     const fs::path link_cache = tree.root / ".mqb" / "cache" / "link" / "product.linkcache";
-
-    mqb::platform::windows::WindowsProcessRunner runner;
-    const std::vector<std::string> target_arguments{"-o", "product"};
+    const std::vector<std::string> target_arguments{
+        "-o", "product", "-L", path_text(library_dir), "-l", "math"};
 
     auto cold = run_mqb(runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
-    expect(cold.has_value(), "cold target invocation should launch");
+    expect(cold.has_value(), "cold library target invocation should launch");
     if (cold) {
         if (cold->exit_code != 0) dump_failure(*cold);
-        expect(cold->exit_code == 0, "cold target build should succeed");
+        expect(cold->exit_code == 0, "cold library target build should succeed");
         expect(cold->stdout_text.find("[compile] main.cpp") != std::string::npos,
                "cold build should compile main.cpp");
         expect(cold->stdout_text.find("[compile] src/utils.cpp") != std::string::npos,
@@ -194,7 +285,7 @@ int main(const int argc, char* argv[]) {
         expect(cold->stdout_text.find("[compile] b/helper.cpp") != std::string::npos,
                "cold build should compile second same-basename helper");
         expect(cold->stdout_text.find("[link] product.exe") != std::string::npos,
-               "custom output name should drive target link artifact");
+               "cold build should link custom target with static library");
     }
 
     expect(fs::is_regular_file(main_object), "main object should use project-level layout");
@@ -203,22 +294,22 @@ int main(const int argc, char* argv[]) {
     expect(fs::is_regular_file(helper_b_object), "second helper object should exist independently");
     expect(helper_a_object != helper_b_object,
            "same-basename sources from different directories must have different artifacts");
-    expect(fs::is_regular_file(executable), "custom target build should create product.exe");
-    expect(fs::is_regular_file(link_cache), "custom target build should persist product link cache");
+    expect(fs::is_regular_file(executable), "library target should create product.exe");
+    expect(fs::is_regular_file(link_cache), "library target should persist link cache");
 
     auto cold_run = run_executable(runner, executable, tree.root);
-    expect(cold_run.has_value(), "cold-built target executable should launch directly");
+    expect(cold_run.has_value(), "cold-built library target should launch");
     if (cold_run) {
         expect(cold_run->exit_code == 0, "cold-built executable should return zero");
-        expect(cold_run->stdout_text.find("mqb-multi=72") != std::string::npos,
-               "cold-built executable should combine all translation units");
+        expect(cold_run->stdout_text.find("mqb-multi=172") != std::string::npos,
+               "cold-built executable should consume initial math.lib behavior");
     }
 
     auto warm = run_mqb(runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
-    expect(warm.has_value(), "warm target invocation should launch");
+    expect(warm.has_value(), "warm library target invocation should launch");
     if (warm) {
         if (warm->exit_code != 0) dump_failure(*warm);
-        expect(warm->exit_code == 0, "warm target build should succeed");
+        expect(warm->exit_code == 0, "warm library target build should succeed");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] main.cpp"),
                "warm build should skip main.cpp");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] src/utils.cpp"),
@@ -228,22 +319,21 @@ int main(const int argc, char* argv[]) {
         expect(contains_output_line(warm->stdout_text, "[up-to-date] b/helper.cpp"),
                "warm build should skip helper B");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] product.exe"),
-               "warm build should skip link.exe for custom target");
+               "warm build should reuse executable while library is unchanged");
     }
 
+    std::vector<std::string> run_arguments = target_arguments;
+    run_arguments.insert(
+        run_arguments.end(),
+        {"--run", "--", "hello world", "--child-option", "", "a b c"});
     auto run_with_args = run_mqb(
-        runner,
-        mqb_executable,
-        tree.root,
-        sources,
-        include_dir,
-        {"-o", "product", "--run", "--", "hello world", "--child-option", "", "a b c"});
+        runner, mqb_executable, tree.root, sources, include_dir, run_arguments);
     expect(run_with_args.has_value(), "warm --run invocation should launch");
     if (run_with_args) {
         if (run_with_args->exit_code != 0) dump_failure(*run_with_args);
         expect(run_with_args->exit_code == 0, "warm --run should return child success code");
         expect(contains_output_line(run_with_args->stdout_text, "[up-to-date] product.exe"),
-               "--run should still reuse warm link state");
+               "--run should still reuse warm library link state");
         expect(contains_output_line(run_with_args->stdout_text, "[run] product.exe"),
                "--run should report the launched target");
         expect(contains_output_line(run_with_args->stdout_text, "argc=5"),
@@ -259,6 +349,60 @@ int main(const int argc, char* argv[]) {
     }
 
     std::error_code error_code;
+    const auto executable_before_library_change = fs::last_write_time(executable, error_code);
+    expect(!error_code, "executable timestamp should be readable before library-only rebuild");
+    auto rebuilt_library = build_static_library(runner, *toolchain, tree.root, library_dir, 101);
+    expect(rebuilt_library.has_value(), "changed static library fixture should rebuild");
+    if (!rebuilt_library) {
+        std::cerr << rebuilt_library.error() << '\n';
+    }
+    if (!error_code && rebuilt_library) {
+        fs::last_write_time(
+            library_file,
+            executable_before_library_change + std::chrono::seconds{2},
+            error_code);
+        expect(!error_code, "library timestamp should be newer than executable deterministically");
+    }
+
+    auto library_changed = run_mqb(
+        runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
+    expect(library_changed.has_value(), "library-only change invocation should launch");
+    if (library_changed) {
+        if (library_changed->exit_code != 0) dump_failure(*library_changed);
+        expect(library_changed->exit_code == 0, "library-only change should link successfully");
+        expect(contains_output_line(library_changed->stdout_text, "[up-to-date] main.cpp"),
+               "library-only change must not recompile main.cpp");
+        expect(contains_output_line(library_changed->stdout_text, "[up-to-date] src/utils.cpp"),
+               "library-only change must not recompile utils.cpp");
+        expect(contains_output_line(library_changed->stdout_text, "[up-to-date] a/helper.cpp"),
+               "library-only change must not recompile helper A");
+        expect(contains_output_line(library_changed->stdout_text, "[up-to-date] b/helper.cpp"),
+               "library-only change must not recompile helper B");
+        expect(library_changed->stdout_text.find("[link] product.exe") != std::string::npos,
+               "newer resolved library must trigger relink");
+        expect(library_changed->stdout_text.find("link inputs changed") != std::string::npos,
+               "library-driven relink should be explained as link inputs changed");
+    }
+
+    auto library_changed_run = run_executable(runner, executable, tree.root);
+    expect(library_changed_run.has_value(), "library-relinked executable should launch");
+    if (library_changed_run) {
+        expect(library_changed_run->exit_code == 0,
+               "library-relinked executable should return zero");
+        expect(library_changed_run->stdout_text.find("mqb-multi=173") != std::string::npos,
+               "library-only relink must update executable behavior");
+    }
+
+    error_code.clear();
+    const auto executable_after_library_change = fs::last_write_time(executable, error_code);
+    if (!error_code) {
+        fs::last_write_time(
+            library_file,
+            executable_after_library_change - std::chrono::seconds{2},
+            error_code);
+    }
+    expect(!error_code, "library timestamp should be normalized after library-only relink");
+
     const auto utils_object_time = fs::last_write_time(utils_object, error_code);
     expect(!error_code, "utils object timestamp should be readable");
     if (!error_code) {
@@ -267,7 +411,8 @@ int main(const int argc, char* argv[]) {
         expect(!error_code, "value header timestamp should be made newer deterministically");
     }
 
-    auto header_changed = run_mqb(runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
+    auto header_changed = run_mqb(
+        runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
     expect(header_changed.has_value(), "header-change target invocation should launch");
     if (header_changed) {
         if (header_changed->exit_code != 0) dump_failure(*header_changed);
@@ -283,7 +428,7 @@ int main(const int argc, char* argv[]) {
         expect(contains_output_line(header_changed->stdout_text, "[up-to-date] b/helper.cpp"),
                "unrelated helper B should remain cached");
         expect(header_changed->stdout_text.find("[link] product.exe") != std::string::npos,
-               "any rebuilt TU should force custom target relink");
+               "any rebuilt TU should force target relink");
         expect(header_changed->stdout_text.find("explicit rebuild") != std::string::npos,
                "compile-to-link handoff should not depend only on timestamps");
     }
@@ -292,8 +437,8 @@ int main(const int argc, char* argv[]) {
     expect(changed_run.has_value(), "partially rebuilt executable should launch");
     if (changed_run) {
         expect(changed_run->exit_code == 0, "partially rebuilt executable should return zero");
-        expect(changed_run->stdout_text.find("mqb-multi=73") != std::string::npos,
-               "partial rebuild must update final executable behavior");
+        expect(changed_run->stdout_text.find("mqb-multi=174") != std::string::npos,
+               "partial rebuild must preserve current static library behavior");
     }
 
     error_code.clear();
@@ -303,13 +448,10 @@ int main(const int argc, char* argv[]) {
     }
     expect(!error_code, "test should normalize value header timestamp after rebuild");
 
+    std::vector<std::string> release_arguments = target_arguments;
+    release_arguments.push_back("--release");
     auto release = run_mqb(
-        runner,
-        mqb_executable,
-        tree.root,
-        sources,
-        include_dir,
-        {"-o", "product", "--release"});
+        runner, mqb_executable, tree.root, sources, include_dir, release_arguments);
     expect(release.has_value(), "release target invocation should launch");
     if (release) {
         if (release->exit_code != 0) dump_failure(*release);
@@ -317,9 +459,17 @@ int main(const int argc, char* argv[]) {
         expect(release->stdout_text.find("compiler options changed") != std::string::npos,
                "Debug to Release should invalidate compile recipes");
         expect(release->stdout_text.find("[link] product.exe") != std::string::npos,
-               "Debug to Release should relink custom target");
+               "Debug to Release should relink target with static library");
         expect(release->stdout_text.find("linker options changed") != std::string::npos,
                "Debug to Release should invalidate link recipe");
+    }
+
+    auto release_run = run_executable(runner, executable, tree.root);
+    expect(release_run.has_value(), "release library target should launch");
+    if (release_run) {
+        expect(release_run->exit_code == 0, "release executable should return zero");
+        expect(release_run->stdout_text.find("mqb-multi=174") != std::string::npos,
+               "release executable should preserve current library behavior");
     }
 
     const fs::path exit_source = tree.root / "exit7.cpp";

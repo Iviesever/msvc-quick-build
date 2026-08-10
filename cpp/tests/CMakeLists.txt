@@ -127,7 +127,7 @@ if(WIN32)
         target_compile_features(mqb_msvc_incremental_loop_tests PRIVATE cxx_std_23)
 
         add_executable(mqb_cli_e2e_tests mqb_cli_e2e_tests.cpp)
-        target_link_libraries(mqb_cli_e2e_tests PRIVATE mqb_platform_windows)
+        target_link_libraries(mqb_cli_e2e_tests PRIVATE mqb_msvc mqb_platform_windows)
         target_compile_features(mqb_cli_e2e_tests PRIVATE cxx_std_23)
 
         list(APPEND MQB_TEST_TARGETS
