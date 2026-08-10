@@ -241,12 +241,17 @@ int main(const int argc, char* argv[]) {
     expect(run_with_args.has_value(), "warm --run invocation should launch");
     if (run_with_args) {
         if (run_with_args->exit_code != 0) dump_failure(*run_with_args);
+        const bool child_argv_visible = contains_output_line(run_with_args->stdout_text, "argc=5");
+        if (!child_argv_visible) {
+            std::cerr << "DIAGNOSTIC: child argv output missing or unexpected\n";
+            dump_failure(*run_with_args);
+        }
         expect(run_with_args->exit_code == 0, "warm --run should return child success code");
         expect(contains_output_line(run_with_args->stdout_text, "[up-to-date] product.exe"),
                "--run should still reuse warm link state");
         expect(contains_output_line(run_with_args->stdout_text, "[run] product.exe"),
                "--run should report the launched target");
-        expect(contains_output_line(run_with_args->stdout_text, "argc=5"),
+        expect(child_argv_visible,
                "child should receive four exact argv elements");
         expect(contains_output_line(run_with_args->stdout_text, "arg1=<hello world>"),
                "argv with spaces should remain one element");
