@@ -36,6 +36,28 @@ void write_text(const fs::path& path, const std::string_view text) {
     stream << text;
 }
 
+[[nodiscard]] bool contains_output_line(
+    const std::string_view output,
+    const std::string_view expected) {
+    std::size_t begin = 0;
+    while (begin <= output.size()) {
+        const std::size_t newline = output.find('\n', begin);
+        const std::size_t end = newline == std::string_view::npos ? output.size() : newline;
+        std::string_view line = output.substr(begin, end - begin);
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1);
+        }
+        if (line == expected) {
+            return true;
+        }
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        begin = newline + 1;
+    }
+    return false;
+}
+
 struct TempTree {
     fs::path root;
 
@@ -163,9 +185,9 @@ int main(const int argc, char* argv[]) {
             dump_failure(*warm);
         }
         expect(warm->exit_code == 0, "warm build should succeed");
-        expect(warm->stdout_text.find("[up-to-date] sample.cpp\n") != std::string::npos,
+        expect(contains_output_line(warm->stdout_text, "[up-to-date] sample.cpp"),
                "warm build should reuse the cached object");
-        expect(warm->stdout_text.find("[up-to-date] sample.cpp.exe") != std::string::npos,
+        expect(contains_output_line(warm->stdout_text, "[up-to-date] sample.cpp.exe"),
                "warm build should reuse the cached executable");
     }
 
@@ -218,9 +240,9 @@ int main(const int argc, char* argv[]) {
             dump_failure(*warm_again);
         }
         expect(warm_again->exit_code == 0, "second warm build should succeed");
-        expect(warm_again->stdout_text.find("[up-to-date] sample.cpp\n") != std::string::npos,
+        expect(contains_output_line(warm_again->stdout_text, "[up-to-date] sample.cpp"),
                "rebuilt object should become reusable again");
-        expect(warm_again->stdout_text.find("[up-to-date] sample.cpp.exe") != std::string::npos,
+        expect(contains_output_line(warm_again->stdout_text, "[up-to-date] sample.cpp.exe"),
                "relinked executable should become reusable again");
     }
 
