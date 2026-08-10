@@ -22,17 +22,20 @@ CLI (mqb.exe)
     |
     +--> Source Discovery (mqb_discovery)
     |      ordinary C++ candidate-TU selection
+    |      reachable project-local named-module provider candidates
+    |      module-pipeline routing requirement
     |
     v
-Ordinary target orchestration
-  bounded parallel N x compile coordinator -> ordered results -> one link coordinator
-
-Named-module orchestration (internal milestone API; not public CLI wiring yet)
-  parallel /scanDependencies
-      -> P1689R5 typed model
-      -> resolved provider graph + compile levels
-      -> level-barrier bounded compile waves
-      -> one incremental link coordinator
+Target routing
+    +--> Ordinary target orchestration
+    |      bounded parallel N x compile coordinator -> ordered results -> one link coordinator
+    |
+    +--> Named-module orchestration
+           parallel /scanDependencies
+               -> P1689R5 typed model
+               -> resolved provider graph + compile levels
+               -> level-barrier bounded compile waves
+               -> one incremental link coordinator
     |
     +--------------------+--------------------+
     v                    v                    v
@@ -73,6 +76,8 @@ Core                  Modules              MSVC backend
 14. **Module topology and header freshness are different data.** `/scanDependencies` determines pre-compile module ordering; `/sourceDependencies` remains the post-compile freshness source for headers.
 15. **Provider selection has one owner.** `ModuleDependencyGraphBuilder` resolves named-module providers once; orchestration consumes those exact resolved edges for `/reference` wiring and downstream rebuild propagation.
 16. **Unsupported module requirements fail closed.** Header units and unresolved external/prebuilt named modules are never silently ignored.
+17. **Discovery does not become a second module compiler.** Its lexical module pass selects project-local candidates and records whether module routing is required; P1689 remains authoritative for topology and provider validation.
+18. **Module routing is explicit execution state, not cache identity.** A discovery result may force the named-module pipeline even when no local interface was selected, preventing import-only targets from silently falling back to ordinary compilation.
 
 ## Project configuration
 
@@ -96,15 +101,17 @@ built-in defaults
 
 List-like build inputs are additive and deterministic: project-config entries appear first, then CLI entries. The v1 schema and examples are documented in `docs/MQB_CONFIG.md`. Unknown fields, duplicate JSON keys, wrong field types, malformed JSON, and unsupported schema versions are rejected instead of guessed.
 
-## Smart ordinary-C++ discovery
+## Smart source discovery
 
-With one positional source, MQB smart-discovers the connected ordinary-C++ target by default. Multiple positional sources remain an explicit ordered source set. `--no-discover` disables discovery; `--discover` explicitly enables it and can override project configuration.
+With one positional ordinary source, MQB smart-discovers the connected target by default. Multiple positional sources remain an explicit ordered source set. `--no-discover` disables discovery; `--discover` explicitly enables it and can override project configuration.
 
-Discovery uses quoted `#include "..."` connectivity, configured include directories, same-basename ownership, deterministic traversal, built-in directory exclusions, and project-config corrections. A reachable non-entry source defining `main(...)` is a traversal barrier. Explicitly excluded sources and directories are also traversal barriers.
+Ordinary discovery uses quoted `#include "..."` connectivity, configured include directories, same-basename ownership, deterministic traversal, built-in directory exclusions, and project-config corrections. A reachable non-entry ordinary source defining `main(...)` is a traversal barrier. Explicitly excluded sources and directories are also traversal barriers.
 
-Discovery output only selects ordinary TUs. Incremental header invalidation continues to use compiler-emitted `/sourceDependencies` metadata.
+The discovery index also understands the supported translation-unit extension classes from `mqb_core`: ordinary `.cpp/.cc/.cxx` units and module-interface `.ixx/.cppm/.mpp` units. A lightweight lexical module pass extracts named module declarations/imports only for source selection. It ignores comments, literals, preprocessor directives, and header-unit imports. Reachable named imports connect to all matching project-local interface candidates; discovery deliberately does not choose a winner among duplicate providers.
 
-The named-module target pipeline added in the Modules milestone is currently an internal orchestration API. Public `mqb.exe` source discovery/CLI routing has not yet been switched to that pipeline.
+When a selected TU contains named-module syntax, discovery reports that the target requires the module pipeline even if no project-local interface provider was found. The CLI propagates that execution-only state through `MsvcTargetRouter`, so `import std` or an unresolved external/prebuilt named module cannot silently fall back to the ordinary pipeline.
+
+Discovery output selects candidate TUs only. Incremental header invalidation continues to use compiler-emitted `/sourceDependencies` metadata, while the real module target pipeline runs `/scanDependencies` and the P1689 graph builder to determine authoritative module topology and provider resolution.
 
 ## Compile identity and cache freshness
 
@@ -196,7 +203,7 @@ The exact resolved dependency edges are reused for both compile ordering and MSV
 
 ## Named-module MSVC pipeline
 
-The current implemented module pipeline supports the internal named-module-interface -> named-consumer path:
+The implemented named-module pipeline supports project-local named-module interfaces and consumers through both explicit CLI target sets and single-entry module-aware discovery:
 
 ```text
 selected source requests
@@ -225,24 +232,25 @@ Warm module target builds currently repeat topology scanning. The proven cache g
 
 ### Current module capability boundary
 
-Supported and regression-tested in this milestone:
+Supported and regression-tested:
 
 - P1689R5 parsing and strict schema validation;
-- internal named-module interface providers;
+- project-local named-module interface providers;
 - named consumers resolved to exact provider sources;
 - source-identity IFC routing;
 - bounded same-level parallelism with dependency-level barriers;
 - module-aware compile signatures and cache freshness;
 - downstream rebuild propagation when a provider recompiles;
 - incremental final linking;
-- real VS2026 provider/consumer executable E2E.
+- explicit public CLI module-interface targets;
+- single-entry public CLI discovery of reachable project-local named-module providers;
+- real VS2026 provider/consumer executable E2E, including warm builds, provider-only mutation, and missing-IFC repair.
 
-Not yet supported by `MsvcModuleTargetCoordinator`:
+Not yet supported by the execution policy:
 
 - header units;
 - unresolved external/prebuilt named-module providers;
-- `import std` (currently appears as an unresolved external named module and fails closed);
-- public CLI/source-discovery routing into the module target coordinator.
+- `import std` (currently appears as an unresolved external named module and fails closed).
 
 The P1689 model can represent more cases than the current execution policy accepts. That is intentional: parsing a requirement is not permission to compile it incorrectly.
 
@@ -307,7 +315,7 @@ GitHub CI enables installed-MSVC integration tests explicitly; local tests keep 
 
 ## Current verification milestone
 
-The VS2026 PR suite now contains **46 registered CTest cases**. It verifies ordinary CLI behavior plus the new module backend/orchestration path.
+The VS2026 PR suite verifies ordinary CLI behavior plus the named-module backend, routing, and source-discovery path.
 
 Among the real installed-MSVC cases are:
 
@@ -317,6 +325,7 @@ Among the real installed-MSVC cases are:
 - real module provider IFC creation and consumer `/reference` compilation;
 - full named-module target cold build and executable launch;
 - warm named-module target with compile 0 / link 0;
+- single-entry `mqb main.cpp` discovery of a reachable project-local module provider;
 - provider-source mutation causing provider + consumer + link rebuild;
 - provider IFC deletion with source/object otherwise warm, causing provider + consumer + link repair;
 - artifact collision/empty-artifact validation before any external process starts.
@@ -325,9 +334,9 @@ The named-module target E2E uses the installed Visual Studio 2026 compiler and l
 
 ## Current CLI milestone
 
-The public `mqb.exe` CLI currently owns the ordinary-C++ path: project config, smart ordinary source discovery, bounded `-j/--jobs` compilation, independent link caching, library resolution, and structured `--run` argv.
+The public `mqb.exe` CLI now owns both the ordinary-C++ path and the supported project-local named-module path: project config, smart source discovery, bounded `-j/--jobs` execution, independent link caching, library resolution, structured `--run` argv, explicit module-interface target routing, and single-entry discovery of reachable project-local named-module providers.
 
-The named-module pipeline described above is implemented and integration-tested behind typed orchestration APIs, but it is **not yet wired into the public CLI/source-discovery path**. Therefore this document does not claim that the C++ V2 CLI has reached full Modules parity with the PowerShell tool.
+This is not full C++ Modules parity. Header units, external/prebuilt provider execution, and `import std` remain explicit fail-closed gaps, and PowerShell/C++ parity testing still precedes cutover.
 
 ## Migration sequence
 
@@ -344,7 +353,7 @@ The named-module pipeline described above is implemented and integration-tested 
 11. **Project config v1** — upward `mqb.json`, typed schema, path semantics, CLI precedence, config E2E. ✅
 12. **Parallel ordinary-TU scheduling** — bounded concurrency with deterministic reporting/failure semantics. ✅
 13. **Named Modules core/orchestration** — P1689 scan, provider graph, IFC artifacts, module-aware cache, dependency waves, incremental link, real VS2026 E2E. ✅
-14. **Modules expansion/UX** — public CLI routing, module-aware source selection, header units, external/prebuilt provider policy, `import std`.
+14. **Modules expansion/UX** — public CLI routing and project-local module-aware source selection ✅; header units, external/prebuilt provider policy, and `import std` remain.
 15. **Parity** — run PowerShell and C++ against the same E2E fixtures.
 16. **Cutover** — make `mqb.exe` primary only after parity tests pass.
 
