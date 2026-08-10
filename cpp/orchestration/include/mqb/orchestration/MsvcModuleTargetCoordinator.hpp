@@ -36,7 +36,8 @@ enum class IncrementalModuleTargetErrorCode {
     no_sources,
     invalid_parallelism,
     duplicate_source,
-    duplicate_scan_output,
+    invalid_artifact,
+    artifact_collision,
     scheduling_failed,
     scan_failed,
     invalid_scan_result,
@@ -49,6 +50,7 @@ struct IncrementalModuleTargetError {
     IncrementalModuleTargetErrorCode code{IncrementalModuleTargetErrorCode::no_sources};
     std::string message;
     std::filesystem::path source;
+    std::filesystem::path artifact;
     std::optional<msvc::ModuleScanError> scan_error;
     std::optional<modules::ModuleGraphError> graph_error;
     std::optional<ModuleCompileError> compile_error;
