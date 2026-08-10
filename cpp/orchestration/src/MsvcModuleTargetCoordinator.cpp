@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -40,6 +41,42 @@ namespace fs = std::filesystem;
     };
 }
 
+[[nodiscard]] IncrementalModuleTargetError artifact_failure(
+    const IncrementalModuleTargetErrorCode code,
+    std::string message,
+    const fs::path& source,
+    const fs::path& artifact) {
+    return IncrementalModuleTargetError{
+        .code = code,
+        .message = std::move(message),
+        .source = source,
+        .artifact = artifact,
+    };
+}
+
+[[nodiscard]] std::optional<IncrementalModuleTargetError> claim_artifact(
+    std::unordered_set<std::string>& claimed,
+    const fs::path& source,
+    const fs::path& artifact,
+    const std::string_view role) {
+    if (artifact.empty()) {
+        return artifact_failure(
+            IncrementalModuleTargetErrorCode::invalid_artifact,
+            "module target " + std::string{role} + " artifact path is empty",
+            source,
+            artifact);
+    }
+    if (!claimed.emplace(windows_path_key(artifact)).second) {
+        return artifact_failure(
+            IncrementalModuleTargetErrorCode::artifact_collision,
+            "module target " + std::string{role}
+                + " artifact collides with another planned writable artifact",
+            source,
+            artifact);
+    }
+    return std::nullopt;
+}
+
 [[nodiscard]] std::optional<fs::path> working_directory_for(
     const fs::path& requested,
     const fs::path& source) {
@@ -68,23 +105,67 @@ MsvcModuleTargetCoordinator::run(const IncrementalModuleTargetRequest& request) 
     }
 
     std::unordered_set<std::string> seen_sources;
-    std::unordered_set<std::string> seen_scan_outputs;
+    std::unordered_set<std::string> claimed_artifacts;
     seen_sources.reserve(request.sources.size());
-    seen_scan_outputs.reserve(request.sources.size());
+    claimed_artifacts.reserve(request.sources.size() * 5u + 2u);
+
     for (const auto& source : request.sources) {
+        if (source.source.empty()) {
+            return std::unexpected(failure(
+                IncrementalModuleTargetErrorCode::duplicate_source,
+                "module target source path is empty",
+                source.source));
+        }
         if (!seen_sources.emplace(windows_path_key(source.source)).second) {
             return std::unexpected(failure(
                 IncrementalModuleTargetErrorCode::duplicate_source,
                 "module target contains the same source more than once",
                 source.source));
         }
-        if (!seen_scan_outputs.emplace(
-                windows_path_key(source.artifacts.module_dependencies)).second) {
-            return std::unexpected(failure(
-                IncrementalModuleTargetErrorCode::duplicate_scan_output,
-                "two module target sources map to the same scan metadata output",
-                source.source));
+
+        if (auto error = claim_artifact(
+                claimed_artifacts, source.source, source.artifacts.object, "object")) {
+            return std::unexpected(std::move(*error));
         }
+        if (auto error = claim_artifact(
+                claimed_artifacts,
+                source.source,
+                source.artifacts.dependencies,
+                "source-dependency metadata")) {
+            return std::unexpected(std::move(*error));
+        }
+        if (auto error = claim_artifact(
+                claimed_artifacts,
+                source.source,
+                source.artifacts.module_dependencies,
+                "module-scan metadata")) {
+            return std::unexpected(std::move(*error));
+        }
+        if (auto error = claim_artifact(
+                claimed_artifacts,
+                source.source,
+                source.artifacts.compile_cache,
+                "compile-cache metadata")) {
+            return std::unexpected(std::move(*error));
+        }
+        if (source.kind == TranslationUnitKind::module_interface) {
+            if (auto error = claim_artifact(
+                    claimed_artifacts,
+                    source.source,
+                    source.artifacts.module_interface,
+                    "IFC")) {
+                return std::unexpected(std::move(*error));
+            }
+        }
+    }
+
+    if (auto error = claim_artifact(
+            claimed_artifacts, {}, request.target.executable, "executable")) {
+        return std::unexpected(std::move(*error));
+    }
+    if (auto error = claim_artifact(
+            claimed_artifacts, {}, request.target.link_cache, "link-cache metadata")) {
+        return std::unexpected(std::move(*error));
     }
 
     using ScanAttempt = std::expected<msvc::ModuleScanResult, msvc::ModuleScanError>;
