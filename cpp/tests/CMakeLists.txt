@@ -69,6 +69,10 @@ if(WIN32)
     target_link_libraries(mqb_msvc_source_dependencies_tests PRIVATE mqb_msvc)
     target_compile_features(mqb_msvc_source_dependencies_tests PRIVATE cxx_std_23)
 
+    add_executable(mqb_cli_argument_tests cli_argument_tests.cpp)
+    target_link_libraries(mqb_cli_argument_tests PRIVATE mqb_cli)
+    target_compile_features(mqb_cli_argument_tests PRIVATE cxx_std_23)
+
     list(APPEND MQB_TEST_TARGETS
         mqb_windows_command_line_tests
         mqb_process_echo_helper
@@ -77,6 +81,7 @@ if(WIN32)
         mqb_msvc_compiler_arguments_tests
         mqb_msvc_compile_executor_tests
         mqb_msvc_source_dependencies_tests
+        mqb_cli_argument_tests
     )
 
     if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
@@ -92,10 +97,15 @@ if(WIN32)
         target_link_libraries(mqb_msvc_incremental_loop_tests PRIVATE mqb_core mqb_msvc mqb_platform_windows)
         target_compile_features(mqb_msvc_incremental_loop_tests PRIVATE cxx_std_23)
 
+        add_executable(mqb_cli_e2e_tests mqb_cli_e2e_tests.cpp)
+        target_link_libraries(mqb_cli_e2e_tests PRIVATE mqb_platform_windows)
+        target_compile_features(mqb_cli_e2e_tests PRIVATE cxx_std_23)
+
         list(APPEND MQB_TEST_TARGETS
             mqb_msvc_visual_studio_tests
             mqb_msvc_compile_integration_tests
             mqb_msvc_incremental_loop_tests
+            mqb_cli_e2e_tests
         )
     endif()
 endif()
@@ -127,10 +137,15 @@ if(WIN32)
     add_test(NAME mqb.msvc.compiler_arguments COMMAND mqb_msvc_compiler_arguments_tests)
     add_test(NAME mqb.msvc.compile_executor COMMAND mqb_msvc_compile_executor_tests)
     add_test(NAME mqb.msvc.source_dependencies COMMAND mqb_msvc_source_dependencies_tests)
+    add_test(NAME mqb.cli.arguments COMMAND mqb_cli_argument_tests)
 
     if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
         add_test(NAME mqb.msvc.visual_studio COMMAND mqb_msvc_visual_studio_tests)
         add_test(NAME mqb.msvc.compile_integration COMMAND mqb_msvc_compile_integration_tests)
         add_test(NAME mqb.msvc.incremental_loop COMMAND mqb_msvc_incremental_loop_tests)
+        add_test(
+            NAME mqb.cli.single_tu_e2e
+            COMMAND mqb_cli_e2e_tests $<TARGET_FILE:mqb>
+        )
     endif()
 endif()
