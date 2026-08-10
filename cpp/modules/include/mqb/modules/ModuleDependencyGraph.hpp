@@ -27,10 +27,20 @@ struct UnresolvedModuleRequirement {
     UnresolvedRequirementKind kind{UnresolvedRequirementKind::named_module};
 };
 
+struct ResolvedModuleDependency {
+    std::filesystem::path consumer_source;
+    std::filesystem::path provider_source;
+    std::string logical_name;
+};
+
 struct ModuleDependencyPlan {
     // Each inner vector may be compiled concurrently. Earlier levels must
     // complete before later levels begin.
     std::vector<std::vector<std::filesystem::path>> compile_levels;
+    // Named-module imports that were resolved to another source in this plan.
+    // Orchestration uses these exact edges both for /reference wiring and for
+    // downstream rebuild propagation; provider selection must not be repeated.
+    std::vector<ResolvedModuleDependency> resolved_dependencies;
     std::vector<UnresolvedModuleRequirement> unresolved_requirements;
 };
 
