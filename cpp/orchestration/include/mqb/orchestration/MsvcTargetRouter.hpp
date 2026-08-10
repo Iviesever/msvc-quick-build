@@ -35,6 +35,10 @@ struct RoutedTargetRequest {
     LinkOptions link_options;
     std::filesystem::path working_directory;
     std::size_t max_parallel_jobs{1};
+    // Execution-routing state only. This is used when discovery observed named
+    // module syntax but found no local interface provider; it must not affect
+    // compile/link signatures or cache identity.
+    bool force_named_modules{false};
 };
 
 enum class RoutedTargetErrorCode {
@@ -64,7 +68,8 @@ public:
         : ordinary_target_(ordinary_target), module_target_(module_target) {}
 
     [[nodiscard]] static MsvcTargetPipeline select_pipeline(
-        std::span<const RoutedTargetSourceRequest> sources) noexcept;
+        std::span<const RoutedTargetSourceRequest> sources,
+        bool force_named_modules = false) noexcept;
 
     [[nodiscard]] std::expected<RoutedTargetResult, RoutedTargetError>
     run(const RoutedTargetRequest& request) const;
