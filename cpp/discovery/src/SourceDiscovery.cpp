@@ -11,6 +11,7 @@
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -78,7 +79,7 @@ struct FileRecord {
     return source_extension(path) || header_extension(path);
 }
 
-[[nodiscard]] bool excluded_directory(const fs::path& path) {
+[[nodiscard]] bool default_excluded_directory(const fs::path& path) {
     const std::string name = ascii_lower(path.filename().string());
     return name == ".mqb"
         || name == ".git"
@@ -99,6 +100,10 @@ struct FileRecord {
         }
     }
     return true;
+}
+
+[[nodiscard]] bool same_or_inside(const fs::path& root, const fs::path& path) {
+    return path.lexically_normal() == root.lexically_normal() || inside_root(root, path);
 }
 
 [[nodiscard]] std::expected<std::string, std::string>
@@ -326,6 +331,43 @@ void add_undirected_edge(
     }
 }
 
+[[nodiscard]] std::expected<fs::path, Error> normalize_directory_correction(
+    const fs::path& requested,
+    const fs::path& root) {
+    std::error_code error_code;
+    fs::path absolute = fs::absolute(requested, error_code).lexically_normal();
+    if (error_code
+        || !fs::is_directory(absolute, error_code)
+        || error_code
+        || !inside_root(root, absolute)) {
+        return std::unexpected(failure(
+            ErrorCode::invalid_correction,
+            requested,
+            "discovery excluded directory must be an existing directory strictly inside the project root"));
+    }
+    return absolute;
+}
+
+[[nodiscard]] std::expected<fs::path, Error> normalize_source_correction(
+    const fs::path& requested,
+    const fs::path& root,
+    const std::string_view description) {
+    std::error_code error_code;
+    fs::path absolute = fs::absolute(requested, error_code).lexically_normal();
+    if (error_code
+        || !fs::is_regular_file(absolute, error_code)
+        || error_code
+        || !source_extension(absolute)
+        || !inside_root(root, absolute)) {
+        return std::unexpected(failure(
+            ErrorCode::invalid_correction,
+            requested,
+            std::string{description}
+                + " must be an existing ordinary C++ source inside the project root"));
+    }
+    return absolute;
+}
+
 } // namespace
 
 std::expected<Result, Error>
@@ -349,6 +391,75 @@ SourceDiscovery::discover(const Request& request) {
             ErrorCode::invalid_entry,
             request.entry,
             "source discovery entry must be an ordinary C++ source inside the project root"));
+    }
+
+    std::vector<fs::path> excluded_directories;
+    std::unordered_set<std::string> excluded_directory_keys;
+    excluded_directories.reserve(request.excluded_directories.size());
+    for (const auto& requested : request.excluded_directories) {
+        auto directory = normalize_directory_correction(requested, root);
+        if (!directory) return std::unexpected(directory.error());
+        if (same_or_inside(*directory, entry)) {
+            return std::unexpected(failure(
+                ErrorCode::invalid_correction,
+                *directory,
+                "discovery excluded directory must not contain the entry translation unit"));
+        }
+        if (excluded_directory_keys.insert(path_key(*directory)).second) {
+            excluded_directories.push_back(std::move(*directory));
+        }
+    }
+
+    std::unordered_set<std::string> excluded_source_keys;
+    for (const auto& requested : request.excluded_sources) {
+        auto source = normalize_source_correction(requested, root, "discovery excluded source");
+        if (!source) return std::unexpected(source.error());
+        if (*source == entry) {
+            return std::unexpected(failure(
+                ErrorCode::invalid_correction,
+                *source,
+                "discovery excluded source must not be the entry translation unit"));
+        }
+        excluded_source_keys.insert(path_key(*source));
+    }
+
+    std::vector<fs::path> extra_sources;
+    std::unordered_set<std::string> extra_source_keys;
+    for (const auto& requested : request.extra_sources) {
+        auto source = normalize_source_correction(requested, root, "discovery extra source");
+        if (!source) return std::unexpected(source.error());
+        const std::string key = path_key(*source);
+        if (excluded_source_keys.contains(key)) {
+            return std::unexpected(failure(
+                ErrorCode::invalid_correction,
+                *source,
+                "the same source cannot be both extra and excluded"));
+        }
+        for (const auto& directory : excluded_directories) {
+            if (same_or_inside(directory, *source)) {
+                return std::unexpected(failure(
+                    ErrorCode::invalid_correction,
+                    *source,
+                    "discovery extra source must not be inside an excluded directory"));
+            }
+        }
+        if (*source != entry && extra_source_keys.insert(key).second) {
+            auto text = read_text(*source);
+            if (!text) {
+                return std::unexpected(failure(
+                    ErrorCode::invalid_correction,
+                    *source,
+                    text.error()));
+            }
+            const std::string comment_free = strip_comments_preserve_literals(*text);
+            if (contains_main(comment_free)) {
+                return std::unexpected(failure(
+                    ErrorCode::invalid_correction,
+                    *source,
+                    "discovery extra source must not define another main()"));
+            }
+            extra_sources.push_back(std::move(*source));
+        }
     }
 
     Result result;
@@ -376,7 +487,9 @@ SourceDiscovery::discover(const Request& request) {
         }
         const fs::directory_entry& item = *iterator;
         if (item.is_directory(error_code)) {
-            if (!error_code && excluded_directory(item.path())) {
+            const bool configured_excluded = !error_code
+                && excluded_directory_keys.contains(path_key(item.path()));
+            if (!error_code && (default_excluded_directory(item.path()) || configured_excluded)) {
                 iterator.disable_recursion_pending();
             }
             error_code.clear();
@@ -486,7 +599,9 @@ SourceDiscovery::discover(const Request& request) {
             const bool second_main = next != entry_index
                 && files[next].kind == FileKind::source
                 && files[next].defines_main;
-            if (!second_main) {
+            const bool excluded_source = files[next].kind == FileKind::source
+                && excluded_source_keys.contains(path_key(files[next].path));
+            if (!second_main && !excluded_source) {
                 queue.push_back(next);
             }
         }
@@ -499,7 +614,21 @@ SourceDiscovery::discover(const Request& request) {
         if (files[index].path != entry && files[index].defines_main) {
             continue;
         }
+        if (excluded_source_keys.contains(path_key(files[index].path))) {
+            continue;
+        }
         result.sources.push_back(files[index].path);
+    }
+
+    for (const auto& source : extra_sources) {
+        const std::string key = path_key(source);
+        const auto duplicate = std::find_if(
+            result.sources.begin(),
+            result.sources.end(),
+            [&](const fs::path& existing) { return path_key(existing) == key; });
+        if (duplicate == result.sources.end()) {
+            result.sources.push_back(source);
+        }
     }
 
     std::sort(
@@ -522,4 +651,4 @@ SourceDiscovery::discover(const Request& request) {
     return result;
 }
 
-} // namespace mqb
+} // namespace mqb::discovery
