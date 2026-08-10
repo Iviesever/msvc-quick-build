@@ -96,6 +96,8 @@ int main() {
     });
     expect(discovered.has_value(), "named-module source discovery should succeed");
     if (discovered) {
+        expect(discovered->requires_module_pipeline,
+               "selected named-module chain must request the module pipeline");
         expect(!discovered->sources.empty() && discovered->sources.front() == main_cpp,
                "ordinary entry should remain first after module-aware discovery");
         expect(contains_source(discovered->sources, stats_cppm),
@@ -133,6 +135,8 @@ int main() {
     expect(duplicate.has_value(),
            "discovery must retain duplicate provider candidates for P1689 validation");
     if (duplicate) {
+        expect(duplicate->requires_module_pipeline,
+               "duplicate provider candidate targets still require authoritative module validation");
         expect(contains_source(duplicate->sources, duplicate_a)
                    && contains_source(duplicate->sources, duplicate_b),
                "all matching local interface candidates should be selected rather than guessed");
@@ -146,13 +150,43 @@ int main() {
     expect(excluded_provider.has_value(),
            "module interface should be usable as an exact excluded-source correction");
     if (excluded_provider) {
+        expect(excluded_provider->requires_module_pipeline,
+               "excluding one provider must not erase the consumer's module-routing requirement");
         expect(!contains_source(excluded_provider->sources, duplicate_a)
                    && contains_source(excluded_provider->sources, duplicate_b),
                "excluded module provider should be a traversal barrier while other candidates remain");
     }
 
+    const fs::path external_main = tree.root / "external_main.cpp";
+    write_text(
+        external_main,
+        "import definitely.external.module;\n"
+        "int main() { return 0; }\n");
+    const auto external = mqb::discovery::SourceDiscovery::discover({
+        .project_root = tree.root,
+        .entry = external_main,
+    });
+    expect(external.has_value(),
+           "import-only discovery with no local provider should still produce a source selection");
+    if (external) {
+        expect(external->sources == std::vector<fs::path>{external_main},
+               "missing local named-module providers must not invent source candidates");
+        expect(external->requires_module_pipeline,
+               "import-only targets with no local provider must fail closed through the module pipeline");
+    }
+
     const fs::path plain_main = tree.root / "plain_main.cpp";
     write_text(plain_main, "int main() { return 0; }\n");
+    const auto plain = mqb::discovery::SourceDiscovery::discover({
+        .project_root = tree.root,
+        .entry = plain_main,
+    });
+    expect(plain.has_value(), "ordinary source discovery should remain valid");
+    if (plain) {
+        expect(!plain->requires_module_pipeline,
+               "unrelated module files elsewhere in the project must not reroute an ordinary target");
+    }
+
     const auto extra_module = mqb::discovery::SourceDiscovery::discover({
         .project_root = tree.root,
         .entry = plain_main,
@@ -161,6 +195,8 @@ int main() {
     expect(extra_module.has_value(),
            "module interface should be usable as an exact extra-source correction");
     if (extra_module) {
+        expect(extra_module->requires_module_pipeline,
+               "an explicitly selected module interface must request the module pipeline");
         expect(contains_source(extra_module->sources, unused_mpp),
                "exact extra module interface should be retained even when disconnected");
     }
