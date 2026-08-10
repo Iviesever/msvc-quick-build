@@ -87,15 +87,27 @@ void add_portable_root_if_missing(
     }
 }
 
+void write_forwarded_text(std::ostream& stream, const std::string_view text) {
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const char ch = text[index];
+        if (ch == '\r' && index + 1 < text.size() && text[index + 1] == '\n') {
+            stream.put('\n');
+            ++index;
+            continue;
+        }
+        stream.put(ch);
+    }
+}
+
 void print_process_output(const mqb::process::ProcessResult& process) {
     if (!process.stdout_text.empty()) {
-        std::cout << process.stdout_text;
+        write_forwarded_text(std::cout, process.stdout_text);
         if (process.stdout_text.back() != '\n') {
             std::cout << '\n';
         }
     }
     if (!process.stderr_text.empty()) {
-        std::cerr << process.stderr_text;
+        write_forwarded_text(std::cerr, process.stderr_text);
         if (process.stderr_text.back() != '\n') {
             std::cerr << '\n';
         }
