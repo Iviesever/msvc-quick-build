@@ -69,18 +69,12 @@ mqb::CompileCacheEntry make_entry(
     const mqb::TranslationUnit& unit,
     const mqb::ToolchainIdentity& toolchain,
     const mqb::CompilerOptions& options) {
-    const auto object = std::find_if(
-        unit.outputs.begin(),
-        unit.outputs.end(),
-        [](const mqb::Artifact& artifact) {
-            return artifact.kind == mqb::ArtifactKind::object;
-        });
     return mqb::CompileCacheEntry{
         .source = unit.source,
         .kind = unit.kind,
         .toolchain = toolchain,
         .signature = mqb::BuildSignature::for_compile(unit, toolchain, options),
-        .object = object == unit.outputs.end() ? mqb::Artifact{} : *object,
+        .outputs = unit.outputs,
         .dependencies = {
             std::filesystem::path{"include/app.hpp"},
             std::filesystem::path{"include/config.hpp"},
@@ -102,7 +96,7 @@ int main() {
         .modified = time_at(10),
     };
     const mqb::FileSnapshot object{
-        .path = entry.object.path,
+        .path = entry.outputs.front().path,
         .exists = true,
         .modified = time_at(30),
     };
@@ -114,7 +108,7 @@ int main() {
 
     const auto fresh = mqb::CompileCacheValidator::validate(
         unit, toolchain, options, entry, source, outputs, dependencies);
-    expect(fresh.reusable(), "unchanged recipe and older dependencies should reuse the object");
+    expect(fresh.reusable(), "unchanged recipe and older dependencies should reuse planned outputs");
     expect(fresh.reasons.empty(), "reusable cache entry should not invent rebuild reasons");
 
     const auto no_entry = mqb::CompileCacheValidator::validate(
@@ -128,14 +122,14 @@ int main() {
     const auto missing_output = mqb::CompileCacheValidator::validate(
         unit, toolchain, options, entry, source, missing_outputs, dependencies);
     expect(has_reason(missing_output, mqb::BuildReason::missing_output),
-           "missing object artifact should force a rebuild");
+           "missing planned artifact should force a rebuild");
 
     auto newer_source = source;
     newer_source.modified = time_at(40);
     const auto source_changed = mqb::CompileCacheValidator::validate(
         unit, toolchain, options, entry, newer_source, outputs, dependencies);
     expect(has_reason(source_changed, mqb::BuildReason::source_changed),
-           "source newer than object should invalidate the cache");
+           "source newer than the oldest planned output should invalidate the cache");
 
     auto newer_dependencies = dependencies;
     newer_dependencies[0].modified = time_at(50);
@@ -143,7 +137,7 @@ int main() {
     const auto dependency_changed = mqb::CompileCacheValidator::validate(
         unit, toolchain, options, entry, source, outputs, newer_dependencies);
     expect(has_reason(dependency_changed, mqb::BuildReason::dependency_changed),
-           "newer cached dependency should invalidate the object");
+           "newer cached dependency should invalidate planned outputs");
     expect(std::count(
                dependency_changed.reasons.begin(),
                dependency_changed.reasons.end(),
@@ -155,7 +149,7 @@ int main() {
     const auto dependency_missing = mqb::CompileCacheValidator::validate(
         unit, toolchain, options, entry, source, outputs, missing_dependency);
     expect(has_reason(dependency_missing, mqb::BuildReason::dependency_changed),
-           "deleted cached dependency should invalidate the object");
+           "deleted cached dependency should invalidate planned outputs");
 
     std::vector<mqb::FileSnapshot> incomplete_dependencies{dependencies[0]};
     const auto dependency_snapshot_missing = mqb::CompileCacheValidator::validate(
@@ -218,7 +212,7 @@ int main() {
             moved_object_outputs,
             dependencies);
         expect(has_reason(moved_object, mqb::BuildReason::missing_output),
-               "cache metadata for a different object path must not authorize reuse");
+               "cache metadata for a different planned output path must not authorize reuse");
     }
 
     {
@@ -236,7 +230,7 @@ int main() {
             .modified = time_at(10),
         };
         const std::vector<mqb::FileSnapshot> module_outputs{
-            mqb::FileSnapshot{.path = "build/math.obj", .exists = true, .modified = time_at(30)},
+            mqb::FileSnapshot{.path = "build/math.obj", .exists = true, .modified = time_at(35)},
             mqb::FileSnapshot{.path = "ifc/math.ifc", .exists = true, .modified = time_at(30)},
         };
         const auto module_fresh = mqb::CompileCacheValidator::validate(
@@ -248,7 +242,20 @@ int main() {
             module_outputs,
             dependencies);
         expect(module_fresh.reusable(),
-               "module provider should reuse cache only when both object and IFC exist");
+               "module provider should reuse cache only when both object and IFC are fresh");
+
+        auto between_outputs_source = module_source;
+        between_outputs_source.modified = time_at(32);
+        const auto oldest_output_guards_source = mqb::CompileCacheValidator::validate(
+            module_unit,
+            toolchain,
+            options,
+            module_entry,
+            between_outputs_source,
+            module_outputs,
+            dependencies);
+        expect(has_reason(oldest_output_guards_source, mqb::BuildReason::source_changed),
+               "source newer than IFC but older than object must still rebuild the provider");
 
         auto missing_ifc_outputs = module_outputs;
         missing_ifc_outputs[1].exists = false;
@@ -277,8 +284,51 @@ int main() {
             module_source,
             moved_ifc_outputs,
             dependencies);
+        expect(has_reason(moved_ifc, mqb::BuildReason::missing_output),
+               "cached planned outputs for the old IFC path must not authorize reuse");
         expect(has_reason(moved_ifc, mqb::BuildReason::compiler_options_changed),
-               "planned IFC routing change must invalidate provider signature identity");
+               "planned IFC routing change must also invalidate provider signature identity");
+    }
+
+    {
+        auto ifc_only_unit = unit;
+        ifc_only_unit.kind = mqb::TranslationUnitKind::module_interface;
+        ifc_only_unit.source = "include/header.hpp";
+        ifc_only_unit.outputs = {
+            mqb::Artifact{.path = "ifc/header.ifc", .kind = mqb::ArtifactKind::module_interface},
+        };
+        const auto ifc_only_entry = make_entry(ifc_only_unit, toolchain, options);
+        const mqb::FileSnapshot ifc_only_source{
+            .path = ifc_only_unit.source,
+            .exists = true,
+            .modified = time_at(10),
+        };
+        const std::vector<mqb::FileSnapshot> ifc_only_outputs{
+            mqb::FileSnapshot{.path = "ifc/header.ifc", .exists = true, .modified = time_at(30)},
+        };
+        const auto ifc_only_fresh = mqb::CompileCacheValidator::validate(
+            ifc_only_unit,
+            toolchain,
+            options,
+            ifc_only_entry,
+            ifc_only_source,
+            ifc_only_outputs,
+            dependencies);
+        expect(ifc_only_fresh.reusable(),
+               "core compile cache must support IFC-only planned outputs without a fake object");
+
+        auto ifc_only_dependency_newer = dependencies;
+        ifc_only_dependency_newer[0].modified = time_at(31);
+        const auto ifc_only_stale = mqb::CompileCacheValidator::validate(
+            ifc_only_unit,
+            toolchain,
+            options,
+            ifc_only_entry,
+            ifc_only_source,
+            ifc_only_outputs,
+            ifc_only_dependency_newer);
+        expect(has_reason(ifc_only_stale, mqb::BuildReason::dependency_changed),
+               "IFC-only output must use its own timestamp as dependency freshness anchor");
     }
 
     {
