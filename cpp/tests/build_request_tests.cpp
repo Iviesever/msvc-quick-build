@@ -21,6 +21,7 @@ int main() {
     const mqb::BuildRequest request{};
 
     expect(request.sources.empty(), "source list should be empty by default");
+    expect(!request.output_name.has_value(), "output name should be unset by default");
     expect(request.configuration == mqb::BuildConfiguration::debug,
            "default configuration should be debug");
     expect(request.architecture == mqb::Architecture::x64,
@@ -29,6 +30,8 @@ int main() {
            "default C++ standard should be C++23");
     expect(!request.run_after_build,
            "run_after_build should be false by default");
+    expect(request.run_arguments.empty(),
+           "run argument list should be empty by default");
 
     expect(mqb::to_string(mqb::BuildConfiguration::release) == "release",
            "release configuration should stringify correctly");

@@ -130,7 +130,7 @@ int main(const int argc, char* argv[]) {
     const fs::path mqb_executable{argv[1]};
     const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
     TempTree tree{
-        .root = fs::temp_directory_path() / ("mqb_cli_multi_tu_" + std::to_string(unique)),
+        .root = fs::temp_directory_path() / ("mqb_cli_target_ux_" + std::to_string(unique)),
     };
     fs::create_directories(tree.root);
 
@@ -160,8 +160,12 @@ int main(const int argc, char* argv[]) {
         "#endif\n"
         "int helper_a();\n"
         "int helper_b();\n"
-        "int main() {\n"
+        "int main(int argc, char** argv) {\n"
         "    std::printf(\"mqb-multi=%d\\n\", util_value() + helper_a() + helper_b() + MQB_CLI_TEST);\n"
+        "    std::printf(\"argc=%d\\n\", argc);\n"
+        "    for (int i = 1; i < argc; ++i) {\n"
+        "        std::printf(\"arg%d=<%s>\\n\", i, argv[i]);\n"
+        "    }\n"
         "    return 0;\n"
         "}\n");
 
@@ -170,16 +174,17 @@ int main(const int argc, char* argv[]) {
     const fs::path utils_object = tree.root / ".mqb" / "obj" / "src" / "utils.cpp.obj";
     const fs::path helper_a_object = tree.root / ".mqb" / "obj" / "a" / "helper.cpp.obj";
     const fs::path helper_b_object = tree.root / ".mqb" / "obj" / "b" / "helper.cpp.obj";
-    const fs::path executable = tree.root / ".mqb" / "bin" / "main.exe";
-    const fs::path link_cache = tree.root / ".mqb" / "cache" / "link" / "main.linkcache";
+    const fs::path executable = tree.root / ".mqb" / "bin" / "product.exe";
+    const fs::path link_cache = tree.root / ".mqb" / "cache" / "link" / "product.linkcache";
 
     mqb::platform::windows::WindowsProcessRunner runner;
+    const std::vector<std::string> target_arguments{"-o", "product"};
 
-    auto cold = run_mqb(runner, mqb_executable, tree.root, sources, include_dir);
-    expect(cold.has_value(), "cold multi-TU invocation should launch");
+    auto cold = run_mqb(runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
+    expect(cold.has_value(), "cold target invocation should launch");
     if (cold) {
         if (cold->exit_code != 0) dump_failure(*cold);
-        expect(cold->exit_code == 0, "cold multi-TU build should succeed");
+        expect(cold->exit_code == 0, "cold target build should succeed");
         expect(cold->stdout_text.find("[compile] main.cpp") != std::string::npos,
                "cold build should compile main.cpp");
         expect(cold->stdout_text.find("[compile] src/utils.cpp") != std::string::npos,
@@ -188,8 +193,8 @@ int main(const int argc, char* argv[]) {
                "cold build should compile first same-basename helper");
         expect(cold->stdout_text.find("[compile] b/helper.cpp") != std::string::npos,
                "cold build should compile second same-basename helper");
-        expect(cold->stdout_text.find("[link] main.exe") != std::string::npos,
-               "cold build should link one target executable");
+        expect(cold->stdout_text.find("[link] product.exe") != std::string::npos,
+               "custom output name should drive target link artifact");
     }
 
     expect(fs::is_regular_file(main_object), "main object should use project-level layout");
@@ -198,22 +203,22 @@ int main(const int argc, char* argv[]) {
     expect(fs::is_regular_file(helper_b_object), "second helper object should exist independently");
     expect(helper_a_object != helper_b_object,
            "same-basename sources from different directories must have different artifacts");
-    expect(fs::is_regular_file(executable), "multi-TU build should create target executable");
-    expect(fs::is_regular_file(link_cache), "multi-TU build should persist one target link cache");
+    expect(fs::is_regular_file(executable), "custom target build should create product.exe");
+    expect(fs::is_regular_file(link_cache), "custom target build should persist product link cache");
 
     auto cold_run = run_executable(runner, executable, tree.root);
-    expect(cold_run.has_value(), "cold-built multi-TU executable should launch");
+    expect(cold_run.has_value(), "cold-built target executable should launch directly");
     if (cold_run) {
         expect(cold_run->exit_code == 0, "cold-built executable should return zero");
         expect(cold_run->stdout_text.find("mqb-multi=72") != std::string::npos,
                "cold-built executable should combine all translation units");
     }
 
-    auto warm = run_mqb(runner, mqb_executable, tree.root, sources, include_dir);
-    expect(warm.has_value(), "warm multi-TU invocation should launch");
+    auto warm = run_mqb(runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
+    expect(warm.has_value(), "warm target invocation should launch");
     if (warm) {
         if (warm->exit_code != 0) dump_failure(*warm);
-        expect(warm->exit_code == 0, "warm multi-TU build should succeed");
+        expect(warm->exit_code == 0, "warm target build should succeed");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] main.cpp"),
                "warm build should skip main.cpp");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] src/utils.cpp"),
@@ -222,8 +227,35 @@ int main(const int argc, char* argv[]) {
                "warm build should skip helper A");
         expect(contains_output_line(warm->stdout_text, "[up-to-date] b/helper.cpp"),
                "warm build should skip helper B");
-        expect(contains_output_line(warm->stdout_text, "[up-to-date] main.exe"),
-               "warm build should skip link.exe");
+        expect(contains_output_line(warm->stdout_text, "[up-to-date] product.exe"),
+               "warm build should skip link.exe for custom target");
+    }
+
+    auto run_with_args = run_mqb(
+        runner,
+        mqb_executable,
+        tree.root,
+        sources,
+        include_dir,
+        {"-o", "product", "--run", "--", "hello world", "--child-option", "", "a b c"});
+    expect(run_with_args.has_value(), "warm --run invocation should launch");
+    if (run_with_args) {
+        if (run_with_args->exit_code != 0) dump_failure(*run_with_args);
+        expect(run_with_args->exit_code == 0, "warm --run should return child success code");
+        expect(contains_output_line(run_with_args->stdout_text, "[up-to-date] product.exe"),
+               "--run should still reuse warm link state");
+        expect(contains_output_line(run_with_args->stdout_text, "[run] product.exe"),
+               "--run should report the launched target");
+        expect(contains_output_line(run_with_args->stdout_text, "argc=5"),
+               "child should receive four exact argv elements");
+        expect(contains_output_line(run_with_args->stdout_text, "arg1=<hello world>"),
+               "argv with spaces should remain one element");
+        expect(contains_output_line(run_with_args->stdout_text, "arg2=<--child-option>"),
+               "option-looking child argv should bypass MQB parsing");
+        expect(contains_output_line(run_with_args->stdout_text, "arg3=<>") ,
+               "empty child argv should be preserved");
+        expect(contains_output_line(run_with_args->stdout_text, "arg4=<a b c>"),
+               "second spaced child argv should remain one element");
     }
 
     std::error_code error_code;
@@ -235,8 +267,8 @@ int main(const int argc, char* argv[]) {
         expect(!error_code, "value header timestamp should be made newer deterministically");
     }
 
-    auto header_changed = run_mqb(runner, mqb_executable, tree.root, sources, include_dir);
-    expect(header_changed.has_value(), "header-change multi-TU invocation should launch");
+    auto header_changed = run_mqb(runner, mqb_executable, tree.root, sources, include_dir, target_arguments);
+    expect(header_changed.has_value(), "header-change target invocation should launch");
     if (header_changed) {
         if (header_changed->exit_code != 0) dump_failure(*header_changed);
         expect(header_changed->exit_code == 0, "header-change build should succeed");
@@ -250,8 +282,8 @@ int main(const int argc, char* argv[]) {
                "unrelated helper A should remain cached");
         expect(contains_output_line(header_changed->stdout_text, "[up-to-date] b/helper.cpp"),
                "unrelated helper B should remain cached");
-        expect(header_changed->stdout_text.find("[link] main.exe") != std::string::npos,
-               "any rebuilt TU should force target relink");
+        expect(header_changed->stdout_text.find("[link] product.exe") != std::string::npos,
+               "any rebuilt TU should force custom target relink");
         expect(header_changed->stdout_text.find("explicit rebuild") != std::string::npos,
                "compile-to-link handoff should not depend only on timestamps");
     }
@@ -277,17 +309,34 @@ int main(const int argc, char* argv[]) {
         tree.root,
         sources,
         include_dir,
-        {"--release"});
-    expect(release.has_value(), "release multi-TU invocation should launch");
+        {"-o", "product", "--release"});
+    expect(release.has_value(), "release target invocation should launch");
     if (release) {
         if (release->exit_code != 0) dump_failure(*release);
-        expect(release->exit_code == 0, "release multi-TU build should succeed");
+        expect(release->exit_code == 0, "release target build should succeed");
         expect(release->stdout_text.find("compiler options changed") != std::string::npos,
                "Debug to Release should invalidate compile recipes");
-        expect(release->stdout_text.find("[link] main.exe") != std::string::npos,
-               "Debug to Release should relink target");
+        expect(release->stdout_text.find("[link] product.exe") != std::string::npos,
+               "Debug to Release should relink custom target");
         expect(release->stdout_text.find("linker options changed") != std::string::npos,
                "Debug to Release should invalidate link recipe");
+    }
+
+    const fs::path exit_source = tree.root / "exit7.cpp";
+    write_text(exit_source, "int main() { return 7; }\n");
+    auto exit7 = run_mqb(
+        runner,
+        mqb_executable,
+        tree.root,
+        {exit_source},
+        include_dir,
+        {"-o", "exit7", "--run"});
+    expect(exit7.has_value(), "non-zero child invocation should launch");
+    if (exit7) {
+        expect(exit7->exit_code == 7,
+               "MQB should propagate the child executable exit code exactly");
+        expect(contains_output_line(exit7->stdout_text, "[run] exit7.exe"),
+               "non-zero child should still be reported as a run action");
     }
 
     if (failures != 0) {

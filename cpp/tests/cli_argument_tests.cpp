@@ -35,6 +35,12 @@ int main() {
         if (parsed) {
             expect(parsed->build.sources.size() == 1 && parsed->build.sources.front() == "main.cpp",
                    "single source should be preserved in ordered source list");
+            expect(!parsed->build.output_name.has_value(),
+                   "output name should remain unset by default");
+            expect(!parsed->build.run_after_build,
+                   "run mode should remain disabled by default");
+            expect(parsed->build.run_arguments.empty(),
+                   "run argument list should remain empty by default");
             expect(parsed->build.configuration == mqb::BuildConfiguration::debug,
                    "default configuration should be debug");
             expect(parsed->build.architecture == mqb::Architecture::x64,
@@ -55,6 +61,9 @@ int main() {
             "--std"sv,
             "latest"sv,
             "--x86"sv,
+            "--output"sv,
+            "product"sv,
+            "--run"sv,
             "--env"sv,
             "portable"sv,
             "--portable-root"sv,
@@ -63,9 +72,14 @@ int main() {
             "-D"sv,
             "VALUE=42"sv,
             "--verbose"sv,
+            "--"sv,
+            "hello world"sv,
+            "--child-option"sv,
+            ""sv,
+            "a b c"sv,
         };
         auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value(), "multi-source option set should parse");
+        expect(parsed.has_value(), "multi-source run option set should parse");
         if (parsed) {
             expect(parsed->build.sources.size() == 3,
                    "all explicit sources should be collected");
@@ -74,6 +88,20 @@ int main() {
                            && parsed->build.sources[1] == "src/utils.cpp"
                            && parsed->build.sources[2] == "tests/helper.cxx",
                        "source order should remain stable for deterministic linking");
+            }
+            expect(parsed->build.output_name.has_value()
+                       && *parsed->build.output_name == "product",
+                   "output name should be parsed");
+            expect(parsed->build.run_after_build,
+                   "run flag should be parsed");
+            expect(parsed->build.run_arguments.size() == 4,
+                   "all argv elements after -- should be preserved");
+            if (parsed->build.run_arguments.size() == 4) {
+                expect(parsed->build.run_arguments[0] == "hello world"
+                           && parsed->build.run_arguments[1] == "--child-option"
+                           && parsed->build.run_arguments[2].empty()
+                           && parsed->build.run_arguments[3] == "a b c",
+                       "run argv must preserve spaces, leading dashes, and empty arguments");
             }
             expect(parsed->build.configuration == mqb::BuildConfiguration::release,
                    "release flag should override default");
@@ -91,6 +119,41 @@ int main() {
                    "separate define value should be collected");
             expect(parsed->verbose, "verbose flag should be parsed");
         }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--output=demo"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "attached long output form should parse");
+        if (parsed) {
+            expect(parsed->build.output_name.has_value() && *parsed->build.output_name == "demo",
+                   "attached long output value should be preserved");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--run"sv, "--"sv, "--release"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "options after -- should become program arguments");
+        if (parsed) {
+            expect(parsed->build.configuration == mqb::BuildConfiguration::debug,
+                   "MQB option parsing must stop at --");
+            expect(parsed->build.run_arguments.size() == 1
+                       && parsed->build.run_arguments.front() == "--release",
+                   "option-looking argv after -- must be preserved verbatim");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--"sv, "argument"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "program arguments without --run should be rejected");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "-o"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "missing output value should be rejected");
     }
 
     {
