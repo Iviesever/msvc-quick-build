@@ -38,6 +38,8 @@ enum class ModuleCompileErrorCode {
     no_sources,
     invalid_parallelism,
     duplicate_source,
+    invalid_artifact,
+    artifact_collision,
     plan_source_missing,
     plan_source_duplicate,
     plan_source_unlisted,
@@ -52,6 +54,7 @@ struct ModuleCompileError {
     ModuleCompileErrorCode code{ModuleCompileErrorCode::no_sources};
     std::string message;
     std::filesystem::path source;
+    std::filesystem::path artifact;
     std::filesystem::path provider_source;
     std::string logical_name;
     std::optional<IncrementalCompileError> compile_error;
