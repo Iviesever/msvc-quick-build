@@ -50,6 +50,10 @@ int main() {
         expect(contains(*result, "/utf-8"), "argv should use UTF-8 source/execution encoding");
         expect(contains(*result, "/Od"), "debug configuration should disable optimization");
         expect(contains(*result, "/MDd"), "debug configuration should select debug DLL CRT");
+        expect(contains(*result, "/Z7"),
+               "debug compilation should keep debug information inside the object for parallel safety");
+        expect(!contains(*result, "/Zi"),
+               "debug compilation must not emit a shared compiler PDB recipe");
         expect(contains(*result, "/D_DEBUG"), "debug configuration should define _DEBUG");
         expect(contains(*result, "/std:c++23preview"),
                "C++23 should map to MSVC's current C++23 preview switch");
@@ -94,6 +98,10 @@ int main() {
     if (release_result) {
         expect(contains(*release_result, "/O2"), "release configuration should optimize");
         expect(contains(*release_result, "/MD"), "release configuration should select release DLL CRT");
+        expect(contains(*release_result, "/Z7"),
+               "release compilation should also avoid a shared compiler PDB");
+        expect(!contains(*release_result, "/Zi"),
+               "release compilation must not emit a shared compiler PDB recipe");
         expect(contains(*release_result, "/DNDEBUG"), "release configuration should define NDEBUG");
         expect(contains(*release_result, "/std:c++latest"), "latest standard should map correctly");
         expect(!contains(*release_result, "/sourceDependencies"),
