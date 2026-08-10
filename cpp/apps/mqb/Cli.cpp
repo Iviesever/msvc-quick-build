@@ -78,7 +78,6 @@ attached_or_next(
 std::expected<Options, Error>
 parse_arguments(const std::span<const std::string_view> arguments) {
     Options options;
-    bool saw_source = false;
 
     for (std::size_t index = 0; index < arguments.size(); ++index) {
         const std::string_view argument = arguments[index];
@@ -164,15 +163,11 @@ parse_arguments(const std::span<const std::string_view> arguments) {
         if (!argument.empty() && argument.front() == '-') {
             return std::unexpected(error("unknown option '" + std::string{argument} + "'"));
         }
-        if (saw_source) {
-            return std::unexpected(error("only one source file is supported in this milestone"));
-        }
 
-        options.build.entry = std::filesystem::path{std::string{argument}};
-        saw_source = true;
+        options.build.sources.emplace_back(std::string{argument});
     }
 
-    if (!options.show_help && !saw_source) {
+    if (!options.show_help && options.build.sources.empty()) {
         return std::unexpected(error("missing source file"));
     }
     return options;
@@ -182,10 +177,10 @@ std::string_view usage() noexcept {
     return R"(MQB - MSVC Quick Build (C++ V2)
 
 Usage:
-  mqb <source.cpp> [options]
+  mqb <source.cpp> [more-sources...] [options]
 
 Current milestone:
-  Incrementally compile and link one C++ translation unit into .mqb/bin/.
+  Incrementally compile an explicit C++ source set and link one executable.
 
 Options:
   --debug                  Debug compile/link preset (default)
@@ -200,10 +195,10 @@ Options:
   -h, --help               Show this help
 
 Generated state:
-  .mqb/obj/    object files
+  .mqb/obj/    collision-free object files
   .mqb/deps/   compiler dependency metadata
   .mqb/cache/  compile and link cache metadata
-  .mqb/bin/    linked executables
+  .mqb/bin/    linked executable
 )";
 }
 
