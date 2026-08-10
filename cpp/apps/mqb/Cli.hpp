@@ -16,6 +16,8 @@ struct Options {
     BuildRequest build;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;
+    std::vector<std::filesystem::path> library_directories;
+    std::vector<std::string> libraries;
     msvc::ToolchainPreference toolchain_preference{msvc::ToolchainPreference::automatic};
     std::vector<std::filesystem::path> portable_roots;
     bool verbose{false};
