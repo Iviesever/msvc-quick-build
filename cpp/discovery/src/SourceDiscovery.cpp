@@ -383,6 +383,12 @@ void add_undirected_edge(
     return path_key(path.parent_path() / path.stem());
 }
 
+[[nodiscard]] bool file_requires_module_pipeline(const FileRecord& file) {
+    return module_interface_translation_unit(file)
+        || file.module_syntax.declared_module.has_value()
+        || !file.module_syntax.imported_modules.empty();
+}
+
 } // namespace
 
 std::expected<Result, Error>
@@ -570,8 +576,6 @@ SourceDiscovery::discover(const Request& request) {
 
     std::vector<std::vector<std::size_t>> adjacency(files.size());
 
-    // Existing quoted-include connectivity remains unchanged and applies to
-    // both ordinary and module translation units.
     for (std::size_t file_index = 0; file_index < files.size(); ++file_index) {
         const auto& file = files[file_index];
         for (const auto& include : file.local_includes) {
@@ -592,9 +596,6 @@ SourceDiscovery::discover(const Request& request) {
         }
     }
 
-    // Same-basename header ownership is intentionally restricted to ordinary
-    // translation units. A module interface must be selected through module
-    // syntax, not merely because it happens to share a header basename.
     std::unordered_map<std::string, std::vector<std::size_t>> ordinary_sources_by_owner;
     for (std::size_t index = 0; index < files.size(); ++index) {
         if (ordinary_translation_unit(files[index])) {
@@ -610,9 +611,6 @@ SourceDiscovery::discover(const Request& request) {
         }
     }
 
-    // Named imports connect to every project-local interface candidate. We do
-    // not choose a winner here: duplicate/ambiguous providers are deliberately
-    // retained so the authoritative P1689 graph can diagnose them later.
     std::unordered_map<std::string, std::vector<std::size_t>> interface_providers;
     std::unordered_map<std::string, std::vector<std::size_t>> declared_module_units;
     for (std::size_t index = 0; index < files.size(); ++index) {
@@ -638,10 +636,6 @@ SourceDiscovery::discover(const Request& request) {
         }
     }
 
-    // A module implementation unit (`module M;`) contributes an object even
-    // though it does not itself satisfy named import M. Connect all units that
-    // declare the exact same logical module so selecting the interface also
-    // selects its project-local implementation units.
     for (const auto& [logical_name, units] : declared_module_units) {
         static_cast<void>(logical_name);
         if (units.size() < 2) continue;
@@ -711,6 +705,15 @@ SourceDiscovery::discover(const Request& request) {
     const auto entry_position = std::find(result.sources.begin(), result.sources.end(), entry);
     if (entry_position != result.sources.end() && entry_position != result.sources.begin()) {
         std::rotate(result.sources.begin(), entry_position, entry_position + 1);
+    }
+
+    for (const auto& source : result.sources) {
+        const auto selected = index_by_path.find(path_key(source));
+        if (selected != index_by_path.end()
+            && file_requires_module_pipeline(files[selected->second])) {
+            result.requires_module_pipeline = true;
+            break;
+        }
     }
 
     if (result.sources.empty() || result.sources.front() != entry) {
