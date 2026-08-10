@@ -25,7 +25,7 @@ CLI (mqb.exe)
     |
     v
 Target orchestration
-  N x compile coordinator -> collect objects -> one link coordinator
+  bounded parallel N x compile coordinator -> ordered results -> one link coordinator
     |
     +--------------------+
     v                    v
@@ -61,6 +61,7 @@ Core                  MSVC backend
 9. **Run-time argv is not build identity.** `--run` and arguments after `--` are execution state only; changing them must not invalidate compile or link caches.
 10. **Discovery is not dependency freshness.** Smart discovery chooses candidate translation units; MSVC `/sourceDependencies` remains the authority for header freshness.
 11. **Configuration is typed policy, not shell text.** `mqb.json` decodes into optional typed overrides before MSVC arguments are produced.
+12. **Compile parallelism is execution policy, not build identity.** `-j/--jobs` controls how many ordinary TUs may execute concurrently; changing it must not invalidate compile or link caches.
 
 ## Project configuration
 
@@ -120,6 +121,8 @@ artifact placement -----------> ProjectArtifactLayout
 `CompileCacheFile` persists compile metadata in a versioned binary format. Missing metadata is a normal cold-cache condition; corrupt/truncated/unsupported metadata is rejected and conservatively rebuilt.
 
 A config-only change that alters effective compiler options therefore changes compile identity even when no source timestamp changes.
+
+Ordinary Debug and Release compilation use MSVC `/Z7`, keeping compiler debug information inside each TU's object instead of sharing a compiler PDB between concurrent `cl.exe` processes. Final link debug information remains a linker concern. The compile signature recipe was version-bumped when this policy changed so old `/Zi` cache entries are conservatively rebuilt once.
 
 ## Link identity and cache freshness
 
@@ -228,14 +231,21 @@ LinkCacheFile
 
 ```text
 ordered source requests
-      -> compile each TU with IncrementalCompileCoordinator
-      -> collect collision-free object artifacts
-      -> any TU compiled? ---- yes ----> force_relink
+      -> preflight unique source/object/deps/cache artifacts
+      -> BoundedWorkScheduler(max_parallel_compiles)
+      -> parallel IncrementalCompileCoordinator per ordinary TU
+      -> join every in-flight compile
+      -> scan attempts in original source order
+      -> any compile failure? ---- yes ----> report lowest source index; never link
+      -> collect collision-free objects in original source order
+      -> any TU compiled? -------- yes ----> force_relink
       -> IncrementalLinkCoordinator
       -> one target executable
 ```
 
-`MsvcIncrementalTargetCoordinator` still schedules translation units sequentially. Parallel compilation is the next execution-policy milestone; it must not change cache identity, artifact routing, diagnostics ordering, or failure semantics.
+`MsvcIncrementalTargetCoordinator` performs bounded ordinary-TU compilation. `-j/--jobs` selects the maximum concurrency; if omitted, the CLI starts from hardware concurrency and clamps it to the selected TU count. `-j1` preserves the sequential execution mode for debugging. Parallelism does not participate in compile or link signatures.
+
+The scheduler assigns indices monotonically and at most once, joins all work that was already assigned, and publishes a stop request when a callback fails. Stop publication also quenches the dispatch counter so a worker that observed an older stop flag but had not yet claimed an index cannot start later work. Target results are reassembled in source order, and concurrent compile failures deterministically surface the lowest source index among recorded failures.
 
 Ordinary cache-load/save failures are surfaced as warnings and conservatively rebuild/relink. Compiler/linker execution failures are build errors.
 
@@ -243,13 +253,13 @@ Ordinary cache-load/save failures are surfaced as warnings and conservatively re
 
 `mqb_process` defines a platform-neutral `ProcessSpec` with executable, argv, working directory, structured environment overrides, inheritance choice, and stdout/stderr capture controls.
 
-`mqb_platform_windows` isolates Windows command-line quoting and the real `CreateProcessW` runner. Tests cover complex argv round-trips, Unicode environment blocks, separate stdout/stderr capture, non-zero child exit codes, native launch errors, and concurrent draining of large output streams.
+`mqb_platform_windows` isolates Windows command-line quoting and the real `CreateProcessW` runner. Tests cover complex argv round-trips, Unicode environment blocks, separate stdout/stderr capture, non-zero child exit codes, native launch errors, concurrent draining of large output streams, and concurrent use of one runner instance.
 
 `--run` uses the same structured process boundary. Arguments after `--` remain distinct argv elements, including whitespace-containing strings, option-looking strings, and empty arguments. Run mode and child argv do not participate in build signatures.
 
 Captured CRLF is normalized before forwarding through Windows text streams so nested output does not become `\r\r\n`; lone carriage returns are preserved.
 
-Before final cutover, handle inheritance should be hardened further with `STARTUPINFOEXW` + `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`.
+Captured child processes use `STARTUPINFOEXW` with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`. Only that child's explicit stdin/stdout/stderr handles are inheritable through `CreateProcessW`; unrelated pipe handles from concurrent compiler launches are not exposed to sibling children. Non-capture launches continue to use no inherited handles.
 
 ## MSVC toolchain boundary
 
@@ -267,6 +277,12 @@ mqb main.cpp
 
 # Explicit source set
 mqb main.cpp src/utils.cpp a/helper.cpp b/helper.cpp -o product
+
+# Bound ordinary-TU compilation to four concurrent jobs
+mqb main.cpp --jobs 4
+
+# Force sequential compile scheduling without changing build identity
+mqb main.cpp -j1
 
 # Exact static library request
 mqb main.cpp -L "vendor libs" -l math
@@ -290,11 +306,14 @@ The real VS2026 suite now verifies, among other cases:
 - upward `mqb.json` lookup from a nested working directory;
 - config-relative include/library paths and config-root artifact placement;
 - config-only define changes invalidating compile recipes;
-- explicit CLI scalar overrides winning over project config while config list inputs remain available.
+- explicit CLI scalar overrides winning over project config while config list inputs remain available;
+- three-way bounded scheduler concurrency, stop/join semantics, and deterministic target failure selection;
+- same-directory four-TU real MSVC cold build with `-j4`;
+- warm reuse of those exact artifacts under `-j1`, proving job count is not build identity.
 
-The current VS2026 PR suite contains 32 registered CTest cases, including real target and project-config E2E tests.
+The current VS2026 PR suite contains 35 registered CTest cases, including real target, project-config, and parallel CLI E2E tests.
 
-Not yet implemented in the C++ V2 path: parallel TU scheduling and C++ Modules/P1689/IFC handling. PowerShell/C++ behavioral parity and final cutover also remain future gates.
+Not yet implemented in the C++ V2 path: C++ Modules/P1689/IFC handling. PowerShell/C++ behavioral parity and final cutover also remain future gates.
 
 ## Migration sequence
 
@@ -309,7 +328,7 @@ Not yet implemented in the C++ V2 path: parallel TU scheduling and C++ Modules/P
 9. **Explicit libraries** — exact resolution, link-cache v2, `.lib` freshness, `-L/-l`. ✅
 10. **Smart source discovery** — single-entry graph selection, secondary-entry barriers, corrections. ✅
 11. **Project config v1** — upward `mqb.json`, typed schema, path semantics, CLI precedence, config E2E. ✅
-12. **Parallel ordinary-TU scheduling** — bounded concurrency with deterministic reporting/failure semantics.
+12. **Parallel ordinary-TU scheduling** — bounded concurrency with deterministic reporting/failure semantics. ✅
 13. **Modules** — P1689 `/scanDependencies`, module graph, IFC/object artifacts, `import std`.
 14. **Parity** — run PowerShell and C++ against the same E2E fixtures.
 15. **Cutover** — make `mqb.exe` primary only after parity tests pass.
