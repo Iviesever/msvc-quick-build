@@ -7,6 +7,7 @@ add_library(mqb_core STATIC
     src/DependencyGraph.cpp
     src/LinkCache.cpp
     src/LinkCacheFile.cpp
+    src/ProjectArtifactLayout.cpp
 )
 
 target_include_directories(mqb_core
