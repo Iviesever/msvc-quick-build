@@ -2,7 +2,6 @@
 #include <barrier>
 #include <cstddef>
 #include <iostream>
-#include <mutex>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -76,6 +75,27 @@ int main() {
     }
 
     {
+        std::vector<std::size_t> order;
+        const auto stopped = BoundedWorkScheduler::run(
+            6,
+            1,
+            [&](const std::size_t index) {
+                order.push_back(index);
+                return index != 2;
+            });
+
+        expect(stopped.has_value(), "single-worker callback stop should be a successful schedule");
+        if (stopped) {
+            expect(stopped->worker_count == 1 && stopped->started_count == 3,
+                   "single-worker stop should deterministically truncate later dispatch");
+            expect(stopped->stop_requested && stopped->stopped_before_all_items,
+                   "single-worker stop should report an early stop");
+        }
+        expect(order == std::vector<std::size_t>({0, 1, 2}),
+               "single-worker stop should not dispatch an index after the failing item");
+    }
+
+    {
         constexpr std::size_t concurrent_workers = 3;
         std::barrier gate{static_cast<std::ptrdiff_t>(concurrent_workers)};
         std::atomic<int> active{0};
@@ -133,14 +153,14 @@ int main() {
 
         expect(stopped.has_value(), "callback-requested stop should not be a scheduler error");
         if (stopped) {
+            expect(stopped->worker_count == worker_count,
+                   "stop path should preserve the requested worker bound");
             expect(stopped->stop_requested,
                    "false callback result should record a stop request");
-            expect(stopped->started_count >= 3,
+            expect(stopped->started_count >= worker_count,
                    "the complete first wave must be joined after a failure");
-            expect(stopped->started_count < calls.size(),
-                   "stop request should prevent at least some new work from starting");
-            expect(stopped->stopped_before_all_items,
-                   "summary should report that not every item started");
+            expect(stopped->stopped_before_all_items == (stopped->started_count < calls.size()),
+                   "early-stop summary should match the actual number of started items");
             expect(finished.load(std::memory_order_relaxed)
                        == static_cast<int>(stopped->started_count),
                    "scheduler must join every callback that it started");
