@@ -3,6 +3,7 @@
 #include <expected>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -11,6 +12,8 @@
 #include <vector>
 
 #include "Cli.hpp"
+#include "mqb/config/ProjectConfig.hpp"
+#include "mqb/config/ProjectOptions.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/LinkOptions.hpp"
@@ -37,9 +40,13 @@ namespace fs = std::filesystem;
 }
 
 [[nodiscard]] std::expected<fs::path, std::string>
-absolute_path(const fs::path& path, const std::string_view description) {
+absolute_path_from(
+    const fs::path& base,
+    const fs::path& path,
+    const std::string_view description) {
     std::error_code error_code;
-    fs::path absolute = fs::absolute(path, error_code);
+    const fs::path candidate = path.is_absolute() ? path : base / path;
+    fs::path absolute = fs::absolute(candidate, error_code);
     if (error_code) {
         return std::unexpected(
             "failed to resolve " + std::string{description} + ": " + error_code.message());
@@ -133,6 +140,17 @@ void print_reasons(const std::vector<mqb::BuildReason>& reasons) {
         std::cout << mqb::to_string(reasons[index]);
     }
     std::cout << ']';
+}
+
+void print_config_error(const mqb::config::Error& error) {
+    std::cerr << "error: project config: " << error.message;
+    if (!error.path.empty()) {
+        std::cerr << ": " << path_text(error.path);
+        if (error.line != 0 && error.column != 0) {
+            std::cerr << ':' << error.line << ':' << error.column;
+        }
+    }
+    std::cerr << '\n';
 }
 
 void print_compile_failure(const mqb::orchestration::IncrementalCompileError& error) {
@@ -237,18 +255,18 @@ int main(const int argc, char* argv[]) {
     }
 
     std::error_code error_code;
-    fs::path project_root = fs::current_path(error_code);
+    fs::path invocation_directory = fs::current_path(error_code);
     if (error_code) {
-        std::cerr << "error: failed to resolve current project directory: "
+        std::cerr << "error: failed to resolve current working directory: "
                   << error_code.message() << '\n';
         return 2;
     }
-    project_root = project_root.lexically_normal();
+    invocation_directory = invocation_directory.lexically_normal();
 
     std::vector<fs::path> requested_sources;
     requested_sources.reserve(options.build.sources.size());
     for (const auto& requested_source : options.build.sources) {
-        auto source = absolute_path(requested_source, "source file");
+        auto source = absolute_path_from(invocation_directory, requested_source, "source file");
         if (!source) {
             std::cerr << "error: " << source.error() << '\n';
             return 2;
@@ -274,7 +292,7 @@ int main(const int argc, char* argv[]) {
     }
 
     for (auto& include_directory : options.include_directories) {
-        auto resolved = absolute_path(include_directory, "include directory");
+        auto resolved = absolute_path_from(invocation_directory, include_directory, "include directory");
         if (!resolved) {
             std::cerr << "error: " << resolved.error() << '\n';
             return 2;
@@ -282,7 +300,7 @@ int main(const int argc, char* argv[]) {
         include_directory = std::move(*resolved);
     }
     for (auto& library_directory : options.library_directories) {
-        auto resolved = absolute_path(library_directory, "library directory");
+        auto resolved = absolute_path_from(invocation_directory, library_directory, "library directory");
         if (!resolved) {
             std::cerr << "error: " << resolved.error() << '\n';
             return 2;
@@ -290,7 +308,7 @@ int main(const int argc, char* argv[]) {
         library_directory = std::move(*resolved);
     }
     for (auto& portable_root : options.portable_roots) {
-        auto resolved = absolute_path(portable_root, "portable toolchain root");
+        auto resolved = absolute_path_from(invocation_directory, portable_root, "portable toolchain root");
         if (!resolved) {
             std::cerr << "error: " << resolved.error() << '\n';
             return 2;
@@ -298,17 +316,66 @@ int main(const int argc, char* argv[]) {
         portable_root = std::move(*resolved);
     }
 
+    std::optional<mqb::config::ProjectConfig> project_config;
+    auto located_config = mqb::config::ProjectConfigLoader::find_upwards(invocation_directory);
+    if (!located_config) {
+        print_config_error(located_config.error());
+        return 2;
+    }
+    if (located_config->has_value()) {
+        auto loaded = mqb::config::ProjectConfigLoader::load(**located_config);
+        if (!loaded) {
+            print_config_error(loaded.error());
+            return 2;
+        }
+        project_config = std::move(*loaded);
+    }
+
+    const fs::path project_root = project_config
+        ? project_config->project_root
+        : invocation_directory;
+
+    mqb::config::ProjectOverrides cli_overrides;
+    cli_overrides.build.configuration = options.configuration_override;
+    cli_overrides.build.architecture = options.architecture_override;
+    cli_overrides.build.standard = options.standard_override;
+    cli_overrides.build.output_name = options.build.output_name;
+    cli_overrides.build.defines = options.defines;
+    cli_overrides.build.include_directories = options.include_directories;
+    cli_overrides.build.library_directories = options.library_directories;
+    cli_overrides.build.libraries = options.libraries;
+    cli_overrides.discovery.enabled = options.discovery_override;
+
+    auto effective = mqb::config::resolve_project_options(
+        project_config ? &*project_config : nullptr,
+        cli_overrides);
+    options.build.configuration = effective.configuration;
+    options.build.architecture = effective.architecture;
+    options.build.standard = effective.standard;
+    options.build.output_name = effective.output_name;
+    options.discover_sources = effective.discovery_enabled;
+    options.defines = effective.defines;
+    options.include_directories = effective.include_directories;
+    options.library_directories = effective.library_directories;
+    options.libraries = effective.libraries;
+
     std::vector<fs::path> sources = requested_sources;
     if (options.discover_sources && requested_sources.size() == 1) {
         const fs::path& entry = requested_sources.front();
-        const fs::path discovery_root = inside_project(project_root, entry)
+        const bool project_scoped = inside_project(project_root, entry);
+        const fs::path discovery_root = project_scoped
             ? project_root
             : entry.parent_path();
-        const mqb::discovery::Request discovery_request{
+        mqb::discovery::Request discovery_request{
             .project_root = discovery_root,
             .entry = entry,
             .include_directories = options.include_directories,
         };
+        if (project_scoped) {
+            discovery_request.excluded_directories = effective.discovery_exclude_directories;
+            discovery_request.extra_sources = effective.discovery_extra_sources;
+            discovery_request.excluded_sources = effective.discovery_exclude_sources;
+        }
         auto discovered = mqb::discovery::SourceDiscovery::discover(discovery_request);
         if (!discovered) {
             std::cerr << "error: source discovery failed: " << discovered.error().message;
@@ -357,7 +424,8 @@ int main(const int argc, char* argv[]) {
         });
     }
 
-    const std::string target_name = options.build.output_name.value_or(requested_sources.front().stem().string());
+    const std::string target_name = options.build.output_name.value_or(
+        requested_sources.front().stem().string());
     auto target_artifacts = layout->for_target(target_name);
     if (!target_artifacts) {
         std::cerr << "error: " << target_artifacts.error().message << '\n';
@@ -403,8 +471,11 @@ int main(const int argc, char* argv[]) {
 
     if (options.verbose) {
         std::cout << "[target] " << target_name << "\n"
-                  << "  project: " << path_text(project_root) << '\n'
-                  << "  cl:      " << path_text(toolchain->identity.compiler) << '\n'
+                  << "  project: " << path_text(project_root) << '\n';
+        if (project_config) {
+            std::cout << "  config:  " << path_text(project_config->file) << '\n';
+        }
+        std::cout << "  cl:      " << path_text(toolchain->identity.compiler) << '\n'
                   << "  link:    " << path_text(toolchain->linker) << '\n';
         for (const auto& source : target_sources) {
             std::cout << "  source:  " << path_text(display_source(project_root, source.source)) << '\n'

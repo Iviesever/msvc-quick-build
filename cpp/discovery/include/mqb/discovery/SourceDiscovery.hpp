@@ -21,6 +21,7 @@ struct Warning {
 enum class ErrorCode {
     invalid_project_root,
     invalid_entry,
+    invalid_correction,
     enumeration_failed,
 };
 
@@ -34,6 +35,9 @@ struct Request {
     std::filesystem::path project_root;
     std::filesystem::path entry;
     std::vector<std::filesystem::path> include_directories;
+    std::vector<std::filesystem::path> excluded_directories;
+    std::vector<std::filesystem::path> extra_sources;
+    std::vector<std::filesystem::path> excluded_sources;
 };
 
 struct Result {
