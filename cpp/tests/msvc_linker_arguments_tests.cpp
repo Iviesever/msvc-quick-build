@@ -31,6 +31,7 @@ int main() {
     mqb::msvc::LinkInvocation invocation;
     invocation.objects = {"obj/main file.obj", "obj/math.obj"};
     invocation.output = "bin/my app.exe";
+    invocation.libraries = {"C:/sdk libs/user32.lib"};
     invocation.options.configuration = mqb::BuildConfiguration::debug;
     invocation.options.architecture = mqb::Architecture::x64;
     invocation.options.subsystem = mqb::LinkSubsystem::console;
@@ -45,7 +46,10 @@ int main() {
         expect(contains(*result, "/DEBUG"), "debug link should emit /DEBUG");
         expect(contains(*result, "/INCREMENTAL"), "debug link should be incremental");
         expect(contains(*result, "/LIBPATH:vendor libs"), "library path should stay one argv element");
-        expect(contains(*result, "user32.lib"), "library should be preserved");
+        expect(contains(*result, "C:/sdk libs/user32.lib"),
+               "linker should consume exact resolved library path");
+        expect(!contains(*result, "user32.lib"),
+               "unresolved library token must not be emitted alongside resolved file");
         expect(contains(*result, "/MACHINE:X64"), "x64 should map to /MACHINE:X64");
         expect(contains(*result, "/SUBSYSTEM:CONSOLE"), "console subsystem should map correctly");
         expect(contains(*result, "/OUT:bin/my app.exe"), "structured output should be emitted");
@@ -70,6 +74,12 @@ int main() {
         expect(contains(*release_result, "/MACHINE:X86"), "x86 should map correctly");
         expect(contains(*release_result, "/SUBSYSTEM:WINDOWS"), "windows subsystem should map correctly");
     }
+
+    auto unresolved = invocation;
+    unresolved.libraries.clear();
+    const auto unresolved_result = mqb::msvc::MsvcLinker::build_arguments(unresolved);
+    expect(!unresolved_result,
+           "linker should reject requested libraries without exact resolved inputs");
 
     auto invalid = invocation;
     invalid.objects.clear();

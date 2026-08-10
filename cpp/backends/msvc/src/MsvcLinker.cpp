@@ -114,13 +114,25 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
             LinkerErrorCode::invalid_request,
             "link output path is empty"));
     }
+    if (invocation.libraries.size() != invocation.options.libraries.size()) {
+        return std::unexpected(failure(
+            LinkerErrorCode::invalid_request,
+            "resolved library inputs must match requested library count"));
+    }
+    for (const auto& library : invocation.libraries) {
+        if (library.empty()) {
+            return std::unexpected(failure(
+                LinkerErrorCode::invalid_request,
+                "resolved library path must not be empty"));
+        }
+    }
 
     std::vector<std::string> arguments;
     arguments.reserve(
         12
         + invocation.objects.size()
         + invocation.options.library_directories.size()
-        + invocation.options.libraries.size()
+        + invocation.libraries.size()
         + invocation.options.additional_arguments.size());
 
     arguments.emplace_back("/NOLOGO");
@@ -141,13 +153,8 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
         }
         arguments.push_back("/LIBPATH:" + path_to_utf8(directory));
     }
-    for (const auto& library : invocation.options.libraries) {
-        if (library.empty()) {
-            return std::unexpected(failure(
-                LinkerErrorCode::invalid_request,
-                "library name must not be empty"));
-        }
-        arguments.push_back(library);
+    for (const auto& library : invocation.libraries) {
+        arguments.push_back(path_to_utf8(library));
     }
     for (const auto& argument : invocation.options.additional_arguments) {
         if (argument.empty()) {

@@ -80,6 +80,10 @@ if(WIN32)
     target_link_libraries(mqb_msvc_linker_arguments_tests PRIVATE mqb_msvc)
     target_compile_features(mqb_msvc_linker_arguments_tests PRIVATE cxx_std_23)
 
+    add_executable(mqb_msvc_library_resolver_tests msvc_library_resolver_tests.cpp)
+    target_link_libraries(mqb_msvc_library_resolver_tests PRIVATE mqb_msvc)
+    target_compile_features(mqb_msvc_library_resolver_tests PRIVATE cxx_std_23)
+
     add_executable(mqb_msvc_compile_executor_tests msvc_compile_executor_tests.cpp)
     target_link_libraries(mqb_msvc_compile_executor_tests PRIVATE mqb_msvc)
     target_compile_features(mqb_msvc_compile_executor_tests PRIVATE cxx_std_23)
@@ -99,6 +103,7 @@ if(WIN32)
         mqb_msvc_portable_tests
         mqb_msvc_compiler_arguments_tests
         mqb_msvc_linker_arguments_tests
+        mqb_msvc_library_resolver_tests
         mqb_msvc_compile_executor_tests
         mqb_msvc_source_dependencies_tests
         mqb_cli_argument_tests
@@ -164,6 +169,7 @@ if(WIN32)
     add_test(NAME mqb.msvc.portable COMMAND mqb_msvc_portable_tests)
     add_test(NAME mqb.msvc.compiler_arguments COMMAND mqb_msvc_compiler_arguments_tests)
     add_test(NAME mqb.msvc.linker_arguments COMMAND mqb_msvc_linker_arguments_tests)
+    add_test(NAME mqb.msvc.library_resolver COMMAND mqb_msvc_library_resolver_tests)
     add_test(NAME mqb.msvc.compile_executor COMMAND mqb_msvc_compile_executor_tests)
     add_test(NAME mqb.msvc.source_dependencies COMMAND mqb_msvc_source_dependencies_tests)
     add_test(NAME mqb.cli.arguments COMMAND mqb_cli_argument_tests)

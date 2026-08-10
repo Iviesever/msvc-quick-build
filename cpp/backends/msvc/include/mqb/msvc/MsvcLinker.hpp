@@ -16,6 +16,7 @@ namespace mqb::msvc {
 struct LinkInvocation {
     std::vector<std::filesystem::path> objects;
     std::filesystem::path output;
+    std::vector<std::filesystem::path> libraries;
     LinkOptions options;
     std::filesystem::path working_directory;
 };
