@@ -1,0 +1,85 @@
+#pragma once
+
+#include <cstddef>
+#include <expected>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/LinkOptions.hpp"
+#include "mqb/core/ProjectArtifactLayout.hpp"
+#include "mqb/modules/ModuleDependencyGraph.hpp"
+#include "mqb/msvc/MsvcModuleDependencyScanner.hpp"
+#include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
+#include "mqb/orchestration/MsvcModuleCompileCoordinator.hpp"
+
+namespace mqb::orchestration {
+
+struct IncrementalModuleTargetRequest {
+    std::vector<ModuleCompileSourceRequest> sources;
+    TargetArtifacts target;
+    CompilerOptions compiler_options;
+    LinkOptions link_options;
+    std::filesystem::path working_directory;
+    std::size_t max_parallel_scans{1};
+    std::size_t max_parallel_compiles{1};
+};
+
+struct ModuleTargetScanResult {
+    std::filesystem::path source;
+    msvc::ModuleScanResult result;
+};
+
+enum class IncrementalModuleTargetErrorCode {
+    no_sources,
+    invalid_parallelism,
+    duplicate_source,
+    duplicate_scan_output,
+    scheduling_failed,
+    scan_failed,
+    invalid_scan_result,
+    graph_failed,
+    compile_failed,
+    link_failed,
+};
+
+struct IncrementalModuleTargetError {
+    IncrementalModuleTargetErrorCode code{IncrementalModuleTargetErrorCode::no_sources};
+    std::string message;
+    std::filesystem::path source;
+    std::optional<msvc::ModuleScanError> scan_error;
+    std::optional<modules::ModuleGraphError> graph_error;
+    std::optional<ModuleCompileError> compile_error;
+    std::optional<IncrementalLinkError> link_error;
+};
+
+struct IncrementalModuleTargetResult {
+    // Scan and compile results both preserve request.sources ordering.
+    std::vector<ModuleTargetScanResult> scans;
+    modules::ModuleDependencyPlan plan;
+    ModuleCompileWaveResult compiles;
+    IncrementalLinkResult link;
+};
+
+class MsvcModuleTargetCoordinator {
+public:
+    MsvcModuleTargetCoordinator(
+        msvc::MsvcModuleDependencyScanner& scanner,
+        MsvcModuleCompileCoordinator& compile_coordinator,
+        MsvcIncrementalLinkCoordinator& link_coordinator)
+        : scanner_(scanner),
+          compile_coordinator_(compile_coordinator),
+          link_coordinator_(link_coordinator) {}
+
+    [[nodiscard]] std::expected<IncrementalModuleTargetResult, IncrementalModuleTargetError>
+    run(const IncrementalModuleTargetRequest& request) const;
+
+private:
+    msvc::MsvcModuleDependencyScanner& scanner_;
+    MsvcModuleCompileCoordinator& compile_coordinator_;
+    MsvcIncrementalLinkCoordinator& link_coordinator_;
+};
+
+} // namespace mqb::orchestration
