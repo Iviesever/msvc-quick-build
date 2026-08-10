@@ -11,6 +11,7 @@
 #include "mqb/core/LinkCache.hpp"
 #include "mqb/core/LinkCacheFile.hpp"
 #include "mqb/core/LinkOptions.hpp"
+#include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/process/Process.hpp"
@@ -40,6 +41,7 @@ struct IncrementalLinkWarning {
 
 enum class IncrementalLinkErrorCode {
     linker_identity_failed,
+    library_resolution_failed,
     planning_failed,
     link_failed,
 };
@@ -48,6 +50,7 @@ struct IncrementalLinkError {
     IncrementalLinkErrorCode code{IncrementalLinkErrorCode::planning_failed};
     std::string message;
     std::optional<BuildPlannerError> planner_error;
+    std::optional<msvc::LibraryResolutionError> library_resolution_error;
     std::optional<msvc::LinkerError> linker_error;
 };
 

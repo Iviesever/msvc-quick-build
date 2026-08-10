@@ -14,6 +14,7 @@
 #include "mqb/core/FileSnapshot.hpp"
 #include "mqb/core/LinkCache.hpp"
 #include "mqb/core/LinkCacheFile.hpp"
+#include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 
 namespace mqb::orchestration {
@@ -43,6 +44,25 @@ snapshot_file(const fs::path& path) {
     };
 }
 
+void snapshot_inputs(
+    const std::vector<fs::path>& paths,
+    std::vector<FileSnapshot>& snapshots,
+    std::vector<IncrementalLinkWarning>& warnings) {
+    snapshots.reserve(paths.size());
+    for (const auto& path : paths) {
+        if (auto snapshot = snapshot_file(path)) {
+            snapshots.push_back(std::move(*snapshot));
+        } else {
+            warnings.push_back(IncrementalLinkWarning{
+                .code = IncrementalLinkWarningCode::file_snapshot_failed,
+                .path = path,
+                .message = snapshot.error(),
+            });
+            snapshots.push_back(FileSnapshot{.path = path, .exists = false});
+        }
+    }
+}
+
 [[nodiscard]] IncrementalLinkError link_failure(
     const IncrementalLinkErrorCode code,
     std::string message,
@@ -66,6 +86,20 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             IncrementalLinkErrorCode::linker_identity_failed,
             "failed to identify MSVC linker",
             linker_identity.error()));
+    }
+
+    auto resolved_libraries = msvc::MsvcLibraryResolver::resolve(
+        toolchain_,
+        request.options,
+        request.working_directory.value_or(fs::path{}));
+    if (!resolved_libraries) {
+        IncrementalLinkError error{
+            .code = IncrementalLinkErrorCode::library_resolution_failed,
+            .message = "failed to resolve requested MSVC library: "
+                + resolved_libraries.error().message,
+            .library_resolution_error = resolved_libraries.error(),
+        };
+        return std::unexpected(std::move(error));
     }
 
     std::optional<LinkCacheEntry> cached_entry;
@@ -92,33 +126,27 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     }
 
     std::vector<FileSnapshot> object_snapshots;
-    object_snapshots.reserve(request.objects.size());
-    for (const auto& object : request.objects) {
-        if (auto snapshot = snapshot_file(object)) {
-            object_snapshots.push_back(std::move(*snapshot));
-        } else {
-            result.warnings.push_back(IncrementalLinkWarning{
-                .code = IncrementalLinkWarningCode::file_snapshot_failed,
-                .path = object,
-                .message = snapshot.error(),
-            });
-            object_snapshots.push_back(FileSnapshot{.path = object, .exists = false});
-        }
-    }
+    snapshot_inputs(request.objects, object_snapshots, result.warnings);
+
+    std::vector<FileSnapshot> library_snapshots;
+    snapshot_inputs(resolved_libraries->files, library_snapshots, result.warnings);
 
     result.validation = LinkCacheValidator::validate(
         request.objects,
+        resolved_libraries->files,
         request.output,
         *linker_identity,
         request.options,
         cached_entry,
         output_snapshot,
         object_snapshots,
+        library_snapshots,
         request.force_relink);
 
     const LinkPlanItem plan_item{
         .objects = request.objects,
         .output = request.output,
+        .libraries = resolved_libraries->files,
         .cache_validation = result.validation,
     };
     auto plan = BuildPlanner::plan_link(plan_item);
@@ -152,6 +180,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     msvc::LinkInvocation invocation{
         .objects = action->objects,
         .output = action->output,
+        .libraries = action->libraries,
         .options = request.options,
         .working_directory = request.working_directory.value_or(fs::path{}),
     };
@@ -170,11 +199,13 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         .linker = *linker_identity,
         .signature = BuildSignature::for_link(
             action->objects,
+            action->libraries,
             action->output,
             *linker_identity,
             request.options),
         .objects = action->objects,
         .output = action->output,
+        .libraries = action->libraries,
     };
     auto saved = LinkCacheFile::save(request.cache_file, new_entry);
     if (!saved) {
