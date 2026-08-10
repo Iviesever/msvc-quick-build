@@ -47,6 +47,8 @@ class ProcessRunner {
 public:
     virtual ~ProcessRunner() = default;
 
+    // Orchestration may call run() concurrently on the same runner instance.
+    // Implementations must keep per-launch state isolated.
     [[nodiscard]] virtual std::expected<ProcessResult, ProcessError>
     run(const ProcessSpec& spec) = 0;
 };
