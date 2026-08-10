@@ -38,6 +38,10 @@ add_executable(mqb_project_artifact_layout_tests project_artifact_layout_tests.c
 target_link_libraries(mqb_project_artifact_layout_tests PRIVATE mqb_core)
 target_compile_features(mqb_project_artifact_layout_tests PRIVATE cxx_std_23)
 
+add_executable(mqb_translation_unit_classifier_tests translation_unit_classifier_tests.cpp)
+target_link_libraries(mqb_translation_unit_classifier_tests PRIVATE mqb_core)
+target_compile_features(mqb_translation_unit_classifier_tests PRIVATE cxx_std_23)
+
 add_executable(mqb_process_model_tests process_model_tests.cpp)
 target_link_libraries(mqb_process_model_tests PRIVATE mqb_process)
 target_compile_features(mqb_process_model_tests PRIVATE cxx_std_23)
@@ -53,6 +57,7 @@ set(MQB_TEST_TARGETS
     mqb_link_state_tests
     mqb_link_cache_file_tests
     mqb_project_artifact_layout_tests
+    mqb_translation_unit_classifier_tests
     mqb_process_model_tests
 )
 
@@ -168,6 +173,7 @@ add_test(NAME mqb.core.build_planner COMMAND mqb_build_planner_tests)
 add_test(NAME mqb.core.link_state COMMAND mqb_link_state_tests)
 add_test(NAME mqb.core.link_cache_file COMMAND mqb_link_cache_file_tests)
 add_test(NAME mqb.core.project_artifact_layout COMMAND mqb_project_artifact_layout_tests)
+add_test(NAME mqb.core.translation_unit_classifier COMMAND mqb_translation_unit_classifier_tests)
 add_test(NAME mqb.process.model COMMAND mqb_process_model_tests)
 
 if(WIN32)
