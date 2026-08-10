@@ -149,8 +149,8 @@ int main(const int argc, char* argv[]) {
         expect(header_changed->exit_code == 0, "header-change build should succeed");
         expect(header_changed->stdout_text.find("[compile]") != std::string::npos,
                "header change should trigger compilation");
-        expect(header_changed->stdout_text.find("dependency_changed") != std::string::npos,
-               "header change should be explained as dependency_changed");
+        expect(header_changed->stdout_text.find("dependency changed") != std::string::npos,
+               "header change should be explained as dependency changed");
     }
 
     error_code.clear();
@@ -186,8 +186,8 @@ int main(const int argc, char* argv[]) {
         expect(release->exit_code == 0, "release build should succeed");
         expect(release->stdout_text.find("[compile]") != std::string::npos,
                "Debug to Release should trigger compilation without source edits");
-        expect(release->stdout_text.find("compiler_options_changed") != std::string::npos,
-               "configuration invalidation should be explained as compiler_options_changed");
+        expect(release->stdout_text.find("compiler options changed") != std::string::npos,
+               "configuration invalidation should be explained as compiler options changed");
     }
 
     if (failures != 0) {
