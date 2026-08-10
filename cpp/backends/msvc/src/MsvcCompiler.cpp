@@ -41,18 +41,21 @@ namespace fs = std::filesystem;
 void append_configuration_arguments(
     std::vector<std::string>& arguments,
     const BuildConfiguration configuration) {
+    // /Z7 keeps compiler debug information inside each object instead of
+    // writing a shared compiler PDB. This makes each TU artifact self-contained
+    // and removes cross-process PDB write contention during parallel builds.
     switch (configuration) {
     case BuildConfiguration::debug:
         arguments.emplace_back("/Od");
         arguments.emplace_back("/MDd");
-        arguments.emplace_back("/Zi");
+        arguments.emplace_back("/Z7");
         arguments.emplace_back("/D_DEBUG");
         break;
     case BuildConfiguration::release:
         arguments.emplace_back("/O2");
         arguments.emplace_back("/Oi");
         arguments.emplace_back("/MD");
-        arguments.emplace_back("/Zi");
+        arguments.emplace_back("/Z7");
         arguments.emplace_back("/DNDEBUG");
         break;
     }
