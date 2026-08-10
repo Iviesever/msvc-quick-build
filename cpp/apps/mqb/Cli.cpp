@@ -285,15 +285,16 @@ Project configuration:
   Config paths are relative to mqb.json; CLI paths are relative to the invocation directory.
 
 Source selection:
-  One positional source       Smart-discover connected ordinary C++ TUs (default)
+  One positional source       Smart-discover connected C++ TUs and reachable project-local named-module providers (default)
   Multiple positional sources Build exactly that explicit ordered source set
-  Explicit .ixx source(s)     Route the explicit target through P1689 named-module scanning
+  Explicit module source(s)   Route targets containing .ixx/.cppm/.mpp through P1689 named-module scanning
   --discover                  Explicitly enable smart discovery for one ordinary source
   --no-discover               Disable smart discovery for a single ordinary source
 
-Named-module provider sources are explicit in this milestone; automatic provider discovery
-from an ordinary entry source remains a follow-up. Header units, external/prebuilt providers,
-and import std continue to fail closed in the module pipeline.
+Single-entry discovery follows reachable project-local named imports to project-local
+module-interface candidates. Discovery selects candidates only; MSVC P1689 scanning remains
+the authority for module topology and provider validation. Header units, external/prebuilt
+provider execution, and import std remain unsupported and fail closed in the module pipeline.
 
 Options:
   --debug                  Explicitly select Debug compile/link preset
