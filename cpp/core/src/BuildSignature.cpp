@@ -105,7 +105,7 @@ BuildSignature BuildSignature::for_compile(
     const ToolchainIdentity& toolchain,
     const CompilerOptions& options) {
     StableHasher hasher;
-    hasher.add_string("mqb.compile.signature.v1");
+    hasher.add_string("mqb.compile.signature.v2");
 
     // Dependencies and output paths are deliberately excluded. Dependency
     // freshness is validated separately, while output locations are artifact
