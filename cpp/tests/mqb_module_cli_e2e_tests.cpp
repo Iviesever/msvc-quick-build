@@ -134,6 +134,10 @@ int main(const int argc, char* argv[]) {
         "export module math;\n"
         "export int answer() { return 42; }\n");
     write_text(
+        tree.root / "unused.ixx",
+        "export module unused;\n"
+        "export int unused_value() { return 7; }\n");
+    write_text(
         tree.root / "main.cpp",
         "import math;\n"
         "int main() { return answer() >= 40 ? 0 : 1; }\n");
@@ -220,7 +224,9 @@ int main(const int argc, char* argv[]) {
                "single-entry module target should discover its provider, build, and run");
         expect(discovered_cold->stdout_text.find("[discover] 2 translation units")
                    != std::string::npos,
-               "single-entry discovery should select the ordinary consumer and module provider");
+               "single-entry discovery should select only the ordinary consumer and imported provider");
+        expect(discovered_cold->stdout_text.find("unused.ixx") == std::string::npos,
+               "unreferenced project-local module interfaces must not be selected by discovery");
         expect(discovered_cold->stdout_text.find("  pipeline: named-modules")
                    != std::string::npos,
                "discovered module target should route through the named-module pipeline");
@@ -313,6 +319,33 @@ int main(const int argc, char* argv[]) {
                        != std::string::npos,
                    "single-entry IFC repair should relink the executable");
         }
+    }
+
+    // Replace the entry with an import that has no project-local provider. The
+    // build must still enter the P1689 path and fail closed; falling back to the
+    // ordinary target here would bypass module provider validation.
+    write_text(
+        tree.root / "main.cpp",
+        "import definitely.missing.module;\n"
+        "int main() { return 0; }\n");
+    auto missing_provider = run_mqb(
+        runner,
+        mqb_executable,
+        tree.root,
+        "1",
+        false,
+        "module-missing");
+    expect(missing_provider.has_value(),
+           "missing-provider public CLI invocation should launch");
+    if (missing_provider) {
+        expect(missing_provider->exit_code != 0,
+               "unsupported external named module must fail instead of building as an ordinary target");
+        expect(missing_provider->stdout_text.find("  pipeline: named-modules")
+                   != std::string::npos,
+               "import-only target with zero local providers must explicitly enter named-module routing");
+        expect(missing_provider->stdout_text.find("[link] module-missing.exe")
+                   == std::string::npos,
+               "missing named-module provider must fail before final link");
     }
 
     if (failures != 0) {
