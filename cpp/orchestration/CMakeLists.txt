@@ -1,7 +1,9 @@
 add_library(mqb_orchestration STATIC
     src/BoundedWorkScheduler.cpp
+    src/MsvcIncrementalArchiveCoordinator.cpp
     src/MsvcIncrementalCompileCoordinator.cpp
     src/MsvcIncrementalLinkCoordinator.cpp
+    src/MsvcIncrementalStaticTargetCoordinator.cpp
     src/MsvcIncrementalTargetCoordinator.cpp
     src/MsvcModuleCompileCoordinator.cpp
     src/MsvcModuleTargetCoordinator.cpp
