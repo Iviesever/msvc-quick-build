@@ -72,6 +72,16 @@ public:
         }
     }
 
+    void add_header_unit_references(
+        const std::vector<HeaderUnitReference>& references) noexcept {
+        add_u64(static_cast<std::uint64_t>(references.size()));
+        for (const auto& reference : references) {
+            add_string(reference.header_name);
+            add_enum(reference.lookup_method);
+            add_path(reference.interface_file);
+        }
+    }
+
     void add_module_outputs(const std::vector<Artifact>& outputs) noexcept {
         std::uint64_t count = 0;
         for (const auto& output : outputs) {
@@ -130,16 +140,17 @@ BuildSignature BuildSignature::for_compile(
     const ToolchainIdentity& toolchain,
     const CompilerOptions& options) {
     StableHasher hasher;
-    hasher.add_string("mqb.compile.signature.v3");
+    hasher.add_string("mqb.compile.signature.v4");
 
     // Header dependency membership remains freshness-only state. Ordinary
-    // object placement also remains outside recipe identity. Module references
-    // are different: their logical-name -> compiled-interface mapping affects
-    // import resolution, and a provider's planned interface-file output path is
-    // consumed semantically by downstream translation units.
+    // object placement also remains outside recipe identity. Module and header-
+    // unit references are different: their import identity -> compiled-interface
+    // mapping affects compiler routing, and a provider's planned interface-file
+    // output path is consumed semantically by downstream translation units.
     hasher.add_path(unit.source);
     hasher.add_enum(unit.kind);
     hasher.add_module_references(unit.module_references);
+    hasher.add_header_unit_references(unit.header_unit_references);
     hasher.add_module_outputs(unit.outputs);
 
     hasher.add_path(toolchain.compiler);

@@ -65,6 +65,20 @@ namespace fs = std::filesystem;
     return fs::is_regular_file(path, error_code) && !error_code;
 }
 
+void add_interface_dependency(
+    std::vector<fs::path>& dependencies,
+    const fs::path& interface_file) {
+    const auto duplicate = std::find_if(
+        dependencies.begin(),
+        dependencies.end(),
+        [&interface_file](const fs::path& dependency) {
+            return same_dependency_path(dependency, interface_file);
+        });
+    if (duplicate == dependencies.end()) {
+        dependencies.push_back(interface_file.lexically_normal());
+    }
+}
+
 } // namespace
 
 std::expected<CompileExecutionResult, CompileExecutorError>
@@ -121,6 +135,7 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
         invocation.module_interface_output = module_interface->path;
     }
     invocation.module_references = request.unit.module_references;
+    invocation.header_unit_references = request.unit.header_unit_references;
     invocation.options = request.options;
     invocation.working_directory = request.working_directory;
 
@@ -164,15 +179,10 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
 
     std::vector<fs::path> cache_dependencies = std::move(dependencies->includes);
     for (const auto& reference : request.unit.module_references) {
-        const auto duplicate = std::find_if(
-            cache_dependencies.begin(),
-            cache_dependencies.end(),
-            [&reference](const fs::path& dependency) {
-                return same_dependency_path(dependency, reference.interface_file);
-            });
-        if (duplicate == cache_dependencies.end()) {
-            cache_dependencies.push_back(reference.interface_file.lexically_normal());
-        }
+        add_interface_dependency(cache_dependencies, reference.interface_file);
+    }
+    for (const auto& reference : request.unit.header_unit_references) {
+        add_interface_dependency(cache_dependencies, reference.interface_file);
     }
 
     CompileCacheEntry cache_entry{

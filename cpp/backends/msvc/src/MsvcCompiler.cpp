@@ -62,6 +62,46 @@ void append_configuration_arguments(
     }
 }
 
+[[nodiscard]] std::expected<void, CompilerError> append_common_compile_arguments(
+    std::vector<std::string>& arguments,
+    const CompilerOptions& options) {
+    arguments.emplace_back("/nologo");
+    arguments.emplace_back("/c");
+    arguments.emplace_back("/utf-8");
+    arguments.emplace_back("/W3");
+    arguments.emplace_back("/EHsc");
+    arguments.emplace_back("/permissive-");
+    arguments.emplace_back("/Zc:__cplusplus");
+    arguments.emplace_back("/Zc:preprocessor");
+    arguments.emplace_back("/diagnostics:column");
+
+    append_configuration_arguments(arguments, options.configuration);
+    arguments.push_back(standard_argument(options.standard));
+
+    for (const auto& define : options.defines) {
+        if (define.empty()) {
+            return std::unexpected(invalid_request("compiler define must not be empty"));
+        }
+        arguments.push_back("/D" + define);
+    }
+
+    for (const auto& include_directory : options.include_directories) {
+        if (include_directory.empty()) {
+            return std::unexpected(invalid_request("include directory must not be empty"));
+        }
+        arguments.push_back("/I" + path_to_utf8(include_directory));
+    }
+
+    for (const auto& argument : options.additional_arguments) {
+        if (argument.empty()) {
+            return std::unexpected(invalid_request("additional compiler argument must not be empty"));
+        }
+        arguments.push_back(argument);
+    }
+
+    return {};
+}
+
 [[nodiscard]] std::expected<void, CompilerError> prepare_parent_directory(
     const fs::path& output,
     const std::string_view description) {
@@ -79,6 +119,12 @@ void append_configuration_arguments(
         });
     }
     return {};
+}
+
+[[nodiscard]] std::string header_unit_key(const HeaderUnitReference& reference) {
+    return std::string{
+        reference.lookup_method == HeaderUnitLookupMethod::angle ? "angle:" : "quote:"
+    } + reference.header_name;
 }
 
 [[nodiscard]] std::expected<void, CompilerError> validate_module_contract(
@@ -110,7 +156,71 @@ void append_configuration_arguments(
                 "duplicate module reference logical name '" + reference.logical_name + "'"));
         }
     }
+
+    std::unordered_set<std::string> header_names;
+    header_names.reserve(invocation.header_unit_references.size());
+    for (const auto& reference : invocation.header_unit_references) {
+        if (reference.header_name.empty()) {
+            return std::unexpected(invalid_request(
+                "header-unit reference name must not be empty"));
+        }
+        if (reference.interface_file.empty()) {
+            return std::unexpected(invalid_request(
+                "header-unit reference IFC path must not be empty"));
+        }
+        const std::string key = header_unit_key(reference);
+        if (!header_names.emplace(key).second) {
+            return std::unexpected(invalid_request(
+                "duplicate header-unit reference '" + reference.header_name + "'"));
+        }
+    }
     return {};
+}
+
+[[nodiscard]] std::string header_name_argument(const HeaderUnitLookupMethod lookup_method) {
+    return lookup_method == HeaderUnitLookupMethod::angle
+        ? "/headerName:angle"
+        : "/headerName:quote";
+}
+
+[[nodiscard]] std::string header_unit_argument(const HeaderUnitLookupMethod lookup_method) {
+    return lookup_method == HeaderUnitLookupMethod::angle
+        ? "/headerUnit:angle"
+        : "/headerUnit:quote";
+}
+
+[[nodiscard]] std::expected<process::ProcessResult, CompilerError> run_compiler(
+    const MsvcToolchain& toolchain,
+    process::ProcessRunner& runner,
+    std::vector<std::string> arguments,
+    const std::optional<fs::path>& working_directory) {
+    process::ProcessSpec spec;
+    spec.executable = toolchain.identity.compiler;
+    spec.arguments = std::move(arguments);
+    spec.working_directory = working_directory;
+    spec.environment = toolchain.environment;
+    spec.inherit_environment = true;
+    spec.capture_stdout = true;
+    spec.capture_stderr = true;
+
+    auto result = runner.run(spec);
+    if (!result) {
+        return std::unexpected(CompilerError{
+            .code = CompilerErrorCode::process_failed,
+            .message = "failed to launch MSVC compiler",
+            .process_error = result.error(),
+        });
+    }
+
+    if (result->exit_code != 0) {
+        return std::unexpected(CompilerError{
+            .code = CompilerErrorCode::compilation_failed,
+            .message = "MSVC compiler returned a non-zero exit code",
+            .process_result = std::move(*result),
+        });
+    }
+
+    return std::move(*result);
 }
 
 } // namespace
@@ -137,44 +247,14 @@ MsvcCompiler::build_arguments(const CompileInvocation& invocation) {
         + invocation.options.defines.size()
         + invocation.options.include_directories.size()
         + invocation.options.additional_arguments.size()
-        + (invocation.module_references.size() * 2));
+        + (invocation.module_references.size() * 2)
+        + (invocation.header_unit_references.size() * 2));
 
-    arguments.emplace_back("/nologo");
-    arguments.emplace_back("/c");
-    arguments.emplace_back("/utf-8");
-    arguments.emplace_back("/W3");
-    arguments.emplace_back("/EHsc");
-    arguments.emplace_back("/permissive-");
-    arguments.emplace_back("/Zc:__cplusplus");
-    arguments.emplace_back("/Zc:preprocessor");
-    arguments.emplace_back("/diagnostics:column");
+    auto common = append_common_compile_arguments(arguments, invocation.options);
+    if (!common) return std::unexpected(common.error());
 
-    append_configuration_arguments(arguments, invocation.options.configuration);
-    arguments.push_back(standard_argument(invocation.options.standard));
-
-    for (const auto& define : invocation.options.defines) {
-        if (define.empty()) {
-            return std::unexpected(invalid_request("compiler define must not be empty"));
-        }
-        arguments.push_back("/D" + define);
-    }
-
-    for (const auto& include_directory : invocation.options.include_directories) {
-        if (include_directory.empty()) {
-            return std::unexpected(invalid_request("include directory must not be empty"));
-        }
-        arguments.push_back("/I" + path_to_utf8(include_directory));
-    }
-
-    for (const auto& argument : invocation.options.additional_arguments) {
-        if (argument.empty()) {
-            return std::unexpected(invalid_request("additional compiler argument must not be empty"));
-        }
-        arguments.push_back(argument);
-    }
-
-    // Module inputs and structured outputs are emitted after raw additional
-    // arguments so the BuildPlan remains authoritative over semantic routing.
+    // Module/header-unit inputs and structured outputs are emitted after raw
+    // additional arguments so the BuildPlan remains authoritative over semantic routing.
     if (invocation.kind == TranslationUnitKind::module_interface) {
         arguments.emplace_back("/interface");
         arguments.emplace_back("/TP");
@@ -184,6 +264,12 @@ MsvcCompiler::build_arguments(const CompileInvocation& invocation) {
         arguments.emplace_back("/reference");
         arguments.push_back(
             reference.logical_name + "=" + path_to_utf8(reference.interface_file));
+    }
+
+    for (const auto& reference : invocation.header_unit_references) {
+        arguments.push_back(header_unit_argument(reference.lookup_method));
+        arguments.push_back(
+            reference.header_name + "=" + path_to_utf8(reference.interface_file));
     }
 
     if (invocation.module_interface_output) {
@@ -198,6 +284,39 @@ MsvcCompiler::build_arguments(const CompileInvocation& invocation) {
 
     arguments.push_back("/Fo" + path_to_utf8(invocation.object));
     arguments.push_back(path_to_utf8(invocation.source));
+    return arguments;
+}
+
+std::expected<std::vector<std::string>, CompilerError>
+MsvcCompiler::build_header_unit_arguments(const HeaderUnitCompileInvocation& invocation) {
+    if (invocation.header_name.empty()) {
+        return std::unexpected(invalid_request("header-unit name must not be empty"));
+    }
+    if (invocation.interface_output.empty()) {
+        return std::unexpected(invalid_request("header-unit IFC output path must not be empty"));
+    }
+    if (invocation.object && invocation.object->empty()) {
+        return std::unexpected(invalid_request("header-unit object output path must not be empty"));
+    }
+
+    std::vector<std::string> arguments;
+    arguments.reserve(
+        20
+        + invocation.options.defines.size()
+        + invocation.options.include_directories.size()
+        + invocation.options.additional_arguments.size());
+
+    auto common = append_common_compile_arguments(arguments, invocation.options);
+    if (!common) return std::unexpected(common.error());
+
+    arguments.emplace_back("/exportHeader");
+    arguments.push_back(header_name_argument(invocation.lookup_method));
+    arguments.push_back(invocation.header_name);
+    arguments.emplace_back("/ifcOutput");
+    arguments.push_back(path_to_utf8(invocation.interface_output));
+    if (invocation.object) {
+        arguments.push_back("/Fo" + path_to_utf8(*invocation.object));
+    }
     return arguments;
 }
 
@@ -229,33 +348,28 @@ MsvcCompiler::compile(const CompileInvocation& invocation) const {
         }
     }
 
-    process::ProcessSpec spec;
-    spec.executable = toolchain_.identity.compiler;
-    spec.arguments = std::move(*arguments);
-    spec.working_directory = invocation.working_directory;
-    spec.environment = toolchain_.environment;
-    spec.inherit_environment = true;
-    spec.capture_stdout = true;
-    spec.capture_stderr = true;
+    return run_compiler(toolchain_, runner_, std::move(*arguments), invocation.working_directory);
+}
 
-    auto result = runner_.run(spec);
-    if (!result) {
-        return std::unexpected(CompilerError{
-            .code = CompilerErrorCode::process_failed,
-            .message = "failed to launch MSVC compiler",
-            .process_error = result.error(),
-        });
+std::expected<process::ProcessResult, CompilerError>
+MsvcCompiler::compile_header_unit(const HeaderUnitCompileInvocation& invocation) const {
+    auto arguments = build_header_unit_arguments(invocation);
+    if (!arguments) {
+        return std::unexpected(arguments.error());
     }
 
-    if (result->exit_code != 0) {
-        return std::unexpected(CompilerError{
-            .code = CompilerErrorCode::compilation_failed,
-            .message = "MSVC compiler returned a non-zero exit code",
-            .process_result = std::move(*result),
-        });
+    auto prepared_interface = prepare_parent_directory(invocation.interface_output, "header-unit interface");
+    if (!prepared_interface) {
+        return std::unexpected(prepared_interface.error());
+    }
+    if (invocation.object) {
+        auto prepared_object = prepare_parent_directory(*invocation.object, "header-unit object");
+        if (!prepared_object) {
+            return std::unexpected(prepared_object.error());
+        }
     }
 
-    return std::move(*result);
+    return run_compiler(toolchain_, runner_, std::move(*arguments), invocation.working_directory);
 }
 
 } // namespace mqb::msvc

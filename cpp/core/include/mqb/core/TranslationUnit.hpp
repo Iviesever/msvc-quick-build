@@ -13,8 +13,19 @@ enum class TranslationUnitKind {
     module_interface,
 };
 
+enum class HeaderUnitLookupMethod {
+    angle,
+    quote,
+};
+
 struct ModuleReference {
     std::string logical_name;
+    std::filesystem::path interface_file;
+};
+
+struct HeaderUnitReference {
+    std::string header_name;
+    HeaderUnitLookupMethod lookup_method{HeaderUnitLookupMethod::quote};
     std::filesystem::path interface_file;
 };
 
@@ -23,6 +34,7 @@ struct TranslationUnit {
     TranslationUnitKind kind{TranslationUnitKind::source};
     std::vector<std::filesystem::path> dependencies;
     std::vector<ModuleReference> module_references;
+    std::vector<HeaderUnitReference> header_unit_references;
     std::vector<Artifact> outputs;
 };
 
