@@ -321,6 +321,147 @@ int main(const int argc, char* argv[]) {
         }
     }
 
+    // A single ordinary entry containing only a header-unit import must route
+    // through the same public module pipeline without promoting the header into
+    // source discovery output or requiring the caller to pass it positionally.
+    cleanup_error.clear();
+    fs::remove_all(tree.root / ".mqb", cleanup_error);
+    expect(!cleanup_error, "test should clear named-module state before header-unit CLI coverage");
+    const fs::path header = tree.root / "util.hpp";
+    write_text(header, "inline int header_answer() { return 42; }\n");
+    write_text(
+        tree.root / "main.cpp",
+        "import \"util.hpp\";\n"
+        "int main() { return header_answer() >= 42 ? 0 : 1; }\n");
+
+    auto header_cold = run_mqb(
+        runner,
+        mqb_executable,
+        tree.root,
+        "2",
+        false,
+        "header-unit-cli");
+    expect(header_cold.has_value(), "cold header-unit public CLI invocation should launch");
+    if (header_cold) {
+        if (header_cold->exit_code != 0) dump_failure(*header_cold);
+        expect(header_cold->exit_code == 0,
+               "single-entry header-unit target should build and run successfully");
+        expect(header_cold->stdout_text.find("[discover] 1 translation units")
+                   != std::string::npos,
+               "header unit must remain outside translation-unit discovery output");
+        expect(header_cold->stdout_text.find("  pipeline: named-modules")
+                   != std::string::npos,
+               "header-unit-only entry must route through the module pipeline");
+        expect(header_cold->stdout_text.find("[compile] main.cpp") != std::string::npos,
+               "cold header-unit CLI target should compile the consumer");
+        expect(header_cold->stdout_text.find("[link] header-unit-cli.exe") != std::string::npos,
+               "cold header-unit CLI target should link the executable");
+        expect(header_cold->stdout_text.find("[run] header-unit-cli.exe") != std::string::npos,
+               "header-unit CLI target should preserve --run behavior");
+    }
+
+    auto header_ifc = first_ifc(tree.root);
+    expect(header_ifc.has_value() && fs::is_regular_file(*header_ifc),
+           "public header-unit CLI target should dynamically create a provider IFC");
+
+    auto header_warm = run_mqb(
+        runner,
+        mqb_executable,
+        tree.root,
+        "1",
+        false,
+        "header-unit-cli");
+    expect(header_warm.has_value(), "warm header-unit public CLI invocation should launch");
+    if (header_warm) {
+        if (header_warm->exit_code != 0) dump_failure(*header_warm);
+        expect(header_warm->exit_code == 0,
+               "warm header-unit target should build and run successfully");
+        expect(contains_line(header_warm->stdout_text, "[up-to-date] main.cpp"),
+               "warm header-unit consumer should reuse its compile cache");
+        expect(contains_line(header_warm->stdout_text, "[up-to-date] header-unit-cli.exe"),
+               "warm header-unit target should reuse its link cache when job count changes");
+    }
+
+    if (header_ifc) {
+        std::error_code time_error;
+        const auto old_ifc_time = fs::last_write_time(*header_ifc, time_error);
+        expect(!time_error, "header-unit CLI mutation fixture requires provider IFC timestamp");
+        write_text(header, "inline int header_answer() { return 43; }\n");
+        time_error.clear();
+        fs::last_write_time(header, old_ifc_time + std::chrono::seconds{2}, time_error);
+        expect(!time_error, "test should make header source deterministically newer than IFC");
+
+        auto header_mutated = run_mqb(
+            runner,
+            mqb_executable,
+            tree.root,
+            "2",
+            false,
+            "header-unit-cli");
+        expect(header_mutated.has_value(), "header mutation public CLI invocation should launch");
+        if (header_mutated) {
+            if (header_mutated->exit_code != 0) dump_failure(*header_mutated);
+            expect(header_mutated->exit_code == 0,
+                   "header mutation should rebuild through the public CLI and preserve behavior");
+            expect(header_mutated->stdout_text.find("[compile] main.cpp") != std::string::npos,
+                   "header-unit provider rebuild should explicitly rebuild the consumer");
+            expect(header_mutated->stdout_text.find("[link] header-unit-cli.exe")
+                       != std::string::npos,
+                   "header-unit provider mutation should relink the executable");
+        }
+
+        header_ifc = first_ifc(tree.root);
+        expect(header_ifc.has_value(), "rebuilt header-unit CLI target should retain provider IFC");
+        if (header_ifc) {
+            time_error.clear();
+            const auto rebuilt_ifc_time = fs::last_write_time(*header_ifc, time_error);
+            expect(!time_error, "rebuilt header-unit target requires IFC timestamp");
+            time_error.clear();
+            fs::last_write_time(header, rebuilt_ifc_time - std::chrono::seconds{1}, time_error);
+            expect(!time_error, "test should normalize header source behind rebuilt IFC");
+
+            auto header_warm_again = run_mqb(
+                runner,
+                mqb_executable,
+                tree.root,
+                "1",
+                false,
+                "header-unit-cli");
+            expect(header_warm_again.has_value(), "rebuilt header-unit target should run warm again");
+            if (header_warm_again) {
+                if (header_warm_again->exit_code != 0) dump_failure(*header_warm_again);
+                expect(contains_line(header_warm_again->stdout_text, "[up-to-date] main.cpp")
+                           && contains_line(header_warm_again->stdout_text, "[up-to-date] header-unit-cli.exe"),
+                       "rebuilt header-unit target should return to compile-0/link-0 state");
+            }
+
+            time_error.clear();
+            fs::remove(*header_ifc, time_error);
+            expect(!time_error, "test should delete only the dynamically allocated header-unit IFC");
+            auto header_repair = run_mqb(
+                runner,
+                mqb_executable,
+                tree.root,
+                "2",
+                false,
+                "header-unit-cli");
+            expect(header_repair.has_value(), "missing header IFC public CLI invocation should launch");
+            if (header_repair) {
+                if (header_repair->exit_code != 0) dump_failure(*header_repair);
+                expect(header_repair->exit_code == 0,
+                       "missing dynamic header IFC should be repaired through public CLI");
+                expect(header_repair->stdout_text.find("[compile] main.cpp") != std::string::npos,
+                       "missing header IFC repair should rebuild the consumer downstream");
+                expect(header_repair->stdout_text.find("[link] header-unit-cli.exe")
+                           != std::string::npos,
+                       "missing header IFC repair should relink the executable");
+                const auto repaired_header_ifc = first_ifc(tree.root);
+                expect(repaired_header_ifc.has_value() && fs::is_regular_file(*repaired_header_ifc),
+                       "missing header IFC should be recreated by the public CLI");
+            }
+        }
+    }
+
     // Replace the entry with an import that has no project-local provider. The
     // build must still enter the P1689 path and fail closed; falling back to the
     // ordinary target here would bypass module provider validation.

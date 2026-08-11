@@ -31,13 +31,16 @@ struct RoutedTargetSourceRequest {
 struct RoutedTargetRequest {
     std::vector<RoutedTargetSourceRequest> sources;
     TargetArtifacts target;
+    // Only consumed by the named-module target when P1689 discovers dynamic
+    // project-local header-unit providers after scanning.
+    std::optional<ProjectArtifactLayout> artifact_layout;
     CompilerOptions compiler_options;
     LinkOptions link_options;
     std::filesystem::path working_directory;
     std::size_t max_parallel_jobs{1};
-    // Execution-routing state only. This is used when discovery observed named
-    // module syntax but found no local interface provider; it must not affect
-    // compile/link signatures or cache identity.
+    // Execution-routing state only. This is used when discovery observed module
+    // syntax but found no local named-module interface provider, including a
+    // header-unit-only entry. It must not affect compile/link cache identity.
     bool force_named_modules{false};
 };
 

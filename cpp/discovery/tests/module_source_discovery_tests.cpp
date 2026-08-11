@@ -175,6 +175,26 @@ int main() {
                "import-only targets with no local provider must fail closed through the module pipeline");
     }
 
+    const fs::path header_unit_main = tree.root / "header_unit_main.cpp";
+    const fs::path header_unit = tree.root / "util.hpp";
+    write_text(header_unit, "inline int header_value() { return 42; }\n");
+    write_text(
+        header_unit_main,
+        "import \"util.hpp\";\n"
+        "int main() { return header_value() == 42 ? 0 : 1; }\n");
+    const auto header_unit_only = mqb::discovery::SourceDiscovery::discover({
+        .project_root = tree.root,
+        .entry = header_unit_main,
+    });
+    expect(header_unit_only.has_value(),
+           "header-unit-only source discovery should succeed");
+    if (header_unit_only) {
+        expect(header_unit_only->sources == std::vector<fs::path>{header_unit_main},
+               "header units must not be promoted into translation-unit discovery output");
+        expect(header_unit_only->requires_module_pipeline,
+               "header-unit imports must route an ordinary entry through the module pipeline");
+    }
+
     const fs::path plain_main = tree.root / "plain_main.cpp";
     write_text(plain_main, "int main() { return 0; }\n");
     const auto plain = mqb::discovery::SourceDiscovery::discover({

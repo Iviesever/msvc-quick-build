@@ -79,6 +79,7 @@ MsvcTargetRouter::run(const RoutedTargetRequest& request) const {
     IncrementalModuleTargetRequest module_request{
         .sources = std::move(sources),
         .target = request.target,
+        .artifact_layout = request.artifact_layout,
         .compiler_options = request.compiler_options,
         .link_options = request.link_options,
         .working_directory = request.working_directory,

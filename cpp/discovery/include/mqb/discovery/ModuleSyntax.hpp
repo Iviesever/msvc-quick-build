@@ -13,6 +13,10 @@ namespace mqb::discovery {
 struct NamedModuleSyntax {
     std::optional<std::string> declared_module;
     std::vector<std::string> imported_modules;
+    // Header-unit imports are not named-module discovery edges, but they still
+    // require the real module pipeline so P1689 can resolve their source path,
+    // lookup method, and provider artifact authoritatively.
+    bool imports_header_unit{false};
 };
 
 class ModuleSyntaxParser {

@@ -29,6 +29,8 @@ int main() {
                "export module should expose its logical module name");
         expect(syntax.imported_modules == std::vector<std::string>({"util", "stats.detail"}),
                "named import and export import should be preserved in source order");
+        expect(!syntax.imports_header_unit,
+               "named-module-only syntax must not report a header-unit import");
     }
 
     {
@@ -58,7 +60,9 @@ int main() {
             "import \"local.hpp\";\n"
             "import project.api;\n");
         expect(syntax.imported_modules == std::vector<std::string>({"project.api"}),
-               "header-unit imports must be excluded from named-module discovery edges");
+               "header-unit imports must remain excluded from named-module discovery edges");
+        expect(syntax.imports_header_unit,
+               "angle or quote header-unit imports must request module-pipeline routing");
     }
 
     {
@@ -74,6 +78,8 @@ int main() {
                "comment and literal contents must not create fake module declarations");
         expect(syntax.imported_modules == std::vector<std::string>({"dependency"}),
                "comment and literal contents must not create fake imports");
+        expect(!syntax.imports_header_unit,
+               "literal contents that resemble header imports must not affect routing");
     }
 
     {
@@ -87,6 +93,8 @@ int main() {
                "preprocessor directives must not create discovery module declarations");
         expect(syntax.imported_modules == std::vector<std::string>({"actual"}),
                "preprocessor directive text must not create discovery imports");
+        expect(!syntax.imports_header_unit,
+               "preprocessor text must not create header-unit routing signals");
     }
 
     {
@@ -120,6 +128,8 @@ int main() {
                "ordinary source without a module declaration should remain undeclared");
         expect(syntax.imported_modules.empty(),
                "relative partition imports without module context should not invent providers");
+        expect(!syntax.imports_header_unit,
+               "non-header import-like identifiers must not request header-unit routing");
     }
 
     if (failures != 0) {
