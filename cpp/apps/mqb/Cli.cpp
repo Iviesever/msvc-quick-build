@@ -215,6 +215,30 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.standard_override = *standard;
             continue;
         }
+        if (argument == "--compiler-arg" || argument == "-flags") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            options.compiler_arguments.emplace_back(*value);
+            continue;
+        }
+        if (argument.starts_with("--compiler-arg=")) {
+            auto value = long_equals_value(argument, "--compiler-arg=");
+            if (!value) return std::unexpected(value.error());
+            options.compiler_arguments.emplace_back(*value);
+            continue;
+        }
+        if (argument == "--linker-arg" || argument == "-link_flags") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            options.linker_arguments.emplace_back(*value);
+            continue;
+        }
+        if (argument.starts_with("--linker-arg=")) {
+            auto value = long_equals_value(argument, "--linker-arg=");
+            if (!value) return std::unexpected(value.error());
+            options.linker_arguments.emplace_back(*value);
+            continue;
+        }
         if (argument == "--env" || argument == "-env") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
@@ -353,11 +377,18 @@ Options:
   --lib-path <dir>         Add a library search directory
   -l <name>, -l<name>      Link a library ('.lib' is optional)
   --lib <name>             Link a library (legacy -libs accepted; repeat for multiple values)
+  --compiler-arg <arg>     Append one raw cl.exe argument (legacy -flags accepted; repeatable)
+  --linker-arg <arg>       Append one raw link.exe argument (legacy -link_flags accepted; repeatable)
   --env <auto|vs|portable> Toolchain selection (legacy -env and portable/port/p accepted)
   --portable-root <dir>    Add a portable_msvc root candidate
   -v, --verbose            Show config, discovery, toolchain, and artifact details
   -h, --help               Show this help and the embedded build version (-help/-? accepted)
   --                       Pass all remaining argv elements to the program
+
+Raw compiler/linker arguments are one argv element per option occurrence; MQB does not split a
+quoted string into multiple switches. Project config entries are applied first and CLI raw args
+append afterward. Structured artifact routing such as /Fo, /scanDependencies, /MACHINE and /OUT
+is emitted after raw arguments so the BuildPlan remains authoritative.
 
 Legacy compatibility aliases intentionally cover spelling only. Legacy-only semantics such as
 -a string splitting, DLL/static output kinds, and MSVC tuning switches remain tracked by the
