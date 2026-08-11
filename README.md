@@ -6,6 +6,7 @@
 >
 > - `cpp/` 中的 **C++23 重构版 (`mqb.exe`)** 已具备普通 C/C++、project-local named modules 与 project-local header units 的端到端构建链，并由 Visual Studio 2026 真实工具链 E2E 持续验证。
 > - `v5.0.0-rc.2` 是 C++ 重构版的第二个可分发 Release Candidate；它新增原生 `.c`、typed runtime/subsystem CLI 与 `mqb.json` policy，**尚不代表 PowerShell → C++ 的最终 cutover**。
+> - **当前 `main` 已领先于 rc.2**：普通 C/C++ 目标已具备 typed `exe` / `dll` / `static` 输出，以及耦合的 typed LTCG（compile `/GL` + downstream `/LTCG`）；CLI 与 strict `mqb.json` 都可表达这些 policy。这些能力尚未作为新的 prerelease 发布。
 > - `build.ps1` 仍保留为 **PowerShell Golden Reference / 过渡期稳定入口**；现有 `install.bat` 和 PowerShell profile 不会被 RC 静默替换。
 > - MQB 不宣称与 MSBuild “1:1 等价”。当前原则是：显式建模已支持的常用 MSVC 语义，并用真实编译器回归测试证明行为。
 
@@ -37,23 +38,28 @@ MQB 5.0.0-rc.2 - MSVC Quick Build (C++ refactor)
 
 发布二进制使用静态 MSVC runtime，避免要求用户额外安装 Visual C++ Redistributable。Release Candidate 的完整边界见 [`release/v5.0.0-rc.2.md`](release/v5.0.0-rc.2.md)。
 
+> 本节描述**已发布的 rc.2 包**。下面“现在能做什么”描述的是**当前仓库 mainline**，因此会包含 rc.2 之后已经合入但尚未重新发布的能力。
+
 ---
 
 ## C++ 重构版现在能做什么
 
-- **结构化 MSVC 调用**：直接执行 `cl.exe` / `link.exe`，不通过 shell 拼接命令字符串。
+- **结构化 MSVC 调用**：直接执行 `cl.exe` / `link.exe` / `lib.exe`，不通过 shell 拼接命令字符串。
 - **C 与 C++ translation units**：原生支持 `.c`、`.cpp`、`.cc`、`.cxx`；C discovery 不会把合法的 `module/import/export` 标识符误识别成 C++ Modules 语法。
 - **工具链发现**：支持 Visual Studio 与 portable MSVC 路径，工具链身份进入缓存判断。
 - **单入口智能发现**：`mqb main.cpp` / `mqb main.c` 会从项目内 include / named-import 连接关系选择相关 translation units。
 - **Project-local named modules**：支持 `.ixx` / `.cppm` / `.mpp` interface providers、partitions 与 implementation units，使用 `/scanDependencies` + P1689 建立真实拓扑。
 - **Project-local header units**：`import "header.hpp";` / `import <header>;` 会进入 P1689 模块管线；header 本身不会被伪装成普通 TU，IFC 由 target 动态分配、增量生成与修复。
 - **增量编译**：使用 `/sourceDependencies` 跟踪实际头文件 freshness；编译参数、工具链、模块引用和计划输出参与 compile identity。
+- **Typed target kinds**：`--type exe|dll|static`（以及兼容 `-type`）统一进入 typed target policy。exe/DLL 由 linker pipeline 负责，普通 C/C++ static target 由独立 `MsvcLibrarian` / `lib.exe` pipeline 负责。
 - **Typed MSVC runtime**：`--runtime MD|MDd|MT|MTd`（以及兼容 `-runtime`）由 backend 统一映射，参与 compile identity，并保持 typed policy 对冲突 raw flag 的最终权威。
+- **Typed LTCG**：`--ltcg` / `--no-ltcg`（兼容 legacy `-ltcg`）是一条耦合 policy：compile 侧统一加入 `/GL`，exe/DLL 由 `link.exe /LTCG` 收口，ordinary static 由 `lib.exe /LTCG` 收口；compile/link/archive identity 都区分 LTCG 状态，且 typed flag 在 raw escape hatch 之后保持最终权威。
 - **Typed subsystem**：`--subsystem console|windows`（以及兼容 `-subsystem`）进入 link identity；仅 subsystem 改变时不会误重编 fresh TUs。
 - **IFC 增量正确性**：provider IFC 缺失、provider/header-unit 重编或引用变化会可靠传导到 consumer。
-- **增量链接**：对象、显式库、linker identity 与 link options 共同决定是否重新链接。
+- **增量 downstream target**：exe/DLL 使用 link identity/cache；static archive 使用独立 archive identity/cache。目标输出缺失会触发修复，fresh translation units 不会被无关重编。
+- **Static archive correctness**：static archive 从干净临时库重建后替换目标，source/object set 缩小时不会残留已移除的旧 object member。
 - **有界并行**：`-j/--jobs` 控制 TU scan/compile 并发；job count 是 execution policy，不污染 build cache identity。
-- **`mqb.json`**：严格、带版本的项目配置，遵循 `explicit CLI > mqb.json > built-in defaults`，并支持 `build.runtime` / `build.subsystem`。
+- **`mqb.json`**：严格、带版本的项目配置，遵循 `explicit CLI > mqb.json > built-in defaults`，并支持 `build.type` / `build.runtime` / `build.ltcg` / `build.subsystem`。
 - **结构化运行参数**：`--run -- arg1 "arg 2"` 保持 argv 边界。
 - **隔离构建产物**：全部 C++ 中间产物放在项目 `.mqb/` 下，不在源码目录通配删除 `.obj/.ifc`。
 
@@ -63,8 +69,8 @@ MQB 5.0.0-rc.2 - MSVC Quick Build (C++ refactor)
 
 - external / prebuilt named-module providers；
 - `import std;`；
-- DLL target 与 static-library target（正在 stable-v5 parity 主线中分别接入 linker / librarian pipeline）；
-- 将 C++ RC 宣称为 PowerShell 版本的完整行为替代品。
+- 需要 named-module / header-unit pipeline 的 static-library target（普通 C/C++ static target 已支持）；
+- 将当前 C++ mainline 宣称为 PowerShell 版本的完整行为替代品。
 
 Modules 剩余扩展策略跟踪在 Issue #16；最终 stable v5 还需要 PowerShell ↔ C++ parity / installer / default-entry cutover 的独立验收。
 
@@ -120,11 +126,32 @@ mqb main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
 
 多个 positional sources 表示**精确 source set**，不再自动扩大集合。
 
-### Runtime / subsystem
+### Target kind：exe / DLL / static
+
+```powershell
+# 默认 executable
+mqb main.cpp -o app
+
+# DLL；导出符号时 import library 会放在 .mqb/bin/ 下
+mqb api.cpp --type dll -o codec
+
+# 普通 C/C++ static library；由 lib.exe pipeline 生成 .lib
+mqb math.cpp vector.cpp --type static -o math
+```
+
+`--type` 也接受 `executable` / `dynamic` / `lib` alias。static target 不接受 subsystem、library search path、linked libraries 或 raw linker args；这些 linker-only policy 会 fail closed，而不是被静默忽略。需要 named modules/header units 的 static target 目前也会 fail closed。
+
+### Runtime / LTCG / subsystem
 
 ```powershell
 # 静态 CRT Release 风格 runtime policy
 mqb main.cpp --runtime MT
+
+# 耦合 LTCG：compile /GL + executable/DLL link /LTCG
+mqb main.cpp --ltcg
+
+# ordinary static 同样支持：compile /GL + lib.exe /LTCG
+mqb math.cpp vector.cpp --type static --ltcg -o math
 
 # Windows GUI subsystem；只改变 link policy，不应让 fresh TU 重编
 mqb winmain.cpp --subsystem windows
@@ -137,12 +164,13 @@ mqb winmain.cpp --subsystem windows
   "version": 1,
   "build": {
     "runtime": "MT",
+    "ltcg": true,
     "subsystem": "console"
   }
 }
 ```
 
-显式 CLI scalar 始终覆盖 config scalar。
+显式 CLI scalar 始终覆盖 config scalar，例如 `--no-ltcg` 会覆盖 `build.ltcg: true`。
 
 ### 运行时参数
 
@@ -218,7 +246,9 @@ C++ 重构版使用根目录 `mqb.json`，不是 PowerShell 版本的 `msvc_list
     "configuration": "release",
     "architecture": "x64",
     "standard": "latest",
+    "type": "exe",
     "runtime": "MT",
+    "ltcg": true,
     "subsystem": "console",
     "output": "game",
     "defines": ["GAME_BUILD=1"],
@@ -235,7 +265,7 @@ C++ 重构版使用根目录 `mqb.json`，不是 PowerShell 版本的 `msvc_list
 }
 ```
 
-MQB 从 invocation directory 向上查找最近的 `mqb.json`；配置文件所在目录成为 project root 和 `.mqb/` 根。完整 schema、路径基准、precedence 与 cache 行为见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
+MQB 从 invocation directory 向上查找最近的 `mqb.json`；配置文件所在目录成为 project root 和 `.mqb/` 根。`build.type` 支持 `exe` / `dll` / `static`（以及 `executable` / `dynamic` / `lib` aliases）；`build.ltcg` 是 strict boolean typed policy。完整 schema、路径基准、precedence 与 cache 行为见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
 
 ---
 
@@ -250,12 +280,14 @@ mqb <source.c|source.cpp|module.ixx|module.cppm|module.mpp> <more-sources...> [o
 |---|---|
 | `--debug` / `--release` | 选择构建配置 |
 | `--std <14|17|20|23|latest>` | 选择 C++ 标准（C TU 不发 C++ `/std`） |
+| `--type <exe|dll|static>` | 选择 executable / DLL / static-library target kind |
 | `--x86` / `--x64` | 选择目标架构 |
 | `--runtime <MD|MDd|MT|MTd>` | 选择 MSVC runtime library |
-| `--subsystem <console|windows>` | 选择 executable subsystem |
+| `--ltcg` / `--no-ltcg` | 开启/关闭耦合 LTCG：compile `/GL` + downstream `/LTCG`；legacy `-ltcg` 可开启 |
+| `--subsystem <console|windows>` | 选择 executable/DLL subsystem；static target 不适用 |
 | `-j, --jobs <N>` | 最大并发 scan/compile 数量 |
 | `-o, --output <name>` | `.mqb/bin/` 下的目标名 |
-| `--run` | 构建成功后运行 |
+| `--run` | 构建成功后运行 executable target |
 | `--discover` / `--no-discover` | 显式打开/关闭单入口 smart discovery |
 | `-I <dir>` | include directory |
 | `-D <value>` | preprocessor definition |
@@ -266,7 +298,7 @@ mqb <source.c|source.cpp|module.ixx|module.cppm|module.mpp> <more-sources...> [o
 | `--env <auto|vs|portable>` | 工具链选择 |
 | `--portable-root <dir>` | 增加 portable toolchain root 候选 |
 | `-v, --verbose` | 输出 project/config/toolchain/artifact/pipeline 信息 |
-| `--` | 后续参数原样作为 program argv |
+| `--` | 后续参数原样作为 executable program argv |
 
 `mqb --help` 是 CLI 的权威即时说明，并显示当前二进制内嵌版本。
 
@@ -280,8 +312,8 @@ mqb <source.c|source.cpp|module.ixx|module.cppm|module.mpp> <more-sources...> [o
 ├── deps/    # /sourceDependencies metadata
 ├── scan/    # /scanDependencies / P1689 metadata
 ├── ifc/     # named-module / header-unit IFC artifacts
-├── cache/   # compile/link cache metadata
-└── bin/     # current target output
+├── cache/   # compile/link/archive cache metadata
+└── bin/     # executable / DLL / static-library target artifacts
 ```
 
 Windows 上同一物理源文件即使被用户或 MSVC scanner 以不同大小写/路径别名表示，也会归一到稳定 artifact identity，避免一份 source 分裂出两套 cache/IFC。
@@ -303,9 +335,9 @@ Build plan
       ↓
 Bounded compile waves
       ↓
-Incremental link
+Incremental link / archive
       ↓
-Optional run
+Optional executable run
 ```
 
 关键边界：Source discovery 只选候选；`/scanDependencies` 管模块拓扑，`/sourceDependencies` 管实际 header freshness；Planner 与 Executor 分离；shell text 不是构建模型；缓存命中必须由 identity + outputs + dependencies 一起证明；并行度只是 execution policy；未定义 artifact/freshness policy 的能力必须 fail closed。
@@ -326,11 +358,12 @@ Optional run
 
 ## 当前路线
 
-- `v5.0.0-rc.2`：交付新增 C translation units 与 typed runtime/subsystem policy 的 C++ standalone candidate；
-- stable-v5 parity：继续 DLL target、static librarian pipeline、必要 coupled policy 与 shared PowerShell↔C++ fixtures；
-- Issue #16：继续 external/prebuilt named-module providers 与 `import std`；
-- installer/profile/default-entry cutover；
-- 满足上述 stable gate 后发布正式 v5，并逐步删除不再需要的 PowerShell Golden Reference。
+- **已发布 `v5.0.0-rc.2`**：交付原生 C translation units 与 typed runtime/subsystem policy 的 C++ standalone candidate；
+- **当前 mainline**：普通 C/C++ `exe` / `dll` / `static` typed target-kind parity 与 typed LTCG 已完成，CLI + strict `mqb.json` + compile/link/archive identity + 真实 MSVC executable/static consumer E2E 已合入，但尚未重新发布；
+- **下一主线**：shared PowerShell ↔ C++ parity fixtures/harness，用同一批 observable fixtures 对照普通目标、config precedence、incremental rebuild、libraries、run argv、x86/x64、Debug/Release 与失败行为；
+- **随后**：installer/profile/default-entry cutover → stable release workflow generalization；
+- **Issue #16**：独立继续 external/prebuilt named-module providers 与 `import std`；
+- 满足 stable gate 后，从**同一份已验证 artifact** 发布正式 `v5.0.0`，再逐步收缩 PowerShell Golden Reference。
 
 ## License
 
