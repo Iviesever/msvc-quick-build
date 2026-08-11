@@ -8,7 +8,7 @@
 > - `mqb` 是唯一受支持的安装命令入口。
 > - `mqb.json` 是唯一受支持的项目配置格式。
 > - 旧 PowerShell `build.ps1`、`build` compatibility shim、PowerShell profile 注入、legacy rollback、`msvc_list.json` migration、PowerShell-era CLI aliases 均不再支持。
-> - 已发布的 `v5.0.0-rc.2` 仍保留为历史 prerelease；最终 `v5.0.0` 会从 native-only mainline 生成，不会为了兼容旧版本重新打包旧实现。
+> - 已发布的 `v5.0.0-rc.2` 仍保留为历史 prerelease；stable release pipeline 只从 native-only mainline 生成并验证发布包，不会为了兼容旧版本重新打包旧实现。
 
 ## 主要能力
 
@@ -36,7 +36,7 @@ cmake --build cpp/build --config Release --target mqb
 .\cpp\build\apps\mqb\Release\mqb.exe --help
 ```
 
-开发构建默认版本为 `5.0.0-dev`。发布 workflow 会显式写入发布版本。
+开发构建默认版本为 `5.0.0-dev`。发布版本由 `release/VERSION` 统一定义，并由 Native Release workflow 显式写入二进制。
 
 ### 完整测试
 
@@ -183,7 +183,7 @@ PowerShell-era aliases（例如 `-config`、`-std`、`-type`、`-run`、`-env`�
 
 ## 安装
 
-当前 stable-v5 mainline 的安装策略是 native-only：
+stable-v5 的安装策略是 native-only。发布包解压后运行：
 
 ```powershell
 .\install.bat
@@ -240,8 +240,9 @@ Optional executable run
 ## 发布状态
 
 - `v5.0.0-rc.2`：已经发布的历史 C++ Release Candidate；不会被追写。
-- 当前 mainline：native-only runtime / installer / CLI contract。
-- 下一主线：generalize stable release workflow，确保 exact tested artifact = exact published artifact，并从 native-only package 发布 `v5.0.0`。
+- `release/VERSION`：当前 stable release target 为 `5.0.0`；对应 release notes 为 `release/v5.0.0.md`。
+- `Native Release`：PR 上构建、完整 Release 测试、打包、checksum、解包 manifest、byte identity 与 packaged-installer lifecycle 全部通过后才上传 artifact。
+- 正式发布只由匹配 `release/VERSION` 的 `vX.Y.Z` tag 触发；发布 job 直接下载同一 workflow run 已验证的 artifact，不做二次 rebuild。
 - Issue #16：独立跟踪 external/prebuilt named-module providers 与 `import std`。
 
 ## License
