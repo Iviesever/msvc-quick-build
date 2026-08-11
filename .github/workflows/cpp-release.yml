@@ -12,7 +12,7 @@ on:
     branches:
       - main
     paths:
-      - 'release/v5.0.0-rc.1.md'
+      - 'release/v5.0.0-rc.2.md'
 
 jobs:
   build-test-package:
@@ -20,8 +20,8 @@ jobs:
     permissions:
       contents: read
     env:
-      MQB_RELEASE_VERSION: 5.0.0-rc.1
-      MQB_PACKAGE_NAME: vscode-msvc-quick-build-v5.0.0-rc.1-windows-x64
+      MQB_RELEASE_VERSION: 5.0.0-rc.2
+      MQB_PACKAGE_NAME: vscode-msvc-quick-build-v5.0.0-rc.2-windows-x64
 
     steps:
       - name: Checkout
@@ -71,7 +71,7 @@ jobs:
           Copy-Item 'LICENSE' (Join-Path $stage 'LICENSE')
           Copy-Item 'docs/MQB_CONFIG.md' (Join-Path $stage 'MQB_CONFIG.md')
           Copy-Item 'docs/CPP_V2_ARCHITECTURE.md' (Join-Path $stage 'CPP_V2_ARCHITECTURE.md')
-          Copy-Item 'release/v5.0.0-rc.1.md' (Join-Path $stage 'RELEASE_NOTES.md')
+          Copy-Item 'release/v5.0.0-rc.2.md' (Join-Path $stage 'RELEASE_NOTES.md')
 
           $zip = Join-Path $dist ($env:MQB_PACKAGE_NAME + '.zip')
           if (Test-Path $zip) { Remove-Item $zip -Force }
@@ -102,8 +102,8 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      MQB_RELEASE_VERSION: 5.0.0-rc.1
-      MQB_PACKAGE_NAME: vscode-msvc-quick-build-v5.0.0-rc.1-windows-x64
+      MQB_RELEASE_VERSION: 5.0.0-rc.2
+      MQB_PACKAGE_NAME: vscode-msvc-quick-build-v5.0.0-rc.2-windows-x64
 
     steps:
       - name: Checkout release notes
@@ -134,6 +134,6 @@ jobs:
             --repo $env:GITHUB_REPOSITORY `
             --target $env:GITHUB_SHA `
             --title "$tag — C++ Refactor Release Candidate" `
-            --notes-file 'release/v5.0.0-rc.1.md' `
+            --notes-file 'release/v5.0.0-rc.2.md' `
             --prerelease
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
