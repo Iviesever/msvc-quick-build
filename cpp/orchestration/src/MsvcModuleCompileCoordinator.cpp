@@ -137,6 +137,18 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
             {},
             unresolved.requirement.logical_name));
     }
+    if (!request.plan.header_units.empty()) {
+        const auto& header = request.plan.header_units.front();
+        const fs::path consumer = request.plan.resolved_header_unit_dependencies.empty()
+            ? fs::path{}
+            : request.plan.resolved_header_unit_dependencies.front().consumer_source;
+        return std::unexpected(failure(
+            ModuleCompileErrorCode::unresolved_requirement,
+            "module dependency plan resolved a project-local header unit, but header-unit wave execution is not wired yet",
+            consumer,
+            header.source,
+            header.header_name));
+    }
 
     std::unordered_map<std::string, std::size_t> source_by_key;
     source_by_key.reserve(request.sources.size());
@@ -293,9 +305,7 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
         }
 
         for (const auto source_index : level) {
-            if (!attempts[source_index]) {
-                continue;
-            }
+            if (!attempts[source_index]) continue;
             if (!attempts[source_index]->has_value()) {
                 ModuleCompileError error = failure(
                     ModuleCompileErrorCode::compile_failed,
