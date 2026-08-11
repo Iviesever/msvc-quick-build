@@ -255,14 +255,41 @@ if(WIN32)
         add_test(NAME mqb.msvc.compile_integration COMMAND mqb_msvc_compile_integration_tests)
         add_test(NAME mqb.msvc.link_integration COMMAND mqb_msvc_link_integration_tests)
         add_test(NAME mqb.msvc.incremental_loop COMMAND mqb_msvc_incremental_loop_tests)
-        add_test(NAME mqb.cli.target_e2e COMMAND mqb_cli_e2e_tests $<TARGET_FILE:mqb>)
-        add_test(NAME mqb.cli.project_config_e2e COMMAND mqb_project_config_e2e_tests $<TARGET_FILE:mqb>)
-        add_test(NAME mqb.cli.parallel_e2e COMMAND mqb_parallel_cli_e2e_tests $<TARGET_FILE:mqb>)
-        add_test(NAME mqb.cli.module_e2e COMMAND mqb_module_cli_e2e_tests $<TARGET_FILE:mqb>)
-        add_test(NAME mqb.cli.build_policy_e2e COMMAND mqb_build_policy_e2e_tests $<TARGET_FILE:mqb>)
-        add_test(NAME mqb.cli.c_source_e2e COMMAND mqb_c_source_e2e_tests $<TARGET_FILE:mqb>)
-        add_test(NAME mqb.cli.runtime_subsystem_config_e2e COMMAND mqb_runtime_subsystem_config_e2e_tests $<TARGET_FILE:mqb>)
-        add_test(NAME mqb.cli.dll_target_e2e COMMAND mqb_dll_target_e2e_tests $<TARGET_FILE:mqb>)
-        add_test(NAME mqb.cli.static_library_e2e COMMAND mqb_static_library_e2e_tests $<TARGET_FILE:mqb>)
+        add_test(
+            NAME mqb.cli.target_e2e
+            COMMAND mqb_cli_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.project_config_e2e
+            COMMAND mqb_project_config_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.parallel_e2e
+            COMMAND mqb_parallel_cli_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.module_e2e
+            COMMAND mqb_module_cli_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.build_policy_e2e
+            COMMAND mqb_build_policy_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.c_source_e2e
+            COMMAND mqb_c_source_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.runtime_subsystem_config_e2e
+            COMMAND mqb_runtime_subsystem_config_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.dll_target_e2e
+            COMMAND mqb_dll_target_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.static_library_e2e
+            COMMAND mqb_static_library_e2e_tests $<TARGET_FILE:mqb>
+        )
     endif()
 endif()
