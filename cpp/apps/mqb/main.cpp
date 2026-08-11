@@ -340,6 +340,7 @@ int main(const int argc, char* argv[]) {
     cli_overrides.build.standard = options.standard_override;
     cli_overrides.build.target_kind = options.target_kind_override;
     cli_overrides.build.runtime_library = options.runtime_override;
+    cli_overrides.build.link_time_code_generation = options.ltcg_override;
     cli_overrides.build.subsystem = options.subsystem_override;
     cli_overrides.build.output_name = options.build.output_name;
     cli_overrides.build.defines = options.defines;
@@ -358,6 +359,7 @@ int main(const int argc, char* argv[]) {
     options.build.standard = effective.standard;
     options.build.target_kind = effective.target_kind;
     options.runtime_override = effective.runtime_library;
+    options.ltcg_override = effective.link_time_code_generation;
     options.subsystem_override = effective.subsystem;
     options.build.output_name = effective.output_name;
     options.discover_sources = effective.discovery_enabled;
@@ -488,6 +490,7 @@ int main(const int argc, char* argv[]) {
     compiler_options.architecture = options.build.architecture;
     compiler_options.standard = options.build.standard;
     compiler_options.runtime_library = options.runtime_override;
+    compiler_options.link_time_code_generation = effective.link_time_code_generation;
     compiler_options.defines = std::move(options.defines);
     compiler_options.include_directories = std::move(options.include_directories);
     compiler_options.additional_arguments = std::move(options.compiler_arguments);
@@ -531,6 +534,7 @@ int main(const int argc, char* argv[]) {
     link_options.architecture = options.build.architecture;
     link_options.target_kind = options.build.target_kind;
     link_options.subsystem = options.subsystem_override.value_or(mqb::LinkSubsystem::console);
+    link_options.link_time_code_generation = effective.link_time_code_generation;
     link_options.library_directories = std::move(options.library_directories);
     link_options.libraries = std::move(options.libraries);
     link_options.additional_arguments = std::move(options.linker_arguments);
@@ -565,6 +569,7 @@ int main(const int argc, char* argv[]) {
             std::cout << "  config:  " << path_text(project_config->file) << '\n';
         }
         std::cout << "  type:    " << mqb::to_string(options.build.target_kind) << '\n'
+                  << "  ltcg:    " << (effective.link_time_code_generation ? "on" : "off") << '\n'
                   << "  jobs:    " << compile_jobs
                   << (options.jobs ? "" : " (auto)") << '\n'
                   << "  cl:      " << path_text(toolchain->identity.compiler) << '\n'
