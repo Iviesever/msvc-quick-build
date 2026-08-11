@@ -95,26 +95,57 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
         request.unit,
         ArtifactKind::object,
         object_count);
-    if (object == nullptr || object_count != 1 || object->path.empty()) {
-        return std::unexpected(invalid_request(
-            "translation unit must expose exactly one non-empty object artifact"));
-    }
-
     std::size_t interface_count = 0;
     const Artifact* module_interface = find_single_artifact(
         request.unit,
         ArtifactKind::module_interface,
         interface_count);
-    if (request.unit.kind == TranslationUnitKind::module_interface) {
+
+    const bool header_unit_producer = request.unit.header_unit.has_value();
+    if (header_unit_producer) {
+        if (request.unit.kind != TranslationUnitKind::source) {
+            return std::unexpected(invalid_request(
+                "header-unit producer identity is only valid on a source-kind compile recipe"));
+        }
+        if (request.unit.header_unit->header_name.empty()) {
+            return std::unexpected(invalid_request(
+                "header-unit producer identity must have a non-empty header name"));
+        }
+        if (object_count != 0) {
+            return std::unexpected(invalid_request(
+                "incremental header-unit producer must be IFC-only and must not expose an object artifact"));
+        }
+        if (module_interface == nullptr
+            || interface_count != 1
+            || module_interface->path.empty()) {
+            return std::unexpected(invalid_request(
+                "header-unit producer must expose exactly one non-empty IFC artifact"));
+        }
+        if (!request.unit.module_references.empty()
+            || !request.unit.header_unit_references.empty()) {
+            return std::unexpected(invalid_request(
+                "nested module/header-unit imports in a header-unit producer are not supported yet"));
+        }
+    } else if (request.unit.kind == TranslationUnitKind::module_interface) {
+        if (object == nullptr || object_count != 1 || object->path.empty()) {
+            return std::unexpected(invalid_request(
+                "module interface translation unit must expose exactly one non-empty object artifact"));
+        }
         if (module_interface == nullptr
             || interface_count != 1
             || module_interface->path.empty()) {
             return std::unexpected(invalid_request(
                 "module interface translation unit must expose exactly one non-empty IFC artifact"));
         }
-    } else if (interface_count != 0) {
-        return std::unexpected(invalid_request(
-            "ordinary source translation unit must not expose an IFC output artifact"));
+    } else {
+        if (object == nullptr || object_count != 1 || object->path.empty()) {
+            return std::unexpected(invalid_request(
+                "ordinary source translation unit must expose exactly one non-empty object artifact"));
+        }
+        if (interface_count != 0) {
+            return std::unexpected(invalid_request(
+                "ordinary source translation unit must not expose an IFC output artifact"));
+        }
     }
 
     for (const auto& output : request.unit.outputs) {
@@ -126,20 +157,33 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
     }
 
     MsvcCompiler compiler{toolchain_, runner_};
-    CompileInvocation invocation;
-    invocation.source = request.unit.source;
-    invocation.object = object->path;
-    invocation.source_dependencies = request.source_dependencies_file;
-    invocation.kind = request.unit.kind;
-    if (module_interface != nullptr) {
-        invocation.module_interface_output = module_interface->path;
-    }
-    invocation.module_references = request.unit.module_references;
-    invocation.header_unit_references = request.unit.header_unit_references;
-    invocation.options = request.options;
-    invocation.working_directory = request.working_directory;
+    auto compiled = [&]() -> std::expected<process::ProcessResult, CompilerError> {
+        if (header_unit_producer) {
+            HeaderUnitCompileInvocation invocation;
+            invocation.header_name = request.unit.header_unit->header_name;
+            invocation.lookup_method = request.unit.header_unit->lookup_method;
+            invocation.interface_output = module_interface->path;
+            invocation.source_dependencies = request.source_dependencies_file;
+            invocation.options = request.options;
+            invocation.working_directory = request.working_directory;
+            return compiler.compile_header_unit(invocation);
+        }
 
-    auto compiled = compiler.compile(invocation);
+        CompileInvocation invocation;
+        invocation.source = request.unit.source;
+        invocation.object = object->path;
+        invocation.source_dependencies = request.source_dependencies_file;
+        invocation.kind = request.unit.kind;
+        if (module_interface != nullptr) {
+            invocation.module_interface_output = module_interface->path;
+        }
+        invocation.module_references = request.unit.module_references;
+        invocation.header_unit_references = request.unit.header_unit_references;
+        invocation.options = request.options;
+        invocation.working_directory = request.working_directory;
+        return compiler.compile(invocation);
+    }();
+
     if (!compiled) {
         return std::unexpected(CompileExecutorError{
             .code = CompileExecutorErrorCode::compiler_failed,
@@ -148,17 +192,13 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
         });
     }
 
-    if (!regular_file(object->path)) {
-        return std::unexpected(CompileExecutorError{
-            .code = CompileExecutorErrorCode::output_missing,
-            .message = "MSVC reported success but the planned object artifact is missing",
-        });
-    }
-    if (module_interface != nullptr && !regular_file(module_interface->path)) {
-        return std::unexpected(CompileExecutorError{
-            .code = CompileExecutorErrorCode::output_missing,
-            .message = "MSVC reported success but the planned IFC artifact is missing",
-        });
+    for (const auto& output : request.unit.outputs) {
+        if (!regular_file(output.path)) {
+            return std::unexpected(CompileExecutorError{
+                .code = CompileExecutorErrorCode::output_missing,
+                .message = "MSVC reported success but a planned compile output artifact is missing",
+            });
+        }
     }
 
     auto dependencies = MsvcSourceDependenciesReader::read(request.source_dependencies_file);

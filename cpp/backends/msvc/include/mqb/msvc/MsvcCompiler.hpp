@@ -33,6 +33,7 @@ struct HeaderUnitCompileInvocation {
     HeaderUnitLookupMethod lookup_method{HeaderUnitLookupMethod::quote};
     std::filesystem::path interface_output;
     std::optional<std::filesystem::path> object;
+    std::optional<std::filesystem::path> source_dependencies;
     CompilerOptions options;
     std::optional<std::filesystem::path> working_directory;
 };

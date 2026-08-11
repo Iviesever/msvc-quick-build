@@ -64,6 +64,19 @@ public:
         }
     }
 
+    void add_header_unit_identity(
+        const std::optional<HeaderUnitIdentity>& identity) noexcept {
+        if (!identity) {
+            return;
+        }
+        // Preserve the exact v4 byte stream for all pre-header-unit recipes so
+        // #19 caches remain reusable. Only the new producer shape appends a
+        // versioned domain marker and its lookup identity.
+        add_string("mqb.header-unit.producer.v1");
+        add_string(identity->header_name);
+        add_enum(identity->lookup_method);
+    }
+
     void add_module_references(const std::vector<ModuleReference>& references) noexcept {
         add_u64(static_cast<std::uint64_t>(references.size()));
         for (const auto& reference : references) {
@@ -142,16 +155,12 @@ BuildSignature BuildSignature::for_compile(
     StableHasher hasher;
     hasher.add_string("mqb.compile.signature.v4");
 
-    // Header dependency membership remains freshness-only state. Ordinary
-    // object placement also remains outside recipe identity. Module and header-
-    // unit references are different: their import identity -> compiled-interface
-    // mapping affects compiler routing, and a provider's planned interface-file
-    // output path is consumed semantically by downstream translation units.
     hasher.add_path(unit.source);
     hasher.add_enum(unit.kind);
     hasher.add_module_references(unit.module_references);
     hasher.add_header_unit_references(unit.header_unit_references);
     hasher.add_module_outputs(unit.outputs);
+    hasher.add_header_unit_identity(unit.header_unit);
 
     hasher.add_path(toolchain.compiler);
     hasher.add_string(toolchain.version);
@@ -188,26 +197,18 @@ BuildSignature BuildSignature::for_link(
     const LinkOptions& options) {
     StableHasher hasher;
     hasher.add_string("mqb.link.signature.v2");
-
-    // File-input order is intentionally preserved. Library resolution is kept
-    // separate from the requested library recipe, but the exact resolved files
-    // still participate in action identity so a changed search result cannot
-    // silently reuse a link built against a different file.
     hasher.add_paths(objects);
     hasher.add_paths(resolved_libraries);
     hasher.add_path(output);
-
     hasher.add_path(linker.linker);
     hasher.add_string(linker.version);
     hasher.add_string(linker.binary_stamp);
-
     hasher.add_enum(options.configuration);
     hasher.add_enum(options.architecture);
     hasher.add_enum(options.subsystem);
     hasher.add_paths(options.library_directories);
     hasher.add_strings(options.libraries);
     hasher.add_strings(options.additional_arguments);
-
     return BuildSignature{hasher.finish()};
 }
 

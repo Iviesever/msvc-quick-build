@@ -5,13 +5,14 @@
 #include <variant>
 #include <vector>
 
+#include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildTypes.hpp"
 
 namespace mqb {
 
 struct CompileAction {
     std::filesystem::path source;
-    std::filesystem::path object;
+    std::vector<Artifact> outputs;
     std::vector<BuildReason> reasons;
 };
 

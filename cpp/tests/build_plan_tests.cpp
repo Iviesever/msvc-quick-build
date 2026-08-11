@@ -3,6 +3,7 @@
 #include <string_view>
 #include <variant>
 
+#include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildAction.hpp"
 #include "mqb/core/BuildPlan.hpp"
 #include "mqb/core/BuildTypes.hpp"
@@ -26,7 +27,9 @@ int main() {
 
     mqb::CompileAction compile;
     compile.source = std::filesystem::path{"src/main.cpp"};
-    compile.object = std::filesystem::path{"build/main.obj"};
+    compile.outputs = {
+        mqb::Artifact{std::filesystem::path{"build/main.obj"}, mqb::ArtifactKind::object},
+    };
     compile.reasons = {mqb::BuildReason::source_changed};
     plan.actions.emplace_back(compile);
 
@@ -38,8 +41,10 @@ int main() {
     const auto& stored_compile = std::get<mqb::CompileAction>(plan.actions.front());
     expect(stored_compile.source == std::filesystem::path{"src/main.cpp"},
            "compile action should retain its source path");
-    expect(stored_compile.object == std::filesystem::path{"build/main.obj"},
-           "compile action should retain its object path");
+    expect(stored_compile.outputs.size() == 1
+               && stored_compile.outputs.front().path == std::filesystem::path{"build/main.obj"}
+               && stored_compile.outputs.front().kind == mqb::ArtifactKind::object,
+           "compile action should retain its complete planned output set");
     expect(stored_compile.reasons.size() == 1,
            "compile action should retain rebuild reasons");
     expect(stored_compile.reasons.front() == mqb::BuildReason::source_changed,
