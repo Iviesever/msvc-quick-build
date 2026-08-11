@@ -539,7 +539,9 @@ SourceDiscovery::discover(const Request& request) {
             const std::string comment_free = strip_comments_preserve_literals(*text);
             record.local_includes = parse_local_includes(comment_free);
             if (record.kind == FileKind::translation_unit) {
-                record.module_syntax = ModuleSyntaxParser::parse(*text);
+                if (is_cpp_translation_unit_path(record.path)) {
+                    record.module_syntax = ModuleSyntaxParser::parse(*text);
+                }
                 record.defines_main = ordinary_translation_unit(record)
                     && contains_main(comment_free);
             }
