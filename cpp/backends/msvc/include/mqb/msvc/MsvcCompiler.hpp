@@ -13,6 +13,7 @@
 
 namespace mqb::msvc {
 
+using HeaderUnitReference = mqb::HeaderUnitReference;
 using ModuleReference = mqb::ModuleReference;
 
 struct CompileInvocation {
@@ -22,6 +23,16 @@ struct CompileInvocation {
     TranslationUnitKind kind{TranslationUnitKind::source};
     std::optional<std::filesystem::path> module_interface_output;
     std::vector<ModuleReference> module_references;
+    std::vector<HeaderUnitReference> header_unit_references;
+    CompilerOptions options;
+    std::optional<std::filesystem::path> working_directory;
+};
+
+struct HeaderUnitCompileInvocation {
+    std::string header_name;
+    HeaderUnitLookupMethod lookup_method{HeaderUnitLookupMethod::quote};
+    std::filesystem::path interface_output;
+    std::optional<std::filesystem::path> object;
     CompilerOptions options;
     std::optional<std::filesystem::path> working_directory;
 };
@@ -48,8 +59,14 @@ public:
     [[nodiscard]] static std::expected<std::vector<std::string>, CompilerError>
     build_arguments(const CompileInvocation& invocation);
 
+    [[nodiscard]] static std::expected<std::vector<std::string>, CompilerError>
+    build_header_unit_arguments(const HeaderUnitCompileInvocation& invocation);
+
     [[nodiscard]] std::expected<process::ProcessResult, CompilerError>
     compile(const CompileInvocation& invocation) const;
+
+    [[nodiscard]] std::expected<process::ProcessResult, CompilerError>
+    compile_header_unit(const HeaderUnitCompileInvocation& invocation) const;
 
 private:
     const MsvcToolchain& toolchain_;

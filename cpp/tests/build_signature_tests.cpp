@@ -151,6 +151,34 @@ int main() {
                != two_references,
            "ordered module-reference routing should be stable build identity");
 
+    auto header_consumer = unit;
+    header_consumer.header_unit_references = {
+        mqb::HeaderUnitReference{
+            .header_name = "util.hpp",
+            .lookup_method = mqb::HeaderUnitLookupMethod::quote,
+            .interface_file = "ifc/util.ifc",
+        },
+    };
+    const auto header_baseline = mqb::BuildSignature::for_compile(
+        header_consumer, toolchain, options);
+    expect(header_baseline != baseline,
+           "header-unit references should participate in consumer recipe identity");
+
+    auto angle_header = header_consumer;
+    angle_header.header_unit_references[0].lookup_method = mqb::HeaderUnitLookupMethod::angle;
+    expect(mqb::BuildSignature::for_compile(angle_header, toolchain, options) != header_baseline,
+           "header-unit lookup method should participate in consumer identity");
+
+    auto renamed_header = header_consumer;
+    renamed_header.header_unit_references[0].header_name = "other.hpp";
+    expect(mqb::BuildSignature::for_compile(renamed_header, toolchain, options) != header_baseline,
+           "header-unit import spelling should participate in consumer identity");
+
+    auto moved_header_ifc = header_consumer;
+    moved_header_ifc.header_unit_references[0].interface_file = "ifc/other-util.ifc";
+    expect(mqb::BuildSignature::for_compile(moved_header_ifc, toolchain, options) != header_baseline,
+           "header-unit IFC path should participate in consumer identity");
+
     auto dependency_only_change = unit;
     dependency_only_change.dependencies.emplace_back("include/transitive.hpp");
     expect(mqb::BuildSignature::for_compile(dependency_only_change, toolchain, options) == baseline,
