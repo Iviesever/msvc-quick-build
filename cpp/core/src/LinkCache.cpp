@@ -70,6 +70,18 @@ void validate_freshness(
     }
 }
 
+void validate_side_outputs(
+    const std::span<const std::filesystem::path> cached_side_outputs,
+    const std::span<const FileSnapshot> snapshots,
+    std::vector<BuildReason>& reasons) {
+    for (const auto& output : cached_side_outputs) {
+        const auto* snapshot = find_snapshot(snapshots, output);
+        if (snapshot == nullptr || !snapshot->exists) {
+            add_reason(reasons, BuildReason::missing_output);
+        }
+    }
+}
+
 } // namespace
 
 LinkCacheValidation LinkCacheValidator::validate(
@@ -91,6 +103,7 @@ LinkCacheValidation LinkCacheValidator::validate(
         output_snapshot,
         object_snapshots,
         std::span<const FileSnapshot>{},
+        std::span<const FileSnapshot>{},
         force_relink);
 }
 
@@ -104,6 +117,32 @@ LinkCacheValidation LinkCacheValidator::validate(
     const FileSnapshot& output_snapshot,
     const std::span<const FileSnapshot> object_snapshots,
     const std::span<const FileSnapshot> library_snapshots,
+    const bool force_relink) {
+    return validate(
+        current_objects,
+        current_libraries,
+        current_output,
+        current_linker,
+        current_options,
+        cached_entry,
+        output_snapshot,
+        object_snapshots,
+        library_snapshots,
+        std::span<const FileSnapshot>{},
+        force_relink);
+}
+
+LinkCacheValidation LinkCacheValidator::validate(
+    const std::span<const std::filesystem::path> current_objects,
+    const std::span<const std::filesystem::path> current_libraries,
+    const std::filesystem::path& current_output,
+    const LinkerIdentity& current_linker,
+    const LinkOptions& current_options,
+    const std::optional<LinkCacheEntry>& cached_entry,
+    const FileSnapshot& output_snapshot,
+    const std::span<const FileSnapshot> object_snapshots,
+    const std::span<const FileSnapshot> library_snapshots,
+    const std::span<const FileSnapshot> side_output_snapshots,
     const bool force_relink) {
     LinkCacheValidation result;
 
@@ -149,6 +188,7 @@ LinkCacheValidation LinkCacheValidator::validate(
     if (!output_snapshot.exists) {
         add_reason(result.reasons, BuildReason::missing_output);
     }
+    validate_side_outputs(cached.side_outputs, side_output_snapshots, result.reasons);
 
     validate_freshness(current_objects, object_snapshots, output_snapshot, result.reasons);
     validate_freshness(current_libraries, library_snapshots, output_snapshot, result.reasons);
