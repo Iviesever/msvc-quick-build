@@ -207,9 +207,16 @@ int run_module_target(
     orchestration::MsvcModuleTargetCoordinator module_target{scanner, module_compile, incremental_link};
     orchestration::MsvcTargetRouter router{ordinary_target, module_target};
 
+    auto artifact_layout = ProjectArtifactLayout::create(request.project_root);
+    if (!artifact_layout) {
+        std::cerr << "error: " << artifact_layout.error().message << '\n';
+        return 2;
+    }
+
     orchestration::RoutedTargetRequest target_request{
         .sources = std::move(routed_sources),
         .target = request.target,
+        .artifact_layout = std::move(*artifact_layout),
         .compiler_options = std::move(request.compiler_options),
         .link_options = std::move(request.link_options),
         .working_directory = request.project_root,
