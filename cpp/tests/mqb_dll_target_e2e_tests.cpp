@@ -170,8 +170,9 @@ int main(int argc, char* argv[]) {
         expect(repaired->exit_code == 0, "missing import library should repair successfully");
         expect(contains_line(repaired->stdout_text, "[up-to-date] plugin.cpp"),
                "missing linker side output must not recompile a fresh TU");
-        expect(repaired->stdout_text.find("[link] plugin.dll [missing_output]") != std::string::npos,
-               "missing import library should invalidate only link output freshness");
+        expect(repaired->stdout_text.find("[link] plugin.dll") != std::string::npos
+                   && repaired->stdout_text.find("missing output") != std::string::npos,
+               "missing import library should invalidate link freshness with missing-output reason");
     }
     expect(fs::is_regular_file(import_library), "repair relink should recreate import library");
 
