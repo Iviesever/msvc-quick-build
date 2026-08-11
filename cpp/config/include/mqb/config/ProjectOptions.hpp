@@ -19,6 +19,7 @@ struct EffectiveProjectOptions {
     Architecture architecture{Architecture::x64};
     CppStandard standard{CppStandard::cpp23};
     std::optional<RuntimeLibrary> runtime_library;
+    bool link_time_code_generation{false};
     LinkSubsystem subsystem{LinkSubsystem::console};
     TargetKind target_kind{TargetKind::executable};
     std::optional<std::string> output_name;
