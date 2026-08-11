@@ -38,7 +38,9 @@ struct Options {
     bool show_help{false};
 };
 
-struct Error { std::string message; };
+struct Error {
+    std::string message;
+};
 
 [[nodiscard]] std::expected<Options, Error>
 parse_arguments(std::span<const std::string_view> arguments);
