@@ -95,8 +95,25 @@ MsvcLinker::identity(const MsvcToolchain& toolchain) {
     };
 }
 
+fs::path MsvcLinker::import_library_path(const fs::path& output) {
+    fs::path import_library = output;
+    import_library.replace_extension(".lib");
+    return import_library;
+}
+
+fs::path MsvcLinker::export_file_path(const fs::path& output) {
+    fs::path export_file = output;
+    export_file.replace_extension(".exp");
+    return export_file;
+}
+
 std::expected<std::vector<std::string>, LinkerError>
 MsvcLinker::build_arguments(const LinkInvocation& invocation) {
+    if (invocation.options.target_kind == TargetKind::static_library) {
+        return std::unexpected(failure(
+            LinkerErrorCode::invalid_request,
+            "static-library targets require the MSVC librarian pipeline"));
+    }
     if (invocation.objects.empty()) {
         return std::unexpected(failure(
             LinkerErrorCode::invalid_request,
@@ -129,7 +146,7 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        12
+        14
         + invocation.objects.size()
         + invocation.options.library_directories.size()
         + invocation.libraries.size()
@@ -167,6 +184,10 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
 
     // Structured routing is emitted after raw flags so the BuildPlan owns the
     // final target identity even if a user supplied a conflicting raw switch.
+    if (invocation.options.target_kind == TargetKind::dynamic_library) {
+        arguments.emplace_back("/DLL");
+        arguments.push_back("/IMPLIB:" + path_to_utf8(import_library_path(invocation.output)));
+    }
     arguments.push_back(architecture_argument(invocation.options.architecture));
     arguments.push_back(subsystem_argument(invocation.options.subsystem));
     arguments.push_back("/OUT:" + path_to_utf8(invocation.output));
