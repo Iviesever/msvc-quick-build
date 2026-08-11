@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/TranslationUnitClassifier.hpp"
+
 namespace mqb::msvc {
 namespace {
 
@@ -69,19 +71,25 @@ void append_configuration_arguments(
 
 [[nodiscard]] std::expected<void, CompilerError> append_common_compile_arguments(
     std::vector<std::string>& arguments,
-    const CompilerOptions& options) {
+    const CompilerOptions& options,
+    const bool c_translation_unit) {
     arguments.emplace_back("/nologo");
     arguments.emplace_back("/c");
     arguments.emplace_back("/utf-8");
     arguments.emplace_back("/W3");
-    arguments.emplace_back("/EHsc");
-    arguments.emplace_back("/permissive-");
-    arguments.emplace_back("/Zc:__cplusplus");
-    arguments.emplace_back("/Zc:preprocessor");
+
+    if (!c_translation_unit) {
+        arguments.emplace_back("/EHsc");
+        arguments.emplace_back("/permissive-");
+        arguments.emplace_back("/Zc:__cplusplus");
+        arguments.emplace_back("/Zc:preprocessor");
+    }
     arguments.emplace_back("/diagnostics:column");
 
     append_configuration_arguments(arguments, options.configuration);
-    arguments.push_back(standard_argument(options.standard));
+    if (!c_translation_unit) {
+        arguments.push_back(standard_argument(options.standard));
+    }
 
     for (const auto& define : options.defines) {
         if (define.empty()) {
@@ -138,6 +146,10 @@ void append_configuration_arguments(
         || invocation.module_interface_output.has_value()
         || !invocation.module_references.empty()
         || !invocation.header_unit_references.empty();
+    if (uses_module_contract && is_c_translation_unit_path(invocation.source)) {
+        return std::unexpected(invalid_request(
+            "C translation units cannot participate in a C++ module/header-unit compile contract"));
+    }
     if (uses_module_contract && predates_cpp20(invocation.options.standard)) {
         return std::unexpected(invalid_request(
             "module and header-unit compilation requires C++20 or newer"));
@@ -255,17 +267,27 @@ MsvcCompiler::build_arguments(const CompileInvocation& invocation) {
         return std::unexpected(module_contract.error());
     }
 
+    const bool c_translation_unit = is_c_translation_unit_path(invocation.source);
     std::vector<std::string> arguments;
     arguments.reserve(
-        20
+        21
         + invocation.options.defines.size()
         + invocation.options.include_directories.size()
         + invocation.options.additional_arguments.size()
         + (invocation.module_references.size() * 2)
         + (invocation.header_unit_references.size() * 2));
 
-    auto common = append_common_compile_arguments(arguments, invocation.options);
+    auto common = append_common_compile_arguments(
+        arguments,
+        invocation.options,
+        c_translation_unit);
     if (!common) return std::unexpected(common.error());
+
+    if (c_translation_unit) {
+        // Keep source-language ownership structural. A raw /TP supplied earlier
+        // cannot silently turn a .c target into C++ without changing its path.
+        arguments.emplace_back("/TC");
+    }
 
     if (invocation.kind == TranslationUnitKind::module_interface) {
         arguments.emplace_back("/interface");
@@ -325,7 +347,7 @@ MsvcCompiler::build_header_unit_arguments(const HeaderUnitCompileInvocation& inv
         + invocation.options.include_directories.size()
         + invocation.options.additional_arguments.size());
 
-    auto common = append_common_compile_arguments(arguments, invocation.options);
+    auto common = append_common_compile_arguments(arguments, invocation.options, false);
     if (!common) return std::unexpected(common.error());
 
     arguments.emplace_back("/exportHeader");

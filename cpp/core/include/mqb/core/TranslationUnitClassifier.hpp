@@ -11,5 +11,7 @@ namespace mqb {
 classify_translation_unit_path(const std::filesystem::path& path);
 
 [[nodiscard]] bool is_translation_unit_path(const std::filesystem::path& path);
+[[nodiscard]] bool is_c_translation_unit_path(const std::filesystem::path& path);
+[[nodiscard]] bool is_cpp_translation_unit_path(const std::filesystem::path& path);
 
 } // namespace mqb
