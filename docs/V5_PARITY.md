@@ -35,7 +35,7 @@ Status meanings:
 | `-std` | `--std`; legacy `-std` accepts 14/17/20/23/latest | **compat** |
 | `-type exe/dll/static` | `--type exe/dll/static`; legacy `-type` accepted; same typed target kind is available in `mqb.json` | **compat** |
 | `-x86` | `--x86`; legacy spelling accepted | **compat** |
-| default x64 | `--x64` / x64 default; legacy `-x64` accepted | **compat** |
+| default x64 | PowerShell has no `-x64` switch: x64 is implicit. Native is also x64 by default and supports explicit `--x64` (plus parser-compatible `-x64`) | **ready**; real shared architecture parity is covered in #42 |
 | `-I`, `-include` | `-I`; legacy `-include` accepted | **compat** |
 | `-L`, `-libpath` | `-L`, `--lib-path`; legacy `-libpath` accepted | **compat** |
 | `-libs` | `-l`, `--lib`; legacy `-libs <value>` accepted and repeatable | **compat** for scalar/repeated values; shell-array tokenization is not emulated |
@@ -94,17 +94,19 @@ Typed LTCG is a single coupled policy, not two user-maintained raw lists. Enabli
 
 | Legacy behavior | Native C++ status | Stable-v5 decision |
 | --- | --- | --- |
-| `msvc_list.json`, upward search up to five levels | native uses nearest upward `mqb.json` | **migrate** to `mqb.json`; provide upgrade guidance/tooling rather than keeping two authoritative schemas forever |
-| CLI overrides scalar config | ready, including type/runtime/LTCG/subsystem | **ready** |
-| additive list precedence | config lists first, CLI lists append | **ready** |
-| 14/17/20/23/latest standard config | ready | **ready** |
-| target-kind config | strict `build.type` supports `exe`/`dll`/`static` (`lib` alias accepted); real static config routing and CLI target-kind precedence are covered | **ready** |
+| `msvc_list.json`, upward search up to five levels | nearest-upward strict `mqb.json`; paired config-only + CLI-override shared fixtures validate semantic migration | **migrate** to `mqb.json` using `V5_CONFIG_MIGRATION.md`; do not keep two authoritative schemas |
+| CLI overrides scalar config | paired Golden/native fixture validates Release/static/losing-output config overridden by Debug/exe/new-output CLI while untouched config values remain active | **ready** |
+| additive list precedence | native consistently applies config entries before CLI entries; legacy ordering differs by field (notably include/libpath/libs are CLI-first) | **migrate ordering semantics**; review order-sensitive lists rather than emulating the inconsistency |
+| 14/17/20/23/latest standard config | ready; paired migration fixture validates C++17 through `_MSVC_LANG` | **ready** |
+| target-kind config | strict `build.type` supports `exe`/`dll`/`static` (`lib` alias accepted); real static config routing and paired CLI target-kind precedence are covered | **ready** |
 | runtime/subsystem config | typed strict-schema fields with real cache-invalidation E2E | **ready** |
 | LTCG config | strict boolean `build.ltcg`; CLI `--ltcg`/`--no-ltcg` precedence and real executable/static E2E | **ready** |
-| include/lib/define/library config | ready in `mqb.json` | **ready** |
-| `compiler_args` / `linker_args` | ready in strict `mqb.json` v1 schema | **ready** |
-| source discovery excludes | ready with the native discovery schema | **ready** |
+| include/lib/define/library config | native fields are ready; paired migration fixture validates config-relative include + config define and additive CLI define | **ready**, subject to list-order migration above |
+| `compiler_args` / `linker_args` | ready in strict `mqb.json` v1 schema | **ready** after argv/tokenization review during migration |
+| legacy `exclude` discovery glob | native has strict path-oriented `exclude_dirs` / `extra_sources` / `exclude_sources`; semantics are intentionally different | **migrate** discovery intent explicitly; do not mechanically rename the field |
 | legacy config keys for remaining coupled policies | no remaining high-value coupled policy is accepted by default solely through raw-list synchronization | **implement** only when parity fixtures prove another typed policy is required |
+
+The authoritative field mapping, search-depth difference, list-order caveat, discovery conversion, long-tail policy review, architecture difference, and output-layout change are documented in `docs/V5_CONFIG_MIGRATION.md`. The paired fixture starts both implementations from `nested/work`, so config discovery and config-root-relative include resolution are exercised rather than inferred from parser unit tests.
 
 ## Toolchain/environment behavior
 
@@ -145,6 +147,6 @@ Project-local named modules and project-local header units are in the RC/stable-
 8. Native DLL target kind with typed linker routing, deterministic import library, and side-output repair. **Done in #35.**
 9. Static-library target with an explicit `lib.exe`/librarian backend, archive cache owner, strict `mqb.json` target kind, and real CLI/config consumer coverage. **Done in #36 + #37.**
 10. Close the high-value coupled MSVC LTCG gap with typed `/GL` + downstream `/LTCG`, config/CLI precedence, cache identities, and real executable/static E2E. **Done in #39.** Charset remains evidence-driven rather than an automatic typed-surface requirement.
-11. Shared PowerShell-vs-C++ fixtures for ordinary targets, config precedence, incremental rebuilds, libraries, run argv, x86/x64, Debug/Release, and failure behavior. **Harness foundation in #40:** same committed fixtures run through isolated PowerShell/C++ sandboxes with observable-result comparison; initial single-TU, explicit multi-TU, Debug, and Release scenarios are covered. Config/incremental/libraries/run argv/x86/x64/failure scenarios remain follow-up slices.
+11. Shared PowerShell-vs-C++ observable parity. **Completed through #40 + #41 + #42 + #43:** #40 established same-fixture isolated sandboxes and single/multi-TU + Debug/Release; #41 added warm no-op/source-mutation incremental behavior and shared simple-token run argv; #42 added static-library producer/consumer, default-x64/x86, and compile-failure behavior; #43 adds paired `msvc_list.json` -> `mqb.json` project-config discovery/mapping and scalar CLI precedence. Additional parity work should now be evidence-driven by cutover findings rather than expanding the matrix speculatively.
 12. Installer/profile/`build` command cutover and clean-machine upgrade/rollback validation.
 13. Generalize the release workflow and publish stable v5 only from the exact validated artifact.

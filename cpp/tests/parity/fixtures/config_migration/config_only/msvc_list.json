@@ -1,0 +1,8 @@
+{
+  "config": "release",
+  "std": "17",
+  "type": "exe",
+  "output": "config_file",
+  "defines": ["PARITY_CONFIG=41"],
+  "include": ["include"]
+}

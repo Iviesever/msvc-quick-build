@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "build": {
+    "configuration": "release",
+    "standard": "17",
+    "type": "static",
+    "output": "should_not_win",
+    "defines": ["PARITY_CONFIG=41"],
+    "include_dirs": ["include"]
+  }
+}
