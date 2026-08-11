@@ -20,6 +20,10 @@ namespace mqb::orchestration {
 struct IncrementalModuleTargetRequest {
     std::vector<ModuleCompileSourceRequest> sources;
     TargetArtifacts target;
+    // Header-unit providers are discovered only after P1689 scanning. When a
+    // graph contains project-local header units, the target coordinator uses
+    // this layout to assign their IFC/dependency/cache artifacts dynamically.
+    std::optional<ProjectArtifactLayout> artifact_layout;
     CompilerOptions compiler_options;
     LinkOptions link_options;
     std::filesystem::path working_directory;
@@ -38,6 +42,9 @@ enum class IncrementalModuleTargetErrorCode {
     duplicate_source,
     invalid_artifact,
     artifact_collision,
+    artifact_layout_missing,
+    artifact_layout_failed,
+    invalid_header_unit,
     scheduling_failed,
     scan_failed,
     invalid_scan_result,
@@ -51,6 +58,7 @@ struct IncrementalModuleTargetError {
     std::string message;
     std::filesystem::path source;
     std::filesystem::path artifact;
+    std::optional<ArtifactLayoutError> artifact_layout_error;
     std::optional<msvc::ModuleScanError> scan_error;
     std::optional<modules::ModuleGraphError> graph_error;
     std::optional<ModuleCompileError> compile_error;
@@ -58,7 +66,9 @@ struct IncrementalModuleTargetError {
 };
 
 struct IncrementalModuleTargetResult {
-    // Scan and compile results both preserve request.sources ordering.
+    // Scan and ordinary/module compile results preserve request.sources order.
+    // Dynamically discovered header-unit compile results preserve graph
+    // header_units order through ModuleCompileWaveResult.
     std::vector<ModuleTargetScanResult> scans;
     modules::ModuleDependencyPlan plan;
     ModuleCompileWaveResult compiles;

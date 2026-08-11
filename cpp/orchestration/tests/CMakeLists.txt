@@ -71,10 +71,15 @@ if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
     target_link_libraries(mqb_header_unit_wave_integration_tests PRIVATE mqb_orchestration mqb_modules mqb_msvc mqb_platform_windows)
     target_compile_features(mqb_header_unit_wave_integration_tests PRIVATE cxx_std_23)
 
+    add_executable(mqb_header_unit_target_integration_tests header_unit_target_integration_tests.cpp)
+    target_link_libraries(mqb_header_unit_target_integration_tests PRIVATE mqb_orchestration mqb_modules mqb_msvc mqb_platform_windows)
+    target_compile_features(mqb_header_unit_target_integration_tests PRIVATE cxx_std_23)
+
     foreach(test_target IN ITEMS
         mqb_module_target_integration_tests
         mqb_header_unit_incremental_integration_tests
         mqb_header_unit_wave_integration_tests
+        mqb_header_unit_target_integration_tests
     )
         if(MSVC)
             target_compile_options(${test_target} PRIVATE /W4 /permissive-)
@@ -86,4 +91,5 @@ if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
     add_test(NAME mqb.orchestration.module_target_integration COMMAND mqb_module_target_integration_tests)
     add_test(NAME mqb.orchestration.header_unit_incremental_integration COMMAND mqb_header_unit_incremental_integration_tests)
     add_test(NAME mqb.orchestration.header_unit_wave_integration COMMAND mqb_header_unit_wave_integration_tests)
+    add_test(NAME mqb.orchestration.header_unit_target_integration COMMAND mqb_header_unit_target_integration_tests)
 endif()

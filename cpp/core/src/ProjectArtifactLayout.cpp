@@ -1,5 +1,7 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
@@ -24,6 +26,35 @@ namespace fs = std::filesystem;
     };
 }
 
+[[nodiscard]] fs::path normalize_existing_identity(const fs::path& path) {
+    fs::path normalized = path.lexically_normal();
+    std::error_code error_code;
+    if (!fs::exists(normalized, error_code) || error_code) {
+        return normalized;
+    }
+
+    error_code.clear();
+    fs::path canonical = fs::weakly_canonical(normalized, error_code);
+    if (error_code || canonical.empty()) {
+        return normalized;
+    }
+    return canonical.lexically_normal();
+}
+
+[[nodiscard]] fs::path windows_identity_casefold(fs::path path) {
+#ifdef _WIN32
+    std::string value = path.generic_string();
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return fs::path{value};
+#else
+    return path;
+#endif
+}
+
 [[nodiscard]] bool safe_relative(const fs::path& relative) {
     if (relative.empty() || relative.is_absolute() || relative == ".") {
         return false;
@@ -36,11 +67,34 @@ namespace fs = std::filesystem;
     return true;
 }
 
+[[nodiscard]] std::optional<fs::path> physical_relative(
+    const fs::path& project_root,
+    const fs::path& source) {
+    std::error_code error_code;
+    if (!fs::exists(project_root, error_code) || error_code) return std::nullopt;
+    error_code.clear();
+    if (!fs::exists(source, error_code) || error_code) return std::nullopt;
+
+    fs::path current = source.parent_path();
+    fs::path relative = source.filename();
+    while (!current.empty()) {
+        error_code.clear();
+        if (fs::equivalent(current, project_root, error_code) && !error_code) {
+            return windows_identity_casefold(relative.lexically_normal());
+        }
+        const fs::path parent = current.parent_path();
+        if (parent.empty() || parent == current) break;
+        relative = current.filename() / relative;
+        current = parent;
+    }
+    return std::nullopt;
+}
+
 [[nodiscard]] std::string stable_path_hash(const fs::path& path) {
     constexpr std::uint64_t offset = 14695981039346656037ull;
     constexpr std::uint64_t prime = 1099511628211ull;
     std::uint64_t hash = offset;
-    const auto bytes = path.lexically_normal().generic_u8string();
+    const auto bytes = windows_identity_casefold(path.lexically_normal()).generic_u8string();
     for (const char8_t byte : bytes) {
         hash ^= static_cast<std::uint8_t>(byte);
         hash *= prime;
@@ -54,20 +108,33 @@ namespace fs = std::filesystem;
 [[nodiscard]] fs::path source_key(
     const fs::path& project_root,
     const fs::path& source) {
-    const fs::path normalized_source = source.lexically_normal();
-    const fs::path relative = normalized_source.lexically_relative(project_root);
+    const fs::path normalized_source = normalize_existing_identity(source);
+
+    // For existing inputs, prefer physical ancestry over textual prefixes.
+    // Windows scanners may return a case/8.3/canonical spelling different from
+    // the caller while still naming the same file under the same project root.
+    if (auto relative = physical_relative(project_root, normalized_source)) {
+        return *relative;
+    }
+
+    fs::path relative = normalized_source.lexically_relative(project_root);
+#ifdef _WIN32
+    // Non-existing planned inputs cannot use fs::equivalent. Keep Windows
+    // identity case-insensitive so textual aliases still converge.
+    relative = windows_identity_casefold(std::move(relative));
+#endif
     if (safe_relative(relative)) {
         return relative;
     }
+
+    const fs::path identity = windows_identity_casefold(normalized_source);
     return fs::path{".external"}
-        / stable_path_hash(normalized_source)
-        / normalized_source.filename();
+        / stable_path_hash(identity)
+        / identity.filename();
 }
 
 [[nodiscard]] bool valid_target_name(const std::string_view target_name) {
-    if (target_name.empty()) {
-        return false;
-    }
+    if (target_name.empty()) return false;
     const fs::path path{std::string{target_name}};
     return !path.has_root_path()
         && !path.has_parent_path()
@@ -91,7 +158,7 @@ ProjectArtifactLayout::create(fs::path project_root) {
             {},
             "project root must not be empty"));
     }
-    project_root = project_root.lexically_normal();
+    project_root = normalize_existing_identity(project_root);
     return ProjectArtifactLayout{
         project_root,
         project_root / ".mqb",
