@@ -386,7 +386,8 @@ void add_undirected_edge(
 [[nodiscard]] bool file_requires_module_pipeline(const FileRecord& file) {
     return module_interface_translation_unit(file)
         || file.module_syntax.declared_module.has_value()
-        || !file.module_syntax.imported_modules.empty();
+        || !file.module_syntax.imported_modules.empty()
+        || file.module_syntax.imports_header_unit;
 }
 
 } // namespace
