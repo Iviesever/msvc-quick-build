@@ -45,6 +45,12 @@ public:
     [[nodiscard]] static std::expected<LinkerIdentity, LinkerError>
     identity(const MsvcToolchain& toolchain);
 
+    [[nodiscard]] static std::filesystem::path
+    import_library_path(const std::filesystem::path& output);
+
+    [[nodiscard]] static std::filesystem::path
+    export_file_path(const std::filesystem::path& output);
+
     [[nodiscard]] static std::expected<std::vector<std::string>, LinkerError>
     build_arguments(const LinkInvocation& invocation);
 
