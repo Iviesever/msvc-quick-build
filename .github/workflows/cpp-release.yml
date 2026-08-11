@@ -28,11 +28,12 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Configure Release
-        run: >-
-          cmake -S cpp -B cpp/build-release
-          -G "Visual Studio 18 2026" -A x64
-          -DMQB_ENABLE_INSTALLED_MSVC_TESTS=ON
-          -DMQB_VERSION=${{ env.MQB_RELEASE_VERSION }}
+        shell: pwsh
+        run: |
+          cmake -S cpp -B cpp/build-release `
+            -G "Visual Studio 18 2026" -A x64 `
+            -DMQB_ENABLE_INSTALLED_MSVC_TESTS=ON `
+            "-DMQB_VERSION=$env:MQB_RELEASE_VERSION"
 
       - name: Build Release
         run: cmake --build cpp/build-release --config Release --parallel
