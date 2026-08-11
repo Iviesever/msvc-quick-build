@@ -25,6 +25,7 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
     "standard": "17",
     "type": "exe",
     "runtime": "MT",
+    "ltcg": true,
     "subsystem": "console",
     "output": "game",
     "defines": [
@@ -73,6 +74,7 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
 | `standard` | string | `14`, `17`, `20`, `23`, or `latest` (`c++14`, `c++17`, `c++20`, `c++23`, `c++latest` are also accepted) |
 | `type` | string | `exe`, `dll`, or `static` (`executable`, `dynamic`, and `lib` aliases are also accepted) |
 | `runtime` | string | MSVC CRT runtime: `MD`, `MDd`, `MT`, or `MTd` |
+| `ltcg` | boolean | enable/disable coupled MSVC link-time code generation; `true` emits compile `/GL` plus downstream `/LTCG` |
 | `subsystem` | string | PE subsystem: `console` or `windows`; not valid for a static target |
 | `output` | string | target name under `.mqb/bin/`; MQB supplies the `.exe`, `.dll`, or `.lib` suffix from `type` |
 | `defines` | string array | preprocessor definitions, without `/D` |
@@ -84,11 +86,13 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
 
 All path-valued config entries are resolved relative to the directory containing `mqb.json`, not the shell's current working directory.
 
-`type`, `runtime`, and `subsystem` are typed policy, not shorthand for raw flags. The MSVC backend remains the sole owner of their command-line spelling. An explicit typed runtime is emitted after raw compiler arguments; typed DLL/output/subsystem routing is emitted after raw linker arguments, so conflicting raw `/MD*`, `/DLL`, `/IMPLIB`, `/SUBSYSTEM:*`, or `/OUT:*` switches cannot silently override the typed project policy.
+`type`, `runtime`, `ltcg`, and `subsystem` are typed policy, not shorthand for raw flags. The MSVC backend remains the sole owner of their command-line spelling. Explicit typed runtime and LTCG compile policy are emitted after raw compiler arguments; typed LTCG downstream policy and DLL/output/subsystem routing are emitted after raw linker arguments. Therefore conflicting raw `/MD*`, `/GL-`, `/LTCG:*`, `/DLL`, `/IMPLIB`, `/SUBSYSTEM:*`, or `/OUT:*` switches cannot silently override the corresponding typed project policy.
+
+Typed LTCG is intentionally coupled. `build.ltcg: true` means `/GL` is part of every affected compilation and `/LTCG` is part of the downstream target recipe. Executable/DLL targets pass `/LTCG` to `link.exe`; static targets pass `/LTCG` to `lib.exe`. Debug executable/DLL LTCG disables MSVC incremental linking (`/INCREMENTAL:NO`) because the typed LTCG contract must not produce an internally incompatible linker recipe.
 
 For a DLL target that exports symbols, MQB supplies a deterministic import-library location beside the DLL (`.mqb/bin/<target>.lib`). Linker side outputs that were actually produced are recorded in the link cache; deleting a recorded import library or export file invalidates link freshness and causes a repair relink without recompiling otherwise-fresh translation units.
 
-For a static target, MQB routes the compiled ordinary C/C++ object set to the dedicated `lib.exe` librarian pipeline. Static archive metadata lives under `.mqb/cache/archive/<target>.archivecache`, separate from executable/DLL link cache metadata. Linker-only policy (`subsystem`, `library_dirs`, `libraries`, or `linker_args`) is rejected for static targets rather than silently ignored. Static targets that require the named-module/header-unit pipeline remain fail-closed until archive topology is explicitly validated.
+For a static target, MQB routes the compiled ordinary C/C++ object set to the dedicated `lib.exe` librarian pipeline. Static archive metadata lives under `.mqb/cache/archive/<target>.archivecache`, separate from executable/DLL link cache metadata. Linker-only policy (`subsystem`, `library_dirs`, `libraries`, or `linker_args`) is rejected for static targets rather than silently ignored. `ltcg` is not linker-only policy: it remains valid for static targets because it couples `/GL` compilation with the librarian `/LTCG` archive recipe. Static targets that require the named-module/header-unit pipeline remain fail-closed until archive topology is explicitly validated.
 
 Raw compiler/linker arguments are literal argv elements. MQB does not split one JSON string containing spaces into several switches. For example:
 
@@ -98,7 +102,7 @@ Raw compiler/linker arguments are literal argv elements. MQB does not split one 
 
 represents two compiler arguments, while `"/W4 /WX"` is one argument and is not rewritten by MQB.
 
-Backend-owned structured routing remains authoritative. Raw arguments are emitted before MQB's planned output/topology switches such as `/Fo`, `/ifcOutput`, `/scanDependencies`, `/DLL`, `/IMPLIB`, `/MACHINE`, `/SUBSYSTEM`, and `/OUT`.
+Backend-owned typed policy and structured routing remain authoritative. Raw arguments are emitted before typed `/GL`/`/LTCG` and planned output/topology switches such as `/Fo`, `/ifcOutput`, `/scanDependencies`, `/DLL`, `/IMPLIB`, `/MACHINE`, `/SUBSYSTEM`, and `/OUT`.
 
 ## Discovery fields
 
@@ -152,7 +156,7 @@ For scalar options:
 explicit CLI option > mqb.json > built-in default
 ```
 
-This includes `configuration`, `architecture`, `standard`, `type`, `runtime`, `subsystem`, and `output`.
+This includes `configuration`, `architecture`, `standard`, `type`, `runtime`, `ltcg`, `subsystem`, and `output`.
 
 Examples:
 
@@ -165,6 +169,12 @@ mqb main.cpp --type exe
 
 # mqb.json says MT; this invocation uses the dynamic CRT.
 mqb main.cpp --runtime MD
+
+# mqb.json enables LTCG; this invocation explicitly disables it.
+mqb main.cpp --no-ltcg
+
+# mqb.json disables LTCG; this invocation enables the coupled /GL + /LTCG policy.
+mqb main.cpp --ltcg
 
 # mqb.json says windows; this invocation uses the console subsystem.
 mqb main.cpp --subsystem console
@@ -219,13 +229,15 @@ The config file timestamp itself is not a special global rebuild trigger. Instea
 
 Changing `runtime` changes compiler recipe identity, recompiles affected TUs, and therefore rebuilds the downstream target. Leaving `runtime` unset preserves the historical Debug `/MDd` and Release `/MD` recipes and their existing signature identity.
 
+Changing `ltcg` changes both halves of the coupled policy. Enabling it changes compile identity because `/GL` becomes part of the typed compiler recipe, then changes executable/DLL link identity or static archive identity because downstream `/LTCG` becomes part of that target recipe. Repeating the same LTCG policy is cache-reusable. Leaving `ltcg` unset (or setting it to `false`) preserves the historical non-LTCG recipe/signature byte stream.
+
 Changing `type` changes target output/recipe ownership. The historical executable signature byte stream is retained for executable targets; DLL targets add typed link target-kind identity. Static targets use a separate archive identity/cache and the `lib.exe` pipeline. Switching among executable/DLL/static does not recompile otherwise-fresh translation units when the compile recipe is unchanged, but it does build the appropriate downstream target artifact.
 
 Changing only `subsystem` changes link recipe identity and relinks without recompiling otherwise-fresh TUs. `subsystem` is not valid when the effective target kind is static.
 
 Changing a compiler argument changes compiler recipe identity and recompiles affected TUs even if no source timestamp changed. The resulting fresh objects force the downstream target action. Changing only a linker argument changes link recipe identity and relinks without recompiling otherwise-fresh TUs; linker arguments are invalid for static targets.
 
-Likewise, library names/search paths affect link recipe identity, while exact resolved `.lib` files are separately tracked as link freshness inputs. Recorded DLL linker side outputs are separately checked for existence and repaired by relinking if missing. Static archive freshness separately checks its current object inputs, archive output, and librarian identity.
+Likewise, library names/search paths affect link recipe identity, while exact resolved `.lib` files are separately tracked as link freshness inputs. Recorded DLL linker side outputs are separately checked for existence and repaired by relinking if missing. Static archive freshness separately checks its current object inputs, archive output, librarian identity, and typed LTCG archive recipe.
 
 For named modules and header units, compile identity also includes typed provider/reference and interface-output identity. Imported IFC files participate in consumer freshness validation, and a missing provider IFC invalidates the provider's cached outputs.
 
@@ -242,6 +254,7 @@ Changing the job count does not alter compile, link, or archive signatures and t
 ## Current boundaries
 
 - v1 `build.type` supports `exe`, `dll`, and `static`; `lib` is accepted as a static-library alias.
+- v1 `build.ltcg` is a boolean coupled policy: `/GL` at compile time plus `/LTCG` at executable/DLL link or static archive time.
 - Static targets currently support ordinary C/C++ translation units; static targets requiring named Modules/Header Units fail closed until archive topology is explicitly validated.
 - `--run` is executable-only; DLL/static targets are built artifacts and are not launched as programs.
 - v1 config has no external/prebuilt module-provider or `import std` policy.
