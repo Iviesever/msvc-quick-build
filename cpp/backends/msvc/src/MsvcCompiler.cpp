@@ -27,8 +27,16 @@ namespace fs = std::filesystem;
         bytes.size()};
 }
 
+[[nodiscard]] bool predates_cpp20(const CppStandard standard) noexcept {
+    return standard == CppStandard::cpp14 || standard == CppStandard::cpp17;
+}
+
 [[nodiscard]] std::string standard_argument(const CppStandard standard) {
     switch (standard) {
+    case CppStandard::cpp14:
+        return "/std:c++14";
+    case CppStandard::cpp17:
+        return "/std:c++17";
     case CppStandard::cpp20:
         return "/std:c++20";
     case CppStandard::cpp23:
@@ -126,6 +134,15 @@ void append_configuration_arguments(
 
 [[nodiscard]] std::expected<void, CompilerError> validate_module_contract(
     const CompileInvocation& invocation) {
+    const bool uses_module_contract = invocation.kind == TranslationUnitKind::module_interface
+        || invocation.module_interface_output.has_value()
+        || !invocation.module_references.empty()
+        || !invocation.header_unit_references.empty();
+    if (uses_module_contract && predates_cpp20(invocation.options.standard)) {
+        return std::unexpected(invalid_request(
+            "module and header-unit compilation requires C++20 or newer"));
+    }
+
     if (invocation.kind == TranslationUnitKind::module_interface) {
         if (!invocation.module_interface_output
             || invocation.module_interface_output->empty()) {
@@ -295,6 +312,10 @@ MsvcCompiler::build_header_unit_arguments(const HeaderUnitCompileInvocation& inv
     }
     if (invocation.source_dependencies && invocation.source_dependencies->empty()) {
         return std::unexpected(invalid_request("sourceDependencies output path is empty"));
+    }
+    if (predates_cpp20(invocation.options.standard)) {
+        return std::unexpected(invalid_request(
+            "header-unit compilation requires C++20 or newer"));
     }
 
     std::vector<std::string> arguments;
