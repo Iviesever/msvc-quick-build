@@ -20,6 +20,28 @@ namespace {
     return Error{.message = std::move(message)};
 }
 
+[[nodiscard]] bool is_legacy_option(const std::string_view argument) noexcept {
+    return argument == "-config"
+        || argument == "-std"
+        || argument == "-type"
+        || argument == "-runtime"
+        || argument == "-run"
+        || argument == "-env"
+        || argument == "-x86"
+        || argument == "-x64"
+        || argument == "-output"
+        || argument == "-include"
+        || argument == "-defines"
+        || argument == "-libpath"
+        || argument == "-libs"
+        || argument == "-flags"
+        || argument == "-link_flags"
+        || argument == "-ltcg"
+        || argument == "-subsystem"
+        || argument == "-help"
+        || argument == "-?";
+}
+
 [[nodiscard]] std::expected<std::string_view, Error>
 require_value(
     const std::span<const std::string_view> arguments,
@@ -146,6 +168,9 @@ parse_arguments(const std::span<const std::string_view> arguments) {
                 options.build.run_arguments.emplace_back(arguments[index]);
             }
             break;
+        }
+        if (is_legacy_option(argument)) {
+            return std::unexpected(error("unknown option '" + std::string{argument} + "'"));
         }
         if (argument == "-h" || argument == "--help") {
             options.show_help = true;
