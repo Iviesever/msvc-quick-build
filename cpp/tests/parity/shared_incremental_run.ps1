@@ -94,12 +94,13 @@ function Invoke-GoldenBuild {
     )
 
     $pwsh = (Get-Process -Id $PID).Path
-    return Invoke-Captured -FilePath $pwsh -WorkingDirectory $WorkingDirectory -Arguments @(
+    $allArgs = @(
         '-NoLogo',
         '-NoProfile',
         '-File',
         $buildPs1
     ) + $Arguments
+    return Invoke-Captured -FilePath $pwsh -WorkingDirectory $WorkingDirectory -Arguments $allArgs
 }
 
 function Invoke-NativeBuild {
@@ -174,6 +175,7 @@ int main() {
     return 0;
 }
 '@
+    $mutatedSource = $mutatedSource.Replace('\"', '"')
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText((Join-Path $psRoot 'main.cpp'), $mutatedSource, $utf8NoBom)
     [System.IO.File]::WriteAllText((Join-Path $cppRoot 'main.cpp'), $mutatedSource, $utf8NoBom)
