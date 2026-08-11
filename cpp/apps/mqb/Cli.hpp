@@ -21,6 +21,7 @@ struct Options {
     std::optional<BuildConfiguration> configuration_override;
     std::optional<Architecture> architecture_override;
     std::optional<CppStandard> standard_override;
+    std::optional<TargetKind> target_kind_override;
     std::optional<RuntimeLibrary> runtime_override;
     std::optional<LinkSubsystem> subsystem_override;
     std::vector<std::string> defines;
