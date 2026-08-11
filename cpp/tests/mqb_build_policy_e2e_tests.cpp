@@ -126,11 +126,10 @@ int main() {
 )cpp");
 
     mqb::platform::windows::WindowsProcessRunner runner;
-    const fs::path map_one = tree.root / "policy-one.map";
-    const fs::path map_two = tree.root / "policy-two.map";
+    const fs::path map_file = tree.root / "policy.map";
     const fs::path executable = tree.root / ".mqb" / "bin" / "policy.exe";
 
-    auto cold = run_mqb(runner, mqb_executable, tree.root, raw_policy(1, map_one));
+    auto cold = run_mqb(runner, mqb_executable, tree.root, raw_policy(1, map_file));
     expect(cold.has_value(), "cold raw-policy invocation should launch");
     if (cold) {
         if (cold->exit_code != 0) dump_failure(*cold);
@@ -140,7 +139,7 @@ int main() {
         expect(cold->stdout_text.find("[link] policy.exe") != std::string::npos,
                "cold raw linker policy should link the target");
     }
-    expect(fs::is_regular_file(map_one), "raw /MAP linker argument should produce its side artifact");
+    expect(fs::is_regular_file(map_file), "raw /MAP linker argument should produce its side artifact");
 
     auto cold_run = run_executable(runner, executable, tree.root);
     expect(cold_run.has_value() && cold_run->exit_code == 0,
@@ -150,7 +149,7 @@ int main() {
                "raw compiler define should affect executable behavior");
     }
 
-    auto warm = run_mqb(runner, mqb_executable, tree.root, raw_policy(1, map_one));
+    auto warm = run_mqb(runner, mqb_executable, tree.root, raw_policy(1, map_file));
     expect(warm.has_value(), "warm raw-policy invocation should launch");
     if (warm) {
         if (warm->exit_code != 0) dump_failure(*warm);
@@ -161,7 +160,7 @@ int main() {
                "unchanged raw linker policy should reuse link cache");
     }
 
-    auto compiler_changed = run_mqb(runner, mqb_executable, tree.root, raw_policy(2, map_one));
+    auto compiler_changed = run_mqb(runner, mqb_executable, tree.root, raw_policy(2, map_file));
     expect(compiler_changed.has_value(), "compiler-policy change invocation should launch");
     if (compiler_changed) {
         if (compiler_changed->exit_code != 0) dump_failure(*compiler_changed);
@@ -181,7 +180,20 @@ int main() {
                "changed raw compiler argument should affect executable behavior");
     }
 
-    auto linker_changed = run_mqb(runner, mqb_executable, tree.root, raw_policy(2, map_two));
+    // Change link recipe identity independently from the compiler recipe while
+    // retaining the already-proven /MAP argument. Delete the map first so the
+    // relink must recreate it; this verifies the changed linker invocation was
+    // actually executed without depending on link.exe's semantics for swapping
+    // /MAP output filenames across consecutive links.
+    std::error_code remove_error;
+    fs::remove(map_file, remove_error);
+    expect(!remove_error && !fs::exists(map_file),
+           "test should remove the first map artifact before linker-only rebuild");
+
+    auto linker_policy = raw_policy(2, map_file);
+    linker_policy.emplace_back("--linker-arg");
+    linker_policy.emplace_back("/INCREMENTAL:NO");
+    auto linker_changed = run_mqb(runner, mqb_executable, tree.root, linker_policy);
     expect(linker_changed.has_value(), "linker-policy change invocation should launch");
     if (linker_changed) {
         if (linker_changed->exit_code != 0) dump_failure(*linker_changed);
@@ -192,7 +204,8 @@ int main() {
                    && linker_changed->stdout_text.find("linker options changed") != std::string::npos,
                "raw linker argument change should invalidate link recipe identity only");
     }
-    expect(fs::is_regular_file(map_two), "changed raw linker /MAP argument should be honored");
+    expect(fs::is_regular_file(map_file),
+           "linker-only rebuild should execute raw /MAP policy and recreate its side artifact");
 
     const fs::path config_map = tree.root / "config-policy.map";
     const std::string config = std::string{R"json({
