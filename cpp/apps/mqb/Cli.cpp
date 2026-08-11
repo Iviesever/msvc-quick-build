@@ -57,6 +57,19 @@ parse_configuration(const std::string_view value) {
         + "' (expected debug or release)"));
 }
 
+[[nodiscard]] std::expected<TargetKind, Error>
+parse_target_kind(const std::string_view value) {
+    if (value == "exe" || value == "executable") return TargetKind::executable;
+    if (value == "dll" || value == "dynamic") return TargetKind::dynamic_library;
+    if (value == "static" || value == "lib") {
+        return std::unexpected(error(
+            "static-library targets require the upcoming MSVC librarian pipeline"));
+    }
+    return std::unexpected(error(
+        "unsupported target kind '" + std::string{value}
+        + "' (expected exe or dll)"));
+}
+
 [[nodiscard]] std::expected<RuntimeLibrary, Error>
 parse_runtime(const std::string_view value) {
     if (value == "MD" || value == "md") return RuntimeLibrary::md;
@@ -195,6 +208,24 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto value = long_equals_value(argument, "--output=");
             if (!value) return std::unexpected(value.error());
             options.build.output_name = std::string{*value};
+            continue;
+        }
+        if (argument == "--type" || argument == "-type") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            auto target_kind = parse_target_kind(*value);
+            if (!target_kind) return std::unexpected(target_kind.error());
+            options.build.target_kind = *target_kind;
+            options.target_kind_override = *target_kind;
+            continue;
+        }
+        if (argument.starts_with("--type=")) {
+            auto value = long_equals_value(argument, "--type=");
+            if (!value) return std::unexpected(value.error());
+            auto target_kind = parse_target_kind(*value);
+            if (!target_kind) return std::unexpected(target_kind.error());
+            options.build.target_kind = *target_kind;
+            options.target_kind_override = *target_kind;
             continue;
         }
         if (argument == "--debug") {
@@ -352,7 +383,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto value = attached_or_next(arguments, index, argument, "-D");
             if (!value) return std::unexpected(value.error());
             if (value->empty()) return std::unexpected(error("empty preprocessor define"));
-            options.defines.emplace_back(*value);
+            options.defines.emplace_back(std::string{*value});
             continue;
         }
         if (argument == "-L" || argument.starts_with("-L")) {
@@ -366,7 +397,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto value = attached_or_next(arguments, index, argument, "-l");
             if (!value) return std::unexpected(value.error());
             if (value->empty()) return std::unexpected(error("empty library name"));
-            options.libraries.emplace_back(*value);
+            options.libraries.emplace_back(std::string{*value});
             continue;
         }
         if (!argument.empty() && argument.front() == '-') {
@@ -419,14 +450,15 @@ Options:
   --config <debug|release> Select compile/link preset (legacy -config alias accepted)
   --std <14|17|20|23|latest>
                            Explicitly select C++ language standard (legacy -std accepted)
+  --type <exe|dll>         Select executable or DLL output kind (legacy -type accepted)
   --runtime <MD|MDd|MT|MTd>
                            Explicitly select MSVC CRT runtime (legacy -runtime accepted)
   --subsystem <console|windows>
-                           Explicitly select executable subsystem (legacy -subsystem accepted)
+                           Explicitly select PE subsystem (legacy -subsystem accepted)
   --x86 | --x64            Explicitly select target architecture (legacy -x86/-x64 accepted)
   -j, --jobs <N>           Maximum concurrent TU scans/compiles (default: hardware concurrency)
-  -o, --output <name>      Set target executable name under .mqb/bin/ (legacy -output accepted)
-  --run                    Run the executable after a successful build (legacy -run accepted)
+  -o, --output <name>      Set target name under .mqb/bin/ (legacy -output accepted)
+  --run                    Run an executable after a successful build (legacy -run accepted)
   -I <dir>, -I<dir>        Add an include directory (legacy -include accepted)
   -D <value>, -D<value>    Add a preprocessor definition (legacy -defines accepted)
   -L <dir>, -L<dir>        Add a library search directory (legacy -libpath accepted)
@@ -439,15 +471,15 @@ Options:
   --portable-root <dir>    Add a portable_msvc root candidate
   -v, --verbose            Show config, discovery, toolchain, and artifact details
   -h, --help               Show this help and the embedded build version (-help/-? accepted)
-  --                       Pass all remaining argv elements to the program
+  --                       Pass all remaining argv elements to an executable program
 
 Raw compiler/linker arguments are one argv element per option occurrence; MQB does not split a
 quoted string into multiple switches. Project config entries are applied first and CLI raw args
-append afterward. Structured artifact routing such as /Fo, /scanDependencies, /MACHINE and /OUT
-is emitted after raw arguments so the BuildPlan remains authoritative.
+append afterward. Structured artifact routing such as /Fo, /scanDependencies, /DLL, /IMPLIB,
+/MACHINE and /OUT is emitted after raw arguments so the BuildPlan remains authoritative.
 
 Legacy compatibility aliases intentionally cover spelling only. Legacy-only semantics such as
--a string splitting and DLL/static output kinds remain tracked by the stable-v5 parity inventory
+-a string splitting and static-library output remain tracked by the stable-v5 parity inventory
 and are not silently accepted here.
 
 Job count is execution policy only; changing -j does not invalidate build caches.
@@ -460,7 +492,7 @@ Generated state:
   .mqb/scan/   module dependency scan metadata
   .mqb/ifc/    module/header-unit interface artifacts
   .mqb/cache/  compile and link cache metadata
-  .mqb/bin/    linked executable
+  .mqb/bin/    linked executable/DLL and DLL import-library artifacts
 )";
 }
 
