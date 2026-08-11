@@ -23,9 +23,7 @@ namespace fs = std::filesystem;
 [[nodiscard]] std::string windows_path_key(const fs::path& path) {
     std::string value = path.lexically_normal().generic_string();
     std::transform(
-        value.begin(),
-        value.end(),
-        value.begin(),
+        value.begin(), value.end(), value.begin(),
         [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return value;
 }
@@ -81,16 +79,31 @@ namespace fs = std::filesystem;
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<HeaderUnitLookupMethod> core_lookup_method(
+    const modules::LookupMethod lookup_method) {
+    switch (lookup_method) {
+    case modules::LookupMethod::include_angle:
+        return HeaderUnitLookupMethod::angle;
+    case modules::LookupMethod::include_quote:
+        return HeaderUnitLookupMethod::quote;
+    case modules::LookupMethod::by_name:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 [[nodiscard]] IncrementalCompileRequest compile_request_for(
     const ModuleCompileSourceRequest& source,
     const CompilerOptions& options,
-    const std::vector<ModuleReference>& references,
+    const std::vector<ModuleReference>& module_references,
+    const std::vector<HeaderUnitReference>& header_unit_references,
     const bool force_rebuild,
     const fs::path& working_directory) {
     TranslationUnit unit;
     unit.source = source.source;
     unit.kind = source.kind;
-    unit.module_references = references;
+    unit.module_references = module_references;
+    unit.header_unit_references = header_unit_references;
     unit.outputs.push_back(Artifact{
         .path = source.artifacts.object,
         .kind = ArtifactKind::object,
@@ -114,14 +127,43 @@ namespace fs = std::filesystem;
     };
 }
 
+[[nodiscard]] IncrementalCompileRequest header_compile_request_for(
+    const ModuleCompileHeaderUnitRequest& header,
+    const CompilerOptions& options,
+    const bool force_rebuild,
+    const fs::path& working_directory) {
+    TranslationUnit unit;
+    unit.source = header.source;
+    unit.kind = TranslationUnitKind::source;
+    unit.header_unit = HeaderUnitIdentity{
+        .header_name = header.header_name,
+        .lookup_method = header.lookup_method,
+    };
+    unit.outputs.push_back(Artifact{
+        .path = header.artifacts.module_interface,
+        .kind = ArtifactKind::module_interface,
+    });
+
+    return IncrementalCompileRequest{
+        .unit = std::move(unit),
+        .options = options,
+        .cache_file = header.artifacts.compile_cache,
+        .source_dependencies_file = header.artifacts.dependencies,
+        .working_directory = working_directory.empty()
+            ? std::optional<fs::path>{header.source.parent_path()}
+            : std::optional<fs::path>{working_directory},
+        .force_rebuild = force_rebuild,
+    };
+}
+
 } // namespace
 
 std::expected<ModuleCompileWaveResult, ModuleCompileError>
 MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const {
-    if (request.sources.empty()) {
+    if (request.sources.empty() && request.header_units.empty()) {
         return std::unexpected(failure(
             ModuleCompileErrorCode::no_sources,
-            "module compile wave requires at least one source"));
+            "module compile wave requires at least one source or header-unit producer"));
     }
     if (request.max_parallel_compiles == 0) {
         return std::unexpected(failure(
@@ -137,72 +179,119 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
             {},
             unresolved.requirement.logical_name));
     }
-    if (!request.plan.header_units.empty()) {
-        const auto& header = request.plan.header_units.front();
-        const fs::path consumer = request.plan.resolved_header_unit_dependencies.empty()
-            ? fs::path{}
-            : request.plan.resolved_header_unit_dependencies.front().consumer_source;
-        return std::unexpected(failure(
-            ModuleCompileErrorCode::unresolved_requirement,
-            "module dependency plan resolved a project-local header unit, but header-unit wave execution is not wired yet",
-            consumer,
-            header.source,
-            header.header_name));
-    }
 
+    const std::size_t source_count = request.sources.size();
+    const std::size_t header_count = request.header_units.size();
+    const std::size_t node_count = source_count + header_count;
+
+    std::unordered_map<std::string, std::size_t> node_by_key;
+    node_by_key.reserve(node_count);
     std::unordered_map<std::string, std::size_t> source_by_key;
-    source_by_key.reserve(request.sources.size());
+    source_by_key.reserve(source_count);
+    std::unordered_map<std::string, std::size_t> header_by_key;
+    header_by_key.reserve(header_count);
     std::unordered_set<std::string> claimed_artifacts;
-    claimed_artifacts.reserve(request.sources.size() * 4u);
+    claimed_artifacts.reserve(source_count * 4u + header_count * 3u);
 
-    for (std::size_t index = 0; index < request.sources.size(); ++index) {
+    for (std::size_t index = 0; index < source_count; ++index) {
         const auto& source = request.sources[index];
         const std::string key = windows_path_key(source.source);
-        if (!source_by_key.emplace(key, index).second) {
+        if (!node_by_key.emplace(key, index).second) {
             return std::unexpected(failure(
                 ModuleCompileErrorCode::duplicate_source,
                 "module compile request contains the same source more than once",
                 source.source));
         }
+        source_by_key.emplace(key, index);
 
-        if (auto error = claim_artifact(
-                claimed_artifacts, source.source, source.artifacts.object, "object")) {
+        if (auto error = claim_artifact(claimed_artifacts, source.source, source.artifacts.object, "object")) {
             return std::unexpected(std::move(*error));
         }
         if (auto error = claim_artifact(
-                claimed_artifacts,
-                source.source,
-                source.artifacts.dependencies,
-                "source-dependency metadata")) {
+                claimed_artifacts, source.source, source.artifacts.dependencies, "source-dependency metadata")) {
             return std::unexpected(std::move(*error));
         }
         if (auto error = claim_artifact(
-                claimed_artifacts,
-                source.source,
-                source.artifacts.compile_cache,
-                "compile-cache metadata")) {
+                claimed_artifacts, source.source, source.artifacts.compile_cache, "compile-cache metadata")) {
             return std::unexpected(std::move(*error));
         }
         if (source.kind == TranslationUnitKind::module_interface) {
             if (auto error = claim_artifact(
-                    claimed_artifacts,
-                    source.source,
-                    source.artifacts.module_interface,
-                    "IFC")) {
+                    claimed_artifacts, source.source, source.artifacts.module_interface, "IFC")) {
                 return std::unexpected(std::move(*error));
             }
         }
     }
 
-    std::vector<std::size_t> plan_occurrences(request.sources.size(), 0);
+    for (std::size_t index = 0; index < header_count; ++index) {
+        const auto& header = request.header_units[index];
+        const std::size_t node_index = source_count + index;
+        const std::string key = windows_path_key(header.source);
+        if (!node_by_key.emplace(key, node_index).second) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::duplicate_source,
+                "header-unit producer source collides with another compile source",
+                header.source));
+        }
+        header_by_key.emplace(key, index);
+        if (header.header_name.empty()) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::invalid_header_unit,
+                "header-unit producer name is empty",
+                header.source));
+        }
+        if (auto error = claim_artifact(
+                claimed_artifacts, header.source, header.artifacts.dependencies, "header-unit source-dependency metadata")) {
+            return std::unexpected(std::move(*error));
+        }
+        if (auto error = claim_artifact(
+                claimed_artifacts, header.source, header.artifacts.compile_cache, "header-unit compile-cache metadata")) {
+            return std::unexpected(std::move(*error));
+        }
+        if (auto error = claim_artifact(
+                claimed_artifacts, header.source, header.artifacts.module_interface, "header-unit IFC")) {
+            return std::unexpected(std::move(*error));
+        }
+    }
+
+    std::unordered_map<std::string, const modules::PlannedHeaderUnit*> planned_header_by_key;
+    planned_header_by_key.reserve(request.plan.header_units.size());
+    for (const auto& planned : request.plan.header_units) {
+        planned_header_by_key.emplace(windows_path_key(planned.source), &planned);
+    }
+    if (planned_header_by_key.size() != request.header_units.size()) {
+        return std::unexpected(failure(
+            ModuleCompileErrorCode::invalid_header_unit,
+            "header-unit compile request does not match dependency-plan producer count"));
+    }
+    for (const auto& header : request.header_units) {
+        const auto planned = planned_header_by_key.find(windows_path_key(header.source));
+        if (planned == planned_header_by_key.end()) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::invalid_header_unit,
+                "header-unit compile request contains a provider absent from dependency plan",
+                header.source));
+        }
+        const auto lookup = core_lookup_method(planned->second->lookup_method);
+        if (!lookup || planned->second->header_name != header.header_name || *lookup != header.lookup_method) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::invalid_header_unit,
+                "header-unit compile request identity does not match dependency plan",
+                header.source,
+                {},
+                header.header_name));
+        }
+    }
+
+    std::vector<std::size_t> plan_occurrences(node_count, 0);
     std::vector<std::vector<std::size_t>> level_indices;
     level_indices.reserve(request.plan.compile_levels.size());
     for (const auto& level : request.plan.compile_levels) {
         auto& indices = level_indices.emplace_back();
         indices.reserve(level.size());
         for (const auto& source : level) {
-            const auto found = source_by_key.find(windows_path_key(source));
-            if (found == source_by_key.end()) {
+            const auto found = node_by_key.find(windows_path_key(source));
+            if (found == node_by_key.end()) {
                 return std::unexpected(failure(
                     ModuleCompileErrorCode::plan_source_missing,
                     "module dependency plan references a source absent from the compile request",
@@ -219,15 +308,20 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
     }
     for (std::size_t index = 0; index < plan_occurrences.size(); ++index) {
         if (plan_occurrences[index] == 0) {
+            const fs::path source = index < source_count
+                ? request.sources[index].source
+                : request.header_units[index - source_count].source;
             return std::unexpected(failure(
                 ModuleCompileErrorCode::plan_source_unlisted,
                 "module compile source is missing from dependency-plan compile levels",
-                request.sources[index].source));
+                source));
         }
     }
 
-    std::vector<std::vector<ModuleReference>> references(request.sources.size());
-    std::vector<std::vector<std::size_t>> provider_indices(request.sources.size());
+    std::vector<std::vector<ModuleReference>> module_references(node_count);
+    std::vector<std::vector<HeaderUnitReference>> header_references(node_count);
+    std::vector<std::vector<std::size_t>> provider_indices(node_count);
+
     for (const auto& dependency : request.plan.resolved_dependencies) {
         const auto consumer = source_by_key.find(windows_path_key(dependency.consumer_source));
         const auto provider = source_by_key.find(windows_path_key(dependency.provider_source));
@@ -251,14 +345,13 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
                 dependency.logical_name));
         }
 
-        auto& consumer_references = references[consumer->second];
+        auto& references = module_references[consumer->second];
         const auto duplicate = std::find_if(
-            consumer_references.begin(),
-            consumer_references.end(),
+            references.begin(), references.end(),
             [&dependency](const ModuleReference& reference) {
                 return reference.logical_name == dependency.logical_name;
             });
-        if (duplicate != consumer_references.end()) {
+        if (duplicate != references.end()) {
             return std::unexpected(failure(
                 ModuleCompileErrorCode::duplicate_reference,
                 "module dependency plan resolves the same logical name more than once for one consumer",
@@ -266,37 +359,95 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
                 dependency.provider_source,
                 dependency.logical_name));
         }
-
-        consumer_references.push_back(ModuleReference{
+        references.push_back(ModuleReference{
             .logical_name = dependency.logical_name,
             .interface_file = provider_request.artifacts.module_interface,
         });
         provider_indices[consumer->second].push_back(provider->second);
     }
 
+    for (const auto& dependency : request.plan.resolved_header_unit_dependencies) {
+        const auto consumer = source_by_key.find(windows_path_key(dependency.consumer_source));
+        const auto provider = header_by_key.find(windows_path_key(dependency.provider_source));
+        if (consumer == source_by_key.end() || provider == header_by_key.end()) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::plan_source_missing,
+                "resolved header-unit dependency references a source absent from the compile request",
+                dependency.consumer_source,
+                dependency.provider_source,
+                dependency.header_name));
+        }
+        const auto lookup = core_lookup_method(dependency.lookup_method);
+        if (!lookup) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::invalid_header_unit,
+                "resolved header-unit dependency has a non-header lookup method",
+                dependency.consumer_source,
+                dependency.provider_source,
+                dependency.header_name));
+        }
+        const auto& provider_request = request.header_units[provider->second];
+        if (provider_request.artifacts.module_interface.empty()) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::invalid_provider,
+                "resolved header-unit provider cannot produce an IFC artifact",
+                dependency.consumer_source,
+                dependency.provider_source,
+                dependency.header_name));
+        }
+
+        auto& references = header_references[consumer->second];
+        const auto duplicate = std::find_if(
+            references.begin(), references.end(),
+            [&](const HeaderUnitReference& reference) {
+                return reference.header_name == dependency.header_name
+                    && reference.lookup_method == *lookup;
+            });
+        if (duplicate != references.end()) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::duplicate_reference,
+                "module dependency plan resolves the same header-unit identity more than once for one consumer",
+                dependency.consumer_source,
+                dependency.provider_source,
+                dependency.header_name));
+        }
+        references.push_back(HeaderUnitReference{
+            .header_name = dependency.header_name,
+            .lookup_method = *lookup,
+            .interface_file = provider_request.artifacts.module_interface,
+        });
+        provider_indices[consumer->second].push_back(source_count + provider->second);
+    }
+
     using CompileAttempt = std::expected<IncrementalCompileResult, IncrementalCompileError>;
-    std::vector<std::optional<CompileAttempt>> attempts(request.sources.size());
-    std::vector<bool> compiled_this_run(request.sources.size(), false);
+    std::vector<std::optional<CompileAttempt>> attempts(node_count);
+    std::vector<bool> compiled_this_run(node_count, false);
 
     for (const auto& level : level_indices) {
         const auto scheduled = BoundedWorkScheduler::run(
-            level.size(),
-            request.max_parallel_compiles,
+            level.size(), request.max_parallel_compiles,
             [&](const std::size_t level_index) {
-                const std::size_t source_index = level[level_index];
+                const std::size_t node_index = level[level_index];
                 bool force_rebuild = false;
-                for (const auto provider_index : provider_indices[source_index]) {
+                for (const auto provider_index : provider_indices[node_index]) {
                     force_rebuild = force_rebuild || compiled_this_run[provider_index];
                 }
 
-                auto compile_request = compile_request_for(
-                    request.sources[source_index],
-                    request.compiler_options,
-                    references[source_index],
-                    force_rebuild,
-                    request.working_directory);
-                attempts[source_index].emplace(compile_coordinator_.run(compile_request));
-                return attempts[source_index]->has_value();
+                IncrementalCompileRequest compile_request = node_index < source_count
+                    ? compile_request_for(
+                        request.sources[node_index],
+                        request.compiler_options,
+                        module_references[node_index],
+                        header_references[node_index],
+                        force_rebuild,
+                        request.working_directory)
+                    : header_compile_request_for(
+                        request.header_units[node_index - source_count],
+                        request.compiler_options,
+                        force_rebuild,
+                        request.working_directory);
+                attempts[node_index].emplace(compile_coordinator_.run(compile_request));
+                return attempts[node_index]->has_value();
             });
         if (!scheduled) {
             return std::unexpected(failure(
@@ -304,32 +455,40 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
                 "module compile scheduler failed: " + scheduled.error().message));
         }
 
-        for (const auto source_index : level) {
-            if (!attempts[source_index]) continue;
-            if (!attempts[source_index]->has_value()) {
+        for (const auto node_index : level) {
+            if (!attempts[node_index]) continue;
+            if (!attempts[node_index]->has_value()) {
+                const fs::path source = node_index < source_count
+                    ? request.sources[node_index].source
+                    : request.header_units[node_index - source_count].source;
                 ModuleCompileError error = failure(
                     ModuleCompileErrorCode::compile_failed,
-                    "module translation unit compilation failed",
-                    request.sources[source_index].source);
-                error.compile_error = attempts[source_index]->error();
+                    node_index < source_count
+                        ? "module translation unit compilation failed"
+                        : "header-unit producer compilation failed",
+                    source);
+                error.compile_error = attempts[node_index]->error();
                 return std::unexpected(std::move(error));
             }
         }
 
-        for (const auto source_index : level) {
-            if (!attempts[source_index]) {
+        for (const auto node_index : level) {
+            if (!attempts[node_index]) {
+                const fs::path source = node_index < source_count
+                    ? request.sources[node_index].source
+                    : request.header_units[node_index - source_count].source;
                 return std::unexpected(failure(
                     ModuleCompileErrorCode::scheduling_failed,
                     "module scheduler stopped without a recorded compile failure",
-                    request.sources[source_index].source));
+                    source));
             }
-            compiled_this_run[source_index] = attempts[source_index]->value().compiled;
+            compiled_this_run[node_index] = attempts[node_index]->value().compiled;
         }
     }
 
     ModuleCompileWaveResult result;
-    result.compiles.reserve(request.sources.size());
-    for (std::size_t index = 0; index < request.sources.size(); ++index) {
+    result.compiles.reserve(source_count);
+    for (std::size_t index = 0; index < source_count; ++index) {
         if (!attempts[index] || !attempts[index]->has_value()) {
             return std::unexpected(failure(
                 ModuleCompileErrorCode::scheduling_failed,
@@ -340,6 +499,25 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
         result.any_compiled = result.any_compiled || compiled.compiled;
         result.compiles.push_back(ModuleCompileResult{
             .source = request.sources[index].source,
+            .result = std::move(compiled),
+        });
+    }
+
+    result.header_unit_compiles.reserve(header_count);
+    for (std::size_t index = 0; index < header_count; ++index) {
+        const std::size_t node_index = source_count + index;
+        if (!attempts[node_index] || !attempts[node_index]->has_value()) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::scheduling_failed,
+                "header-unit compile result is missing after all dependency levels completed",
+                request.header_units[index].source));
+        }
+        auto compiled = std::move(attempts[node_index]->value());
+        result.any_compiled = result.any_compiled || compiled.compiled;
+        result.header_unit_compiles.push_back(HeaderUnitCompileResult{
+            .source = request.header_units[index].source,
+            .header_name = request.header_units[index].header_name,
+            .lookup_method = request.header_units[index].lookup_method,
             .result = std::move(compiled),
         });
     }
