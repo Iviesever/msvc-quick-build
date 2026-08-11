@@ -12,7 +12,7 @@ The repository no longer ships or supports the old PowerShell build implementati
 
 ## Installation
 
-The Windows package places `mqb.exe`, `install.ps1`, `uninstall.ps1`, and `install.bat` together. Run:
+The Windows release package places `mqb.exe`, `install.ps1`, `uninstall.ps1`, and `install.bat` together. Run:
 
 ```powershell
 .\install.bat
@@ -106,6 +106,43 @@ The `Native Installer` workflow validates on Windows that:
 
 The normal C++ Debug and Release gates remain authoritative for the build engine itself.
 
+## Release-package acceptance
+
+`release/VERSION` is the release source of truth. For a version `X.Y.Z`, the Native Release workflow requires matching notes at `release/vX.Y.Z.md` and produces:
+
+```text
+vscode-msvc-quick-build-vX.Y.Z-windows-x64.zip
+vscode-msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
+```
+
+The ZIP contains only the native release payload:
+
+```text
+mqb.exe
+install.bat
+install.ps1
+uninstall.ps1
+README.md
+LICENSE
+MQB_CONFIG.md
+CPP_V2_ARCHITECTURE.md
+V5_INSTALL_CUTOVER.md
+RELEASE_NOTES.md
+```
+
+Before the artifact is uploaded, CI:
+
+1. verifies the embedded MQB version;
+2. runs the full Release installed-MSVC test suite;
+3. creates the ZIP and SHA-256 sidecar;
+4. extracts that exact ZIP;
+5. verifies the extracted manifest contains only the expected native files;
+6. verifies packaged `mqb.exe` is byte-identical to the tested Release binary;
+7. verifies the checksum sidecar against the exact ZIP;
+8. runs the native install/reinstall/uninstall regression using the extracted package itself.
+
+Tag publication is immutable and exact-artifact based. A pushed `vX.Y.Z` tag must exactly match `release/VERSION`; the publication job downloads the already-validated artifact from the same workflow run and publishes that ZIP and checksum without rebuilding the executable or package.
+
 ## Release boundary
 
-The already-published `v5.0.0-rc.2` remains a historical prerelease and is not rewritten. The final `v5.0.0` package must be produced from the native-only mainline and must not reintroduce legacy assets for compatibility.
+The already-published `v5.0.0-rc.2` remains a historical prerelease and is not rewritten. The final `v5.0.0` package is produced from the native-only mainline through the Native Release workflow and must not reintroduce legacy assets for compatibility.
