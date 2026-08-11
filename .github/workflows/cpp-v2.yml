@@ -11,7 +11,9 @@ on:
       - 'README.md'
       - 'docs/CPP_V2_ARCHITECTURE.md'
       - 'docs/MQB_CONFIG.md'
+      - 'release/**'
       - '.github/workflows/cpp-v2.yml'
+      - '.github/workflows/cpp-release.yml'
 
 jobs:
   build-and-test:
@@ -19,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure
         run: cmake -S cpp -B cpp/build -G "Visual Studio 18 2026" -A x64 -DMQB_ENABLE_INSTALLED_MSVC_TESTS=ON
