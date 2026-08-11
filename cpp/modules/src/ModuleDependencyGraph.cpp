@@ -44,9 +44,7 @@ struct ProviderCandidate {
     const std::vector<ScannedModuleUnit>& units) {
     std::vector<std::size_t> interface_candidates;
     for (const auto& candidate : candidates) {
-        if (candidate.is_interface) {
-            interface_candidates.push_back(candidate.unit_index);
-        }
+        if (candidate.is_interface) interface_candidates.push_back(candidate.unit_index);
     }
 
     if (interface_candidates.size() > 1) {
@@ -56,12 +54,8 @@ struct ProviderCandidate {
             units[interface_candidates.front()].source,
             logical_name));
     }
-    if (interface_candidates.size() == 1) {
-        return interface_candidates.front();
-    }
-    if (candidates.size() == 1) {
-        return candidates.front().unit_index;
-    }
+    if (interface_candidates.size() == 1) return interface_candidates.front();
+    if (candidates.size() == 1) return candidates.front().unit_index;
 
     return std::unexpected(graph_failure(
         ModuleGraphErrorCode::ambiguous_named_provider,
@@ -71,13 +65,22 @@ struct ProviderCandidate {
         logical_name));
 }
 
+[[nodiscard]] bool same_header_identity(
+    const PlannedHeaderUnit& planned,
+    const RequiredModule& required) {
+    return planned.header_name == required.logical_name
+        && planned.lookup_method == required.lookup_method;
+}
+
 } // namespace
 
 std::expected<ModuleDependencyPlan, ModuleGraphError>
 ModuleDependencyGraphBuilder::build(const std::vector<ScannedModuleUnit>& units) {
     DependencyGraph graph;
     std::unordered_map<std::string, std::size_t> unit_by_key;
+    std::unordered_map<std::string, fs::path> source_by_key;
     unit_by_key.reserve(units.size());
+    source_by_key.reserve(units.size());
 
     for (std::size_t index = 0; index < units.size(); ++index) {
         if (units[index].source.empty()) {
@@ -93,6 +96,7 @@ ModuleDependencyGraphBuilder::build(const std::vector<ScannedModuleUnit>& units)
                 units[index].source));
         }
         unit_by_key.emplace(key, index);
+        source_by_key.emplace(key, units[index].source);
         auto added = graph.add_node(key);
         if (!added) {
             return std::unexpected(graph_failure(
@@ -105,12 +109,7 @@ ModuleDependencyGraphBuilder::build(const std::vector<ScannedModuleUnit>& units)
     std::unordered_map<std::string, std::vector<ProviderCandidate>> provider_candidates;
     for (std::size_t index = 0; index < units.size(); ++index) {
         for (const auto& provided : units[index].rule.provided_modules) {
-            if (provided.unique_on_source_path) {
-                // Header-unit identity is source-based and is retained as an
-                // unresolved typed requirement until header-unit compilation is
-                // implemented. It must not collide with the named-module map.
-                continue;
-            }
+            if (provided.unique_on_source_path) continue;
             provider_candidates[provided.logical_name].push_back(ProviderCandidate{
                 .unit_index = index,
                 .is_interface = provided.is_interface,
@@ -127,17 +126,76 @@ ModuleDependencyGraphBuilder::build(const std::vector<ScannedModuleUnit>& units)
     }
 
     ModuleDependencyPlan plan;
+    std::unordered_map<std::string, std::size_t> header_unit_by_key;
+
     for (std::size_t consumer_index = 0; consumer_index < units.size(); ++consumer_index) {
         const std::string consumer_key = path_key(units[consumer_index].source);
         for (const auto& required : units[consumer_index].rule.required_modules) {
             const bool header_unit = required.unique_on_source_path
                 || required.lookup_method != LookupMethod::by_name;
             if (header_unit) {
-                plan.unresolved_requirements.push_back(UnresolvedModuleRequirement{
+                if (!required.source_path || required.source_path->empty()) {
+                    plan.unresolved_requirements.push_back(UnresolvedModuleRequirement{
+                        .consumer_source = units[consumer_index].source,
+                        .requirement = required,
+                        .kind = UnresolvedRequirementKind::header_unit,
+                    });
+                    continue;
+                }
+
+                const fs::path header_source = required.source_path->lexically_normal();
+                const std::string header_key = path_key(header_source);
+                if (unit_by_key.contains(header_key)) {
+                    return std::unexpected(graph_failure(
+                        ModuleGraphErrorCode::header_unit_source_conflict,
+                        "header-unit source path collides with a scanned translation unit",
+                        header_source,
+                        required.logical_name));
+                }
+
+                auto header = header_unit_by_key.find(header_key);
+                if (header == header_unit_by_key.end()) {
+                    auto added = graph.add_node(header_key);
+                    if (!added) {
+                        return std::unexpected(graph_failure(
+                            ModuleGraphErrorCode::header_unit_source_conflict,
+                            "header-unit source path collides with another graph node",
+                            header_source,
+                            required.logical_name));
+                    }
+                    source_by_key.emplace(header_key, header_source);
+                    const std::size_t header_index = plan.header_units.size();
+                    plan.header_units.push_back(PlannedHeaderUnit{
+                        .source = header_source,
+                        .header_name = required.logical_name,
+                        .lookup_method = required.lookup_method,
+                    });
+                    header = header_unit_by_key.emplace(header_key, header_index).first;
+                } else if (!same_header_identity(plan.header_units[header->second], required)) {
+                    return std::unexpected(graph_failure(
+                        ModuleGraphErrorCode::conflicting_header_unit_identity,
+                        "the same header-unit source path is required with conflicting import identity",
+                        header_source,
+                        required.logical_name));
+                }
+
+                plan.resolved_header_unit_dependencies.push_back(ResolvedHeaderUnitDependency{
                     .consumer_source = units[consumer_index].source,
-                    .requirement = required,
-                    .kind = UnresolvedRequirementKind::header_unit,
+                    .provider_source = header_source,
+                    .header_name = required.logical_name,
+                    .lookup_method = required.lookup_method,
                 });
+
+                auto dependency = graph.add_dependency(consumer_key, header_key);
+                if (!dependency) {
+                    ModuleGraphError error = graph_failure(
+                        ModuleGraphErrorCode::dependency_cycle,
+                        "failed to add header-unit dependency edge",
+                        units[consumer_index].source,
+                        required.logical_name);
+                    error.graph_error = dependency.error();
+                    return std::unexpected(std::move(error));
+                }
                 continue;
             }
 
@@ -151,11 +209,7 @@ ModuleDependencyGraphBuilder::build(const std::vector<ScannedModuleUnit>& units)
                 continue;
             }
 
-            if (provider->second == consumer_index) {
-                // A source may mention its own module identity in scan metadata.
-                // It does not create a useful build-order edge or /reference.
-                continue;
-            }
+            if (provider->second == consumer_index) continue;
 
             plan.resolved_dependencies.push_back(ResolvedModuleDependency{
                 .consumer_source = units[consumer_index].source,
@@ -192,10 +246,8 @@ ModuleDependencyGraphBuilder::build(const std::vector<ScannedModuleUnit>& units)
         auto& output_level = plan.compile_levels.emplace_back();
         output_level.reserve(level.size());
         for (const auto& key : level) {
-            const auto unit = unit_by_key.find(key);
-            if (unit != unit_by_key.end()) {
-                output_level.push_back(units[unit->second].source);
-            }
+            const auto source = source_by_key.find(key);
+            if (source != source_by_key.end()) output_level.push_back(source->second);
         }
     }
 
