@@ -23,6 +23,8 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
     "configuration": "release",
     "architecture": "x64",
     "standard": "17",
+    "runtime": "MT",
+    "subsystem": "console",
     "output": "game",
     "defines": [
       "GAME_BUILD=1"
@@ -68,6 +70,8 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
 | `configuration` | string | `debug` or `release` |
 | `architecture` | string | `x86` or `x64` |
 | `standard` | string | `14`, `17`, `20`, `23`, or `latest` (`c++14`, `c++17`, `c++20`, `c++23`, `c++latest` are also accepted) |
+| `runtime` | string | MSVC CRT runtime: `MD`, `MDd`, `MT`, or `MTd` |
+| `subsystem` | string | executable subsystem: `console` or `windows` |
 | `output` | string | target name under `.mqb/bin/` |
 | `defines` | string array | preprocessor definitions, without `/D` |
 | `include_dirs` | string array | include search directories |
@@ -77,6 +81,8 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
 | `linker_args` | string array | ordered raw `link.exe` argv elements |
 
 All path-valued config entries are resolved relative to the directory containing `mqb.json`, not the shell's current working directory.
+
+`runtime` and `subsystem` are typed policy, not shorthand for raw flags. The MSVC backend remains the sole owner of their command-line spelling. An explicit typed runtime is emitted after raw compiler arguments, and the structured subsystem is emitted after raw linker arguments, so a conflicting raw `/MD*` or `/SUBSYSTEM:*` cannot silently override the typed project policy.
 
 Raw compiler/linker arguments are literal argv elements. MQB does not split one JSON string containing spaces into several switches. For example:
 
@@ -94,15 +100,18 @@ Backend-owned structured routing remains authoritative. Raw arguments are emitte
 |---|---|---|
 | `enabled` | boolean | enable or disable single-entry smart source discovery |
 | `exclude_dirs` | string array | exact project directories to prune before discovery graph construction |
-| `extra_sources` | string array | exact supported C++ translation units to add even when disconnected from the entry graph |
-| `exclude_sources` | string array | exact supported C++ translation units to exclude and treat as traversal barriers |
+| `extra_sources` | string array | exact supported C/C++ translation units to add even when disconnected from the entry graph |
+| `exclude_sources` | string array | exact supported C/C++ translation units to exclude and treat as traversal barriers |
 
-Supported C++ translation-unit extensions in the current V2 source classifier are:
+Supported translation-unit extensions in the current V2 source classifier are:
 
 ```text
-ordinary source:   .cpp .cc .cxx
-module interface:  .ixx .cppm .mpp
+C ordinary source:     .c
+C++ ordinary source:   .cpp .cc .cxx
+module interface:      .ixx .cppm .mpp
 ```
+
+C sources participate in ordinary include/main smart discovery but are never parsed as C++ module syntax. This keeps legal C identifiers such as `module`, `import`, or `export` from routing a C target into the P1689 module pipeline.
 
 Version 1 intentionally uses exact paths rather than a glob language. This keeps correction semantics deterministic while the discovery model is still being stabilized.
 
@@ -137,11 +146,19 @@ For scalar options:
 explicit CLI option > mqb.json > built-in default
 ```
 
+This includes `configuration`, `architecture`, `standard`, `runtime`, `subsystem`, and `output`.
+
 Examples:
 
 ```powershell
 # mqb.json says release; this build is debug.
 mqb main.cpp --debug
+
+# mqb.json says MT; this invocation uses the dynamic CRT.
+mqb main.cpp --runtime MD
+
+# mqb.json says windows; this invocation links a console target.
+mqb main.cpp --subsystem console
 
 # mqb.json disables discovery; this explicitly turns it back on.
 mqb main.cpp --discover
@@ -191,6 +208,10 @@ still loads `project/mqb.json`, places artifacts under `project/.mqb/`, and inte
 
 The config file timestamp itself is not a special global rebuild trigger. Instead, the effective typed build options produced from the file participate in the existing compile/link signatures.
 
+Changing `runtime` changes compiler recipe identity, recompiles affected TUs, and therefore relinks the target. Leaving `runtime` unset preserves the historical Debug `/MDd` and Release `/MD` recipes and their existing signature identity.
+
+Changing only `subsystem` changes link recipe identity and relinks without recompiling otherwise-fresh TUs.
+
 Changing a compiler argument changes compiler recipe identity and recompiles affected TUs even if no source timestamp changed. The resulting fresh objects force the downstream link. Changing only a linker argument changes link recipe identity and relinks without recompiling otherwise-fresh TUs.
 
 Likewise, library names/search paths affect link recipe identity, while exact resolved `.lib` files are separately tracked as link freshness inputs.
@@ -209,10 +230,10 @@ Changing the job count does not alter compile or link signatures and therefore m
 
 ## Current boundaries
 
+- v1 config has no target-kind field yet; executable targets are the native output contract until DLL/static work lands.
 - v1 config has no external/prebuilt module-provider or `import std` policy.
 - v1 config does not store parallel job count.
 - `exclude_dirs`, `extra_sources`, and `exclude_sources` are exact paths, not globs.
 - Explicit user libraries are freshness-tracked; indirect `/DEFAULTLIB` transitive dependencies are not claimed as fully tracked.
-- C++ V2 currently classifies C++ translation units only; `.c` is not supported by the V2 source classifier.
 
 For stable-v5 migration decisions, see [`V5_PARITY.md`](V5_PARITY.md). For the broader build/module/cache architecture, see [`CPP_V2_ARCHITECTURE.md`](CPP_V2_ARCHITECTURE.md).
