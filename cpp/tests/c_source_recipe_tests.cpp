@@ -68,16 +68,20 @@ int main() {
 
     {
         auto static_runtime = c;
+        static_runtime.options.additional_arguments.emplace_back("/MD");
         static_runtime.options.runtime_library = mqb::RuntimeLibrary::mtd;
         auto recipe = mqb::msvc::MsvcCompiler::build_arguments(static_runtime);
         expect(recipe.has_value(), "explicit MTd runtime should produce a valid recipe");
         if (recipe) {
             const auto preset = std::find(recipe->begin(), recipe->end(), "/MDd");
+            const auto raw_runtime = std::find(recipe->begin(), recipe->end(), "/MD");
             const auto override_argument = std::find(recipe->begin(), recipe->end(), "/MTd");
             expect(preset != recipe->end()
+                       && raw_runtime != recipe->end()
                        && override_argument != recipe->end()
-                       && preset < override_argument,
-                   "typed runtime override must appear after preset runtime and therefore win");
+                       && preset < raw_runtime
+                       && raw_runtime < override_argument,
+                   "typed runtime override must follow preset and raw CRT switches and therefore win");
         }
     }
 
