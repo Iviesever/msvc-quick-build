@@ -27,8 +27,16 @@ namespace fs = std::filesystem;
         bytes.size()};
 }
 
+[[nodiscard]] bool predates_cpp20(const CppStandard standard) noexcept {
+    return standard == CppStandard::cpp14 || standard == CppStandard::cpp17;
+}
+
 [[nodiscard]] std::string standard_argument(const CppStandard standard) {
     switch (standard) {
+    case CppStandard::cpp14:
+        return "/std:c++14";
+    case CppStandard::cpp17:
+        return "/std:c++17";
     case CppStandard::cpp20:
         return "/std:c++20";
     case CppStandard::cpp23:
@@ -108,6 +116,11 @@ MsvcModuleDependencyScanner::build_arguments(const ModuleScanInvocation& invocat
         return std::unexpected(failure(
             ModuleScanErrorCode::invalid_request,
             "module scan output path is empty"));
+    }
+    if (predates_cpp20(invocation.options.standard)) {
+        return std::unexpected(failure(
+            ModuleScanErrorCode::invalid_request,
+            "module dependency scanning requires C++20 or newer"));
     }
 
     std::vector<std::string> arguments;

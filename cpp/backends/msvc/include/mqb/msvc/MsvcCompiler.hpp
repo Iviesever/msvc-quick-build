@@ -13,6 +13,7 @@
 
 namespace mqb::msvc {
 
+using HeaderUnitLookupMethod = mqb::HeaderUnitLookupMethod;
 using HeaderUnitReference = mqb::HeaderUnitReference;
 using ModuleReference = mqb::ModuleReference;
 

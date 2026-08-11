@@ -211,12 +211,26 @@ int main() {
     }
 
     {
+        const std::vector arguments{"main.cpp"sv, "--std"sv, "14"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value() && parsed->standard_override == mqb::CppStandard::cpp14,
+               "--std 14 should select the typed C++14 mode");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--std"sv, "c++17"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value() && parsed->standard_override == mqb::CppStandard::cpp17,
+               "--std c++17 should select the typed C++17 mode");
+    }
+
+    {
         const std::vector arguments{
             "main.cpp"sv,
             "-config"sv,
             "release"sv,
             "-std"sv,
-            "20"sv,
+            "17"sv,
             "-x86"sv,
             "-output"sv,
             "legacy-product"sv,
@@ -237,8 +251,8 @@ int main() {
         if (parsed) {
             expect(parsed->configuration_override == mqb::BuildConfiguration::release,
                    "legacy -config release should map to the typed release override");
-            expect(parsed->standard_override == mqb::CppStandard::cpp20,
-                   "legacy -std should map to the typed standard override");
+            expect(parsed->standard_override == mqb::CppStandard::cpp17,
+                   "legacy -std 17 should map to the typed C++17 override");
             expect(parsed->architecture_override == mqb::Architecture::x86,
                    "legacy -x86 should map to the typed architecture override");
             expect(parsed->build.output_name == "legacy-product",

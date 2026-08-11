@@ -24,6 +24,10 @@ std::string_view to_string(const Architecture value) noexcept {
 
 std::string_view to_string(const CppStandard value) noexcept {
     switch (value) {
+    case CppStandard::cpp14:
+        return "c++14";
+    case CppStandard::cpp17:
+        return "c++17";
     case CppStandard::cpp20:
         return "c++20";
     case CppStandard::cpp23:

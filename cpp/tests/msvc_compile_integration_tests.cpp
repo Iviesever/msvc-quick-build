@@ -148,6 +148,33 @@ int main() {
         }
     }
 
+    for (const auto standard : {mqb::CppStandard::cpp14, mqb::CppStandard::cpp17}) {
+        auto legacy = invocation;
+        legacy.object = fixture.path() / "object dir"
+            / (standard == mqb::CppStandard::cpp14 ? "cpp14.obj" : "cpp17.obj");
+        legacy.source_dependencies = fixture.path() / "dependency dir"
+            / (standard == mqb::CppStandard::cpp14 ? "cpp14.json" : "cpp17.json");
+        legacy.options.standard = standard;
+
+        const auto legacy_result = compiler.compile(legacy);
+        expect(legacy_result.has_value(),
+               standard == mqb::CppStandard::cpp14
+                   ? "installed MSVC should compile the ordinary fixture in C++14 mode"
+                   : "installed MSVC should compile the ordinary fixture in C++17 mode");
+        if (!legacy_result) {
+            std::cerr << "legacy-standard compiler error: " << legacy_result.error().message << '\n';
+            if (legacy_result.error().process_result) {
+                std::cerr << legacy_result.error().process_result->stdout_text;
+                std::cerr << legacy_result.error().process_result->stderr_text;
+            }
+        } else {
+            expect(fs::is_regular_file(legacy.object),
+                   "legacy standard compile should create its requested object");
+            expect(fs::is_regular_file(*legacy.source_dependencies),
+                   "legacy standard compile should keep source dependency metadata enabled");
+        }
+    }
+
     const fs::path broken_source = fixture.path() / "source dir" / "broken.cpp";
     const fs::path broken_object = fixture.path() / "object dir" / "broken.obj";
     write_text(broken_source, "int broken( { return 0; }\n");

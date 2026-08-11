@@ -134,6 +134,20 @@ int main() {
         }
     }
 
+    {
+        ModuleScanInvocation pre20;
+        pre20.source = "src/legacy.cpp";
+        pre20.output_file = "scan/legacy.json";
+        pre20.options.standard = CppStandard::cpp17;
+        auto rejected = MsvcModuleDependencyScanner::build_arguments(pre20);
+        expect(!rejected && rejected.error().code == ModuleScanErrorCode::invalid_request,
+               "P1689 module scanning should reject C++17 before cl.exe is launched");
+        if (!rejected) {
+            expect(rejected.error().message.find("C++20") != std::string::npos,
+                   "pre-C++20 scan rejection should explain the minimum standard");
+        }
+    }
+
     const fs::path root = make_temp_root();
     const fs::path output = root / "scan" / "module.json";
     const fs::path source = root / "module.ixx";
