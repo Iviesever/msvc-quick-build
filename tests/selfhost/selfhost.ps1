@@ -35,7 +35,7 @@ function Assert-MqbVersion {
     if ($help[0] -ne $expected) {
         throw "$Label version mismatch. Expected '$expected', got '$($help[0])'"
     }
-    Write-Host "$Label: $($help[0])"
+    Write-Host "${Label}: $($help[0])"
 }
 
 function Assert-SelfHostSourceManifest {
