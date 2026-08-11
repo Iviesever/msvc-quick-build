@@ -1,4 +1,6 @@
+#include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -23,9 +25,7 @@ int main() {
     const fs::path root = fs::path{"C:/work/project"}.lexically_normal();
     auto layout = mqb::ProjectArtifactLayout::create(root);
     expect(layout.has_value(), "non-empty project root should create an artifact layout");
-    if (!layout) {
-        return 1;
-    }
+    if (!layout) return 1;
 
     auto src_foo = layout->for_source(root / "src" / "foo.cpp");
     auto tests_foo = layout->for_source(root / "tests" / "foo.cpp");
@@ -41,14 +41,11 @@ int main() {
                "in-project object path should preserve relative source identity");
         expect(src_foo->dependencies == root / ".mqb" / "deps" / "src" / "foo.cpp.json",
                "dependency metadata should preserve relative source identity");
-        expect(src_foo->module_dependencies
-                   == root / ".mqb" / "scan" / "src" / "foo.cpp.json",
+        expect(src_foo->module_dependencies == root / ".mqb" / "scan" / "src" / "foo.cpp.json",
                "module scan metadata should preserve relative source identity");
-        expect(src_foo->module_interface
-                   == root / ".mqb" / "ifc" / "src" / "foo.cpp.ifc",
+        expect(src_foo->module_interface == root / ".mqb" / "ifc" / "src" / "foo.cpp.ifc",
                "compiled module interface path should preserve relative source identity");
-        expect(src_foo->compile_cache
-                   == root / ".mqb" / "cache" / "compile" / "src" / "foo.cpp.mqbcache",
+        expect(src_foo->compile_cache == root / ".mqb" / "cache" / "compile" / "src" / "foo.cpp.mqbcache",
                "compile cache should preserve relative source identity");
         expect(src_foo->module_dependencies != tests_foo->module_dependencies
                    && src_foo->module_interface != tests_foo->module_interface,
@@ -58,8 +55,7 @@ int main() {
     auto partition = layout->for_source(root / "modules" / "math-part.ixx");
     expect(partition.has_value(), "module interface source should map to module artifacts");
     if (partition) {
-        expect(partition->module_interface
-                   == root / ".mqb" / "ifc" / "modules" / "math-part.ixx.ifc",
+        expect(partition->module_interface == root / ".mqb" / "ifc" / "modules" / "math-part.ixx.ifc",
                "IFC filename should come from source identity rather than logical module spelling");
         expect(partition->module_interface.filename().generic_string().find(':') == std::string::npos,
                "IFC filename must not require logical-name characters such as partition ':'");
@@ -73,8 +69,7 @@ int main() {
                "external source artifacts should be isolated under .external hash namespace");
         expect(generic.ends_with("/foo.cpp.obj"),
                "external artifact should retain source filename for diagnostics");
-        expect(outside->module_interface.generic_string().find(".mqb/ifc/.external/")
-                   != std::string::npos,
+        expect(outside->module_interface.generic_string().find(".mqb/ifc/.external/") != std::string::npos,
                "external IFCs should share the stable external-source namespace");
     }
 
@@ -86,6 +81,46 @@ int main() {
         expect(target->link_cache == root / ".mqb" / "cache" / "link" / "demo.linkcache",
                "link cache should be isolated from compile cache metadata");
     }
+
+#ifdef _WIN32
+    // Existing physical paths are normalized before deriving source identity.
+    // This prevents scanner/user aliases (case differences, 8.3/long-path or
+    // other canonical spellings) from splitting one source into two caches.
+    const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path physical_root = fs::temp_directory_path()
+        / ("MqB_Artifact_Alias_" + std::to_string(tick));
+    const fs::path physical_header = physical_root / "Include" / "Util.hpp";
+    fs::create_directories(physical_header.parent_path());
+    {
+        std::ofstream file{physical_header, std::ios::binary | std::ios::trunc};
+        file << "#pragma once\n";
+    }
+
+    auto physical_layout = mqb::ProjectArtifactLayout::create(physical_root);
+    expect(physical_layout.has_value(), "existing physical project root should create a layout");
+    if (physical_layout) {
+        std::string alias_component = physical_root.filename().string();
+        for (auto& ch : alias_component) {
+            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+        }
+        const fs::path root_alias = physical_root.parent_path() / alias_component;
+        const fs::path source_alias = root_alias / "include" / "util.hpp";
+        auto real_artifacts = physical_layout->for_source(physical_header);
+        auto alias_artifacts = physical_layout->for_source(source_alias);
+        expect(real_artifacts.has_value() && alias_artifacts.has_value(),
+               "case aliases of an existing Windows source should map to artifacts");
+        if (real_artifacts && alias_artifacts) {
+            expect(real_artifacts->object == alias_artifacts->object
+                       && real_artifacts->dependencies == alias_artifacts->dependencies
+                       && real_artifacts->module_dependencies == alias_artifacts->module_dependencies
+                       && real_artifacts->module_interface == alias_artifacts->module_interface
+                       && real_artifacts->compile_cache == alias_artifacts->compile_cache,
+                   "one physical Windows source must have one stable artifact identity across path aliases");
+        }
+    }
+    std::error_code cleanup_error;
+    fs::remove_all(physical_root, cleanup_error);
+#endif
 
     expect(!layout->for_target("../demo"), "target names with parent traversal must be rejected");
     expect(!mqb::ProjectArtifactLayout::create({}), "empty project root must be rejected");

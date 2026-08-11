@@ -24,6 +24,21 @@ namespace fs = std::filesystem;
     };
 }
 
+[[nodiscard]] fs::path normalize_existing_identity(const fs::path& path) {
+    fs::path normalized = path.lexically_normal();
+    std::error_code error_code;
+    if (!fs::exists(normalized, error_code) || error_code) {
+        return normalized;
+    }
+
+    error_code.clear();
+    fs::path canonical = fs::weakly_canonical(normalized, error_code);
+    if (error_code || canonical.empty()) {
+        return normalized;
+    }
+    return canonical.lexically_normal();
+}
+
 [[nodiscard]] bool safe_relative(const fs::path& relative) {
     if (relative.empty() || relative.is_absolute() || relative == ".") {
         return false;
@@ -54,7 +69,7 @@ namespace fs = std::filesystem;
 [[nodiscard]] fs::path source_key(
     const fs::path& project_root,
     const fs::path& source) {
-    const fs::path normalized_source = source.lexically_normal();
+    const fs::path normalized_source = normalize_existing_identity(source);
     const fs::path relative = normalized_source.lexically_relative(project_root);
     if (safe_relative(relative)) {
         return relative;
@@ -91,7 +106,7 @@ ProjectArtifactLayout::create(fs::path project_root) {
             {},
             "project root must not be empty"));
     }
-    project_root = project_root.lexically_normal();
+    project_root = normalize_existing_identity(project_root);
     return ProjectArtifactLayout{
         project_root,
         project_root / ".mqb",

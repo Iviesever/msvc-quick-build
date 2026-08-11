@@ -59,25 +59,12 @@ void print_error(const mqb::orchestration::IncrementalModuleTargetError& error) 
     if (!error.source.empty()) std::cerr << "  source=" << error.source.generic_string() << '\n';
     if (!error.artifact.empty()) std::cerr << "  artifact=" << error.artifact.generic_string() << '\n';
     if (error.artifact_layout_error) std::cerr << "  layout=" << error.artifact_layout_error->message << '\n';
-    if (error.scan_error) {
-        std::cerr << "  scan=" << error.scan_error->message << '\n';
-        if (error.scan_error->process_result) {
-            std::cerr << error.scan_error->process_result->stdout_text
-                      << error.scan_error->process_result->stderr_text;
-        }
+    if (error.scan_error && error.scan_error->process_result) {
+        std::cerr << error.scan_error->process_result->stdout_text
+                  << error.scan_error->process_result->stderr_text;
     }
     if (error.graph_error) std::cerr << "  graph=" << error.graph_error->message << '\n';
-    if (error.compile_error) {
-        std::cerr << "  wave=" << error.compile_error->message << '\n';
-        if (error.compile_error->compile_error
-            && error.compile_error->compile_error->compile_error
-            && error.compile_error->compile_error->compile_error->compiler_error
-            && error.compile_error->compile_error->compile_error->compiler_error->process_result) {
-            const auto& process = *error.compile_error->compile_error
-                ->compile_error->compiler_error->process_result;
-            std::cerr << process.stdout_text << process.stderr_text;
-        }
-    }
+    if (error.compile_error) std::cerr << "  wave=" << error.compile_error->message << '\n';
     if (error.link_error) std::cerr << "  link=" << error.link_error->message << '\n';
 }
 
@@ -94,7 +81,6 @@ bool run_executable(
     expect(result.has_value(), "header-unit target executable should launch");
     if (!result) return false;
     expect(result->exit_code == 0, "header-unit target executable should return zero");
-    if (result->exit_code != 0) std::cerr << result->stdout_text << result->stderr_text;
     return result->exit_code == 0;
 }
 
@@ -140,21 +126,15 @@ int main() {
     mqb::orchestration::MsvcModuleTargetCoordinator target{scanner, module_compile, incremental_link};
 
     mqb::orchestration::IncrementalModuleTargetRequest request;
-    request.sources = {
-        mqb::orchestration::ModuleCompileSourceRequest{
-            .source = consumer,
-            .artifacts = *consumer_artifacts,
-            .kind = mqb::TranslationUnitKind::source,
-        },
-    };
+    request.sources = {{
+        .source = consumer,
+        .artifacts = *consumer_artifacts,
+        .kind = mqb::TranslationUnitKind::source,
+    }};
     request.target = *target_artifacts;
     request.artifact_layout = *layout;
-    request.compiler_options.configuration = mqb::BuildConfiguration::debug;
-    request.compiler_options.architecture = mqb::Architecture::x64;
     request.compiler_options.standard = mqb::CppStandard::latest;
     request.compiler_options.include_directories = {include_dir};
-    request.link_options.configuration = mqb::BuildConfiguration::debug;
-    request.link_options.architecture = mqb::Architecture::x64;
     request.link_options.subsystem = mqb::LinkSubsystem::console;
     request.working_directory = root;
     request.max_parallel_scans = 2;
@@ -166,8 +146,13 @@ int main() {
     expect(cold->plan.header_units.size() == 1,
            "real P1689 target scan should expose exactly one project-local header unit");
     if (cold->plan.header_units.size() == 1) {
-        expect(cold->plan.header_units[0].source.lexically_normal() == header.lexically_normal(),
-               "P1689 source-path should resolve to the physical project header");
+        std::error_code equivalent_error;
+        const bool equivalent = fs::equivalent(
+            cold->plan.header_units[0].source,
+            header,
+            equivalent_error);
+        expect(equivalent && !equivalent_error,
+               "P1689 source-path should resolve to the same physical project header even if Windows spelling differs");
         expect(cold->plan.header_units[0].header_name == "util.hpp",
                "P1689 header-unit logical name should preserve import spelling");
         expect(cold->plan.header_units[0].lookup_method == mqb::modules::LookupMethod::include_quote,
@@ -180,7 +165,7 @@ int main() {
            "cold target should compile consumer after header-unit provider");
     expect(cold->link.linked, "cold target should link executable");
     expect(fs::is_regular_file(expected_header_artifacts->module_interface),
-           "target should allocate and create the layout-derived header-unit IFC");
+           "one physical project header should receive the layout-derived in-project IFC identity");
     expect(fs::is_regular_file(expected_header_artifacts->dependencies),
            "target should allocate header-unit sourceDependencies metadata");
     expect(fs::is_regular_file(expected_header_artifacts->compile_cache),
@@ -191,11 +176,10 @@ int main() {
 
     auto warm = target.run(request);
     if (!warm) { print_error(warm.error()); return 1; }
-    expect(!warm->compiles.header_unit_compiles[0].result.compiled,
-           "warm target should reuse dynamically allocated header-unit IFC");
-    expect(!warm->compiles.compiles[0].result.compiled,
-           "warm target should reuse consumer object");
-    expect(!warm->link.linked, "warm target should reuse linked executable");
+    expect(!warm->compiles.header_unit_compiles[0].result.compiled
+               && !warm->compiles.compiles[0].result.compiled
+               && !warm->link.linked,
+           "unchanged dynamically allocated header-unit target should be fully warm");
 
     std::error_code time_error;
     const auto old_ifc_time = fs::last_write_time(expected_header_artifacts->module_interface, time_error);
@@ -232,11 +216,10 @@ int main() {
     expect(!time_error, "test should delete only layout-derived header-unit IFC");
     auto repaired = target.run(request);
     if (!repaired) { print_error(repaired.error()); return 1; }
-    expect(repaired->compiles.header_unit_compiles[0].result.compiled,
-           "missing dynamic header IFC should rebuild provider");
-    expect(repaired->compiles.compiles[0].result.compiled,
-           "missing header IFC repair should rebuild consumer");
-    expect(repaired->link.linked, "missing header IFC repair should relink target");
+    expect(repaired->compiles.header_unit_compiles[0].result.compiled
+               && repaired->compiles.compiles[0].result.compiled
+               && repaired->link.linked,
+           "missing dynamic header IFC should repair provider, consumer, and link");
     expect(fs::is_regular_file(expected_header_artifacts->module_interface),
            "missing dynamic header IFC should be recreated");
 
