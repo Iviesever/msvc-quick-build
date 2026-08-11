@@ -1,141 +1,111 @@
-# Stable v5 installer / default-entry cutover
+# Stable v5 native-only install contract
 
-This document defines the Windows install and rollback contract for the stable-v5 C++ cutover.
+Stable v5 is a **clean break** from the old PowerShell implementation.
 
-## Installed command layout
+There is one supported runtime implementation and one supported project configuration format:
 
-The canonical stable command is:
+- executable: `mqb.exe`
+- command: `mqb`
+- project config: `mqb.json`
 
-```text
-mqb
-```
+The repository no longer ships or supports the old PowerShell build implementation, PowerShell profile shim, `build` compatibility command, `msvc_list.json` migration path, legacy CLI aliases, or rollback to the PowerShell implementation.
 
-For users upgrading from the PowerShell release line, stable v5 also installs:
+## Installation
 
-```text
-build
-```
-
-`build` is a compatibility shim that forwards argv directly to `mqb.exe`. It is not a second PowerShell execution path. Legacy spellings already classified as compatible in `docs/V5_PARITY.md` continue to be parsed by the C++ CLI; intentionally migrated semantics such as structured program argv remain migrations rather than hidden emulation.
-
-The default per-user install root remains:
-
-```text
-%USERPROFILE%\bin
-```
-
-This preserves the location used by the old installer while allowing both `mqb.exe` and `build.cmd` to work in PowerShell, cmd.exe, and other shells once that directory is on the user PATH.
-
-## What the installer deploys
-
-A stable package installs or maintains these files under the install root:
-
-```text
-mqb.exe
-build.cmd
-build-legacy.ps1
-mqb-install.ps1
-uninstall-mqb.ps1
-mqb-install-state.json
-```
-
-`build.ps1` from an existing PowerShell installation is never overwritten or deleted by the v5 cutover.
-
-When upgrading from the legacy line, the first v5 install copies the existing installed `build.ps1` to `build-legacy.ps1`. On a clean install, the package Golden Reference is copied there instead. This makes rollback available without making PowerShell the default implementation.
-
-## PowerShell profile policy
-
-The old installer copied `Microsoft.PowerShell_profile.ps1` over the user's complete Windows PowerShell and PowerShell 7 profiles.
-
-Stable v5 must not do that.
-
-The new installer:
-
-1. leaves unrelated profile files untouched;
-2. recognizes the known legacy `build` function that invokes `%USERPROFILE%\bin\build.ps1`;
-3. appends a clearly delimited MQB-managed block after that function so `build` resolves to the installed `mqb.exe`;
-4. updates only that managed block on reinstall;
-5. leaves unrelated custom `build` functions alone and emits a warning rather than silently taking ownership.
-
-Clean installations do not need a PowerShell function at all: `mqb.exe` and `build.cmd` are shell-neutral commands through PATH.
-
-Managed blocks are delimited by:
-
-```text
-# >>> MQB v5 C++ default >>>
-# <<< MQB v5 C++ default <<<
-```
-
-Rollback uses a separate explicit legacy block:
-
-```text
-# >>> MQB v5 legacy rollback >>>
-# <<< MQB v5 legacy rollback <<<
-```
-
-## PATH ownership
-
-The installer adds the install root to the **current user's** PATH only when it is not already present.
-
-`mqb-install-state.json` records whether the v5 installer added that PATH entry. Uninstall and rollback remove the entry only when v5 owns it; a pre-existing user PATH entry is not removed.
-
-Reinstall is idempotent and must not duplicate the PATH entry.
-
-## Install
-
-A packaged stable build contains `mqb.exe` next to `install.bat` / `install.ps1`.
+The Windows package places `mqb.exe`, `install.ps1`, `uninstall.ps1`, and `install.bat` together. Run:
 
 ```powershell
 .\install.bat
 ```
 
-`install.bat` is now a non-interactive wrapper around Windows PowerShell. It does not change the user's execution policy and it no longer prompts for or extracts `portable_msvc.zip`.
+The default per-user installation root is:
 
-The PowerShell implementation is also directly callable:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Action Install
+```text
+%USERPROFILE%\bin
 ```
 
-For source-tree validation, `-MqbPath` can select an already-built `mqb.exe`.
+The installer copies only native-v5 assets into that root:
+
+```text
+mqb.exe
+mqb-install.ps1
+uninstall-mqb.ps1
+mqb-install-state.json
+```
+
+It does **not** create any of the following compatibility artifacts:
+
+```text
+build.cmd
+build.ps1
+build-legacy.ps1
+Microsoft.PowerShell_profile.ps1
+```
+
+## PATH ownership
+
+The installer adds the installation root to the user PATH only when it is missing. The install state records whether this v5 installation added the entry.
+
+Reinstall is idempotent: the same path is not duplicated.
+
+Uninstall removes the PATH entry only when the current native-v5 install state says the installer owns it.
+
+## PowerShell profiles
+
+Stable v5 does not modify Windows PowerShell or PowerShell 7 profile files.
+
+There is no `build` function injection and no profile migration logic. Users invoke `mqb` directly.
 
 ## Uninstall
 
-The installed maintenance entry is:
+Use:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File "$HOME\bin\uninstall-mqb.ps1"
 ```
 
-Uninstall removes the C++ binary, `build.cmd`, MQB-managed profile blocks, and installer-owned PATH state. Pre-existing legacy `build.ps1` and unrelated profile content remain untouched.
+Uninstall removes installer-owned native-v5 files and an installer-owned PATH entry. There is no `-RestoreLegacy` mode.
 
-## Roll back to the PowerShell Golden Reference
+## Existing old installations
 
-Use:
+Stable v5 does not provide an automatic migration or rollback contract for old PowerShell installations.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File "$HOME\bin\uninstall-mqb.ps1" `
-  -RestoreLegacy
+If an old installation left `build.ps1`, a custom `build` function, or an old profile modification on a machine, those files are outside the v5 installer contract. Remove them manually if they are no longer wanted.
+
+This is intentional: stable v5 does not keep two authoritative build implementations alive.
+
+## CLI compatibility policy
+
+Stable v5 accepts the native CLI documented by `mqb --help`.
+
+PowerShell-era aliases such as the following are rejected as unknown options:
+
+```text
+-config -std -type -runtime -run -env -x86 -x64 -output
+-include -defines -libpath -libs -flags -link_flags -ltcg
+-subsystem -help -?
 ```
 
-Rollback removes the C++ default entry and its installer-owned PATH entry, preserves `build-legacy.ps1`, and installs an explicit profile fallback when necessary.
+Normal native short options remain supported where documented, including `-h`, `-v`, `-j`, `-o`, `-I`, `-D`, `-L`, and `-l`.
 
-For an upgraded machine that still has the original `%USERPROFILE%\bin\build.ps1`, rollback points to that prior installed implementation. For a clean stable-v5 install, rollback points to `build-legacy.ps1` copied from the package Golden Reference.
+## Configuration compatibility policy
+
+Stable v5 reads `mqb.json` only. The old `msvc_list.json` format is not accepted, translated, or searched for by the native tool.
 
 ## CI acceptance
 
-`.github/workflows/install-cutover.yml` builds a Release `mqb.exe` on Windows and exercises all of the following against isolated install/profile directories:
+The `Native Installer` workflow validates on Windows that:
 
-- clean install through `install.bat`;
-- deployed `mqb.exe` and `build.cmd` expose the same `--help` identity;
-- unrelated profiles are not overwritten;
-- user PATH insertion is idempotent and installer-owned;
-- uninstall removes only v5-owned state;
-- upgrade from a seeded PowerShell `build.ps1` + legacy profile preserves the original script and user profile content;
-- the upgraded PowerShell `build` function resolves to `mqb.exe`;
-- rollback removes the C++ default, preserves the old script, and restores a legacy `build` entry;
-- a clean install can also roll back using the packaged Golden Reference.
+1. the validated Release `mqb.exe` is the binary installed by the public batch entry;
+2. only native-v5 files are installed;
+3. no `build`/PowerShell compatibility artifacts are created;
+4. reinstall does not duplicate PATH state;
+5. uninstall removes installer-owned native files and PATH state;
+6. old installer parameters such as `-LegacyBuildPath` are rejected instead of triggering migration behavior.
 
-This is the installer/default-entry gate required by issue #26. Stable release publication remains a separate follow-up and must package these validated installer files with the exact tested stable binary.
+The normal C++ Debug and Release gates remain authoritative for the build engine itself.
+
+## Release boundary
+
+The already-published `v5.0.0-rc.2` remains a historical prerelease and is not rewritten. The final `v5.0.0` package must be produced from the native-only mainline and must not reintroduce legacy assets for compatibility.
