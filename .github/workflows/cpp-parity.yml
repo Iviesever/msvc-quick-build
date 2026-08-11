@@ -50,3 +50,11 @@ jobs:
           & (Join-Path $PWD 'cpp/tests/parity/shared_library_arch_failure.ps1') `
             -MqbPath $mqb `
             -RepoRoot $PWD
+
+      - name: Run shared project-config migration parity
+        shell: pwsh
+        run: |
+          $mqb = Join-Path $PWD "cpp/build-parity/apps/mqb/${{ matrix.configuration }}/mqb.exe"
+          & (Join-Path $PWD 'cpp/tests/parity/shared_config_migration.ps1') `
+            -MqbPath $mqb `
+            -RepoRoot $PWD
