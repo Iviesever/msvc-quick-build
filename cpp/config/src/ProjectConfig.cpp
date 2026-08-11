@@ -199,7 +199,7 @@ private:
     }
     static void append_utf8(std::string& out, std::uint32_t cp) {
         if (cp <= 0x7fu) out.push_back(static_cast<char>(cp));
-        else if (cp <= 0x7fffu) {
+        else if (cp <= 0x7ffu) {
             out.push_back(static_cast<char>(0xc0u | (cp >> 6u)));
             out.push_back(static_cast<char>(0x80u | (cp & 0x3fu)));
         } else if (cp <= 0xffffu) {
