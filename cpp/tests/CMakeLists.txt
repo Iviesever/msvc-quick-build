@@ -86,6 +86,10 @@ if(WIN32)
     target_link_libraries(mqb_msvc_compiler_arguments_tests PRIVATE mqb_msvc)
     target_compile_features(mqb_msvc_compiler_arguments_tests PRIVATE cxx_std_23)
 
+    add_executable(mqb_c_source_recipe_tests c_source_recipe_tests.cpp)
+    target_link_libraries(mqb_c_source_recipe_tests PRIVATE mqb_msvc)
+    target_compile_features(mqb_c_source_recipe_tests PRIVATE cxx_std_23)
+
     add_executable(mqb_msvc_linker_arguments_tests msvc_linker_arguments_tests.cpp)
     target_link_libraries(mqb_msvc_linker_arguments_tests PRIVATE mqb_msvc)
     target_compile_features(mqb_msvc_linker_arguments_tests PRIVATE cxx_std_23)
@@ -116,6 +120,7 @@ if(WIN32)
         mqb_windows_process_runner_tests
         mqb_msvc_portable_tests
         mqb_msvc_compiler_arguments_tests
+        mqb_c_source_recipe_tests
         mqb_msvc_linker_arguments_tests
         mqb_msvc_library_resolver_tests
         mqb_msvc_compile_executor_tests
@@ -161,6 +166,10 @@ if(WIN32)
         target_link_libraries(mqb_build_policy_e2e_tests PRIVATE mqb_platform_windows)
         target_compile_features(mqb_build_policy_e2e_tests PRIVATE cxx_std_23)
 
+        add_executable(mqb_c_source_e2e_tests mqb_c_source_e2e_tests.cpp)
+        target_link_libraries(mqb_c_source_e2e_tests PRIVATE mqb_platform_windows)
+        target_compile_features(mqb_c_source_e2e_tests PRIVATE cxx_std_23)
+
         list(APPEND MQB_TEST_TARGETS
             mqb_msvc_visual_studio_tests
             mqb_msvc_compile_integration_tests
@@ -171,6 +180,7 @@ if(WIN32)
             mqb_parallel_cli_e2e_tests
             mqb_module_cli_e2e_tests
             mqb_build_policy_e2e_tests
+            mqb_c_source_e2e_tests
         )
     endif()
 endif()
@@ -205,6 +215,7 @@ if(WIN32)
     )
     add_test(NAME mqb.msvc.portable COMMAND mqb_msvc_portable_tests)
     add_test(NAME mqb.msvc.compiler_arguments COMMAND mqb_msvc_compiler_arguments_tests)
+    add_test(NAME mqb.msvc.c_source_recipe COMMAND mqb_c_source_recipe_tests)
     add_test(NAME mqb.msvc.linker_arguments COMMAND mqb_msvc_linker_arguments_tests)
     add_test(NAME mqb.msvc.library_resolver COMMAND mqb_msvc_library_resolver_tests)
     add_test(NAME mqb.msvc.compile_executor COMMAND mqb_msvc_compile_executor_tests)
@@ -236,6 +247,10 @@ if(WIN32)
         add_test(
             NAME mqb.cli.build_policy_e2e
             COMMAND mqb_build_policy_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.c_source_e2e
+            COMMAND mqb_c_source_e2e_tests $<TARGET_FILE:mqb>
         )
     endif()
 endif()
