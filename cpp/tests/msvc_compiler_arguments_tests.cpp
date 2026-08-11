@@ -82,6 +82,24 @@ int main() {
                "structured object routing should win by appearing after a raw /Fo");
     }
 
+    auto cpp14 = invocation;
+    cpp14.options.standard = mqb::CppStandard::cpp14;
+    cpp14.options.additional_arguments.clear();
+    const auto cpp14_result = mqb::msvc::MsvcCompiler::build_arguments(cpp14);
+    expect(cpp14_result.has_value(), "ordinary C++14 compile invocation should be supported");
+    if (cpp14_result) {
+        expect(contains(*cpp14_result, "/std:c++14"), "C++14 should map correctly");
+    }
+
+    auto cpp17 = invocation;
+    cpp17.options.standard = mqb::CppStandard::cpp17;
+    cpp17.options.additional_arguments.clear();
+    const auto cpp17_result = mqb::msvc::MsvcCompiler::build_arguments(cpp17);
+    expect(cpp17_result.has_value(), "ordinary C++17 compile invocation should be supported");
+    if (cpp17_result) {
+        expect(contains(*cpp17_result, "/std:c++17"), "C++17 should map correctly");
+    }
+
     auto cpp20 = invocation;
     cpp20.options.standard = mqb::CppStandard::cpp20;
     cpp20.options.additional_arguments.clear();
@@ -161,6 +179,38 @@ int main() {
                    "structured module object routing should follow raw /Fo arguments");
             expect(module_result->back() == "modules/math.ixx",
                    "module source should remain the final argv element");
+        }
+    }
+
+    {
+        auto pre20_module = invocation;
+        pre20_module.kind = mqb::TranslationUnitKind::module_interface;
+        pre20_module.module_interface_output = "ifc/legacy.ifc";
+        pre20_module.options.standard = mqb::CppStandard::cpp17;
+        pre20_module.options.additional_arguments.clear();
+        auto rejected = mqb::msvc::MsvcCompiler::build_arguments(pre20_module);
+        expect(!rejected
+                   && rejected.error().code == mqb::msvc::CompilerErrorCode::invalid_request,
+               "module interface should fail closed below C++20");
+        if (!rejected) {
+            expect(rejected.error().message.find("C++20") != std::string::npos,
+                   "pre-C++20 module rejection should explain the minimum standard");
+        }
+    }
+
+    {
+        mqb::msvc::HeaderUnitCompileInvocation header;
+        header.header_name = "legacy.hpp";
+        header.lookup_method = mqb::msvc::HeaderUnitLookupMethod::quote;
+        header.interface_output = "ifc/legacy.hpp.ifc";
+        header.options.standard = mqb::CppStandard::cpp14;
+        auto rejected = mqb::msvc::MsvcCompiler::build_header_unit_arguments(header);
+        expect(!rejected
+                   && rejected.error().code == mqb::msvc::CompilerErrorCode::invalid_request,
+               "header-unit producer should fail closed below C++20");
+        if (!rejected) {
+            expect(rejected.error().message.find("C++20") != std::string::npos,
+                   "pre-C++20 header-unit rejection should explain the minimum standard");
         }
     }
 
