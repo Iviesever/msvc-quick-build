@@ -335,6 +335,8 @@ int main(const int argc, char* argv[]) {
     cli_overrides.build.configuration = options.configuration_override;
     cli_overrides.build.architecture = options.architecture_override;
     cli_overrides.build.standard = options.standard_override;
+    cli_overrides.build.runtime_library = options.runtime_override;
+    cli_overrides.build.subsystem = options.subsystem_override;
     cli_overrides.build.output_name = options.build.output_name;
     cli_overrides.build.defines = options.defines;
     cli_overrides.build.include_directories = options.include_directories;
@@ -350,6 +352,8 @@ int main(const int argc, char* argv[]) {
     options.build.configuration = effective.configuration;
     options.build.architecture = effective.architecture;
     options.build.standard = effective.standard;
+    options.runtime_override = effective.runtime_library;
+    options.subsystem_override = effective.subsystem;
     options.build.output_name = effective.output_name;
     options.discover_sources = effective.discovery_enabled;
     options.defines = effective.defines;

@@ -404,13 +404,25 @@ require_paths(const fs::path& file, const fs::path& root, const JsonValue& value
     if (value == "latest" || value == "c++latest") return CppStandard::latest;
     return std::nullopt;
 }
+[[nodiscard]] std::optional<RuntimeLibrary> runtime_library(std::string_view value) {
+    if (value == "MD" || value == "md") return RuntimeLibrary::md;
+    if (value == "MDd" || value == "mdd") return RuntimeLibrary::mdd;
+    if (value == "MT" || value == "mt") return RuntimeLibrary::mt;
+    if (value == "MTd" || value == "mtd") return RuntimeLibrary::mtd;
+    return std::nullopt;
+}
+[[nodiscard]] std::optional<LinkSubsystem> subsystem(std::string_view value) {
+    if (value == "console") return LinkSubsystem::console;
+    if (value == "windows") return LinkSubsystem::windows;
+    return std::nullopt;
+}
 
 [[nodiscard]] std::expected<void, Error>
 decode_build(const fs::path& file, const fs::path& root, const JsonValue& value, BuildOverrides& out) {
     auto object = require_object(file, value, "build");
     if (!object) return std::unexpected(object.error());
     auto known = reject_unknown(file, **object,
-        {"configuration", "architecture", "standard", "output", "defines", "include_dirs",
+        {"configuration", "architecture", "standard", "runtime", "subsystem", "output", "defines", "include_dirs",
          "library_dirs", "libraries", "compiler_args", "linker_args"},
         "build");
     if (!known) return std::unexpected(known.error());
@@ -435,6 +447,20 @@ decode_build(const fs::path& file, const fs::path& root, const JsonValue& value,
         auto parsed = standard(*text);
         if (!parsed) return std::unexpected(schema_error(file, it->second, "build.standard must be '14', '17', '20', '23', or 'latest'"));
         out.standard = *parsed;
+    }
+    if (auto it = (**object).find("runtime"); it != (**object).end()) {
+        auto text = require_string(file, it->second, "build.runtime");
+        if (!text) return std::unexpected(text.error());
+        auto parsed = runtime_library(*text);
+        if (!parsed) return std::unexpected(schema_error(file, it->second, "build.runtime must be 'MD', 'MDd', 'MT', or 'MTd'"));
+        out.runtime_library = *parsed;
+    }
+    if (auto it = (**object).find("subsystem"); it != (**object).end()) {
+        auto text = require_string(file, it->second, "build.subsystem");
+        if (!text) return std::unexpected(text.error());
+        auto parsed = subsystem(*text);
+        if (!parsed) return std::unexpected(schema_error(file, it->second, "build.subsystem must be 'console' or 'windows'"));
+        out.subsystem = *parsed;
     }
     if (auto it = (**object).find("output"); it != (**object).end()) {
         auto text = require_string(file, it->second, "build.output");

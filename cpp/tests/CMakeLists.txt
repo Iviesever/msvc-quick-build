@@ -175,6 +175,10 @@ if(WIN32)
         target_link_libraries(mqb_c_source_e2e_tests PRIVATE mqb_platform_windows)
         target_compile_features(mqb_c_source_e2e_tests PRIVATE cxx_std_23)
 
+        add_executable(mqb_runtime_subsystem_config_e2e_tests mqb_runtime_subsystem_config_e2e_tests.cpp)
+        target_link_libraries(mqb_runtime_subsystem_config_e2e_tests PRIVATE mqb_platform_windows)
+        target_compile_features(mqb_runtime_subsystem_config_e2e_tests PRIVATE cxx_std_23)
+
         list(APPEND MQB_TEST_TARGETS
             mqb_msvc_visual_studio_tests
             mqb_msvc_compile_integration_tests
@@ -186,6 +190,7 @@ if(WIN32)
             mqb_module_cli_e2e_tests
             mqb_build_policy_e2e_tests
             mqb_c_source_e2e_tests
+            mqb_runtime_subsystem_config_e2e_tests
         )
     endif()
 endif()
@@ -257,6 +262,10 @@ if(WIN32)
         add_test(
             NAME mqb.cli.c_source_e2e
             COMMAND mqb_c_source_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.runtime_subsystem_config_e2e
+            COMMAND mqb_runtime_subsystem_config_e2e_tests $<TARGET_FILE:mqb>
         )
     endif()
 endif()

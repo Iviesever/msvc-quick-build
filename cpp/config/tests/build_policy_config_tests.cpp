@@ -43,6 +43,8 @@ int main() {
   "version": 1,
   "build": {
     "standard": "17",
+    "runtime": "MT",
+    "subsystem": "windows",
     "compiler_args": ["/W4", "/DCONFIG_POLICY=1"],
     "linker_args": ["/OPT:NOREF"]
   }
@@ -53,6 +55,10 @@ int main() {
     if (loaded) {
         expect(loaded->build.standard == mqb::CppStandard::cpp17,
                "mqb.json should accept C++17");
+        expect(loaded->build.runtime_library == mqb::RuntimeLibrary::mt,
+               "mqb.json should decode typed MT runtime");
+        expect(loaded->build.subsystem == mqb::LinkSubsystem::windows,
+               "mqb.json should decode typed Windows subsystem");
         expect(loaded->build.compiler_arguments.size() == 2
                    && loaded->build.compiler_arguments[0] == "/W4"
                    && loaded->build.compiler_arguments[1] == "/DCONFIG_POLICY=1",
@@ -63,11 +69,17 @@ int main() {
 
         mqb::config::ProjectOverrides cli;
         cli.build.standard = mqb::CppStandard::cpp14;
+        cli.build.runtime_library = mqb::RuntimeLibrary::mdd;
+        cli.build.subsystem = mqb::LinkSubsystem::console;
         cli.build.compiler_arguments = {"/WX"};
         cli.build.linker_arguments = {"/MAP:cli.map"};
         const auto effective = mqb::config::resolve_project_options(&*loaded, cli);
         expect(effective.standard == mqb::CppStandard::cpp14,
                "CLI scalar standard should override project config");
+        expect(effective.runtime_library == mqb::RuntimeLibrary::mdd,
+               "CLI scalar runtime should override project config");
+        expect(effective.subsystem == mqb::LinkSubsystem::console,
+               "CLI scalar subsystem should override project config");
         expect(effective.compiler_arguments.size() == 3
                    && effective.compiler_arguments[0] == "/W4"
                    && effective.compiler_arguments[1] == "/DCONFIG_POLICY=1"
@@ -83,6 +95,21 @@ int main() {
     auto cpp14 = mqb::config::ProjectConfigLoader::load(file);
     expect(cpp14.has_value() && cpp14->build.standard == mqb::CppStandard::cpp14,
            "mqb.json should accept C++14");
+
+    write_text(file, R"json({"version":1,"build":{"runtime":"dynamic"}})json");
+    auto bad_runtime = mqb::config::ProjectConfigLoader::load(file);
+    expect(!bad_runtime && bad_runtime.error().code == mqb::config::ErrorCode::schema_error,
+           "unknown runtime must fail strict schema validation");
+
+    write_text(file, R"json({"version":1,"build":{"subsystem":"gui"}})json");
+    auto bad_subsystem = mqb::config::ProjectConfigLoader::load(file);
+    expect(!bad_subsystem && bad_subsystem.error().code == mqb::config::ErrorCode::schema_error,
+           "unknown subsystem must fail strict schema validation");
+
+    write_text(file, R"json({"version":1,"build":{"runtime":17}})json");
+    auto runtime_type = mqb::config::ProjectConfigLoader::load(file);
+    expect(!runtime_type && runtime_type.error().code == mqb::config::ErrorCode::schema_error,
+           "runtime must be a JSON string");
 
     write_text(file, R"json({"version":1,"build":{"compiler_args":[""]}})json");
     auto empty = mqb::config::ProjectConfigLoader::load(file);
