@@ -129,8 +129,9 @@ struct Scenario {
         path_text(build_script),
     };
     arguments.insert(arguments.end(), scenario.sources.begin(), scenario.sources.end());
-    arguments.emplace_back("-env");
-    arguments.emplace_back("vs");
+    // Legacy -env is a persistent preference command that exits immediately;
+    // it is not equivalent to native --env. A clean installed-MSVC CI runner
+    // therefore lets the Golden Reference auto-detect Visual Studio.
     arguments.emplace_back("-o");
     arguments.push_back(scenario.output_name);
     arguments.insert(
