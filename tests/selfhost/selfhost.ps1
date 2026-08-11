@@ -88,7 +88,7 @@ function Invoke-SelfBuild {
     Push-Location $CppRoot
     try {
         Write-Host "[$Label] builder: $Builder"
-        & $Builder 'apps/mqb/main.cpp' '--env' 'vs' '-D' $VersionDefine
+        & $Builder 'apps/mqb/main.cpp' '--env' 'vs' '--verbose' '-D' $VersionDefine
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) {
             throw "$Label self-build failed with exit code $exitCode"
@@ -133,8 +133,9 @@ if (Test-Path -LiteralPath $mqbState) {
     Remove-Item -LiteralPath $mqbState -Recurse -Force
 }
 
-# The compiler receives this as /DMQB_VERSION=\"X.Y.Z\".
-$versionDefine = 'MQB_VERSION=\"' + $ReleaseVersion + '\"'
+# Keep literal quotes in the structured define value. MQB's Windows argv encoder
+# is responsible for escaping them when constructing cl.exe's command line.
+$versionDefine = 'MQB_VERSION="' + $ReleaseVersion + '"'
 
 # Stage 0 may come from the bootstrap build system. It is never packaged.
 $stage1Built = Invoke-SelfBuild `
