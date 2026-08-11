@@ -42,6 +42,7 @@ Status meanings:
 | `-D`, `-defines` | `-D`; legacy `-defines` accepted | **compat** |
 | `-config debug/release` | `--debug`, `--release`, `--config`; legacy `-config` accepted | **compat** |
 | `-runtime MD/MDd/MT/MTd` | `--runtime`; legacy `-runtime` accepted | **compat** |
+| `-ltcg` | `--ltcg` / `--no-ltcg`; legacy `-ltcg` enables the same coupled typed policy | **compat** |
 | `-subsystem console/windows` | `--subsystem`; legacy `-subsystem` accepted | **compat** |
 | `-env vs/portable/port/p/auto` | `--env auto/vs/portable`; legacy spelling and portable aliases accepted | **compat** |
 | `-help`, `-?` | `--help`, `-h`; legacy help aliases accepted | **compat** |
@@ -62,11 +63,13 @@ Status meanings:
 
 DLL link identity is typed and separate from executable identity while preserving the historical executable link-signature byte stream. For exporting DLLs, MQB owns a deterministic `.mqb/bin/<target>.lib` import-library path. Linker side outputs that were observed after a successful link are persisted in link-cache v3; v2 executable caches remain readable. Removing a recorded import library/export file invalidates only the link and repairs it without recompiling fresh translation units.
 
-Static libraries have a separate build owner rather than being modeled as `link.exe` targets. `MsvcLibrarian` invokes `lib.exe` over the compiled object set, archive identity hashes object order/output/librarian identity, and static metadata lives under `.mqb/cache/archive/<target>.archivecache` so it cannot collide with established executable/DLL link caches. Missing archives repair without recompiling fresh TUs; changed library sources recompile only affected TUs and re-archive. Each rebuild is created from a clean temporary archive before installation, so shrinking the source/object set cannot retain stale members. Linker-only policy is rejected for static targets instead of being silently ignored. Static targets that require the named-module/header-unit pipeline remain fail-closed until archive topology is explicitly validated.
+Static libraries have a separate build owner rather than being modeled as `link.exe` targets. `MsvcLibrarian` invokes `lib.exe` over the compiled object set, archive identity hashes object order/output/librarian identity and typed archive policy, and static metadata lives under `.mqb/cache/archive/<target>.archivecache` so it cannot collide with established executable/DLL link caches. Missing archives repair without recompiling fresh TUs; changed library sources recompile only affected TUs and re-archive. Each rebuild is created from a clean temporary archive before installation, so shrinking the source/object set cannot retain stale members. Linker-only policy is rejected for static targets instead of being silently ignored. Static targets that require the named-module/header-unit pipeline remain fail-closed until archive topology is explicitly validated.
 
 ## Compiler and linker policy
 
-The native backend has typed `CompilerOptions` / `LinkOptions` plus ordered additional argument vectors. CLI and `mqb.json` expose those vectors, and compile/link signatures hash them in order. Config arguments are applied first and CLI arguments append afterward. High-value typed policy remains authoritative over conflicting raw flags: typed runtime is emitted after raw compiler arguments, while structured target-kind/subsystem/output routing is emitted after raw linker arguments.
+The native backend has typed `CompilerOptions` / `LinkOptions` plus ordered additional argument vectors. CLI and `mqb.json` expose those vectors, and compile/link/archive signatures hash the relevant typed and raw policy. Config arguments are applied first and CLI arguments append afterward. High-value typed policy remains authoritative over conflicting raw flags: typed runtime and LTCG compile policy are emitted after raw compiler arguments, while typed LTCG downstream policy and structured target-kind/subsystem/output routing are emitted after raw linker arguments.
+
+Typed LTCG is a single coupled policy, not two user-maintained raw lists. Enabling it adds `/GL` to affected compilation and `/LTCG` to the downstream target recipe. Executable/DLL targets use `link.exe /LTCG`; ordinary static-library targets use `lib.exe /LTCG`. Debug executable/DLL LTCG forces `/INCREMENTAL:NO` rather than generating an incompatible `/INCREMENTAL` + `/LTCG` recipe. Compile, link, and archive identities all distinguish LTCG-on from LTCG-off, while the historical non-LTCG signature byte streams remain unchanged. Real installed-MSVC E2E covers cold/warm executable LTCG, `mqb.json`/CLI precedence, static LTCG archive creation, and an LTCG executable consuming the generated static library.
 
 | Legacy option | Native C++ status | Stable-v5 decision |
 | --- | --- | --- |
@@ -82,7 +85,7 @@ The native backend has typed `CompilerOptions` / `LinkOptions` plus ordered addi
 | `-permissive` | native baseline is `/permissive-`; raw args can add a later MSVC conformance switch where supported | **migrate** strict conformance remains default |
 | `-fp precise/strict/fast` | raw compiler args exist | **migrate** to raw build policy |
 | `-charset unicode/mbcs` | UTF-8 source/execution is native baseline; Windows macro charset is not typed | **implement** only if parity fixtures show `_UNICODE/UNICODE` vs `_MBCS` is a required stable contract |
-| `-ltcg` | requires coupled compile `/GL` + link `/LTCG` policy | **implement** typed/coupled policy; do not rely on users manually keeping two raw lists coherent |
+| `-ltcg` | typed CLI/config coupled `/GL` + downstream `/LTCG`, cache identities, legacy spelling, and real MSVC E2E are covered | **ready/compat** |
 | `-incremental` linker switch | native build engine is incrementally cached; linker `/INCREMENTAL` can be passed raw | **migrate** terminology; expose raw linker switch if specifically desired |
 | `-flags` / arbitrary compiler switches | ordered CLI/config pass-through is wired and cache-safe | **ready/compat** |
 | `-link_flags` / arbitrary linker switches | ordered CLI/config pass-through is wired and cache-safe | **ready/compat** |
@@ -92,15 +95,16 @@ The native backend has typed `CompilerOptions` / `LinkOptions` plus ordered addi
 | Legacy behavior | Native C++ status | Stable-v5 decision |
 | --- | --- | --- |
 | `msvc_list.json`, upward search up to five levels | native uses nearest upward `mqb.json` | **migrate** to `mqb.json`; provide upgrade guidance/tooling rather than keeping two authoritative schemas forever |
-| CLI overrides scalar config | ready, including type/runtime/subsystem | **ready** |
+| CLI overrides scalar config | ready, including type/runtime/LTCG/subsystem | **ready** |
 | additive list precedence | config lists first, CLI lists append | **ready** |
 | 14/17/20/23/latest standard config | ready | **ready** |
 | target-kind config | strict `build.type` supports `exe`/`dll`/`static` (`lib` alias accepted); real static config routing and CLI target-kind precedence are covered | **ready** |
 | runtime/subsystem config | typed strict-schema fields with real cache-invalidation E2E | **ready** |
+| LTCG config | strict boolean `build.ltcg`; CLI `--ltcg`/`--no-ltcg` precedence and real executable/static E2E | **ready** |
 | include/lib/define/library config | ready in `mqb.json` | **ready** |
 | `compiler_args` / `linker_args` | ready in strict `mqb.json` v1 schema | **ready** |
 | source discovery excludes | ready with the native discovery schema | **ready** |
-| legacy config keys for remaining coupled policies | not all represented | **implement** only for capabilities accepted into the stable parity surface |
+| legacy config keys for remaining coupled policies | no remaining high-value coupled policy is accepted by default solely through raw-list synchronization | **implement** only when parity fixtures prove another typed policy is required |
 
 ## Toolchain/environment behavior
 
@@ -117,9 +121,9 @@ The native backend has typed `CompilerOptions` / `LinkOptions` plus ordered addi
 
 Stable v5 does not require byte-for-byte artifact layout parity with PowerShell. It requires equivalent observable correctness: cold build succeeds, warm no-op avoids unnecessary work, source/header/library/config/toolchain/build-policy changes invalidate the right work, missing required artifacts repair correctly, and outputs are collision-free.
 
-Typed runtime changes are compile-recipe identity and therefore force affected compile + downstream target work. Typed target-kind/subsystem changes are target recipe identity; subsystem changes relink without recompiling otherwise-fresh TUs. Static archives have their own archive identity/cache and do not reuse `LinkCache`.
+Typed runtime changes are compile-recipe identity and therefore force affected compile + downstream target work. Typed target-kind/subsystem changes are target recipe identity; subsystem changes relink without recompiling otherwise-fresh TUs. Typed LTCG changes compile identity and the corresponding downstream link/archive identity as one coupled policy. Static archives have their own archive identity/cache and do not reuse `LinkCache`.
 
-Raw compiler argument changes are compile-recipe identity and therefore force affected compile + downstream target work. Raw linker argument changes are link-recipe identity and therefore relink without recompiling otherwise-fresh TUs. Linker-only options are invalid for static targets in the current public contract.
+Raw compiler argument changes are compile-recipe identity and therefore force affected compile + downstream target work. Raw linker argument changes are link-recipe identity and therefore relink without recompiling otherwise-fresh TUs. Linker-only options are invalid for static targets in the current public contract; typed LTCG is valid because it owns both compile and archive halves.
 
 The native `.mqb/obj`, `.mqb/deps`, `.mqb/scan`, `.mqb/ifc`, `.mqb/cache`, and `.mqb/bin` layout is the stable direction rather than the old PowerShell temporary layout.
 
@@ -137,8 +141,8 @@ Project-local named modules and project-local header units are in the RC/stable-
 6. Isolate C smart discovery from C++ module lexical syntax. **Done in #32.**
 7. Typed `mqb.json` runtime/subsystem policy with CLI precedence and real invalidation E2E. **Done in #33.**
 8. Native DLL target kind with typed linker routing, deterministic import library, and side-output repair. **Done in #35.**
-9. Static-library target with an explicit `lib.exe`/librarian backend, archive cache owner, strict `mqb.json` target kind, and real CLI/config consumer coverage. **Done in #36 + #37 once #37 merges.**
-10. Close the remaining high-value coupled MSVC policy gap (notably LTCG and any charset requirement proven by parity fixtures).
+9. Static-library target with an explicit `lib.exe`/librarian backend, archive cache owner, strict `mqb.json` target kind, and real CLI/config consumer coverage. **Done in #36 + #37.**
+10. Close the high-value coupled MSVC LTCG gap with typed `/GL` + downstream `/LTCG`, config/CLI precedence, cache identities, and real executable/static E2E. **Done in #39.** Charset remains evidence-driven rather than an automatic typed-surface requirement.
 11. Shared PowerShell-vs-C++ fixtures for ordinary targets, config precedence, incremental rebuilds, libraries, run argv, x86/x64, Debug/Release, and failure behavior.
 12. Installer/profile/`build` command cutover and clean-machine upgrade/rollback validation.
 13. Generalize the release workflow and publish stable v5 only from the exact validated artifact.
