@@ -27,7 +27,7 @@ if (-not (Test-Path -LiteralPath $fixturesRoot -PathType Container)) {
 function Invoke-Captured {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory
     )
 
@@ -175,7 +175,6 @@ int main() {
     return 0;
 }
 '@
-    $mutatedSource = $mutatedSource.Replace('\"', '"')
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText((Join-Path $psRoot 'main.cpp'), $mutatedSource, $utf8NoBom)
     [System.IO.File]::WriteAllText((Join-Path $cppRoot 'main.cpp'), $mutatedSource, $utf8NoBom)
