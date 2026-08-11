@@ -65,6 +65,7 @@ int main() {
         expect(contains(*result, "/Iinclude"), "include path should become one /I argv element");
         expect(contains(*result, "/Ivendor include"), "include path with spaces should remain one argv element");
         expect(contains(*result, "/sourceDependencies"), "dependency output should enable /sourceDependencies");
+        expect(!contains(*result, "/GL"), "default compiler recipe should preserve non-LTCG behavior");
         expect(!contains(*result, "/interface") && !contains(*result, "/ifcOutput"),
                "ordinary source compilation should not emit module-interface switches");
 
@@ -80,6 +81,19 @@ int main() {
         const auto structured_fo = std::find(result->begin(), result->end(), "/Fobuild/my file.obj");
         expect(raw_fo != result->end() && structured_fo != result->end() && raw_fo < structured_fo,
                "structured object routing should win by appearing after a raw /Fo");
+    }
+
+    auto ltcg = invocation;
+    ltcg.options.link_time_code_generation = true;
+    ltcg.options.additional_arguments = {"/GL-"};
+    const auto ltcg_result = mqb::msvc::MsvcCompiler::build_arguments(ltcg);
+    expect(ltcg_result.has_value(), "typed LTCG compile invocation should produce argv");
+    if (ltcg_result) {
+        expect(contains(*ltcg_result, "/GL"), "typed LTCG should emit /GL");
+        const auto raw_gl = std::find(ltcg_result->begin(), ltcg_result->end(), "/GL-");
+        const auto typed_gl = std::find(ltcg_result->begin(), ltcg_result->end(), "/GL");
+        expect(raw_gl != ltcg_result->end() && typed_gl != ltcg_result->end() && raw_gl < typed_gl,
+               "typed /GL must follow raw compiler arguments and remain authoritative");
     }
 
     auto cpp14 = invocation;
