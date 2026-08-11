@@ -93,3 +93,48 @@ jobs:
             dist/${{ env.MQB_PACKAGE_NAME }}.zip
             dist/${{ env.MQB_PACKAGE_NAME }}.zip.sha256
           if-no-files-found: error
+          retention-days: 30
+
+  publish-prerelease:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-test-package
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MQB_RELEASE_VERSION: 5.0.0-rc.2
+      MQB_PACKAGE_NAME: vscode-msvc-quick-build-v5.0.0-rc.2-windows-x64
+
+    steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v7
+
+      - name: Download validated package
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.MQB_PACKAGE_NAME }}
+          path: dist-publish
+
+      - name: Publish GitHub prerelease
+        shell: pwsh
+        run: |
+          $tag = "v$env:MQB_RELEASE_VERSION"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; leaving it unchanged."
+            exit 0
+          }
+
+          $zip = Join-Path $PWD "dist-publish/$($env:MQB_PACKAGE_NAME).zip"
+          $sha = $zip + '.sha256'
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "Missing release package: $zip" }
+          if (-not (Test-Path -LiteralPath $sha -PathType Leaf)) { throw "Missing checksum: $sha" }
+
+          gh release create $tag $zip $sha `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "$tag — C++ Refactor Release Candidate" `
+            --notes-file 'release/v5.0.0-rc.2.md' `
+            --prerelease
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
