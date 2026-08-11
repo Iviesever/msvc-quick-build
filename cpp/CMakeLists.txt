@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Release candidates are shipped as a standalone mqb.exe. Keep MSVC's runtime
+# Native release artifacts ship as a standalone mqb.exe. Keep MSVC's runtime
 # linked statically so the package does not depend on a separately installed
 # Visual C++ redistributable. Debug keeps the matching debug static runtime.
 if(MSVC)
