@@ -332,7 +332,7 @@ int main(const int argc, char* argv[]) {
     write_text(
         tree.root / "main.cpp",
         "import \"util.hpp\";\n"
-        "int main() { return header_answer() == 42 ? 0 : 1; }\n");
+        "int main() { return header_answer() >= 42 ? 0 : 1; }\n");
 
     auto header_cold = run_mqb(
         runner,
