@@ -15,14 +15,13 @@ enum class Architecture {
 };
 
 enum class CppStandard {
-    // Keep the existing values first: BuildSignature hashes the enum value and
-    // existing C++20/23/latest caches must not be invalidated just because
-    // stable-v5 parity adds older ordinary-TU modes.
-    cpp20,
-    cpp23,
-    latest,
-    cpp14,
-    cpp17,
+    // BuildSignature hashes these numeric values. Keep existing identities
+    // stable across parity expansion so old C++20/23/latest caches remain valid.
+    cpp20 = 0,
+    cpp23 = 1,
+    latest = 2,
+    cpp14 = 3,
+    cpp17 = 4,
 };
 
 enum class BuildReason {
