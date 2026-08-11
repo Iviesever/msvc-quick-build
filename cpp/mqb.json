@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "build": {
+    "configuration": "release",
+    "architecture": "x64",
+    "standard": "23",
+    "type": "exe",
+    "runtime": "MT",
+    "subsystem": "console",
+    "output": "mqb",
+    "include_dirs": [
+      "apps/mqb",
+      "backends/msvc/include",
+      "config/include",
+      "core/include",
+      "discovery/include",
+      "json/include",
+      "modules/include",
+      "orchestration/include",
+      "platform/windows/include",
+      "process/include"
+    ],
+    "compiler_args": [
+      "/W4",
+      "/permissive-"
+    ]
+  },
+  "discovery": {
+    "enabled": true,
+    "exclude_dirs": [
+      "backends/msvc/tests",
+      "config/tests",
+      "discovery/tests",
+      "json/tests",
+      "modules/tests",
+      "orchestration/tests",
+      "tests"
+    ],
+    "extra_sources": [
+      "apps/mqb/Cli.cpp",
+      "apps/mqb/ModuleCliTarget.cpp",
+      "apps/mqb/StaticCliTarget.cpp",
+      "backends/msvc/src/MsvcCompileExecutor.cpp",
+      "backends/msvc/src/MsvcCompiler.cpp",
+      "backends/msvc/src/MsvcLibrarian.cpp",
+      "backends/msvc/src/MsvcLibraryResolver.cpp",
+      "backends/msvc/src/MsvcLinker.cpp",
+      "backends/msvc/src/MsvcModuleDependencyScanner.cpp",
+      "backends/msvc/src/MsvcSourceDependenciesReader.cpp",
+      "backends/msvc/src/MsvcToolchainLocator.cpp",
+      "config/src/ProjectConfig.cpp",
+      "config/src/ProjectOptions.cpp",
+      "core/src/ArchiveCache.cpp",
+      "core/src/ArchiveCacheFile.cpp",
+      "core/src/BuildPlanner.cpp",
+      "core/src/BuildSignature.cpp",
+      "core/src/BuildTypes.cpp",
+      "core/src/CompileCache.cpp",
+      "core/src/CompileCacheFile.cpp",
+      "core/src/DependencyGraph.cpp",
+      "core/src/LinkCache.cpp",
+      "core/src/LinkCacheFile.cpp",
+      "core/src/ProjectArtifactLayout.cpp",
+      "core/src/TranslationUnitClassifier.cpp",
+      "discovery/src/ModuleSyntax.cpp",
+      "discovery/src/SourceDiscovery.cpp",
+      "json/src/Json.cpp",
+      "modules/src/ModuleDependencyGraph.cpp",
+      "modules/src/P1689.cpp",
+      "orchestration/src/BoundedWorkScheduler.cpp",
+      "orchestration/src/MsvcIncrementalArchiveCoordinator.cpp",
+      "orchestration/src/MsvcIncrementalCompileCoordinator.cpp",
+      "orchestration/src/MsvcIncrementalLinkCoordinator.cpp",
+      "orchestration/src/MsvcIncrementalStaticTargetCoordinator.cpp",
+      "orchestration/src/MsvcIncrementalTargetCoordinator.cpp",
+      "orchestration/src/MsvcModuleCompileCoordinator.cpp",
+      "orchestration/src/MsvcModuleTargetCoordinator.cpp",
+      "orchestration/src/MsvcTargetRouter.cpp",
+      "platform/windows/src/CommandLine.cpp",
+      "platform/windows/src/WindowsProcessRunner.cpp"
+    ]
+  }
+}
