@@ -3,18 +3,16 @@
 #include <algorithm>
 #include <cctype>
 #include <deque>
-#include <expected>
-#include <filesystem>
 #include <fstream>
-#include <iterator>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
-#include <vector>
 
 #include "mqb/core/TranslationUnitClassifier.hpp"
 #include "mqb/discovery/ModuleSyntax.hpp"
@@ -24,75 +22,54 @@ namespace {
 
 namespace fs = std::filesystem;
 
-enum class FileKind {
-    translation_unit,
-    header,
-};
-
 struct FileRecord {
     fs::path path;
-    FileKind kind{FileKind::header};
+    enum class Kind { translation_unit, header } kind{Kind::header};
     std::optional<TranslationUnitKind> translation_unit_kind;
     std::vector<std::string> local_includes;
     NamedModuleSyntax module_syntax;
     bool defines_main{false};
 };
 
+struct IndexedProject {
+    std::vector<FileRecord> files;
+    std::unordered_map<std::string, std::vector<std::size_t>> by_name;
+};
+
 [[nodiscard]] Error failure(
     const ErrorCode code,
-    fs::path path,
+    const fs::path& path,
     std::string message) {
     return Error{
         .code = code,
-        .path = std::move(path),
+        .path = path,
         .message = std::move(message),
     };
 }
 
-[[nodiscard]] std::string ascii_lower(std::string value) {
-    std::transform(
-        value.begin(),
-        value.end(),
-        value.begin(),
-        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return value;
-}
-
 [[nodiscard]] std::string path_key(const fs::path& path) {
-    return ascii_lower(path.lexically_normal().generic_string());
+    auto normalized = path.lexically_normal().generic_u8string();
+#ifdef _WIN32
+    std::string key;
+    key.reserve(normalized.size());
+    for (const char8_t byte : normalized) {
+        const unsigned char ch = static_cast<unsigned char>(byte);
+        key.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    return key;
+#else
+    return std::string{
+        reinterpret_cast<const char*>(normalized.data()),
+        normalized.size()};
+#endif
 }
 
-[[nodiscard]] std::string extension_lower(const fs::path& path) {
-    return ascii_lower(path.extension().string());
+[[nodiscard]] bool same_path(const fs::path& left, const fs::path& right) {
+    return path_key(left) == path_key(right);
 }
 
-[[nodiscard]] bool header_extension(const fs::path& path) {
-    const std::string extension = extension_lower(path);
-    return extension == ".h"
-        || extension == ".hh"
-        || extension == ".hpp"
-        || extension == ".hxx"
-        || extension == ".inl"
-        || extension == ".ipp";
-}
-
-[[nodiscard]] bool indexed_path(const fs::path& path) {
-    return is_translation_unit_path(path) || header_extension(path);
-}
-
-[[nodiscard]] bool default_excluded_directory(const fs::path& path) {
-    const std::string name = ascii_lower(path.filename().string());
-    return name == ".mqb"
-        || name == ".git"
-        || name == ".vs"
-        || name == "build"
-        || name == "out"
-        || name.starts_with("cmake-build-");
-}
-
-[[nodiscard]] bool inside_root(const fs::path& root, const fs::path& path) {
-    const fs::path relative = path.lexically_normal().lexically_relative(root.lexically_normal());
-    if (relative.empty() || relative.is_absolute()) {
+[[nodiscard]] bool safe_relative(const fs::path& relative) {
+    if (relative.empty() || relative.is_absolute() || relative == ".") {
         return false;
     }
     for (const auto& component : relative) {
@@ -103,625 +80,766 @@ struct FileRecord {
     return true;
 }
 
-[[nodiscard]] bool same_or_inside(const fs::path& root, const fs::path& path) {
-    return path.lexically_normal() == root.lexically_normal() || inside_root(root, path);
+[[nodiscard]] bool within_root(const fs::path& root, const fs::path& path) {
+    const fs::path relative = path.lexically_normal().lexically_relative(root.lexically_normal());
+    return safe_relative(relative);
 }
 
-[[nodiscard]] std::expected<std::string, std::string>
-read_text(const fs::path& path) {
-    std::ifstream stream{path, std::ios::binary};
-    if (!stream) {
-        return std::unexpected("failed to open source-discovery input");
+[[nodiscard]] bool built_in_excluded_name(const std::string& name) {
+    static const std::unordered_set<std::string> exact{
+        ".git", ".mqb", ".vs", "build", "out", "dist", ".cache", "node_modules"};
+    if (exact.contains(name)) {
+        return true;
     }
-    std::string text{
-        std::istreambuf_iterator<char>{stream},
-        std::istreambuf_iterator<char>{}};
-    if (!stream.eof() && stream.fail()) {
-        return std::unexpected("failed while reading source-discovery input");
-    }
-    return text;
+    return name.starts_with("cmake-build-");
 }
 
-[[nodiscard]] std::string strip_comments_preserve_literals(const std::string_view input) {
-    enum class State {
-        normal,
-        line_comment,
-        block_comment,
-        string_literal,
-        char_literal,
-    };
-
-    State state = State::normal;
-    bool escaped = false;
-    std::string output;
-    output.reserve(input.size());
-
-    for (std::size_t index = 0; index < input.size(); ++index) {
-        const char ch = input[index];
-        const char next = index + 1 < input.size() ? input[index + 1] : '\0';
-
-        switch (state) {
-        case State::normal:
-            if (ch == '/' && next == '/') {
-                output.append("  ");
-                ++index;
-                state = State::line_comment;
-            } else if (ch == '/' && next == '*') {
-                output.append("  ");
-                ++index;
-                state = State::block_comment;
-            } else {
-                output.push_back(ch);
-                if (ch == '"') {
-                    state = State::string_literal;
-                    escaped = false;
-                } else if (ch == '\'') {
-                    state = State::char_literal;
-                    escaped = false;
-                }
-            }
-            break;
-
-        case State::line_comment:
-            if (ch == '\n') {
-                output.push_back('\n');
-                state = State::normal;
-            } else {
-                output.push_back(' ');
-            }
-            break;
-
-        case State::block_comment:
-            if (ch == '*' && next == '/') {
-                output.append("  ");
-                ++index;
-                state = State::normal;
-            } else {
-                output.push_back(ch == '\n' ? '\n' : ' ');
-            }
-            break;
-
-        case State::string_literal:
-        case State::char_literal: {
-            output.push_back(ch);
-            const char closing = state == State::string_literal ? '"' : '\'';
-            if (escaped) {
-                escaped = false;
-            } else if (ch == '\\') {
-                escaped = true;
-            } else if (ch == closing) {
-                state = State::normal;
-            }
-            break;
-        }
-        }
-    }
-    return output;
+[[nodiscard]] bool built_in_excluded_directory(const fs::path& path) {
+    return built_in_excluded_name(path.filename().string());
 }
 
-[[nodiscard]] std::string blank_literals(const std::string_view input) {
-    enum class State {
-        normal,
-        string_literal,
-        char_literal,
-    };
-    State state = State::normal;
-    bool escaped = false;
-    std::string output;
-    output.reserve(input.size());
-
-    for (const char ch : input) {
-        switch (state) {
-        case State::normal:
-            if (ch == '"') {
-                output.push_back(' ');
-                state = State::string_literal;
-                escaped = false;
-            } else if (ch == '\'') {
-                output.push_back(' ');
-                state = State::char_literal;
-                escaped = false;
-            } else {
-                output.push_back(ch);
-            }
-            break;
-        case State::string_literal:
-        case State::char_literal: {
-            output.push_back(ch == '\n' ? '\n' : ' ');
-            const char closing = state == State::string_literal ? '"' : '\'';
-            if (escaped) {
-                escaped = false;
-            } else if (ch == '\\') {
-                escaped = true;
-            } else if (ch == closing) {
-                state = State::normal;
-            }
-            break;
-        }
-        }
-    }
-    return output;
-}
-
-[[nodiscard]] std::vector<std::string>
-parse_local_includes(const std::string_view comment_free) {
-    std::vector<std::string> includes;
-    std::size_t line_begin = 0;
-    while (line_begin <= comment_free.size()) {
-        const std::size_t newline = comment_free.find('\n', line_begin);
-        const std::size_t line_end = newline == std::string_view::npos
-            ? comment_free.size()
-            : newline;
-        std::string_view line = comment_free.substr(line_begin, line_end - line_begin);
-
-        std::size_t cursor = 0;
-        while (cursor < line.size() && std::isspace(static_cast<unsigned char>(line[cursor]))) {
-            ++cursor;
-        }
-        if (cursor < line.size() && line[cursor] == '#') {
-            ++cursor;
-            while (cursor < line.size() && std::isspace(static_cast<unsigned char>(line[cursor]))) {
-                ++cursor;
-            }
-            constexpr std::string_view keyword = "include";
-            if (line.substr(cursor, keyword.size()) == keyword) {
-                cursor += keyword.size();
-                if (cursor == line.size()
-                    || !std::isalnum(static_cast<unsigned char>(line[cursor]))) {
-                    while (cursor < line.size()
-                           && std::isspace(static_cast<unsigned char>(line[cursor]))) {
-                        ++cursor;
-                    }
-                    if (cursor < line.size() && line[cursor] == '"') {
-                        const std::size_t end_quote = line.find('"', cursor + 1);
-                        if (end_quote != std::string_view::npos && end_quote > cursor + 1) {
-                            includes.emplace_back(line.substr(cursor + 1, end_quote - cursor - 1));
-                        }
-                    }
-                }
-            }
-        }
-
-        if (newline == std::string_view::npos) {
-            break;
-        }
-        line_begin = newline + 1;
-    }
-    return includes;
-}
-
-[[nodiscard]] bool contains_main(const std::string_view comment_free) {
-    const std::string code = blank_literals(comment_free);
-    std::size_t cursor = 0;
-    while ((cursor = code.find("main", cursor)) != std::string::npos) {
-        const bool left_boundary = cursor == 0
-            || !(std::isalnum(static_cast<unsigned char>(code[cursor - 1]))
-                 || code[cursor - 1] == '_');
-        const std::size_t after_name = cursor + 4;
-        const bool right_boundary = after_name >= code.size()
-            || !(std::isalnum(static_cast<unsigned char>(code[after_name]))
-                 || code[after_name] == '_');
-        if (left_boundary && right_boundary) {
-            std::size_t next = after_name;
-            while (next < code.size() && std::isspace(static_cast<unsigned char>(code[next]))) {
-                ++next;
-            }
-            if (next < code.size() && code[next] == '(') {
-                return true;
-            }
-        }
-        cursor = after_name;
-    }
-    return false;
-}
-
-void add_undirected_edge(
-    std::vector<std::vector<std::size_t>>& adjacency,
-    const std::size_t left,
-    const std::size_t right) {
-    if (left == right) {
-        return;
-    }
-    auto& left_edges = adjacency[left];
-    if (std::find(left_edges.begin(), left_edges.end(), right) == left_edges.end()) {
-        left_edges.push_back(right);
-    }
-    auto& right_edges = adjacency[right];
-    if (std::find(right_edges.begin(), right_edges.end(), left) == right_edges.end()) {
-        right_edges.push_back(left);
-    }
-}
-
-[[nodiscard]] std::expected<fs::path, Error> normalize_directory_correction(
-    const fs::path& requested,
-    const fs::path& root) {
-    std::error_code error_code;
-    fs::path absolute = fs::absolute(requested, error_code).lexically_normal();
-    if (error_code
-        || !fs::is_directory(absolute, error_code)
-        || error_code
-        || !inside_root(root, absolute)) {
+[[nodiscard]] std::expected<fs::path, Error> normalize_existing_path(
+    const fs::path& path,
+    const ErrorCode error_code,
+    const std::string_view description) {
+    std::error_code ec;
+    fs::path absolute = fs::absolute(path, ec);
+    if (ec) {
         return std::unexpected(failure(
-            ErrorCode::invalid_correction,
-            requested,
-            "discovery excluded directory must be an existing directory strictly inside the project root"));
+            error_code,
+            path,
+            "failed to resolve " + std::string{description} + ": " + ec.message()));
+    }
+    absolute = absolute.lexically_normal();
+    if (!fs::exists(absolute, ec) || ec) {
+        return std::unexpected(failure(
+            error_code,
+            absolute,
+            std::string{description} + " does not exist"));
     }
     return absolute;
 }
 
 [[nodiscard]] std::expected<fs::path, Error> normalize_source_correction(
-    const fs::path& requested,
     const fs::path& root,
+    const fs::path& path,
     const std::string_view description) {
-    std::error_code error_code;
-    fs::path absolute = fs::absolute(requested, error_code).lexically_normal();
-    if (error_code
-        || !fs::is_regular_file(absolute, error_code)
-        || error_code
-        || !is_translation_unit_path(absolute)
-        || !inside_root(root, absolute)) {
+    auto normalized = normalize_existing_path(path, ErrorCode::invalid_correction, description);
+    if (!normalized) return std::unexpected(normalized.error());
+
+    std::error_code ec;
+    if (!fs::is_regular_file(*normalized, ec) || ec) {
         return std::unexpected(failure(
             ErrorCode::invalid_correction,
-            requested,
-            std::string{description}
-                + " must be an existing supported C++ translation unit inside the project root"));
+            *normalized,
+            std::string{description} + " must be a regular file"));
     }
-    return absolute;
+    if (!within_root(root, *normalized)) {
+        return std::unexpected(failure(
+            ErrorCode::invalid_correction,
+            *normalized,
+            std::string{description} + " must be inside the project root"));
+    }
+    if (!is_translation_unit_path(*normalized)) {
+        return std::unexpected(failure(
+            ErrorCode::invalid_correction,
+            *normalized,
+            std::string{description} + " must use a supported C/C++ translation-unit extension"));
+    }
+    return *normalized;
 }
 
-[[nodiscard]] bool ordinary_translation_unit(const FileRecord& file) {
-    return file.kind == FileKind::translation_unit
-        && file.translation_unit_kind == TranslationUnitKind::source;
+[[nodiscard]] std::expected<fs::path, Error> normalize_excluded_directory(
+    const fs::path& root,
+    const fs::path& path) {
+    auto normalized = normalize_existing_path(
+        path,
+        ErrorCode::invalid_correction,
+        "excluded directory");
+    if (!normalized) return std::unexpected(normalized.error());
+
+    std::error_code ec;
+    if (!fs::is_directory(*normalized, ec) || ec) {
+        return std::unexpected(failure(
+            ErrorCode::invalid_correction,
+            *normalized,
+            "excluded directory must be a directory"));
+    }
+    if (!within_root(root, *normalized)) {
+        return std::unexpected(failure(
+            ErrorCode::invalid_correction,
+            *normalized,
+            "excluded directory must be inside the project root"));
+    }
+    return *normalized;
+}
+
+[[nodiscard]] bool explicitly_excluded_directory(
+    const fs::path& path,
+    const std::vector<fs::path>& excluded_directories) {
+    return std::any_of(
+        excluded_directories.begin(),
+        excluded_directories.end(),
+        [&path](const fs::path& excluded) { return same_path(path, excluded); });
+}
+
+[[nodiscard]] bool under_excluded_directory(
+    const fs::path& path,
+    const std::vector<fs::path>& excluded_directories) {
+    return std::any_of(
+        excluded_directories.begin(),
+        excluded_directories.end(),
+        [&path](const fs::path& excluded) {
+            return same_path(path, excluded) || within_root(excluded, path);
+        });
+}
+
+[[nodiscard]] bool indexed_path(const fs::path& path) {
+    if (is_translation_unit_path(path)) {
+        return true;
+    }
+    const std::string extension = path.extension().string();
+    std::string lowered;
+    lowered.reserve(extension.size());
+    for (const unsigned char ch : extension) {
+        lowered.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    return lowered == ".h" || lowered == ".hh" || lowered == ".hpp" || lowered == ".hxx";
+}
+
+[[nodiscard]] std::expected<std::string, Error> read_text(const fs::path& path) {
+    std::ifstream stream{path, std::ios::binary};
+    if (!stream) {
+        return std::unexpected(failure(
+            ErrorCode::read_failed,
+            path,
+            "failed to open source file"));
+    }
+    std::string text{
+        std::istreambuf_iterator<char>{stream},
+        std::istreambuf_iterator<char>{}};
+    if (!stream.eof() && stream.fail()) {
+        return std::unexpected(failure(
+            ErrorCode::read_failed,
+            path,
+            "failed while reading source file"));
+    }
+    return text;
+}
+
+[[nodiscard]] std::string strip_comments_and_literals(const std::string_view text) {
+    enum class State { normal, line_comment, block_comment, string_literal, character_literal };
+    State state = State::normal;
+    bool escaped = false;
+    std::string result{text};
+
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const char ch = text[index];
+        const char next = index + 1 < text.size() ? text[index + 1] : '\0';
+        switch (state) {
+        case State::normal:
+            if (ch == '/' && next == '/') {
+                result[index] = ' ';
+                result[index + 1] = ' ';
+                ++index;
+                state = State::line_comment;
+            } else if (ch == '/' && next == '*') {
+                result[index] = ' ';
+                result[index + 1] = ' ';
+                ++index;
+                state = State::block_comment;
+            } else if (ch == '"') {
+                result[index] = ' ';
+                state = State::string_literal;
+                escaped = false;
+            } else if (ch == '\'') {
+                result[index] = ' ';
+                state = State::character_literal;
+                escaped = false;
+            }
+            break;
+        case State::line_comment:
+            if (ch == '\n') state = State::normal;
+            else result[index] = ' ';
+            break;
+        case State::block_comment:
+            if (ch == '*' && next == '/') {
+                result[index] = ' ';
+                result[index + 1] = ' ';
+                ++index;
+                state = State::normal;
+            } else if (ch != '\n') {
+                result[index] = ' ';
+            }
+            break;
+        case State::string_literal:
+            if (ch == '\n') {
+                state = State::normal;
+                escaped = false;
+                break;
+            }
+            result[index] = ' ';
+            if (escaped) escaped = false;
+            else if (ch == '\\') escaped = true;
+            else if (ch == '"') state = State::normal;
+            break;
+        case State::character_literal:
+            if (ch == '\n') {
+                state = State::normal;
+                escaped = false;
+                break;
+            }
+            result[index] = ' ';
+            if (escaped) escaped = false;
+            else if (ch == '\\') escaped = true;
+            else if (ch == '\'') state = State::normal;
+            break;
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] std::vector<std::string> parse_local_includes(const std::string_view text) {
+    std::vector<std::string> includes;
+    std::size_t position = 0;
+    while (position < text.size()) {
+        const std::size_t end = text.find('\n', position);
+        const std::string_view line = text.substr(
+            position,
+            end == std::string_view::npos ? text.size() - position : end - position);
+        std::size_t cursor = 0;
+        while (cursor < line.size() && std::isspace(static_cast<unsigned char>(line[cursor]))) ++cursor;
+        if (cursor < line.size() && line[cursor] == '#') {
+            ++cursor;
+            while (cursor < line.size() && std::isspace(static_cast<unsigned char>(line[cursor]))) ++cursor;
+            constexpr std::string_view include_keyword = "include";
+            if (line.substr(cursor).starts_with(include_keyword)) {
+                cursor += include_keyword.size();
+                while (cursor < line.size() && std::isspace(static_cast<unsigned char>(line[cursor]))) ++cursor;
+                if (cursor < line.size() && line[cursor] == '"') {
+                    ++cursor;
+                    const std::size_t close = line.find('"', cursor);
+                    if (close != std::string_view::npos && close > cursor) {
+                        includes.emplace_back(line.substr(cursor, close - cursor));
+                    }
+                }
+            }
+        }
+        if (end == std::string_view::npos) break;
+        position = end + 1;
+    }
+    return includes;
+}
+
+[[nodiscard]] bool identifier_boundary(const char ch) {
+    const unsigned char byte = static_cast<unsigned char>(ch);
+    return !std::isalnum(byte) && ch != '_';
+}
+
+[[nodiscard]] bool contains_main(const std::string_view text) {
+    std::size_t position = 0;
+    while ((position = text.find("main", position)) != std::string_view::npos) {
+        const bool left_ok = position == 0 || identifier_boundary(text[position - 1]);
+        const std::size_t after = position + 4;
+        bool right_ok = after >= text.size() || identifier_boundary(text[after]);
+        if (left_ok && right_ok) {
+            std::size_t cursor = after;
+            while (cursor < text.size() && std::isspace(static_cast<unsigned char>(text[cursor]))) ++cursor;
+            if (cursor < text.size() && text[cursor] == '(') return true;
+        }
+        position = after;
+    }
+    return false;
+}
+
+[[nodiscard]] std::expected<FileRecord, Error> scan_file(const fs::path& path) {
+    auto text = read_text(path);
+    if (!text) return std::unexpected(text.error());
+
+    FileRecord record;
+    record.path = path;
+    record.translation_unit_kind = classify_translation_unit_path(path);
+    record.kind = record.translation_unit_kind
+        ? FileRecord::Kind::translation_unit
+        : FileRecord::Kind::header;
+    const std::string comment_free = strip_comments_and_literals(*text);
+    record.local_includes = parse_local_includes(comment_free);
+    // C participates in ordinary include/main discovery, but C++ module lexical
+    // syntax is not meaningful in C. Keep headers and C++ TUs unchanged while
+    // preventing legal C identifiers such as `module` / `import` from routing a
+    // target into the P1689 pipeline.
+    if (!record.translation_unit_kind || is_cpp_translation_unit_path(path)) {
+        record.module_syntax = ModuleSyntaxParser::parse(*text);
+    }
+    record.defines_main = record.kind == FileRecord::Kind::translation_unit
+        && contains_main(comment_free);
+    return record;
+}
+
+[[nodiscard]] std::expected<IndexedProject, Error> index_project(
+    const fs::path& root,
+    const std::vector<fs::path>& excluded_directories) {
+    IndexedProject index;
+    std::error_code ec;
+    fs::recursive_directory_iterator iterator{
+        root,
+        fs::directory_options::skip_permission_denied,
+        ec};
+    const fs::recursive_directory_iterator end;
+    if (ec) {
+        return std::unexpected(failure(
+            ErrorCode::read_failed,
+            root,
+            "failed to start source discovery: " + ec.message()));
+    }
+
+    for (; iterator != end; iterator.increment(ec)) {
+        if (ec) {
+            const fs::path failed_path = iterator == end ? root : iterator->path();
+            return std::unexpected(failure(
+                ErrorCode::read_failed,
+                failed_path,
+                "failed while enumerating project files: " + ec.message()));
+        }
+
+        const fs::path path = iterator->path().lexically_normal();
+        if (iterator->is_directory(ec)) {
+            if (ec) {
+                return std::unexpected(failure(
+                    ErrorCode::read_failed,
+                    path,
+                    "failed to inspect project directory: " + ec.message()));
+            }
+            if (built_in_excluded_directory(path)
+                || explicitly_excluded_directory(path, excluded_directories)) {
+                iterator.disable_recursion_pending();
+            }
+            continue;
+        }
+        if (ec) {
+            return std::unexpected(failure(
+                ErrorCode::read_failed,
+                path,
+                "failed to inspect project file: " + ec.message()));
+        }
+        if (!iterator->is_regular_file(ec) || ec || !indexed_path(path)) continue;
+
+        auto record = scan_file(path);
+        if (!record) return std::unexpected(record.error());
+        const std::size_t id = index.files.size();
+        index.by_name[path.filename().string()].push_back(id);
+        index.files.push_back(std::move(*record));
+    }
+    return index;
+}
+
+[[nodiscard]] std::optional<std::size_t> find_record(
+    const IndexedProject& index,
+    const fs::path& path) {
+    for (std::size_t id = 0; id < index.files.size(); ++id) {
+        if (same_path(index.files[id].path, path)) return id;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<std::size_t> resolve_local_include(
+    const IndexedProject& index,
+    const FileRecord& from,
+    const std::string& include,
+    const std::vector<fs::path>& include_directories) {
+    const fs::path local = (from.path.parent_path() / include).lexically_normal();
+    if (auto id = find_record(index, local)) return id;
+
+    for (const auto& directory : include_directories) {
+        const fs::path candidate = (directory / include).lexically_normal();
+        if (auto id = find_record(index, candidate)) return id;
+    }
+
+    const fs::path include_name = fs::path{include}.filename();
+    if (const auto it = index.by_name.find(include_name.string()); it != index.by_name.end()) {
+        if (it->second.size() == 1) return it->second.front();
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::string stem_key(const fs::path& path) {
+    std::string stem = path.stem().string();
+#ifdef _WIN32
+    std::transform(
+        stem.begin(), stem.end(), stem.begin(),
+        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+#endif
+    return stem;
 }
 
 [[nodiscard]] bool module_interface_translation_unit(const FileRecord& file) {
-    return file.kind == FileKind::translation_unit
+    return file.kind == FileRecord::Kind::translation_unit
         && file.translation_unit_kind == TranslationUnitKind::module_interface;
 }
 
-[[nodiscard]] std::string ownership_key(const fs::path& path) {
-    return path_key(path.parent_path() / path.stem());
-}
-
 [[nodiscard]] bool file_requires_module_pipeline(const FileRecord& file) {
+    if (is_c_translation_unit_path(file.path)) {
+        return false;
+    }
     return module_interface_translation_unit(file)
         || file.module_syntax.declared_module.has_value()
         || !file.module_syntax.imported_modules.empty()
-        || file.module_syntax.imports_header_unit;
+        || file.module_syntax.has_header_unit_import;
+}
+
+struct EdgeGraph {
+    std::vector<std::vector<std::size_t>> edges;
+    std::vector<std::string> warnings;
+};
+
+[[nodiscard]] EdgeGraph build_edges(
+    const IndexedProject& index,
+    const std::vector<fs::path>& include_directories) {
+    EdgeGraph graph;
+    graph.edges.resize(index.files.size());
+    for (std::size_t id = 0; id < index.files.size(); ++id) {
+        for (const auto& include : index.files[id].local_includes) {
+            const auto target = resolve_local_include(
+                index,
+                index.files[id],
+                include,
+                include_directories);
+            if (target) {
+                graph.edges[id].push_back(*target);
+            }
+        }
+        std::sort(graph.edges[id].begin(), graph.edges[id].end());
+        graph.edges[id].erase(
+            std::unique(graph.edges[id].begin(), graph.edges[id].end()),
+            graph.edges[id].end());
+    }
+
+    std::unordered_map<std::string, std::vector<std::size_t>> by_stem;
+    for (std::size_t id = 0; id < index.files.size(); ++id) {
+        by_stem[stem_key(index.files[id].path)].push_back(id);
+    }
+    for (const auto& [stem, ids] : by_stem) {
+        (void)stem;
+        std::vector<std::size_t> sources;
+        std::vector<std::size_t> headers;
+        for (const auto id : ids) {
+            if (index.files[id].kind == FileRecord::Kind::translation_unit) sources.push_back(id);
+            else headers.push_back(id);
+        }
+        if (sources.size() == 1) {
+            for (const auto header : headers) {
+                graph.edges[sources.front()].push_back(header);
+                graph.edges[header].push_back(sources.front());
+            }
+        }
+    }
+    for (auto& neighbors : graph.edges) {
+        std::sort(neighbors.begin(), neighbors.end());
+        neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
+    }
+    return graph;
+}
+
+[[nodiscard]] std::vector<bool> reachable_from(
+    const EdgeGraph& graph,
+    const std::size_t entry) {
+    std::vector<bool> reachable(graph.edges.size(), false);
+    std::deque<std::size_t> queue;
+    queue.push_back(entry);
+    reachable[entry] = true;
+    while (!queue.empty()) {
+        const auto current = queue.front();
+        queue.pop_front();
+        for (const auto neighbor : graph.edges[current]) {
+            if (!reachable[neighbor]) {
+                reachable[neighbor] = true;
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    return reachable;
+}
+
+void add_edge(EdgeGraph& graph, const std::size_t from, const std::size_t to) {
+    auto& edges = graph.edges[from];
+    if (std::find(edges.begin(), edges.end(), to) == edges.end()) {
+        edges.push_back(to);
+    }
+}
+
+void add_reachable_module_provider_edges(
+    const IndexedProject& index,
+    EdgeGraph& graph,
+    std::vector<bool>& reachable) {
+    std::map<std::string, std::vector<std::size_t>, std::less<>> providers;
+    for (std::size_t id = 0; id < index.files.size(); ++id) {
+        const auto& file = index.files[id];
+        if (module_interface_translation_unit(file)
+            && file.module_syntax.declared_module) {
+            providers[*file.module_syntax.declared_module].push_back(id);
+        }
+    }
+
+    std::deque<std::size_t> pending;
+    std::vector<bool> scanned(index.files.size(), false);
+    for (std::size_t id = 0; id < reachable.size(); ++id) {
+        if (reachable[id]) pending.push_back(id);
+    }
+
+    while (!pending.empty()) {
+        const std::size_t importer = pending.front();
+        pending.pop_front();
+        if (scanned[importer]) continue;
+        scanned[importer] = true;
+
+        for (const auto& logical_name : index.files[importer].module_syntax.imported_modules) {
+            const auto found = providers.find(logical_name);
+            if (found == providers.end() || found->second.size() != 1) continue;
+
+            const std::size_t provider = found->second.front();
+            add_edge(graph, importer, provider);
+            add_edge(graph, provider, importer);
+            if (!reachable[provider]) {
+                reachable[provider] = true;
+                pending.push_back(provider);
+            }
+        }
+    }
+}
+
+[[nodiscard]] std::optional<std::size_t> find_header_owner(
+    const IndexedProject& index,
+    const EdgeGraph& graph,
+    const std::size_t header) {
+    std::vector<std::size_t> candidates;
+    for (const auto neighbor : graph.edges[header]) {
+        if (index.files[neighbor].kind == FileRecord::Kind::translation_unit) {
+            candidates.push_back(neighbor);
+        }
+    }
+    if (candidates.size() == 1) return candidates.front();
+    return std::nullopt;
+}
+
+void select_translation_units(
+    const IndexedProject& index,
+    const EdgeGraph& graph,
+    const std::vector<bool>& reachable,
+    std::set<std::size_t>& selected) {
+    for (std::size_t id = 0; id < index.files.size(); ++id) {
+        if (reachable[id] && index.files[id].kind == FileRecord::Kind::translation_unit) {
+            selected.insert(id);
+        }
+    }
+    for (std::size_t id = 0; id < index.files.size(); ++id) {
+        if (!reachable[id] || index.files[id].kind != FileRecord::Kind::header) continue;
+        if (auto owner = find_header_owner(index, graph, id)) selected.insert(*owner);
+    }
+}
+
+[[nodiscard]] std::vector<fs::path> sorted_selected_paths(
+    const IndexedProject& index,
+    const std::set<std::size_t>& selected,
+    const fs::path& entry) {
+    std::vector<fs::path> paths;
+    paths.reserve(selected.size());
+    for (const auto id : selected) paths.push_back(index.files[id].path);
+    std::sort(paths.begin(), paths.end(), [&entry](const fs::path& left, const fs::path& right) {
+        if (same_path(left, entry)) return true;
+        if (same_path(right, entry)) return false;
+        return path_key(left) < path_key(right);
+    });
+    return paths;
 }
 
 } // namespace
 
-std::expected<Result, Error>
-SourceDiscovery::discover(const Request& request) {
-    std::error_code error_code;
-    fs::path root = fs::absolute(request.project_root, error_code).lexically_normal();
-    if (error_code || !fs::is_directory(root, error_code) || error_code) {
-        return std::unexpected(failure(
-            ErrorCode::invalid_project_root,
-            request.project_root,
-            "source discovery project root must be an existing directory"));
-    }
+std::expected<Result, Error> SourceDiscovery::discover(const Request& request) {
+    auto root = normalize_existing_path(
+        request.project_root,
+        ErrorCode::invalid_root,
+        "project root");
+    if (!root) return std::unexpected(root.error());
+    auto entry = normalize_existing_path(
+        request.entry,
+        ErrorCode::invalid_entry,
+        "entry source");
+    if (!entry) return std::unexpected(entry.error());
 
-    fs::path entry = fs::absolute(request.entry, error_code).lexically_normal();
-    if (error_code
-        || !fs::is_regular_file(entry, error_code)
-        || error_code
-        || !is_translation_unit_path(entry)
-        || !inside_root(root, entry)) {
+    std::error_code ec;
+    if (!fs::is_directory(*root, ec) || ec) {
+        return std::unexpected(failure(
+            ErrorCode::invalid_root,
+            *root,
+            "project root must be a directory"));
+    }
+    if (!fs::is_regular_file(*entry, ec) || ec || !is_translation_unit_path(*entry)) {
         return std::unexpected(failure(
             ErrorCode::invalid_entry,
-            request.entry,
-            "source discovery entry must be a supported C++ translation unit inside the project root"));
+            *entry,
+            "entry source must be a supported C/C++ translation unit"));
+    }
+    if (!within_root(*root, *entry)) {
+        return std::unexpected(failure(
+            ErrorCode::entry_outside_root,
+            *entry,
+            "entry source must be inside the project root"));
     }
 
     std::vector<fs::path> excluded_directories;
-    std::unordered_set<std::string> excluded_directory_keys;
     excluded_directories.reserve(request.excluded_directories.size());
-    for (const auto& requested : request.excluded_directories) {
-        auto directory = normalize_directory_correction(requested, root);
-        if (!directory) return std::unexpected(directory.error());
-        if (same_or_inside(*directory, entry)) {
-            return std::unexpected(failure(
-                ErrorCode::invalid_correction,
-                *directory,
-                "discovery excluded directory must not contain the entry translation unit"));
-        }
-        if (excluded_directory_keys.insert(path_key(*directory)).second) {
-            excluded_directories.push_back(std::move(*directory));
-        }
+    for (const auto& directory : request.excluded_directories) {
+        auto normalized = normalize_excluded_directory(*root, directory);
+        if (!normalized) return std::unexpected(normalized.error());
+        excluded_directories.push_back(std::move(*normalized));
     }
-
-    std::unordered_set<std::string> excluded_source_keys;
-    for (const auto& requested : request.excluded_sources) {
-        auto source = normalize_source_correction(requested, root, "discovery excluded source");
-        if (!source) return std::unexpected(source.error());
-        if (*source == entry) {
-            return std::unexpected(failure(
-                ErrorCode::invalid_correction,
-                *source,
-                "discovery excluded source must not be the entry translation unit"));
-        }
-        excluded_source_keys.insert(path_key(*source));
+    if (under_excluded_directory(*entry, excluded_directories)) {
+        return std::unexpected(failure(
+            ErrorCode::invalid_correction,
+            *entry,
+            "entry source must not be inside an excluded directory"));
     }
 
     std::vector<fs::path> extra_sources;
-    std::unordered_set<std::string> extra_source_keys;
-    for (const auto& requested : request.extra_sources) {
-        auto source = normalize_source_correction(requested, root, "discovery extra source");
-        if (!source) return std::unexpected(source.error());
-        const std::string key = path_key(*source);
-        if (excluded_source_keys.contains(key)) {
+    extra_sources.reserve(request.extra_sources.size());
+    for (const auto& source : request.extra_sources) {
+        auto normalized = normalize_source_correction(*root, source, "extra source");
+        if (!normalized) return std::unexpected(normalized.error());
+        if (under_excluded_directory(*normalized, excluded_directories)) {
             return std::unexpected(failure(
                 ErrorCode::invalid_correction,
-                *source,
-                "the same source cannot be both extra and excluded"));
+                *normalized,
+                "extra source must not be inside an excluded directory"));
         }
-        for (const auto& directory : excluded_directories) {
-            if (same_or_inside(directory, *source)) {
-                return std::unexpected(failure(
-                    ErrorCode::invalid_correction,
-                    *source,
-                    "discovery extra source must not be inside an excluded directory"));
-            }
+        extra_sources.push_back(std::move(*normalized));
+    }
+
+    std::vector<fs::path> excluded_sources;
+    excluded_sources.reserve(request.excluded_sources.size());
+    for (const auto& source : request.excluded_sources) {
+        auto normalized = normalize_source_correction(*root, source, "excluded source");
+        if (!normalized) return std::unexpected(normalized.error());
+        if (same_path(*normalized, *entry)) {
+            return std::unexpected(failure(
+                ErrorCode::invalid_correction,
+                *normalized,
+                "entry source must not be excluded"));
         }
-        if (*source != entry && extra_source_keys.insert(key).second) {
-            auto text = read_text(*source);
-            if (!text) {
-                return std::unexpected(failure(
-                    ErrorCode::invalid_correction,
-                    *source,
-                    text.error()));
-            }
-            const auto source_kind = classify_translation_unit_path(*source);
-            const std::string comment_free = strip_comments_preserve_literals(*text);
-            if (source_kind == TranslationUnitKind::source && contains_main(comment_free)) {
-                return std::unexpected(failure(
-                    ErrorCode::invalid_correction,
-                    *source,
-                    "discovery extra source must not define another main()"));
-            }
-            extra_sources.push_back(std::move(*source));
+        if (under_excluded_directory(*normalized, excluded_directories)) {
+            return std::unexpected(failure(
+                ErrorCode::invalid_correction,
+                *normalized,
+                "excluded source is redundant because its directory is already excluded"));
+        }
+        excluded_sources.push_back(std::move(*normalized));
+    }
+
+    for (const auto& extra : extra_sources) {
+        if (std::any_of(
+                excluded_sources.begin(),
+                excluded_sources.end(),
+                [&extra](const fs::path& excluded) { return same_path(extra, excluded); })) {
+            return std::unexpected(failure(
+                ErrorCode::invalid_correction,
+                extra,
+                "source cannot be both extra and excluded"));
+        }
+    }
+
+    auto index = index_project(*root, excluded_directories);
+    if (!index) return std::unexpected(index.error());
+
+    const auto entry_id = find_record(*index, *entry);
+    if (!entry_id) {
+        return std::unexpected(failure(
+            ErrorCode::invalid_entry,
+            *entry,
+            "entry source was not indexed"));
+    }
+
+    for (const auto& source : extra_sources) {
+        if (!find_record(*index, source)) {
+            return std::unexpected(failure(
+                ErrorCode::invalid_correction,
+                source,
+                "extra source was not indexed"));
+        }
+    }
+    for (const auto& source : excluded_sources) {
+        if (!find_record(*index, source)) {
+            return std::unexpected(failure(
+                ErrorCode::invalid_correction,
+                source,
+                "excluded source was not indexed"));
+        }
+    }
+
+    std::vector<fs::path> normalized_include_directories;
+    normalized_include_directories.reserve(request.include_directories.size());
+    for (const auto& directory : request.include_directories) {
+        std::error_code include_error;
+        fs::path absolute = fs::absolute(directory, include_error);
+        if (include_error) {
+            return std::unexpected(failure(
+                ErrorCode::invalid_root,
+                directory,
+                "failed to resolve include directory"));
+        }
+        normalized_include_directories.push_back(absolute.lexically_normal());
+    }
+
+    auto graph = build_edges(*index, normalized_include_directories);
+
+    std::vector<bool> blocked(index->files.size(), false);
+    for (const auto& source : excluded_sources) {
+        if (const auto id = find_record(*index, source)) blocked[*id] = true;
+    }
+    for (std::size_t from = 0; from < graph.edges.size(); ++from) {
+        auto& edges = graph.edges[from];
+        edges.erase(
+            std::remove_if(
+                edges.begin(),
+                edges.end(),
+                [&blocked](const std::size_t target) { return blocked[target]; }),
+            edges.end());
+        if (blocked[from]) edges.clear();
+    }
+
+    auto reachable = reachable_from(graph, *entry_id);
+    add_reachable_module_provider_edges(*index, graph, reachable);
+    reachable = reachable_from(graph, *entry_id);
+    std::set<std::size_t> selected;
+    select_translation_units(*index, graph, reachable, selected);
+    selected.insert(*entry_id);
+
+    for (const auto& extra : extra_sources) {
+        if (const auto id = find_record(*index, extra)) selected.insert(*id);
+    }
+    for (const auto& excluded : excluded_sources) {
+        if (const auto id = find_record(*index, excluded)) selected.erase(*id);
+    }
+
+    for (const auto id : selected) {
+        if (id != *entry_id && index->files[id].defines_main) {
+            return std::unexpected(failure(
+                ErrorCode::ambiguous_main,
+                index->files[id].path,
+                "discovered source defines another main()"));
         }
     }
 
     Result result;
-    std::vector<FileRecord> files;
-    std::unordered_map<std::string, std::size_t> index_by_path;
-
-    fs::recursive_directory_iterator iterator{
-        root,
-        fs::directory_options::skip_permission_denied,
-        error_code};
-    const fs::recursive_directory_iterator end;
-    if (error_code) {
-        return std::unexpected(failure(
-            ErrorCode::enumeration_failed,
-            root,
-            "failed to enumerate source discovery project root"));
-    }
-
-    for (; iterator != end; iterator.increment(error_code)) {
-        if (error_code) {
-            return std::unexpected(failure(
-                ErrorCode::enumeration_failed,
-                root,
-                "failed while enumerating source discovery project root: " + error_code.message()));
-        }
-        const fs::directory_entry& item = *iterator;
-        if (item.is_directory(error_code)) {
-            const bool configured_excluded = !error_code
-                && excluded_directory_keys.contains(path_key(item.path()));
-            if (!error_code && (default_excluded_directory(item.path()) || configured_excluded)) {
-                iterator.disable_recursion_pending();
-            }
-            error_code.clear();
-            continue;
-        }
-        error_code.clear();
-        if (!item.is_regular_file(error_code) || error_code || !indexed_path(item.path())) {
-            error_code.clear();
-            continue;
-        }
-
-        FileRecord record;
-        record.path = fs::absolute(item.path(), error_code).lexically_normal();
-        if (error_code) {
-            error_code.clear();
-            continue;
-        }
-        record.translation_unit_kind = classify_translation_unit_path(record.path);
-        record.kind = record.translation_unit_kind
-            ? FileKind::translation_unit
-            : FileKind::header;
-
-        if (auto text = read_text(record.path)) {
-            const std::string comment_free = strip_comments_preserve_literals(*text);
-            record.local_includes = parse_local_includes(comment_free);
-            if (record.kind == FileKind::translation_unit) {
-                record.module_syntax = ModuleSyntaxParser::parse(*text);
-                record.defines_main = ordinary_translation_unit(record)
-                    && contains_main(comment_free);
-            }
-        } else {
-            result.warnings.push_back(Warning{
-                .code = WarningCode::file_read_failed,
-                .path = record.path,
-                .message = text.error(),
-            });
-        }
-
-        const std::size_t index = files.size();
-        index_by_path.emplace(path_key(record.path), index);
-        files.push_back(std::move(record));
-    }
-
-    result.indexed_files = files.size();
-    const auto entry_it = index_by_path.find(path_key(entry));
-    if (entry_it == index_by_path.end()) {
-        return std::unexpected(failure(
-            ErrorCode::invalid_entry,
-            entry,
-            "source discovery entry was not indexed"));
-    }
-
-    std::vector<fs::path> include_directories;
-    include_directories.reserve(request.include_directories.size());
-    for (const auto& directory : request.include_directories) {
-        fs::path absolute = fs::absolute(directory, error_code).lexically_normal();
-        if (!error_code) {
-            include_directories.push_back(std::move(absolute));
-        }
-        error_code.clear();
-    }
-
-    std::vector<std::vector<std::size_t>> adjacency(files.size());
-
-    for (std::size_t file_index = 0; file_index < files.size(); ++file_index) {
-        const auto& file = files[file_index];
-        for (const auto& include : file.local_includes) {
-            std::vector<fs::path> candidates;
-            candidates.reserve(1 + include_directories.size());
-            candidates.push_back((file.path.parent_path() / include).lexically_normal());
-            for (const auto& include_directory : include_directories) {
-                candidates.push_back((include_directory / include).lexically_normal());
-            }
-
-            for (const auto& candidate : candidates) {
-                const auto found = index_by_path.find(path_key(candidate));
-                if (found != index_by_path.end()) {
-                    add_undirected_edge(adjacency, file_index, found->second);
-                    break;
-                }
-            }
-        }
-    }
-
-    std::unordered_map<std::string, std::vector<std::size_t>> ordinary_sources_by_owner;
-    for (std::size_t index = 0; index < files.size(); ++index) {
-        if (ordinary_translation_unit(files[index])) {
-            ordinary_sources_by_owner[ownership_key(files[index].path)].push_back(index);
-        }
-    }
-    for (std::size_t index = 0; index < files.size(); ++index) {
-        if (files[index].kind != FileKind::header) continue;
-        const auto owners = ordinary_sources_by_owner.find(ownership_key(files[index].path));
-        if (owners == ordinary_sources_by_owner.end()) continue;
-        for (const std::size_t owner : owners->second) {
-            add_undirected_edge(adjacency, index, owner);
-        }
-    }
-
-    std::unordered_map<std::string, std::vector<std::size_t>> interface_providers;
-    std::unordered_map<std::string, std::vector<std::size_t>> declared_module_units;
-    for (std::size_t index = 0; index < files.size(); ++index) {
-        if (files[index].kind != FileKind::translation_unit
-            || !files[index].module_syntax.declared_module) {
-            continue;
-        }
-        const std::string& logical_name = *files[index].module_syntax.declared_module;
-        declared_module_units[logical_name].push_back(index);
-        if (module_interface_translation_unit(files[index])) {
-            interface_providers[logical_name].push_back(index);
-        }
-    }
-
-    for (std::size_t index = 0; index < files.size(); ++index) {
-        if (files[index].kind != FileKind::translation_unit) continue;
-        for (const auto& imported : files[index].module_syntax.imported_modules) {
-            const auto providers = interface_providers.find(imported);
-            if (providers == interface_providers.end()) continue;
-            for (const std::size_t provider : providers->second) {
-                add_undirected_edge(adjacency, index, provider);
-            }
-        }
-    }
-
-    for (const auto& [logical_name, units] : declared_module_units) {
-        static_cast<void>(logical_name);
-        if (units.size() < 2) continue;
-        const std::size_t first = units.front();
-        for (std::size_t offset = 1; offset < units.size(); ++offset) {
-            add_undirected_edge(adjacency, first, units[offset]);
-        }
-    }
-
-    const std::size_t entry_index = entry_it->second;
-    std::vector<bool> visited(files.size(), false);
-    std::deque<std::size_t> queue;
-    queue.push_back(entry_index);
-    visited[entry_index] = true;
-    while (!queue.empty()) {
-        const std::size_t current = queue.front();
-        queue.pop_front();
-        for (const std::size_t next : adjacency[current]) {
-            if (visited[next]) {
-                continue;
-            }
-            visited[next] = true;
-
-            const bool second_main = next != entry_index
-                && ordinary_translation_unit(files[next])
-                && files[next].defines_main;
-            const bool excluded_source = files[next].kind == FileKind::translation_unit
-                && excluded_source_keys.contains(path_key(files[next].path));
-            if (!second_main && !excluded_source) {
-                queue.push_back(next);
-            }
-        }
-    }
-
-    for (std::size_t index = 0; index < files.size(); ++index) {
-        if (!visited[index] || files[index].kind != FileKind::translation_unit) {
-            continue;
-        }
-        if (files[index].path != entry
-            && ordinary_translation_unit(files[index])
-            && files[index].defines_main) {
-            continue;
-        }
-        if (excluded_source_keys.contains(path_key(files[index].path))) {
-            continue;
-        }
-        result.sources.push_back(files[index].path);
-    }
-
-    for (const auto& source : extra_sources) {
-        const std::string key = path_key(source);
-        const auto duplicate = std::find_if(
-            result.sources.begin(),
-            result.sources.end(),
-            [&](const fs::path& existing) { return path_key(existing) == key; });
-        if (duplicate == result.sources.end()) {
-            result.sources.push_back(source);
-        }
-    }
-
-    std::sort(
-        result.sources.begin(),
-        result.sources.end(),
-        [](const fs::path& left, const fs::path& right) {
-            return path_key(left) < path_key(right);
+    result.sources = sorted_selected_paths(*index, selected, *entry);
+    result.indexed_files = index->files.size();
+    result.requires_module_pipeline = std::any_of(
+        selected.begin(),
+        selected.end(),
+        [&index](const std::size_t id) {
+            return file_requires_module_pipeline(index->files[id]);
         });
-    const auto entry_position = std::find(result.sources.begin(), result.sources.end(), entry);
-    if (entry_position != result.sources.end() && entry_position != result.sources.begin()) {
-        std::rotate(result.sources.begin(), entry_position, entry_position + 1);
-    }
-
-    for (const auto& source : result.sources) {
-        const auto selected = index_by_path.find(path_key(source));
-        if (selected != index_by_path.end()
-            && file_requires_module_pipeline(files[selected->second])) {
-            result.requires_module_pipeline = true;
-            break;
-        }
-    }
-
-    if (result.sources.empty() || result.sources.front() != entry) {
-        return std::unexpected(failure(
-            ErrorCode::invalid_entry,
-            entry,
-            "source discovery did not retain the entry translation unit"));
+    result.warnings.reserve(graph.warnings.size());
+    for (auto& warning : graph.warnings) {
+        result.warnings.push_back(Warning{.message = std::move(warning)});
     }
     return result;
 }
