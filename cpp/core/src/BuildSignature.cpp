@@ -9,6 +9,7 @@
 #include <type_traits>
 
 #include "mqb/core/Artifact.hpp"
+#include "mqb/core/TranslationUnitClassifier.hpp"
 
 namespace mqb {
 namespace {
@@ -168,7 +169,17 @@ BuildSignature BuildSignature::for_compile(
 
     hasher.add_enum(options.configuration);
     hasher.add_enum(options.architecture);
-    hasher.add_enum(options.standard);
+    if (is_c_translation_unit_path(unit.source)) {
+        // .c did not exist in any previous valid v4 recipe, so a C-only domain
+        // marker can be added without invalidating old C++ caches. The target
+        // C++ standard is intentionally absent because the C backend recipe does
+        // not emit a C++ /std switch; raw C standard switches remain represented
+        // through additional_arguments when users opt into them explicitly.
+        hasher.add_string("mqb.c.language.v1");
+    } else {
+        // Preserve the exact pre-C v4 byte stream for every existing C++ recipe.
+        hasher.add_enum(options.standard);
+    }
     hasher.add_strings(options.defines);
     hasher.add_paths(options.include_directories);
     hasher.add_strings(options.additional_arguments);
