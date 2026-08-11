@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include "mqb/core/BuildTypes.hpp"
+
 namespace mqb {
 
 struct SourceArtifacts {
@@ -16,6 +18,9 @@ struct SourceArtifacts {
 };
 
 struct TargetArtifacts {
+    // Existing field name is retained through the executable/DLL slice to keep
+    // the incremental target API stable. Static-library work will generalize the
+    // final-artifact/cache vocabulary when the librarian pipeline lands.
     std::filesystem::path executable;
     std::filesystem::path link_cache;
 };
@@ -42,7 +47,9 @@ public:
     for_source(const std::filesystem::path& source) const;
 
     [[nodiscard]] std::expected<TargetArtifacts, ArtifactLayoutError>
-    for_target(std::string_view target_name) const;
+    for_target(
+        std::string_view target_name,
+        TargetKind target_kind = TargetKind::executable) const;
 
     [[nodiscard]] const std::filesystem::path& project_root() const noexcept {
         return project_root_;
