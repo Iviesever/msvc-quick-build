@@ -26,6 +26,8 @@ int main() {
                "built-in architecture default should be x64");
         expect(effective.standard == mqb::CppStandard::cpp23,
                "built-in language default should be C++23");
+        expect(effective.target_kind == mqb::TargetKind::executable,
+               "built-in target kind should be executable");
         expect(effective.discovery_enabled,
                "smart discovery should be enabled by default");
         expect(!effective.output_name,
@@ -36,6 +38,7 @@ int main() {
     project.build.configuration = mqb::BuildConfiguration::release;
     project.build.architecture = mqb::Architecture::x86;
     project.build.standard = mqb::CppStandard::latest;
+    project.build.target_kind = mqb::TargetKind::static_library;
     project.build.output_name = "from-config";
     project.build.defines = {"CONFIG_A=1", "SHARED=config"};
     project.build.include_directories = {fs::path{"config/include"}};
@@ -55,6 +58,8 @@ int main() {
                "project config should override built-in architecture");
         expect(effective.standard == mqb::CppStandard::latest,
                "project config should override built-in standard");
+        expect(effective.target_kind == mqb::TargetKind::static_library,
+               "project config should override built-in target kind");
         expect(effective.output_name && *effective.output_name == "from-config",
                "project output should override built-in unset output");
         expect(!effective.discovery_enabled,
@@ -68,6 +73,7 @@ int main() {
         cli.build.configuration = mqb::BuildConfiguration::debug;
         cli.build.architecture = mqb::Architecture::x64;
         cli.build.standard = mqb::CppStandard::cpp20;
+        cli.build.target_kind = mqb::TargetKind::dynamic_library;
         cli.build.output_name = "from-cli";
         cli.build.defines = {"CLI_B=2", "SHARED=cli"};
         cli.build.include_directories = {fs::path{"cli/include"}};
@@ -85,6 +91,8 @@ int main() {
                "CLI architecture should override project config");
         expect(effective.standard == mqb::CppStandard::cpp20,
                "CLI standard should override project config");
+        expect(effective.target_kind == mqb::TargetKind::dynamic_library,
+               "CLI target kind should override static project config");
         expect(effective.output_name && *effective.output_name == "from-cli",
                "CLI output should override project config");
         expect(effective.discovery_enabled,

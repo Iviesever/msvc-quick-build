@@ -419,6 +419,7 @@ require_paths(const fs::path& file, const fs::path& root, const JsonValue& value
 [[nodiscard]] std::optional<TargetKind> target_kind(std::string_view value) {
     if (value == "exe" || value == "executable") return TargetKind::executable;
     if (value == "dll" || value == "dynamic") return TargetKind::dynamic_library;
+    if (value == "static" || value == "lib") return TargetKind::static_library;
     return std::nullopt;
 }
 
@@ -473,7 +474,7 @@ decode_build(const fs::path& file, const fs::path& root, const JsonValue& value,
         auto parsed = target_kind(*text);
         if (!parsed) return std::unexpected(schema_error(
             file, it->second,
-            "build.type must be 'exe' or 'dll'; static libraries require the librarian milestone"));
+            "build.type must be 'exe', 'dll', or 'static'"));
         out.target_kind = *parsed;
     }
     if (auto it = (**object).find("output"); it != (**object).end()) {

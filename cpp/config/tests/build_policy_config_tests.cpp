@@ -104,8 +104,9 @@ int main() {
 
     write_text(file, R"json({"version":1,"build":{"type":"static"}})json");
     auto static_target = mqb::config::ProjectConfigLoader::load(file);
-    expect(!static_target && static_target.error().code == mqb::config::ErrorCode::schema_error,
-           "static target must remain fail-closed before librarian support");
+    expect(static_target.has_value()
+               && static_target->build.target_kind == mqb::TargetKind::static_library,
+           "mqb.json should accept static target kind after librarian support");
 
     write_text(file, R"json({"version":1,"build":{"runtime":"dynamic"}})json");
     auto bad_runtime = mqb::config::ProjectConfigLoader::load(file);

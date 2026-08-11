@@ -245,6 +245,49 @@ int main() {
         if (stale_member_probe->exit_code == 0) dump_failure(*stale_member_probe);
     }
 
+    write_text(tree.root / "mqb.json", R"json({
+  "version": 1,
+  "build": {
+    "type": "static",
+    "output": "config_math"
+  },
+  "discovery": {
+    "enabled": false
+  }
+})json");
+    auto config_static = run_process(
+        runner, mqb_executable, tree.root,
+        {"math.cpp", "--no-discover", "--env", "vs"});
+    expect(config_static.has_value(), "config-only static target invocation should launch");
+    if (config_static) {
+        if (config_static->exit_code != 0) dump_failure(*config_static);
+        expect(config_static->exit_code == 0,
+               "mqb.json build.type=static should build without a CLI target-kind flag");
+        expect(config_static->stdout_text.find("[archive] config_math.lib") != std::string::npos,
+               "config target kind and output should route to the librarian pipeline");
+    }
+    expect(fs::is_regular_file(tree.root / ".mqb" / "bin" / "config_math.lib"),
+           "config-only static target should produce the configured .lib output");
+
+    auto cli_type_override = run_process(
+        runner, mqb_executable, tree.root,
+        {"consumer.cpp", "--no-discover", "--env", "vs", "--type", "exe",
+         "-L", ".mqb/bin", "-l", "math", "-o", "config_override"});
+    expect(cli_type_override.has_value(), "CLI target-kind override invocation should launch");
+    if (cli_type_override) {
+        if (cli_type_override->exit_code != 0) dump_failure(*cli_type_override);
+        expect(cli_type_override->exit_code == 0,
+               "CLI --type exe should override mqb.json build.type=static");
+        expect(cli_type_override->stdout_text.find("[link] config_override.exe") != std::string::npos,
+               "CLI target-kind override should route back to the linker pipeline");
+    }
+    auto override_run = run_process(
+        runner,
+        tree.root / ".mqb" / "bin" / "config_override.exe",
+        tree.root);
+    expect(override_run.has_value() && override_run->exit_code == 43,
+           "CLI-overridden executable should consume the existing static library");
+
     auto invalid_policy = run_process(
         runner, mqb_executable, tree.root,
         {"math.cpp", "--type", "static", "--subsystem", "console"});
