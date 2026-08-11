@@ -29,6 +29,7 @@
     "enabled": true,
     "exclude_dirs": [
       "backends/msvc/tests",
+      "build-release",
       "config/tests",
       "discovery/tests",
       "json/tests",
