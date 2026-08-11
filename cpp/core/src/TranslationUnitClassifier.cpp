@@ -19,15 +19,23 @@ namespace {
     return extension;
 }
 
+[[nodiscard]] bool cpp_ordinary_extension(const std::string& extension) {
+    return extension == ".cpp" || extension == ".cc" || extension == ".cxx";
+}
+
+[[nodiscard]] bool module_extension(const std::string& extension) {
+    return extension == ".ixx" || extension == ".cppm" || extension == ".mpp";
+}
+
 } // namespace
 
 std::optional<TranslationUnitKind>
 classify_translation_unit_path(const std::filesystem::path& path) {
     const std::string extension = extension_lower(path);
-    if (extension == ".cpp" || extension == ".cc" || extension == ".cxx") {
+    if (extension == ".c" || cpp_ordinary_extension(extension)) {
         return TranslationUnitKind::source;
     }
-    if (extension == ".ixx" || extension == ".cppm" || extension == ".mpp") {
+    if (module_extension(extension)) {
         return TranslationUnitKind::module_interface;
     }
     return std::nullopt;
@@ -35,6 +43,15 @@ classify_translation_unit_path(const std::filesystem::path& path) {
 
 bool is_translation_unit_path(const std::filesystem::path& path) {
     return classify_translation_unit_path(path).has_value();
+}
+
+bool is_c_translation_unit_path(const std::filesystem::path& path) {
+    return extension_lower(path) == ".c";
+}
+
+bool is_cpp_translation_unit_path(const std::filesystem::path& path) {
+    const std::string extension = extension_lower(path);
+    return cpp_ordinary_extension(extension) || module_extension(extension);
 }
 
 } // namespace mqb
