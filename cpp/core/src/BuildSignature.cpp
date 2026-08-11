@@ -32,17 +32,13 @@ class StableHasher {
 public:
     void add_string(const std::string_view value) noexcept {
         add_u64(static_cast<std::uint64_t>(value.size()));
-        for (const unsigned char byte : value) {
-            add_byte(byte);
-        }
+        for (const unsigned char byte : value) add_byte(byte);
     }
 
     void add_path(const std::filesystem::path& value) noexcept {
         const auto normalized = value.lexically_normal().generic_u8string();
         add_u64(static_cast<std::uint64_t>(normalized.size()));
-        for (const char8_t byte : normalized) {
-            add_byte(static_cast<std::uint8_t>(byte));
-        }
+        for (const char8_t byte : normalized) add_byte(static_cast<std::uint8_t>(byte));
     }
 
     template <typename Enum>
@@ -53,23 +49,16 @@ public:
 
     void add_strings(const std::vector<std::string>& values) noexcept {
         add_u64(static_cast<std::uint64_t>(values.size()));
-        for (const auto& value : values) {
-            add_string(value);
-        }
+        for (const auto& value : values) add_string(value);
     }
 
     void add_paths(const std::span<const std::filesystem::path> values) noexcept {
         add_u64(static_cast<std::uint64_t>(values.size()));
-        for (const auto& value : values) {
-            add_path(value);
-        }
+        for (const auto& value : values) add_path(value);
     }
 
-    void add_header_unit_identity(
-        const std::optional<HeaderUnitIdentity>& identity) noexcept {
-        if (!identity) {
-            return;
-        }
+    void add_header_unit_identity(const std::optional<HeaderUnitIdentity>& identity) noexcept {
+        if (!identity) return;
         add_string("mqb.header-unit.producer.v1");
         add_string(identity->header_name);
         add_enum(identity->lookup_method);
@@ -83,8 +72,7 @@ public:
         }
     }
 
-    void add_header_unit_references(
-        const std::vector<HeaderUnitReference>& references) noexcept {
+    void add_header_unit_references(const std::vector<HeaderUnitReference>& references) noexcept {
         add_u64(static_cast<std::uint64_t>(references.size()));
         for (const auto& reference : references) {
             add_string(reference.header_name);
@@ -96,23 +84,16 @@ public:
     void add_module_outputs(const std::vector<Artifact>& outputs) noexcept {
         std::uint64_t count = 0;
         for (const auto& output : outputs) {
-            if (output.kind == ArtifactKind::module_interface) {
-                ++count;
-            }
+            if (output.kind == ArtifactKind::module_interface) ++count;
         }
         add_u64(count);
         for (const auto& output : outputs) {
-            if (output.kind == ArtifactKind::module_interface) {
-                add_path(output.path);
-            }
+            if (output.kind == ArtifactKind::module_interface) add_path(output.path);
         }
     }
 
     [[nodiscard]] SignatureDigest finish() const noexcept {
-        return SignatureDigest{
-            .high = avalanche(primary_),
-            .low = avalanche(secondary_),
-        };
+        return SignatureDigest{.high = avalanche(primary_), .low = avalanche(secondary_)};
     }
 
 private:
@@ -125,7 +106,6 @@ private:
     void add_byte(const std::uint8_t byte) noexcept {
         primary_ ^= byte;
         primary_ *= fnv_prime;
-
         secondary_ ^= static_cast<std::uint64_t>(byte) + secondary_seed
             + (secondary_ << 6u) + (secondary_ >> 2u);
         secondary_ = std::rotl(secondary_, 13);
@@ -152,18 +132,15 @@ BuildSignature BuildSignature::for_compile(
     const CompilerOptions& options) {
     StableHasher hasher;
     hasher.add_string("mqb.compile.signature.v4");
-
     hasher.add_path(unit.source);
     hasher.add_enum(unit.kind);
     hasher.add_module_references(unit.module_references);
     hasher.add_header_unit_references(unit.header_unit_references);
     hasher.add_module_outputs(unit.outputs);
     hasher.add_header_unit_identity(unit.header_unit);
-
     hasher.add_path(toolchain.compiler);
     hasher.add_string(toolchain.version);
     hasher.add_string(toolchain.binary_stamp);
-
     hasher.add_enum(options.configuration);
     hasher.add_enum(options.architecture);
     if (is_c_translation_unit_path(unit.source)) {
@@ -178,7 +155,6 @@ BuildSignature BuildSignature::for_compile(
         hasher.add_string("mqb.runtime-library.v1");
         hasher.add_enum(*options.runtime_library);
     }
-
     return BuildSignature{hasher.finish()};
 }
 
@@ -187,12 +163,7 @@ BuildSignature BuildSignature::for_link(
     const std::filesystem::path& output,
     const LinkerIdentity& linker,
     const LinkOptions& options) {
-    return for_link(
-        objects,
-        std::span<const std::filesystem::path>{},
-        output,
-        linker,
-        options);
+    return for_link(objects, std::span<const std::filesystem::path>{}, output, linker, options);
 }
 
 BuildSignature BuildSignature::for_link(
@@ -216,11 +187,23 @@ BuildSignature BuildSignature::for_link(
     hasher.add_strings(options.libraries);
     hasher.add_strings(options.additional_arguments);
     if (options.target_kind != TargetKind::executable) {
-        // Preserve the exact historical v2 byte stream for executable links.
-        // New executable-style targets append a versioned kind domain only.
         hasher.add_string("mqb.link.target-kind.v1");
         hasher.add_enum(options.target_kind);
     }
+    return BuildSignature{hasher.finish()};
+}
+
+BuildSignature BuildSignature::for_archive(
+    const std::span<const std::filesystem::path> objects,
+    const std::filesystem::path& output,
+    const LibrarianIdentity& librarian) {
+    StableHasher hasher;
+    hasher.add_string("mqb.archive.signature.v1");
+    hasher.add_paths(objects);
+    hasher.add_path(output);
+    hasher.add_path(librarian.librarian);
+    hasher.add_string(librarian.version);
+    hasher.add_string(librarian.binary_stamp);
     return BuildSignature{hasher.finish()};
 }
 
