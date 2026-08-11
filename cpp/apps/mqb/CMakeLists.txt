@@ -19,6 +19,7 @@ target_link_libraries(mqb_cli
 )
 
 target_compile_features(mqb_cli PUBLIC cxx_std_23)
+target_compile_definitions(mqb_cli PRIVATE MQB_VERSION="${MQB_VERSION}")
 
 add_executable(mqb
     main.cpp

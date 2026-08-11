@@ -10,6 +10,10 @@
 #include <system_error>
 #include <utility>
 
+#ifndef MQB_VERSION
+#define MQB_VERSION "0.0.0-dev"
+#endif
+
 namespace mqb::cli {
 namespace {
 
@@ -273,9 +277,8 @@ parse_arguments(const std::span<const std::string_view> arguments) {
 }
 
 std::string_view usage() noexcept {
-    return R"(MQB - MSVC Quick Build (C++ V2)
-
-Usage:
+    return "MQB " MQB_VERSION " - MSVC Quick Build (C++ refactor)\n\n"
+R"(Usage:
   mqb <entry.cpp> [options] [-- program-args...]
   mqb <source.cpp> <more-sources...|module.ixx...> [options] [-- program-args...]
 
@@ -293,8 +296,10 @@ Source selection:
 
 Single-entry discovery follows reachable project-local named imports to project-local
 module-interface candidates. Discovery selects candidates only; MSVC P1689 scanning remains
-the authority for module topology and provider validation. Header units, external/prebuilt
-provider execution, and import std remain unsupported and fail closed in the module pipeline.
+the authority for module topology and provider validation. Project-local header-unit imports
+stay outside TU discovery but route through the P1689 module pipeline, where their IFCs are
+built and cached automatically. External/prebuilt named-module providers and import std
+remain unsupported and fail closed.
 
 Options:
   --debug                  Explicitly select Debug compile/link preset
@@ -313,7 +318,7 @@ Options:
   --env <auto|vs|portable> Toolchain selection (default: auto)
   --portable-root <dir>    Add a portable_msvc root candidate
   -v, --verbose            Show config, discovery, toolchain, and artifact details
-  -h, --help               Show this help
+  -h, --help               Show this help and the embedded build version
   --                       Pass all remaining argv elements to the program
 
 Job count is execution policy only; changing -j does not invalidate build caches.
@@ -324,7 +329,7 @@ Generated state:
   .mqb/obj/    collision-free object files
   .mqb/deps/   compiler dependency metadata
   .mqb/scan/   module dependency scan metadata
-  .mqb/ifc/    module interface artifacts
+  .mqb/ifc/    module/header-unit interface artifacts
   .mqb/cache/  compile and link cache metadata
   .mqb/bin/    linked executable
 )";
