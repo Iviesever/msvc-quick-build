@@ -178,6 +178,10 @@ BuildSignature BuildSignature::for_compile(
         hasher.add_string("mqb.runtime-library.v1");
         hasher.add_enum(*options.runtime_library);
     }
+    if (options.link_time_code_generation) {
+        // Preserve the historical signature byte stream when typed LTCG is off.
+        hasher.add_string("mqb.ltcg.compile.v1");
+    }
 
     return BuildSignature{hasher.finish()};
 }
@@ -221,13 +225,18 @@ BuildSignature BuildSignature::for_link(
         hasher.add_string("mqb.link.target-kind.v1");
         hasher.add_enum(options.target_kind);
     }
+    if (options.link_time_code_generation) {
+        // Preserve historical executable/DLL link identities when LTCG is off.
+        hasher.add_string("mqb.ltcg.link.v1");
+    }
     return BuildSignature{hasher.finish()};
 }
 
 BuildSignature BuildSignature::for_archive(
     const std::span<const std::filesystem::path> objects,
     const std::filesystem::path& output,
-    const LibrarianIdentity& librarian) {
+    const LibrarianIdentity& librarian,
+    const bool link_time_code_generation) {
     StableHasher hasher;
     hasher.add_string("mqb.archive.signature.v1");
     hasher.add_paths(objects);
@@ -235,6 +244,10 @@ BuildSignature BuildSignature::for_archive(
     hasher.add_path(librarian.librarian);
     hasher.add_string(librarian.version);
     hasher.add_string(librarian.binary_stamp);
+    if (link_time_code_generation) {
+        // Preserve historical archive identities when LTCG is off.
+        hasher.add_string("mqb.ltcg.archive.v1");
+    }
     return BuildSignature{hasher.finish()};
 }
 
