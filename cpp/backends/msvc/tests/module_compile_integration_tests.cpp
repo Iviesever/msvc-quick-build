@@ -161,8 +161,12 @@ int main() {
         }
     }
     expect(!walk_error, "temporary module project should be traversable after compilation");
-    expect(ifc_count == 1 && discovered_ifc == module_artifacts->module_interface,
-           "MSVC should emit exactly the explicitly planned IFC rather than a default-path side artifact");
+    std::error_code equivalent_error;
+    const bool planned_ifc = ifc_count == 1
+        && fs::equivalent(discovered_ifc, module_artifacts->module_interface, equivalent_error)
+        && !equivalent_error;
+    expect(planned_ifc,
+           "MSVC should emit exactly the explicitly planned physical IFC rather than a default-path side artifact");
 
     std::error_code cleanup_error;
     fs::remove_all(root, cleanup_error);
