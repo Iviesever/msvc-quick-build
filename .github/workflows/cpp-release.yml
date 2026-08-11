@@ -10,6 +10,7 @@ on:
       - 'install.ps1'
       - 'uninstall.ps1'
       - 'tests/installer/**'
+      - 'tests/selfhost/**'
       - 'release/**'
       - '.github/workflows/cpp-release.yml'
   push:
@@ -64,7 +65,8 @@ jobs:
           Write-Host "Release version: $version"
           Write-Host "Package: $packageName"
 
-      - name: Configure Release
+      # Stage 0 is only a bootstrap/test vehicle. It is never packaged.
+      - name: Configure bootstrap Release
         shell: pwsh
         env:
           MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
@@ -74,30 +76,42 @@ jobs:
             -DMQB_ENABLE_INSTALLED_MSVC_TESTS=ON `
             "-DMQB_VERSION=$env:MQB_RELEASE_VERSION"
 
-      - name: Build Release
+      - name: Build bootstrap Release
         run: cmake --build cpp/build-release --config Release --parallel
 
-      - name: Test Release
+      - name: Test bootstrap source graph
         run: ctest --test-dir cpp/build-release -C Release --output-on-failure
 
-      - name: Verify embedded release version
+      - name: Verify bootstrap embedded release version
         shell: pwsh
         env:
           MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
         run: |
           $mqb = Join-Path $PWD 'cpp/build-release/apps/mqb/Release/mqb.exe'
           if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
-            throw "Release executable not found: $mqb"
+            throw "Bootstrap executable not found: $mqb"
           }
           $help = @(& $mqb --help 2>&1 | ForEach-Object { $_.ToString() })
           if ($LASTEXITCODE -ne 0 -or $help.Count -eq 0) {
-            throw "mqb --help failed with exit code $LASTEXITCODE"
+            throw "bootstrap mqb --help failed with exit code $LASTEXITCODE"
           }
           $expected = "MQB $env:MQB_RELEASE_VERSION - MSVC Quick Build (C++ refactor)"
           if ($help[0] -ne $expected) {
-            throw "Embedded version mismatch. Expected '$expected', got '$($help[0])'"
+            throw "Bootstrap embedded version mismatch. Expected '$expected', got '$($help[0])'"
           }
           Write-Host $help[0]
+
+      - name: Self-host stable release with MQB
+        shell: pwsh
+        env:
+          MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          & (Join-Path $PWD 'tests/selfhost/selfhost.ps1') `
+            -BootstrapMqbPath (Join-Path $PWD 'cpp/build-release/apps/mqb/Release/mqb.exe') `
+            -RepoRoot $PWD `
+            -ReleaseVersion $env:MQB_RELEASE_VERSION `
+            -OutputRoot (Join-Path $PWD 'selfhost-out')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Stage release package
         shell: pwsh
@@ -110,7 +124,8 @@ jobs:
           if (Test-Path -LiteralPath $dist) { Remove-Item -LiteralPath $dist -Recurse -Force }
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-          Copy-Item 'cpp/build-release/apps/mqb/Release/mqb.exe' (Join-Path $stage 'mqb.exe')
+          # Stable releases package Stage 1: the binary produced by MQB itself.
+          Copy-Item 'selfhost-out/stage1/mqb.exe' (Join-Path $stage 'mqb.exe')
           Copy-Item 'install.bat' (Join-Path $stage 'install.bat')
           Copy-Item 'install.ps1' (Join-Path $stage 'install.ps1')
           Copy-Item 'uninstall.ps1' (Join-Path $stage 'uninstall.ps1')
@@ -119,6 +134,7 @@ jobs:
           Copy-Item 'docs/MQB_CONFIG.md' (Join-Path $stage 'MQB_CONFIG.md')
           Copy-Item 'docs/CPP_V2_ARCHITECTURE.md' (Join-Path $stage 'CPP_V2_ARCHITECTURE.md')
           Copy-Item 'docs/V5_INSTALL_CUTOVER.md' (Join-Path $stage 'V5_INSTALL_CUTOVER.md')
+          Copy-Item 'docs/SELF_HOSTING.md' (Join-Path $stage 'SELF_HOSTING.md')
           Copy-Item $env:MQB_NOTES_FILE (Join-Path $stage 'RELEASE_NOTES.md')
 
           $zip = Join-Path $dist ($env:MQB_PACKAGE_NAME + '.zip')
@@ -162,6 +178,7 @@ jobs:
             'mqb.exe',
             'README.md',
             'RELEASE_NOTES.md',
+            'SELF_HOSTING.md',
             'uninstall.ps1',
             'V5_INSTALL_CUTOVER.md'
           ) | Sort-Object
@@ -169,15 +186,15 @@ jobs:
           $manifestDiff = @(Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $actualFiles)
           if ($manifestDiff.Count -ne 0) {
             $manifestDiff | Format-Table | Out-String | Write-Host
-            throw 'Release package manifest differs from the native-only contract.'
+            throw 'Release package manifest differs from the native-only self-hosting contract.'
           }
 
-          $builtMqb = Join-Path $PWD 'cpp/build-release/apps/mqb/Release/mqb.exe'
+          $selfHostedMqb = Join-Path $PWD 'selfhost-out/stage1/mqb.exe'
           $packagedMqb = Join-Path $verifyRoot 'mqb.exe'
-          $builtHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $builtMqb).Hash
+          $selfHostedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $selfHostedMqb).Hash
           $packagedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $packagedMqb).Hash
-          if ($builtHash -ne $packagedHash) {
-            throw 'Packaged mqb.exe is not byte-identical to the tested Release binary.'
+          if ($selfHostedHash -ne $packagedHash) {
+            throw 'Packaged mqb.exe is not byte-identical to the validated Stage 1 self-hosted binary.'
           }
 
           $help = @(& $packagedMqb --help 2>&1 | ForEach-Object { $_.ToString() })
@@ -194,7 +211,7 @@ jobs:
             throw "Packaged installer lifecycle failed with exit code $LASTEXITCODE"
           }
 
-          Write-Host 'Exact packaged artifact validation passed.'
+          Write-Host 'Exact self-hosted packaged artifact validation passed.'
 
       - name: Upload validated package
         uses: actions/upload-artifact@v7
