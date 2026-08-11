@@ -7,7 +7,10 @@
 namespace {
 int failures = 0;
 void expect(bool condition, std::string_view message) {
-    if (!condition) { ++failures; std::cerr << "FAIL: " << message << '\n'; }
+    if (!condition) {
+        ++failures;
+        std::cerr << "FAIL: " << message << '\n';
+    }
 }
 } // namespace
 
@@ -93,23 +96,29 @@ int main() {
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(!parsed, "unknown runtime should be rejected");
     }
+
     {
         const std::vector arguments{"main.cpp"sv, "--subsystem"sv, "gui"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(!parsed, "unknown subsystem should be rejected");
     }
+
     {
         const std::vector arguments{"main.cpp"sv, "--compiler-arg"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(!parsed, "missing raw compiler argument should be rejected");
     }
+
     {
         const std::vector arguments{"main.cpp"sv, "--linker-arg="sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(!parsed, "empty raw linker argument should be rejected");
     }
 
-    if (failures != 0) { std::cerr << failures << " test(s) failed\n"; return 1; }
+    if (failures != 0) {
+        std::cerr << failures << " test(s) failed\n";
+        return 1;
+    }
     std::cout << "mqb_build_policy_cli_tests passed\n";
     return 0;
 }
