@@ -2,10 +2,14 @@
 #include <iostream>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildSignature.hpp"
 #include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/LibrarianIdentity.hpp"
+#include "mqb/core/LinkOptions.hpp"
+#include "mqb/core/LinkerIdentity.hpp"
 #include "mqb/core/ToolchainIdentity.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 
@@ -80,6 +84,11 @@ int main() {
     x86_options.architecture = mqb::Architecture::x86;
     expect(mqb::BuildSignature::for_compile(unit, toolchain, x86_options) != baseline,
            "changing target architecture should invalidate the compile signature");
+
+    auto ltcg_options = options;
+    ltcg_options.link_time_code_generation = true;
+    expect(mqb::BuildSignature::for_compile(unit, toolchain, ltcg_options) != baseline,
+           "enabling typed LTCG should invalidate the compile signature");
 
     auto define_options = options;
     define_options.defines.emplace_back("FEATURE_X=1");
@@ -188,6 +197,34 @@ int main() {
     output_only_change.outputs.front().path = std::filesystem::path{"another-cache/main.obj"};
     expect(mqb::BuildSignature::for_compile(output_only_change, toolchain, options) == baseline,
            "ordinary object placement should not change compiler recipe identity");
+
+    const std::vector<std::filesystem::path> objects{"build/main.obj"};
+    const mqb::LinkerIdentity linker{
+        .linker = "toolchain/link.exe",
+        .version = "14.50.12345",
+        .binary_stamp = "link-stamp",
+    };
+    mqb::LinkOptions link_options;
+    link_options.configuration = mqb::BuildConfiguration::debug;
+    link_options.architecture = mqb::Architecture::x64;
+    const auto link_baseline = mqb::BuildSignature::for_link(
+        objects, "bin/app.exe", linker, link_options);
+    auto ltcg_link_options = link_options;
+    ltcg_link_options.link_time_code_generation = true;
+    expect(mqb::BuildSignature::for_link(objects, "bin/app.exe", linker, ltcg_link_options)
+               != link_baseline,
+           "enabling typed LTCG should invalidate downstream link identity");
+
+    const mqb::LibrarianIdentity librarian{
+        .librarian = "toolchain/lib.exe",
+        .version = "14.50.12345",
+        .binary_stamp = "lib-stamp",
+    };
+    const auto archive_baseline = mqb::BuildSignature::for_archive(
+        objects, "bin/math.lib", librarian);
+    expect(mqb::BuildSignature::for_archive(objects, "bin/math.lib", librarian, true)
+               != archive_baseline,
+           "enabling typed LTCG should invalidate downstream archive identity");
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
