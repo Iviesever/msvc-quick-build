@@ -1,0 +1,53 @@
+name: Installer Cutover
+
+on:
+  pull_request:
+    paths:
+      - 'install.bat'
+      - 'install.ps1'
+      - 'uninstall.ps1'
+      - 'Microsoft.PowerShell_profile.ps1'
+      - 'build.ps1'
+      - 'tests/installer/**'
+      - 'docs/V5_INSTALL_CUTOVER.md'
+      - 'README.md'
+      - '.github/workflows/install-cutover.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'install.bat'
+      - 'install.ps1'
+      - 'uninstall.ps1'
+      - 'Microsoft.PowerShell_profile.ps1'
+      - 'build.ps1'
+      - 'tests/installer/**'
+      - 'docs/V5_INSTALL_CUTOVER.md'
+      - 'README.md'
+      - '.github/workflows/install-cutover.yml'
+
+jobs:
+  clean-upgrade-rollback:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure Release mqb
+        shell: pwsh
+        run: |
+          cmake -S cpp -B cpp/build-installer `
+            -G "Visual Studio 18 2026" -A x64 `
+            -DMQB_ENABLE_INSTALLED_MSVC_TESTS=OFF
+
+      - name: Build Release mqb
+        run: cmake --build cpp/build-installer --config Release --target mqb --parallel
+
+      - name: Validate clean install upgrade rollback
+        shell: pwsh
+        run: |
+          $mqb = Join-Path $PWD 'cpp/build-installer/apps/mqb/Release/mqb.exe'
+          & (Join-Path $PWD 'tests/installer/installer_cutover.ps1') `
+            -MqbPath $mqb `
+            -RepoRoot $PWD
