@@ -245,10 +245,53 @@ int main() {
         if (stale_member_probe->exit_code == 0) dump_failure(*stale_member_probe);
     }
 
+    auto ltcg_static = run_process(
+        runner, mqb_executable, tree.root,
+        {"math.cpp", "--no-discover", "--env", "vs", "--type", "static", "--ltcg", "-o", "math"});
+    expect(ltcg_static.has_value(), "typed-LTCG static invocation should launch");
+    if (ltcg_static) {
+        if (ltcg_static->exit_code != 0) dump_failure(*ltcg_static);
+        expect(ltcg_static->exit_code == 0, "typed LTCG static target should succeed");
+        expect(ltcg_static->stdout_text.find("[compile] math.cpp") != std::string::npos
+                   && ltcg_static->stdout_text.find("compiler options changed") != std::string::npos,
+               "enabling typed LTCG should rebuild the static input with /GL");
+        expect(ltcg_static->stdout_text.find("[archive] math.lib") != std::string::npos,
+               "typed LTCG should rebuild the archive through lib.exe /LTCG");
+    }
+
+    auto ltcg_static_warm = run_process(
+        runner, mqb_executable, tree.root,
+        {"math.cpp", "--no-discover", "--env", "vs", "--type", "static", "--ltcg", "-o", "math"});
+    expect(ltcg_static_warm.has_value(), "warm typed-LTCG static invocation should launch");
+    if (ltcg_static_warm) {
+        if (ltcg_static_warm->exit_code != 0) dump_failure(*ltcg_static_warm);
+        expect(ltcg_static_warm->exit_code == 0, "warm typed LTCG static target should succeed");
+        expect(contains_line(ltcg_static_warm->stdout_text, "[up-to-date] math.cpp"),
+               "unchanged typed LTCG should reuse /GL compile cache");
+        expect(contains_line(ltcg_static_warm->stdout_text, "[up-to-date] math.lib"),
+               "unchanged typed LTCG should reuse archive cache");
+    }
+
+    const fs::path ltcg_consumer = tree.root / ".mqb" / "bin" / "ltcg_consumer.exe";
+    auto ltcg_consumer_build = run_process(
+        runner, mqb_executable, tree.root,
+        {"consumer.cpp", "--no-discover", "--env", "vs", "--ltcg",
+         "-L", ".mqb/bin", "-l", "math", "-o", "ltcg_consumer"});
+    expect(ltcg_consumer_build.has_value(), "LTCG static-library consumer build should launch");
+    if (ltcg_consumer_build) {
+        if (ltcg_consumer_build->exit_code != 0) dump_failure(*ltcg_consumer_build);
+        expect(ltcg_consumer_build->exit_code == 0,
+               "an LTCG executable should link against the generated LTCG static library");
+    }
+    auto ltcg_consumer_run = run_process(runner, ltcg_consumer, tree.root);
+    expect(ltcg_consumer_run.has_value() && ltcg_consumer_run->exit_code == 43,
+           "LTCG consumer should execute the symbol from the LTCG static library");
+
     write_text(tree.root / "mqb.json", R"json({
   "version": 1,
   "build": {
     "type": "static",
+    "ltcg": true,
     "output": "config_math"
   },
   "discovery": {
@@ -262,9 +305,9 @@ int main() {
     if (config_static) {
         if (config_static->exit_code != 0) dump_failure(*config_static);
         expect(config_static->exit_code == 0,
-               "mqb.json build.type=static should build without a CLI target-kind flag");
+               "mqb.json build.type=static/build.ltcg=true should build without CLI target policy");
         expect(config_static->stdout_text.find("[archive] config_math.lib") != std::string::npos,
-               "config target kind and output should route to the librarian pipeline");
+               "config target kind, LTCG, and output should route to the librarian pipeline");
     }
     expect(fs::is_regular_file(tree.root / ".mqb" / "bin" / "config_math.lib"),
            "config-only static target should produce the configured .lib output");
@@ -277,7 +320,7 @@ int main() {
     if (cli_type_override) {
         if (cli_type_override->exit_code != 0) dump_failure(*cli_type_override);
         expect(cli_type_override->exit_code == 0,
-               "CLI --type exe should override mqb.json build.type=static");
+               "CLI --type exe should override mqb.json build.type=static while retaining config LTCG");
         expect(cli_type_override->stdout_text.find("[link] config_override.exe") != std::string::npos,
                "CLI target-kind override should route back to the linker pipeline");
     }
@@ -286,7 +329,7 @@ int main() {
         tree.root / ".mqb" / "bin" / "config_override.exe",
         tree.root);
     expect(override_run.has_value() && override_run->exit_code == 43,
-           "CLI-overridden executable should consume the existing static library");
+           "CLI-overridden LTCG executable should consume the existing static library");
 
     auto invalid_policy = run_process(
         runner, mqb_executable, tree.root,
