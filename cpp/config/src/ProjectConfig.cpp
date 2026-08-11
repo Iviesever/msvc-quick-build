@@ -428,7 +428,7 @@ decode_build(const fs::path& file, const fs::path& root, const JsonValue& value,
     auto object = require_object(file, value, "build");
     if (!object) return std::unexpected(object.error());
     auto known = reject_unknown(file, **object,
-        {"configuration", "architecture", "standard", "runtime", "subsystem", "type", "output", "defines", "include_dirs",
+        {"configuration", "architecture", "standard", "runtime", "ltcg", "subsystem", "type", "output", "defines", "include_dirs",
          "library_dirs", "libraries", "compiler_args", "linker_args"},
         "build");
     if (!known) return std::unexpected(known.error());
@@ -460,6 +460,11 @@ decode_build(const fs::path& file, const fs::path& root, const JsonValue& value,
         auto parsed = runtime_library(*text);
         if (!parsed) return std::unexpected(schema_error(file, it->second, "build.runtime must be 'MD', 'MDd', 'MT', or 'MTd'"));
         out.runtime_library = *parsed;
+    }
+    if (auto it = (**object).find("ltcg"); it != (**object).end()) {
+        auto enabled = require_bool(file, it->second, "build.ltcg");
+        if (!enabled) return std::unexpected(enabled.error());
+        out.link_time_code_generation = *enabled;
     }
     if (auto it = (**object).find("subsystem"); it != (**object).end()) {
         auto text = require_string(file, it->second, "build.subsystem");
