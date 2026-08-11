@@ -6,7 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "mqb/core/BuildTypes.hpp"
+#include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/LinkOptions.hpp"
 
 namespace mqb::config {
 
@@ -14,6 +15,8 @@ struct BuildOverrides {
     std::optional<BuildConfiguration> configuration;
     std::optional<Architecture> architecture;
     std::optional<CppStandard> standard;
+    std::optional<RuntimeLibrary> runtime_library;
+    std::optional<LinkSubsystem> subsystem;
     std::optional<std::string> output_name;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;

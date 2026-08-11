@@ -18,6 +18,8 @@ struct EffectiveProjectOptions {
     BuildConfiguration configuration{BuildConfiguration::debug};
     Architecture architecture{Architecture::x64};
     CppStandard standard{CppStandard::cpp23};
+    std::optional<RuntimeLibrary> runtime_library;
+    LinkSubsystem subsystem{LinkSubsystem::console};
     std::optional<std::string> output_name;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;

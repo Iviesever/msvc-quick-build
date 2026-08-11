@@ -16,6 +16,8 @@ void apply_build(
     if (overrides.configuration) effective.configuration = *overrides.configuration;
     if (overrides.architecture) effective.architecture = *overrides.architecture;
     if (overrides.standard) effective.standard = *overrides.standard;
+    if (overrides.runtime_library) effective.runtime_library = overrides.runtime_library;
+    if (overrides.subsystem) effective.subsystem = *overrides.subsystem;
     if (overrides.output_name) effective.output_name = overrides.output_name;
     append_all(effective.defines, overrides.defines);
     append_all(effective.include_directories, overrides.include_directories);
