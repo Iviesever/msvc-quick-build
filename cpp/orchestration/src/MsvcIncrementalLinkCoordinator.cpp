@@ -63,6 +63,25 @@ void snapshot_inputs(
     }
 }
 
+void collect_existing_side_output(
+    const fs::path& path,
+    std::vector<fs::path>& outputs,
+    std::vector<IncrementalLinkWarning>& warnings) {
+    std::error_code error_code;
+    const bool exists = fs::exists(path, error_code);
+    if (error_code) {
+        warnings.push_back(IncrementalLinkWarning{
+            .code = IncrementalLinkWarningCode::file_snapshot_failed,
+            .path = path,
+            .message = "failed to query linker side output: " + error_code.message(),
+        });
+        return;
+    }
+    if (exists) {
+        outputs.push_back(path);
+    }
+}
+
 [[nodiscard]] IncrementalLinkError link_failure(
     const IncrementalLinkErrorCode code,
     std::string message,
@@ -131,6 +150,11 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     std::vector<FileSnapshot> library_snapshots;
     snapshot_inputs(resolved_libraries->files, library_snapshots, result.warnings);
 
+    std::vector<FileSnapshot> side_output_snapshots;
+    if (cached_entry) {
+        snapshot_inputs(cached_entry->side_outputs, side_output_snapshots, result.warnings);
+    }
+
     result.validation = LinkCacheValidator::validate(
         request.objects,
         resolved_libraries->files,
@@ -141,6 +165,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         output_snapshot,
         object_snapshots,
         library_snapshots,
+        side_output_snapshots,
         request.force_relink);
 
     const LinkPlanItem plan_item{
@@ -195,6 +220,18 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     result.linked = true;
     result.process = std::move(*linked);
 
+    std::vector<fs::path> side_outputs;
+    if (request.options.target_kind == TargetKind::dynamic_library) {
+        collect_existing_side_output(
+            msvc::MsvcLinker::import_library_path(action->output),
+            side_outputs,
+            result.warnings);
+        collect_existing_side_output(
+            msvc::MsvcLinker::export_file_path(action->output),
+            side_outputs,
+            result.warnings);
+    }
+
     const LinkCacheEntry new_entry{
         .linker = *linker_identity,
         .signature = BuildSignature::for_link(
@@ -206,6 +243,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         .objects = action->objects,
         .output = action->output,
         .libraries = action->libraries,
+        .side_outputs = std::move(side_outputs),
     };
     auto saved = LinkCacheFile::save(request.cache_file, new_entry);
     if (!saved) {
