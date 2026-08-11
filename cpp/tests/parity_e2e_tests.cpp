@@ -79,6 +79,13 @@ void dump_process(const std::string_view label, const mqb::process::ProcessResul
 }
 
 [[nodiscard]] fs::path powershell_executable() {
+    // Mirror the installed profile contract: prefer PowerShell 7 when present,
+    // then fall back to the legacy Windows PowerShell host.
+    if (const char* program_files = std::getenv("ProgramFiles"); program_files != nullptr) {
+        const fs::path candidate = fs::path{program_files} / "PowerShell" / "7" / "pwsh.exe";
+        std::error_code ec;
+        if (fs::is_regular_file(candidate, ec) && !ec) return candidate;
+    }
     if (const char* system_root = std::getenv("SystemRoot"); system_root != nullptr) {
         const fs::path candidate = fs::path{system_root}
             / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe";
