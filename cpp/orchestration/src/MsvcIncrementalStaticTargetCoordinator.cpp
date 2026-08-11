@@ -156,6 +156,7 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
         .output = request.target.executable,
         .cache_file = request.target.link_cache,
         .working_directory = request.working_directory,
+        .link_time_code_generation = request.compiler_options.link_time_code_generation,
         .force_archive = result.any_compiled,
     });
     if (!archived) {
