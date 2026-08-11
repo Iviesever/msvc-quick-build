@@ -213,6 +213,69 @@ int main() {
     {
         const std::vector arguments{
             "main.cpp"sv,
+            "-config"sv,
+            "release"sv,
+            "-std"sv,
+            "20"sv,
+            "-x86"sv,
+            "-output"sv,
+            "legacy-product"sv,
+            "-run"sv,
+            "-env"sv,
+            "p"sv,
+            "-include"sv,
+            "legacy include"sv,
+            "-defines"sv,
+            "LEGACY=1"sv,
+            "-libpath"sv,
+            "legacy libs"sv,
+            "-libs"sv,
+            "legacy_math"sv,
+        };
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "legacy PowerShell-style aliases should parse");
+        if (parsed) {
+            expect(parsed->configuration_override == mqb::BuildConfiguration::release,
+                   "legacy -config release should map to the typed release override");
+            expect(parsed->standard_override == mqb::CppStandard::cpp20,
+                   "legacy -std should map to the typed standard override");
+            expect(parsed->architecture_override == mqb::Architecture::x86,
+                   "legacy -x86 should map to the typed architecture override");
+            expect(parsed->build.output_name == "legacy-product",
+                   "legacy -output should map to the output name");
+            expect(parsed->build.run_after_build,
+                   "legacy -run should map to run-after-build");
+            expect(parsed->toolchain_preference == mqb::msvc::ToolchainPreference::portable,
+                   "legacy -env p should map to portable toolchain preference");
+            expect(parsed->include_directories.size() == 1
+                       && parsed->include_directories.front() == "legacy include",
+                   "legacy -include should preserve the include path");
+            expect(parsed->defines.size() == 1 && parsed->defines.front() == "LEGACY=1",
+                   "legacy -defines should preserve the preprocessor definition");
+            expect(parsed->library_directories.size() == 1
+                       && parsed->library_directories.front() == "legacy libs",
+                   "legacy -libpath should preserve the library directory");
+            expect(parsed->libraries.size() == 1 && parsed->libraries.front() == "legacy_math",
+                   "legacy -libs should preserve one repeatable library value");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "-config"sv, "profile"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "legacy -config should reject unknown preset names");
+    }
+
+    {
+        const std::vector arguments{"-?"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value() && parsed->show_help,
+               "legacy -? help alias should not require a source file");
+    }
+
+    {
+        const std::vector arguments{
+            "main.cpp"sv,
             "--output=demo"sv,
             "--jobs=3"sv,
             "--lib-path=vendor"sv,
