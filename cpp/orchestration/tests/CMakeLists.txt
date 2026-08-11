@@ -1,78 +1,34 @@
 add_executable(mqb_orchestration_incremental_tests
     incremental_compile_coordinator_tests.cpp
 )
-
-target_link_libraries(mqb_orchestration_incremental_tests
-    PRIVATE
-        mqb_orchestration
-        mqb_msvc
-)
-
+target_link_libraries(mqb_orchestration_incremental_tests PRIVATE mqb_orchestration mqb_msvc)
 target_compile_features(mqb_orchestration_incremental_tests PRIVATE cxx_std_23)
 
-add_executable(mqb_orchestration_incremental_link_tests
-    incremental_link_coordinator_tests.cpp
-)
-
-target_link_libraries(mqb_orchestration_incremental_link_tests
-    PRIVATE
-        mqb_orchestration
-        mqb_msvc
-)
-
+add_executable(mqb_orchestration_incremental_link_tests incremental_link_coordinator_tests.cpp)
+target_link_libraries(mqb_orchestration_incremental_link_tests PRIVATE mqb_orchestration mqb_msvc)
 target_compile_features(mqb_orchestration_incremental_link_tests PRIVATE cxx_std_23)
 
-add_executable(mqb_bounded_work_scheduler_tests
-    bounded_work_scheduler_tests.cpp
-)
+add_executable(mqb_bounded_work_scheduler_tests bounded_work_scheduler_tests.cpp)
 target_link_libraries(mqb_bounded_work_scheduler_tests PRIVATE mqb_orchestration)
 target_compile_features(mqb_bounded_work_scheduler_tests PRIVATE cxx_std_23)
 
-add_executable(mqb_incremental_target_coordinator_tests
-    incremental_target_coordinator_tests.cpp
-)
-target_link_libraries(mqb_incremental_target_coordinator_tests
-    PRIVATE
-        mqb_orchestration
-        mqb_msvc
-)
+add_executable(mqb_incremental_target_coordinator_tests incremental_target_coordinator_tests.cpp)
+target_link_libraries(mqb_incremental_target_coordinator_tests PRIVATE mqb_orchestration mqb_msvc)
 target_compile_features(mqb_incremental_target_coordinator_tests PRIVATE cxx_std_23)
 
-add_executable(mqb_module_compile_coordinator_tests
-    module_compile_coordinator_tests.cpp
-)
-target_link_libraries(mqb_module_compile_coordinator_tests
-    PRIVATE
-        mqb_orchestration
-        mqb_modules
-        mqb_msvc
-)
+add_executable(mqb_module_compile_coordinator_tests module_compile_coordinator_tests.cpp)
+target_link_libraries(mqb_module_compile_coordinator_tests PRIVATE mqb_orchestration mqb_modules mqb_msvc)
 target_compile_features(mqb_module_compile_coordinator_tests PRIVATE cxx_std_23)
 
-add_executable(mqb_module_target_coordinator_tests
-    module_target_coordinator_tests.cpp
-)
-target_link_libraries(mqb_module_target_coordinator_tests
-    PRIVATE
-        mqb_orchestration
-        mqb_modules
-        mqb_msvc
-)
+add_executable(mqb_module_target_coordinator_tests module_target_coordinator_tests.cpp)
+target_link_libraries(mqb_module_target_coordinator_tests PRIVATE mqb_orchestration mqb_modules mqb_msvc)
 target_compile_features(mqb_module_target_coordinator_tests PRIVATE cxx_std_23)
 
-add_executable(mqb_module_target_validation_tests
-    module_target_validation_tests.cpp
-)
-target_link_libraries(mqb_module_target_validation_tests
-    PRIVATE
-        mqb_orchestration
-        mqb_msvc
-)
+add_executable(mqb_module_target_validation_tests module_target_validation_tests.cpp)
+target_link_libraries(mqb_module_target_validation_tests PRIVATE mqb_orchestration mqb_msvc)
 target_compile_features(mqb_module_target_validation_tests PRIVATE cxx_std_23)
 
-add_executable(mqb_target_router_tests
-    target_router_tests.cpp
-)
+add_executable(mqb_target_router_tests target_router_tests.cpp)
 target_link_libraries(mqb_target_router_tests PRIVATE mqb_orchestration)
 target_compile_features(mqb_target_router_tests PRIVATE cxx_std_23)
 
@@ -103,42 +59,31 @@ add_test(NAME mqb.orchestration.module_target_validation COMMAND mqb_module_targ
 add_test(NAME mqb.orchestration.target_router COMMAND mqb_target_router_tests)
 
 if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
-    add_executable(mqb_module_target_integration_tests
-        module_target_integration_tests.cpp
-    )
-    target_link_libraries(mqb_module_target_integration_tests
-        PRIVATE
-            mqb_orchestration
-            mqb_msvc
-            mqb_platform_windows
-    )
+    add_executable(mqb_module_target_integration_tests module_target_integration_tests.cpp)
+    target_link_libraries(mqb_module_target_integration_tests PRIVATE mqb_orchestration mqb_msvc mqb_platform_windows)
     target_compile_features(mqb_module_target_integration_tests PRIVATE cxx_std_23)
 
-    add_executable(mqb_header_unit_incremental_integration_tests
-        header_unit_incremental_integration_tests.cpp
-    )
-    target_link_libraries(mqb_header_unit_incremental_integration_tests
-        PRIVATE
-            mqb_orchestration
-            mqb_msvc
-            mqb_platform_windows
-    )
+    add_executable(mqb_header_unit_incremental_integration_tests header_unit_incremental_integration_tests.cpp)
+    target_link_libraries(mqb_header_unit_incremental_integration_tests PRIVATE mqb_orchestration mqb_msvc mqb_platform_windows)
     target_compile_features(mqb_header_unit_incremental_integration_tests PRIVATE cxx_std_23)
 
-    if(MSVC)
-        target_compile_options(mqb_module_target_integration_tests PRIVATE /W4 /permissive-)
-        target_compile_options(mqb_header_unit_incremental_integration_tests PRIVATE /W4 /permissive-)
-    else()
-        target_compile_options(mqb_module_target_integration_tests PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(mqb_header_unit_incremental_integration_tests PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
+    add_executable(mqb_header_unit_wave_integration_tests header_unit_wave_integration_tests.cpp)
+    target_link_libraries(mqb_header_unit_wave_integration_tests PRIVATE mqb_orchestration mqb_modules mqb_msvc mqb_platform_windows)
+    target_compile_features(mqb_header_unit_wave_integration_tests PRIVATE cxx_std_23)
 
-    add_test(
-        NAME mqb.orchestration.module_target_integration
-        COMMAND mqb_module_target_integration_tests
+    foreach(test_target IN ITEMS
+        mqb_module_target_integration_tests
+        mqb_header_unit_incremental_integration_tests
+        mqb_header_unit_wave_integration_tests
     )
-    add_test(
-        NAME mqb.orchestration.header_unit_incremental_integration
-        COMMAND mqb_header_unit_incremental_integration_tests
-    )
+        if(MSVC)
+            target_compile_options(${test_target} PRIVATE /W4 /permissive-)
+        else()
+            target_compile_options(${test_target} PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    endforeach()
+
+    add_test(NAME mqb.orchestration.module_target_integration COMMAND mqb_module_target_integration_tests)
+    add_test(NAME mqb.orchestration.header_unit_incremental_integration COMMAND mqb_header_unit_incremental_integration_tests)
+    add_test(NAME mqb.orchestration.header_unit_wave_integration COMMAND mqb_header_unit_wave_integration_tests)
 endif()

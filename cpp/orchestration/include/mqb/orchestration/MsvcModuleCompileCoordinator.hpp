@@ -21,8 +21,16 @@ struct ModuleCompileSourceRequest {
     TranslationUnitKind kind{TranslationUnitKind::source};
 };
 
+struct ModuleCompileHeaderUnitRequest {
+    std::filesystem::path source;
+    std::string header_name;
+    HeaderUnitLookupMethod lookup_method{HeaderUnitLookupMethod::quote};
+    SourceArtifacts artifacts;
+};
+
 struct ModuleCompileWaveRequest {
     std::vector<ModuleCompileSourceRequest> sources;
+    std::vector<ModuleCompileHeaderUnitRequest> header_units;
     modules::ModuleDependencyPlan plan;
     CompilerOptions compiler_options;
     std::filesystem::path working_directory;
@@ -31,6 +39,13 @@ struct ModuleCompileWaveRequest {
 
 struct ModuleCompileResult {
     std::filesystem::path source;
+    IncrementalCompileResult result;
+};
+
+struct HeaderUnitCompileResult {
+    std::filesystem::path source;
+    std::string header_name;
+    HeaderUnitLookupMethod lookup_method{HeaderUnitLookupMethod::quote};
     IncrementalCompileResult result;
 };
 
@@ -46,6 +61,7 @@ enum class ModuleCompileErrorCode {
     unresolved_requirement,
     invalid_provider,
     duplicate_reference,
+    invalid_header_unit,
     scheduling_failed,
     compile_failed,
 };
@@ -61,9 +77,11 @@ struct ModuleCompileError {
 };
 
 struct ModuleCompileWaveResult {
-    // Results are returned in request.sources order, independent of graph level
-    // order and worker completion order.
+    // Ordinary/module-TU results preserve request.sources order. Header-unit
+    // results preserve request.header_units order; graph level and worker
+    // completion order never leak into public result ordering.
     std::vector<ModuleCompileResult> compiles;
+    std::vector<HeaderUnitCompileResult> header_unit_compiles;
     bool any_compiled{false};
 };
 
