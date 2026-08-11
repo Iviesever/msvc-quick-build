@@ -60,6 +60,32 @@ int main() {
                "planned output must override a conflicting raw /OUT");
     }
 
+    auto dll = invocation;
+    dll.output = "bin/plugin.dll";
+    dll.options.target_kind = mqb::TargetKind::dynamic_library;
+    dll.options.additional_arguments = {"/OUT:ignored.dll", "/IMPLIB:ignored.lib"};
+    const auto dll_result = mqb::msvc::MsvcLinker::build_arguments(dll);
+    expect(dll_result.has_value(), "typed DLL link invocation should produce argv");
+    if (dll_result) {
+        expect(contains(*dll_result, "/DLL"), "DLL target should emit /DLL");
+        expect(contains(*dll_result, "/IMPLIB:bin/plugin.lib"),
+               "DLL target should own deterministic import-library path");
+        expect(contains(*dll_result, "/OUT:bin/plugin.dll"),
+               "DLL target should own structured DLL output path");
+        const auto raw_implib = std::find(dll_result->begin(), dll_result->end(), "/IMPLIB:ignored.lib");
+        const auto planned_implib = std::find(dll_result->begin(), dll_result->end(), "/IMPLIB:bin/plugin.lib");
+        expect(raw_implib != dll_result->end() && planned_implib != dll_result->end()
+                   && raw_implib < planned_implib,
+               "typed DLL import-library path must override conflicting raw /IMPLIB");
+        expect(mqb::msvc::MsvcLinker::export_file_path(dll.output) == std::filesystem::path{"bin/plugin.exp"},
+               "DLL export side-output path should be deterministic");
+    }
+
+    auto static_library = invocation;
+    static_library.options.target_kind = mqb::TargetKind::static_library;
+    const auto static_result = mqb::msvc::MsvcLinker::build_arguments(static_library);
+    expect(!static_result, "static target must fail closed in linker backend");
+
     auto release = invocation;
     release.options.configuration = mqb::BuildConfiguration::release;
     release.options.architecture = mqb::Architecture::x86;
