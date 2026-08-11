@@ -16,6 +16,7 @@ namespace mqb {
 enum class BuildPlannerErrorCode {
     missing_object_output,
     multiple_object_outputs,
+    invalid_header_unit_outputs,
     missing_link_input,
     missing_link_output,
 };
@@ -24,6 +25,7 @@ struct BuildPlannerError {
     BuildPlannerErrorCode code{};
     std::filesystem::path source;
     std::size_t object_output_count{};
+    std::size_t module_interface_output_count{};
 };
 
 struct CompilePlanItem {

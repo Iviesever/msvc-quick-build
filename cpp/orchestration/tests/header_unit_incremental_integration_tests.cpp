@@ -60,6 +60,49 @@ void write_text(const fs::path& path, const std::string_view text) {
         != validation.reasons.end();
 }
 
+void print_incremental_error(const mqb::orchestration::IncrementalCompileError& error) {
+    std::cerr << "incremental compile error: " << error.message << '\n';
+    if (error.planner_error) {
+        std::cerr << "  planner code=" << static_cast<int>(error.planner_error->code)
+                  << " source=" << error.planner_error->source.generic_string()
+                  << " object_outputs=" << error.planner_error->object_output_count
+                  << " ifc_outputs=" << error.planner_error->module_interface_output_count
+                  << '\n';
+    }
+    if (!error.compile_error) {
+        return;
+    }
+    const auto& compile = *error.compile_error;
+    std::cerr << "  executor: " << compile.message << '\n';
+    if (compile.compiler_error) {
+        const auto& compiler = *compile.compiler_error;
+        std::cerr << "  compiler: " << compiler.message << '\n';
+        if (compiler.process_error) {
+            std::cerr << "  process: " << compiler.process_error->message
+                      << " native=" << compiler.process_error->native_code << '\n';
+        }
+        if (compiler.process_result) {
+            std::cerr << "  exit=" << compiler.process_result->exit_code << '\n'
+                      << compiler.process_result->stdout_text
+                      << compiler.process_result->stderr_text;
+        }
+    }
+    if (compile.dependency_error) {
+        std::cerr << "  dependency metadata: " << compile.dependency_error->message << '\n';
+    }
+}
+
+template <typename Result>
+[[nodiscard]] bool require_success(const Result& result, const std::string_view message) {
+    if (result) {
+        return true;
+    }
+    ++failures;
+    std::cerr << "FAIL: " << message << '\n';
+    print_incremental_error(result.error());
+    return false;
+}
+
 } // namespace
 
 int main() {
@@ -115,13 +158,12 @@ int main() {
         .working_directory = fixture.path(),
     };
 
-    // 1. Cold: IFC-only producer is scheduled and persisted without an object.
     auto cold = coordinator.run(request);
-    expect(cold.has_value() && cold->compiled,
-           "cold header-unit producer should execute exactly one compile action");
-    expect(cold && has_reason(cold->validation, mqb::BuildReason::missing_cache_entry),
+    if (!require_success(cold, "cold header-unit producer should execute successfully")) return 1;
+    expect(cold->compiled, "cold header-unit producer should execute exactly one compile action");
+    expect(has_reason(cold->validation, mqb::BuildReason::missing_cache_entry),
            "cold header-unit build should explain missing cache metadata");
-    expect(cold && has_reason(cold->validation, mqb::BuildReason::missing_output),
+    expect(has_reason(cold->validation, mqb::BuildReason::missing_output),
            "cold header-unit build should explain missing IFC output");
     expect(fs::is_regular_file(ifc), "cold header-unit build should create the planned IFC");
     expect(fs::is_regular_file(dependencies),
@@ -139,29 +181,25 @@ int main() {
                "header-unit cache should persist exactly the planned IFC output");
     }
 
-    // 2. Warm: unchanged producer reuses the IFC and executes nothing.
     auto warm = coordinator.run(request);
-    expect(warm.has_value() && !warm->compiled,
-           "unchanged header-unit producer should be a compile-cache hit");
-    expect(warm && warm->plan.actions.empty(),
-           "warm header-unit producer should schedule zero actions");
+    if (!require_success(warm, "warm header-unit producer should validate successfully")) return 1;
+    expect(!warm->compiled, "unchanged header-unit producer should be a compile-cache hit");
+    expect(warm->plan.actions.empty(), "warm header-unit producer should schedule zero actions");
 
-    // 3. Producer identity is recipe state: quote -> angle must rebuild even
-    // with the same physical source and IFC destination.
     auto angle_request = request;
     angle_request.unit.header_unit->lookup_method = mqb::HeaderUnitLookupMethod::angle;
     auto angle = coordinator.run(angle_request);
-    expect(angle.has_value() && angle->compiled,
+    if (!require_success(angle, "angle header-unit producer should rebuild successfully")) return 1;
+    expect(angle->compiled,
            "changing header-unit lookup identity should invalidate the producer recipe");
-    expect(angle && has_reason(angle->validation, mqb::BuildReason::compiler_options_changed),
+    expect(has_reason(angle->validation, mqb::BuildReason::compiler_options_changed),
            "header-unit identity change should surface as recipe/signature invalidation");
 
-    // Return to quote identity for the freshness tests below.
     auto quote_again = coordinator.run(request);
-    expect(quote_again.has_value() && quote_again->compiled,
+    if (!require_success(quote_again, "quote header-unit producer should rebuild successfully")) return 1;
+    expect(quote_again->compiled,
            "switching header-unit identity back should rebuild the quote producer");
 
-    // 4. Header mutation invalidates the IFC by source freshness.
     std::error_code time_error;
     const auto ifc_before_mutation = fs::last_write_time(ifc, time_error);
     expect(!time_error, "mutation fixture requires an IFC timestamp");
@@ -171,13 +209,11 @@ int main() {
     expect(!time_error, "test should be able to make the header deterministically newer than the IFC");
 
     auto mutated = coordinator.run(request);
-    expect(mutated.has_value() && mutated->compiled,
-           "header source mutation should rebuild the header-unit IFC");
-    expect(mutated && has_reason(mutated->validation, mqb::BuildReason::source_changed),
+    if (!require_success(mutated, "mutated header-unit producer should rebuild successfully")) return 1;
+    expect(mutated->compiled, "header source mutation should rebuild the header-unit IFC");
+    expect(has_reason(mutated->validation, mqb::BuildReason::source_changed),
            "header source mutation should report source_changed");
 
-    // Normalize timestamps after the deliberately future-dated source so the
-    // next warm assertion is deterministic rather than wall-clock dependent.
     const auto header_time = fs::last_write_time(header, time_error);
     expect(!time_error, "rebuilt mutation fixture requires the header timestamp");
     time_error.clear();
@@ -185,16 +221,16 @@ int main() {
     expect(!time_error, "test should be able to make rebuilt IFC newer than its source");
 
     auto warm_after_mutation = coordinator.run(request);
-    expect(warm_after_mutation.has_value() && !warm_after_mutation->compiled,
+    if (!require_success(warm_after_mutation, "rebuilt header unit should validate successfully")) return 1;
+    expect(!warm_after_mutation->compiled,
            "rebuilt header unit should return to a warm cache hit");
 
-    // 5. Missing planned IFC is repaired even when source/cache metadata are warm.
     fs::remove(ifc, time_error);
     expect(!time_error, "test should be able to delete only the header-unit IFC");
     auto repaired = coordinator.run(request);
-    expect(repaired.has_value() && repaired->compiled,
-           "missing header-unit IFC should schedule a repair compile");
-    expect(repaired && has_reason(repaired->validation, mqb::BuildReason::missing_output),
+    if (!require_success(repaired, "missing header-unit IFC should repair successfully")) return 1;
+    expect(repaired->compiled, "missing header-unit IFC should schedule a repair compile");
+    expect(has_reason(repaired->validation, mqb::BuildReason::missing_output),
            "missing header-unit IFC repair should report missing_output");
     expect(fs::is_regular_file(ifc), "missing-IFC repair should recreate the planned IFC");
     expect(!fs::exists(object), "missing-IFC repair must not create an object artifact");
