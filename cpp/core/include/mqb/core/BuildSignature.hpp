@@ -6,6 +6,7 @@
 #include <string>
 
 #include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/LibrarianIdentity.hpp"
 #include "mqb/core/LinkOptions.hpp"
 #include "mqb/core/LinkerIdentity.hpp"
 #include "mqb/core/ToolchainIdentity.hpp"
@@ -40,6 +41,11 @@ public:
         const std::filesystem::path& output,
         const LinkerIdentity& linker,
         const LinkOptions& options);
+
+    [[nodiscard]] static BuildSignature for_archive(
+        std::span<const std::filesystem::path> objects,
+        const std::filesystem::path& output,
+        const LibrarianIdentity& librarian);
 
     [[nodiscard]] static BuildSignature from_digest(const SignatureDigest digest) noexcept {
         return BuildSignature{digest};
