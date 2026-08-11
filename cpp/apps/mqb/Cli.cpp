@@ -38,12 +38,14 @@ require_value(
 
 [[nodiscard]] std::expected<CppStandard, Error>
 parse_standard(const std::string_view value) {
+    if (value == "14" || value == "c++14") return CppStandard::cpp14;
+    if (value == "17" || value == "c++17") return CppStandard::cpp17;
     if (value == "20" || value == "c++20") return CppStandard::cpp20;
     if (value == "23" || value == "c++23") return CppStandard::cpp23;
     if (value == "latest" || value == "c++latest") return CppStandard::latest;
     return std::unexpected(error(
         "unsupported C++ standard '" + std::string{value}
-        + "' (expected 20, 23, or latest)"));
+        + "' (expected 14, 17, 20, 23, or latest)"));
 }
 
 [[nodiscard]] std::expected<BuildConfiguration, Error>
@@ -331,14 +333,16 @@ Single-entry discovery follows reachable project-local named imports to project-
 module-interface candidates. Discovery selects candidates only; MSVC P1689 scanning remains
 the authority for module topology and provider validation. Project-local header-unit imports
 stay outside TU discovery but route through the P1689 module pipeline, where their IFCs are
-built and cached automatically. External/prebuilt named-module providers and import std
-remain unsupported and fail closed.
+built and cached automatically. Modules and header units require C++20 or newer; selecting
+C++14/17 for a target that requires the module pipeline fails closed before MSVC is invoked.
+External/prebuilt named-module providers and import std remain unsupported and fail closed.
 
 Options:
   --debug                  Explicitly select Debug compile/link preset
   --release                Explicitly select Release compile/link preset
   --config <debug|release> Select compile/link preset (legacy -config alias accepted)
-  --std <20|23|latest>     Explicitly select C++ language standard (legacy -std accepted)
+  --std <14|17|20|23|latest>
+                           Explicitly select C++ language standard (legacy -std accepted)
   --x86 | --x64            Explicitly select target architecture (legacy -x86/-x64 accepted)
   -j, --jobs <N>           Maximum concurrent TU scans/compiles (default: hardware concurrency)
   -o, --output <name>      Set target executable name under .mqb/bin/ (legacy -output accepted)
@@ -356,8 +360,8 @@ Options:
   --                       Pass all remaining argv elements to the program
 
 Legacy compatibility aliases intentionally cover spelling only. Legacy-only semantics such as
--a string splitting, DLL/static output kinds, C++14/17, and MSVC tuning switches remain tracked
-by the stable-v5 parity inventory and are not silently accepted here.
+-a string splitting, DLL/static output kinds, and MSVC tuning switches remain tracked by the
+stable-v5 parity inventory and are not silently accepted here.
 
 Job count is execution policy only; changing -j does not invalidate build caches.
 Discovery is source selection only. Incremental header freshness continues to use
