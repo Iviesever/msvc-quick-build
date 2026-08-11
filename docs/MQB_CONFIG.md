@@ -12,7 +12,7 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
 }
 ```
 
-`version` is required. Version 1 uses strict JSON: comments, trailing commas, duplicate keys, unknown schema fields, and incorrect field types are rejected.
+`version` is required. Version 1 uses strict JSON: comments, trailing commas, duplicate keys, unknown schema fields, incorrect field types, and empty entries in string arrays are rejected.
 
 ## Full example
 
@@ -22,7 +22,7 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
   "build": {
     "configuration": "release",
     "architecture": "x64",
-    "standard": "23",
+    "standard": "17",
     "output": "game",
     "defines": [
       "GAME_BUILD=1"
@@ -37,6 +37,12 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
     "libraries": [
       "math",
       "codec.lib"
+    ],
+    "compiler_args": [
+      "/W4"
+    ],
+    "linker_args": [
+      "/OPT:NOREF"
     ]
   },
   "discovery": {
@@ -61,14 +67,26 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
 |---|---|---|
 | `configuration` | string | `debug` or `release` |
 | `architecture` | string | `x86` or `x64` |
-| `standard` | string | `20`, `23`, or `latest` (`c++20`, `c++23`, `c++latest` are also accepted) |
+| `standard` | string | `14`, `17`, `20`, `23`, or `latest` (`c++14`, `c++17`, `c++20`, `c++23`, `c++latest` are also accepted) |
 | `output` | string | target name under `.mqb/bin/` |
 | `defines` | string array | preprocessor definitions, without `/D` |
 | `include_dirs` | string array | include search directories |
 | `library_dirs` | string array | library search directories |
 | `libraries` | string array | requested libraries; `.lib` is optional for ordinary names |
+| `compiler_args` | string array | ordered raw `cl.exe` argv elements |
+| `linker_args` | string array | ordered raw `link.exe` argv elements |
 
 All path-valued config entries are resolved relative to the directory containing `mqb.json`, not the shell's current working directory.
+
+Raw compiler/linker arguments are literal argv elements. MQB does not split one JSON string containing spaces into several switches. For example:
+
+```json
+"compiler_args": ["/W4", "/WX"]
+```
+
+represents two compiler arguments, while `"/W4 /WX"` is one argument and is not rewritten by MQB.
+
+Backend-owned structured routing remains authoritative. Raw arguments are emitted before MQB's planned output/topology switches such as `/Fo`, `/ifcOutput`, `/scanDependencies`, `/MACHINE`, `/SUBSYSTEM`, and `/OUT`.
 
 ## Discovery fields
 
@@ -92,9 +110,9 @@ An ordinary `extra_sources` entry may not define another `main()`. The entry TU 
 
 Built-in directory exclusions such as `.mqb`, `.git`, `.vs`, `build`, `out`, and `cmake-build-*` remain active in addition to configured exclusions.
 
-### Named modules and discovery
+### Named modules and header units
 
-Project-local named modules do **not** require a separate v1 config section.
+Project-local named modules and project-local header units do **not** require separate v1 config sections.
 
 For a single ordinary entry such as:
 
@@ -105,9 +123,11 @@ int main() { return answer(); }
 
 smart discovery may select a reachable local `.ixx/.cppm/.mpp` provider candidate. Discovery does not decide which candidate is authoritative; MSVC `/scanDependencies` P1689 metadata remains responsible for provider selection, dependency ordering, ambiguity/cycle diagnostics, and unresolved requirements.
 
-If a selected source contains named-module syntax but no supported local provider is found, the target still routes through the module pipeline and fails closed. It does not silently fall back to an ordinary compile.
+Header-unit lexical syntax stays out of ordinary TU discovery edges, but it routes the target through the same authoritative P1689 module pipeline. Project-local header-unit IFCs are allocated, built, freshness-tracked, and repaired automatically.
 
-Header units, external/prebuilt providers, and `import std` do not yet have execution/artifact policy and remain unsupported.
+Modules and header units require C++20 or newer. Selecting `standard: "14"` or `"17"` for an ordinary target is supported; if that target requires module/header-unit scanning, MQB fails closed before launching the unsupported module operation.
+
+If a selected source contains named-module syntax but no supported local provider is found, the target fails closed. External/prebuilt named-module providers and `import std` remain tracked separately in issue #16.
 
 ## Precedence
 
@@ -138,7 +158,7 @@ List-like options are additive rather than replacing the config list. The effect
 mqb.json entries, then CLI entries
 ```
 
-This applies to defines, include directories, library directories, and libraries. For example, `-I local` adds a CLI include directory after the project's `include_dirs` entries.
+This applies to defines, include directories, library directories, libraries, `compiler_args`, and `linker_args`. For example, a CLI `--compiler-arg /WX` is appended after project `compiler_args` entries.
 
 ## Path bases
 
@@ -171,23 +191,11 @@ still loads `project/mqb.json`, places artifacts under `project/.mqb/`, and inte
 
 The config file timestamp itself is not a special global rebuild trigger. Instead, the effective typed build options produced from the file participate in the existing compile/link signatures.
 
-For example, changing only:
-
-```json
-"defines": ["VALUE=1"]
-```
-
-to:
-
-```json
-"defines": ["VALUE=2"]
-```
-
-changes compiler recipe identity and recompiles affected TUs even if no source file timestamp changed.
+Changing a compiler argument changes compiler recipe identity and recompiles affected TUs even if no source timestamp changed. The resulting fresh objects force the downstream link. Changing only a linker argument changes link recipe identity and relinks without recompiling otherwise-fresh TUs.
 
 Likewise, library names/search paths affect link recipe identity, while exact resolved `.lib` files are separately tracked as link freshness inputs.
 
-For named modules, compile identity also includes typed module references and planned module-interface output identity. Imported IFC files participate in consumer freshness validation, and a missing provider IFC invalidates the provider's cached compile outputs.
+For named modules and header units, compile identity also includes typed provider/reference and interface-output identity. Imported IFC files participate in consumer freshness validation, and a missing provider IFC invalidates the provider's cached outputs.
 
 ## Parallelism
 
@@ -201,10 +209,10 @@ Changing the job count does not alter compile or link signatures and therefore m
 
 ## Current boundaries
 
-- v1 config has no header-unit, external/prebuilt module-provider, or `import std` policy.
+- v1 config has no external/prebuilt module-provider or `import std` policy.
 - v1 config does not store parallel job count.
 - `exclude_dirs`, `extra_sources`, and `exclude_sources` are exact paths, not globs.
 - Explicit user libraries are freshness-tracked; indirect `/DEFAULTLIB` transitive dependencies are not claimed as fully tracked.
 - C++ V2 currently classifies C++ translation units only; `.c` is not supported by the V2 source classifier.
 
-For the broader build/module/cache architecture, see [`CPP_V2_ARCHITECTURE.md`](CPP_V2_ARCHITECTURE.md).
+For stable-v5 migration decisions, see [`V5_PARITY.md`](V5_PARITY.md). For the broader build/module/cache architecture, see [`CPP_V2_ARCHITECTURE.md`](CPP_V2_ARCHITECTURE.md).
