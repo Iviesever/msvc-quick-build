@@ -1,8 +1,5 @@
-$OutputEncoding = [console]::InputEncoding = [console]::OutputEncoding = New-Object System.Text.UTF8Encoding
+# MQB stable-v5 compatibility fragment for manual profile setup.
+# The installer no longer overwrites user profiles; it merges an equivalent managed block only when needed.
 function build {
-    if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) {
-        & pwsh.exe -NoProfile -File "$HOME\bin\build.ps1" @args
-    } else {
-        & "$HOME\bin\build.ps1" @args
-    }
+    & "$HOME\bin\mqb.exe" @args
 }
