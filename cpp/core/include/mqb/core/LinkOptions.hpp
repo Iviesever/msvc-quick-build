@@ -18,6 +18,9 @@ struct LinkOptions {
     Architecture architecture{Architecture::x64};
     TargetKind target_kind{TargetKind::executable};
     LinkSubsystem subsystem{LinkSubsystem::console};
+    // Coupled with CompilerOptions::link_time_code_generation. False preserves
+    // the historical link signature/recipe; true makes /LTCG structured policy.
+    bool link_time_code_generation{false};
     std::vector<std::filesystem::path> library_directories;
     std::vector<std::string> libraries;
     std::vector<std::string> additional_arguments;
