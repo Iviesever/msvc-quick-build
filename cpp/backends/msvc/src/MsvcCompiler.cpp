@@ -101,11 +101,6 @@ void append_configuration_arguments(
     arguments.emplace_back("/diagnostics:column");
 
     append_configuration_arguments(arguments, options.configuration);
-    if (options.runtime_library) {
-        // Explicit typed runtime follows the preset runtime and therefore owns
-        // the final MSVC CRT selection without changing historical defaults.
-        arguments.push_back(runtime_argument(*options.runtime_library));
-    }
     if (!c_translation_unit) {
         arguments.push_back(standard_argument(options.standard));
     }
@@ -129,6 +124,13 @@ void append_configuration_arguments(
             return std::unexpected(invalid_request("additional compiler argument must not be empty"));
         }
         arguments.push_back(argument);
+    }
+
+    if (options.runtime_library) {
+        // Typed runtime policy has higher precedence than the raw escape hatch.
+        // Emitting it last keeps the explicit CRT selection authoritative while
+        // leaving the historical default preset byte-for-byte unchanged.
+        arguments.push_back(runtime_argument(*options.runtime_library));
     }
 
     return {};
