@@ -9,6 +9,7 @@
 > - `mqb.json` 是唯一受支持的项目配置格式。
 > - 旧 PowerShell `build.ps1`、`build` compatibility shim、PowerShell profile 注入、legacy rollback、`msvc_list.json` migration、PowerShell-era CLI aliases 均不再支持。
 > - 已发布的 `v5.0.0-rc.2` 仍保留为历史 prerelease；stable release pipeline 只从 native-only mainline 生成并验证发布包，不会为了兼容旧版本重新打包旧实现。
+> - stable release 必须 self-host：最终 ZIP 中的 `mqb.exe` 必须由 MQB 自身构建，而不是由 CMake 直接产出。
 
 ## 主要能力
 
@@ -28,7 +29,9 @@
 
 ## 从源码构建
 
-要求：Windows、CMake 3.25+、Visual Studio 2026 / MSVC、C++23 编译能力。
+要求：Windows、Visual Studio 2026 / MSVC、C++23 编译能力。开发测试还使用 CMake 3.25+ 作为 bootstrap/test harness；稳定版发布的最终 `mqb.exe` 不由 CMake 直接产出。
+
+### 开发 / 测试 bootstrap
 
 ```powershell
 cmake -S cpp -B cpp/build -G "Visual Studio 18 2026" -A x64
@@ -36,7 +39,28 @@ cmake --build cpp/build --config Release --target mqb
 .\cpp\build\apps\mqb\Release\mqb.exe --help
 ```
 
-开发构建默认版本为 `5.0.0-dev`。发布版本由 `release/VERSION` 统一定义，并由 Native Release workflow 显式写入二进制。
+开发构建默认版本为 `5.0.0-dev`。发布版本由 `release/VERSION` 统一定义。
+
+### 用 MQB 构建 MQB
+
+仓库中的 [`cpp/mqb.json`](cpp/mqb.json) 是 MQB 自身的 native project description。给定一个可运行的 MQB binary，可完全绕过 `CMakeLists.txt` 构建 MQB：
+
+```powershell
+$version = (Get-Content .\release\VERSION -Raw).Trim()
+$define = 'MQB_VERSION=\"' + $version + '\"'
+
+Push-Location .\cpp
+& C:\path\to\mqb.exe apps\mqb\main.cpp --env vs -D $define
+Pop-Location
+```
+
+输出为：
+
+```text
+cpp\.mqb\bin\mqb.exe
+```
+
+Stable release workflow 使用两代自举闭包：bootstrap Stage 0 用 MQB 构建 Stage 1；清空 `cpp/.mqb` 后，再由 Stage 1 构建 Stage 2。最终发布 **Stage 1**，并要求 Stage 1/Stage 2 都报告相同 stable version。完整契约见 [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md)。
 
 ### 完整测试
 
@@ -241,7 +265,8 @@ Optional executable run
 
 - `v5.0.0-rc.2`：已经发布的历史 C++ Release Candidate；不会被追写。
 - `release/VERSION`：当前 stable release target 为 `5.0.0`；对应 release notes 为 `release/v5.0.0.md`。
-- `Native Release`：PR 上构建、完整 Release 测试、打包、checksum、解包 manifest、byte identity 与 packaged-installer lifecycle 全部通过后才上传 artifact。
+- `Native Release`：PR 上完成 bootstrap Release tests 后，必须通过 Stage 0 → Stage 1 → clean Stage 1 → Stage 2 的 MQB self-host closure；只有 Stage 1 可以进入最终 ZIP。
+- 最终 ZIP 继续经过 checksum、解包 manifest、Stage 1 byte identity 与 packaged-installer lifecycle 验证后才上传 artifact。
 - 正式发布只由匹配 `release/VERSION` 的 `vX.Y.Z` tag 触发；发布 job 直接下载同一 workflow run 已验证的 artifact，不做二次 rebuild。
 - Issue #16：独立跟踪 external/prebuilt named-module providers 与 `import std`。
 
