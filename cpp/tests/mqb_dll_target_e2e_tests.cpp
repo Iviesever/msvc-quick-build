@@ -162,7 +162,7 @@ int main(int argc, char* argv[]) {
         runner,
         mqb_executable,
         tree.root,
-        {"plugin.cpp", "--no-discover", "--env", "vs", "-type", "dll",
+        {"plugin.cpp", "--no-discover", "--env", "vs", "--type", "dll",
          "--runtime", "MT", "-o", "plugin"});
     expect(repaired.has_value(), "missing-import-library repair invocation should launch");
     if (repaired) {
