@@ -3,7 +3,6 @@
 #include <charconv>
 #include <cstddef>
 #include <expected>
-#include <filesystem>
 #include <span>
 #include <string>
 #include <string_view>
@@ -105,9 +104,7 @@ parse_jobs(const std::string_view value) {
 parse_toolchain_preference(const std::string_view value) {
     if (value == "auto") return msvc::ToolchainPreference::automatic;
     if (value == "vs") return msvc::ToolchainPreference::visual_studio;
-    if (value == "portable" || value == "port" || value == "p") {
-        return msvc::ToolchainPreference::portable;
-    }
+    if (value == "portable") return msvc::ToolchainPreference::portable;
     return std::unexpected(error(
         "unsupported toolchain preference '" + std::string{value}
         + "' (expected auto, vs, or portable)"));
@@ -150,8 +147,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             }
             break;
         }
-        if (argument == "-h" || argument == "--help"
-            || argument == "-help" || argument == "-?") {
+        if (argument == "-h" || argument == "--help") {
             options.show_help = true;
             continue;
         }
@@ -169,11 +165,11 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.discovery_override = false;
             continue;
         }
-        if (argument == "--run" || argument == "-run") {
+        if (argument == "--run") {
             options.build.run_after_build = true;
             continue;
         }
-        if (argument == "--ltcg" || argument == "-ltcg") {
+        if (argument == "--ltcg") {
             options.ltcg_override = true;
             continue;
         }
@@ -203,7 +199,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.jobs = *jobs;
             continue;
         }
-        if (argument == "-o" || argument == "--output" || argument == "-output") {
+        if (argument == "-o" || argument == "--output") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             options.build.output_name = std::string{*value};
@@ -215,7 +211,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.build.output_name = std::string{*value};
             continue;
         }
-        if (argument == "--type" || argument == "-type") {
+        if (argument == "--type") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             auto target_kind = parse_target_kind(*value);
@@ -243,7 +239,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.configuration_override = BuildConfiguration::release;
             continue;
         }
-        if (argument == "--config" || argument == "-config") {
+        if (argument == "--config") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             auto configuration = parse_configuration(*value);
@@ -252,17 +248,17 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.configuration_override = *configuration;
             continue;
         }
-        if (argument == "--x86" || argument == "-x86") {
+        if (argument == "--x86") {
             options.build.architecture = Architecture::x86;
             options.architecture_override = Architecture::x86;
             continue;
         }
-        if (argument == "--x64" || argument == "-x64") {
+        if (argument == "--x64") {
             options.build.architecture = Architecture::x64;
             options.architecture_override = Architecture::x64;
             continue;
         }
-        if (argument == "--std" || argument == "-std") {
+        if (argument == "--std") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             auto standard = parse_standard(*value);
@@ -271,7 +267,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.standard_override = *standard;
             continue;
         }
-        if (argument == "--runtime" || argument == "-runtime") {
+        if (argument == "--runtime") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             auto runtime = parse_runtime(*value);
@@ -287,7 +283,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.runtime_override = *runtime;
             continue;
         }
-        if (argument == "--subsystem" || argument == "-subsystem") {
+        if (argument == "--subsystem") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             auto subsystem = parse_subsystem(*value);
@@ -303,7 +299,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.subsystem_override = *subsystem;
             continue;
         }
-        if (argument == "--compiler-arg" || argument == "-flags") {
+        if (argument == "--compiler-arg") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             options.compiler_arguments.emplace_back(*value);
@@ -315,7 +311,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.compiler_arguments.emplace_back(*value);
             continue;
         }
-        if (argument == "--linker-arg" || argument == "-link_flags") {
+        if (argument == "--linker-arg") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             options.linker_arguments.emplace_back(*value);
@@ -327,7 +323,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.linker_arguments.emplace_back(*value);
             continue;
         }
-        if (argument == "--env" || argument == "-env") {
+        if (argument == "--env") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             auto preference = parse_toolchain_preference(*value);
@@ -341,7 +337,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.portable_roots.emplace_back(std::string{*value});
             continue;
         }
-        if (argument == "--lib-path" || argument == "-libpath") {
+        if (argument == "--lib-path") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             options.library_directories.emplace_back(std::string{*value});
@@ -353,7 +349,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.library_directories.emplace_back(std::string{*value});
             continue;
         }
-        if (argument == "--lib" || argument == "-libs") {
+        if (argument == "--lib") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             options.libraries.emplace_back(*value);
@@ -363,18 +359,6 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto value = long_equals_value(argument, "--lib=");
             if (!value) return std::unexpected(value.error());
             options.libraries.emplace_back(*value);
-            continue;
-        }
-        if (argument == "-include") {
-            auto value = require_value(arguments, index, argument);
-            if (!value) return std::unexpected(value.error());
-            options.include_directories.emplace_back(std::string{*value});
-            continue;
-        }
-        if (argument == "-defines") {
-            auto value = require_value(arguments, index, argument);
-            if (!value) return std::unexpected(value.error());
-            options.defines.emplace_back(*value);
             continue;
         }
         if (argument == "-I" || argument.starts_with("-I")) {
@@ -445,59 +429,56 @@ Single-entry discovery follows reachable project-local named imports to project-
 module-interface candidates. Discovery selects candidates only; MSVC P1689 scanning remains
 the authority for module topology and provider validation. Project-local header-unit imports
 stay outside TU discovery but route through the P1689 module pipeline, where their IFCs are
-built and cached automatically. Modules and header units require C++20 or newer; selecting
-C++14/17 for a target that requires the module pipeline fails closed before MSVC is invoked.
-External/prebuilt named-module providers and import std remain unsupported and fail closed.
-Static-library targets currently accept ordinary C/C++ translation units; static targets that
-require the Modules/Header Unit pipeline fail closed until archive topology is validated.
+built and cached automatically. Modules and header units require C++20 or newer. External or
+prebuilt named-module providers and import std remain unsupported and fail closed.
 
 Options:
   --debug                  Explicitly select Debug compile/link preset
   --release                Explicitly select Release compile/link preset
-  --config <debug|release> Select compile/link preset (legacy -config alias accepted)
+  --config <debug|release> Select compile/link preset
   --std <14|17|20|23|latest>
-                           Explicitly select C++ language standard (legacy -std accepted)
-  --type <exe|dll|static>  Select executable, DLL, or static-library output (legacy -type accepted)
+                           Explicitly select C++ language standard
+  --type <exe|dll|static>  Select executable, DLL, or static-library output
   --runtime <MD|MDd|MT|MTd>
-                           Explicitly select MSVC CRT runtime (legacy -runtime accepted)
-  --ltcg | --no-ltcg      Enable/disable coupled /GL + downstream /LTCG (legacy -ltcg enables)
+                           Explicitly select MSVC CRT runtime
+  --ltcg | --no-ltcg      Enable/disable coupled /GL + downstream /LTCG
   --subsystem <console|windows>
-                           Explicitly select PE subsystem for executable/DLL targets (legacy -subsystem accepted)
-  --x86 | --x64            Explicitly select target architecture (legacy -x86/-x64 accepted)
-  -j, --jobs <N>           Maximum concurrent TU scans/compiles (default: hardware concurrency)
-  -o, --output <name>      Set target name under .mqb/bin/ (legacy -output accepted)
-  --run                    Run an executable after a successful build (legacy -run accepted)
-  -I <dir>, -I<dir>        Add an include directory (legacy -include accepted)
-  -D <value>, -D<value>    Add a preprocessor definition (legacy -defines accepted)
-  -L <dir>, -L<dir>        Add a library search directory (legacy -libpath accepted)
-  --lib-path <dir>         Add a library search directory
-  -l <name>, -l<name>      Link a library ('.lib' is optional)
-  --lib <name>             Link a library (legacy -libs accepted; repeat for multiple values)
-  --compiler-arg <arg>     Append one raw cl.exe argument (legacy -flags accepted; repeatable)
-  --linker-arg <arg>       Append one raw link.exe argument (legacy -link_flags accepted; repeatable)
-  --env <auto|vs|portable> Toolchain selection (legacy -env and portable/port/p accepted)
-  --portable-root <dir>    Add a portable_msvc root candidate
-  -v, --verbose            Show config, discovery, toolchain, and artifact details
-  -h, --help               Show this help and the embedded build version (-help/-? accepted)
-  --                       Pass all remaining argv elements to an executable program
+                           Explicitly select PE subsystem for executable/DLL targets
+  --x86 | --x64           Explicitly select target architecture
+  -j, --jobs <N>          Maximum concurrent TU scans/compiles (default: hardware concurrency)
+  -o, --output <name>     Set target name under .mqb/bin/
+  --run                   Run an executable after a successful build
+  -I <dir>, -I<dir>       Add an include directory
+  -D <value>, -D<value>   Add a preprocessor definition
+  -L <dir>, -L<dir>       Add a library search directory
+  --lib-path <dir>        Add a library search directory
+  -l <name>, -l<name>     Link a library ('.lib' is optional)
+  --lib <name>            Link a library
+  --compiler-arg <arg>    Append one raw cl.exe argument
+  --linker-arg <arg>      Append one raw link.exe argument
+  --env <auto|vs|portable>
+                           Toolchain selection
+  --portable-root <dir>   Add a portable_msvc root candidate
+  -v, --verbose           Show config, discovery, toolchain, and artifact details
+  -h, --help              Show this help and the embedded build version
+  --                      Pass all remaining argv elements to an executable program
 
 Static libraries are produced by MSVC lib.exe from the compiled object set. Linker-only policy
-(libraries, library search paths, subsystem, and raw linker arguments) does not apply to a static
-archive and is rejected when explicitly supplied for a static target. Typed LTCG remains valid
-for static targets and couples /GL compilation with lib.exe /LTCG archive policy.
+(libraries, library search paths, subsystem, and raw linker arguments) is rejected for static
+targets. Typed LTCG remains valid for static targets and couples /GL compilation with lib.exe
+/LTCG archive policy.
 
 Raw compiler/linker arguments are one argv element per option occurrence; MQB does not split a
 quoted string into multiple switches. Project config entries are applied first and CLI raw args
-append afterward. Typed runtime/LTCG and structured artifact routing such as /Fo,
-/scanDependencies, /DLL, /IMPLIB, /MACHINE and /OUT are emitted after raw arguments so the
-BuildPlan remains authoritative.
+append afterward. Typed runtime/LTCG and structured artifact routing are emitted after raw
+arguments so the BuildPlan remains authoritative.
 
-Legacy compatibility aliases intentionally cover spelling only. Legacy-only semantics such as
--a string splitting remain tracked by the stable-v5 parity inventory and are not silently accepted here.
+MQB v5 intentionally does not accept the PowerShell-era command aliases. Use the native options
+shown above; unknown legacy spellings fail instead of silently entering a compatibility path.
 
 Job count is execution policy only; changing -j does not invalidate build caches.
-Discovery is source selection only. Incremental header freshness continues to use
-MSVC /sourceDependencies metadata; /scanDependencies is module topology only.
+Discovery is source selection only. Incremental header freshness uses MSVC
+/sourceDependencies metadata; /scanDependencies is module topology only.
 
 Generated state:
   .mqb/obj/    collision-free object files
