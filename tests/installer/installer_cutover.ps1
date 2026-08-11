@@ -11,11 +11,10 @@ $mqb = [IO.Path]::GetFullPath($MqbPath)
 $repo = [IO.Path]::GetFullPath($RepoRoot)
 $installPs1 = Join-Path $repo 'install.ps1'
 $installBat = Join-Path $repo 'install.bat'
-$legacySource = Join-Path $repo 'build.ps1'
 
-foreach ($path in @($mqb, $installPs1, $installBat, $legacySource)) {
+foreach ($path in @($mqb, $installPs1, $installBat)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "installer cutover prerequisite missing: $path"
+        throw "installer prerequisite missing: $path"
     }
 }
 
@@ -40,32 +39,6 @@ function Invoke-PS5 {
         throw "$Label failed with exit code $code"
     }
     return $lines
-}
-
-function Profiles-Expr {
-    param([string[]]$Profiles)
-    return '@(' + (($Profiles | ForEach-Object { Q $_ }) -join ',') + ')'
-}
-
-function Install-Mqb {
-    param([string]$Root, [string[]]$Profiles)
-    $command = '& ' + (Q $installPs1) +
-        ' -Action Install -MqbPath ' + (Q $mqb) +
-        ' -LegacyBuildPath ' + (Q $legacySource) +
-        ' -InstallRoot ' + (Q $Root) +
-        ' -ProfilePaths ' + (Profiles-Expr $Profiles)
-    Invoke-PS5 $command "install $Root" | Out-Null
-}
-
-function Maintain-Mqb {
-    param([string]$Root, [string[]]$Profiles, [switch]$RestoreLegacy)
-    $wrapper = Join-Path $Root 'uninstall-mqb.ps1'
-    Assert-True (Test-Path -LiteralPath $wrapper -PathType Leaf) "maintenance wrapper missing: $wrapper"
-    $command = '& ' + (Q $wrapper) +
-        ' -InstallRoot ' + (Q $Root) +
-        ' -ProfilePaths ' + (Profiles-Expr $Profiles)
-    if ($RestoreLegacy) { $command += ' -RestoreLegacy' }
-    Invoke-PS5 $command "maintenance $Root" | Out-Null
 }
 
 function Normalize-PathEntry {
@@ -97,126 +70,82 @@ function Help-Line {
     return $lines[0]
 }
 
-$runRoot = Join-Path ([IO.Path]::GetTempPath()) ("mqb-installer-" + [Guid]::NewGuid().ToString('N'))
+function Install-Mqb {
+    param([string]$Root)
+    $command = '& ' + (Q $installPs1) +
+        ' -Action Install -MqbPath ' + (Q $mqb) +
+        ' -InstallRoot ' + (Q $Root)
+    Invoke-PS5 $command "install $Root" | Out-Null
+}
+
+function Uninstall-Mqb {
+    param([string]$Root)
+    $wrapper = Join-Path $Root 'uninstall-mqb.ps1'
+    Assert-True (Test-Path -LiteralPath $wrapper -PathType Leaf) "uninstall wrapper missing: $wrapper"
+    $command = '& ' + (Q $wrapper) + ' -InstallRoot ' + (Q $Root)
+    Invoke-PS5 $command "uninstall $Root" | Out-Null
+}
+
+$runRoot = Join-Path ([IO.Path]::GetTempPath()) ("mqb-native-installer-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
 $originalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 
 try {
-    # Clean install through the public batch entry.
-    $cleanRoot = Join-Path $runRoot 'clean\bin'
-    $cleanProfile = Join-Path $runRoot 'clean\profile.ps1'
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cleanProfile) | Out-Null
-    $sentinel = "# clean-profile-sentinel`r`n"
-    [IO.File]::WriteAllText($cleanProfile, $sentinel, (New-Object Text.UTF8Encoding($false)))
+    $installRoot = Join-Path $runRoot 'bin'
 
+    # Public batch entry must install only the native command and native maintenance files.
     $output = @(& $installBat `
         -MqbPath $mqb `
-        -LegacyBuildPath $legacySource `
-        -InstallRoot $cleanRoot `
-        -ProfilePaths $cleanProfile 2>&1 | ForEach-Object { $_.ToString() })
+        -InstallRoot $installRoot 2>&1 | ForEach-Object { $_.ToString() })
     if ($LASTEXITCODE -ne 0) {
         $output | ForEach-Object { Write-Host $_ }
         throw "install.bat failed with exit code $LASTEXITCODE"
     }
 
-    $cleanMqb = Join-Path $cleanRoot 'mqb.exe'
-    $cleanBuild = Join-Path $cleanRoot 'build.cmd'
-    $cleanLegacy = Join-Path $cleanRoot 'build-legacy.ps1'
+    $installedMqb = Join-Path $installRoot 'mqb.exe'
     foreach ($required in @(
-        $cleanMqb,
-        $cleanBuild,
-        $cleanLegacy,
-        (Join-Path $cleanRoot 'mqb-install.ps1'),
-        (Join-Path $cleanRoot 'uninstall-mqb.ps1'),
-        (Join-Path $cleanRoot 'mqb-install-state.json')
+        $installedMqb,
+        (Join-Path $installRoot 'mqb-install.ps1'),
+        (Join-Path $installRoot 'uninstall-mqb.ps1'),
+        (Join-Path $installRoot 'mqb-install-state.json')
     )) {
-        Assert-True (Test-Path -LiteralPath $required -PathType Leaf) "clean install missing: $required"
-    }
-    Assert-True (([IO.File]::ReadAllText($cleanProfile)) -ceq $sentinel) 'clean install rewrote unrelated profile content'
-    Assert-True ((Help-Line $cleanMqb) -ceq (Help-Line $cleanBuild)) 'build.cmd does not resolve to the installed mqb.exe'
-    Assert-True ((Count-UserPathEntry $cleanRoot) -eq 1) 'clean install did not own exactly one PATH entry'
-
-    Install-Mqb $cleanRoot @($cleanProfile)
-    Assert-True ((Count-UserPathEntry $cleanRoot) -eq 1) 'reinstall duplicated PATH'
-    Maintain-Mqb $cleanRoot @($cleanProfile)
-    Assert-True (-not (Test-Path -LiteralPath $cleanMqb -PathType Leaf)) 'uninstall left mqb.exe'
-    Assert-True (-not (Test-Path -LiteralPath $cleanBuild -PathType Leaf)) 'uninstall left build.cmd'
-    Assert-True (-not (Test-Path -LiteralPath $cleanLegacy -PathType Leaf)) 'uninstall left installer-owned legacy backup'
-    Assert-True ((Count-UserPathEntry $cleanRoot) -eq 0) 'uninstall left installer-owned PATH'
-    Assert-True (([IO.File]::ReadAllText($cleanProfile)) -ceq $sentinel) 'uninstall changed unrelated profile content'
-
-    # Upgrade from the existing PowerShell installation shape.
-    $upgradeRoot = Join-Path $runRoot 'upgrade\bin'
-    New-Item -ItemType Directory -Force -Path $upgradeRoot | Out-Null
-    $priorBuild = Join-Path $upgradeRoot 'build.ps1'
-    Copy-Item -LiteralPath $legacySource -Destination $priorBuild -Force
-    $priorHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $priorBuild).Hash
-
-    $legacyProfile = @'
-$OutputEncoding = [console]::InputEncoding = [console]::OutputEncoding = New-Object System.Text.UTF8Encoding
-function build {
-    if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) {
-        & pwsh.exe -NoProfile -File "$HOME\bin\build.ps1" @args
-    } else {
-        & "$HOME\bin\build.ps1" @args
-    }
-}
-'@
-    $profiles = @(
-        (Join-Path $runRoot 'upgrade\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
-        (Join-Path $runRoot 'upgrade\PowerShell\Microsoft.PowerShell_profile.ps1')
-    )
-    foreach ($profile in $profiles) {
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $profile) | Out-Null
-        [IO.File]::WriteAllText(
-            $profile,
-            "# user-before`r`n" + $legacyProfile.TrimEnd() + "`r`n# user-after`r`n",
-            (New-Object Text.UTF8Encoding($false)))
+        Assert-True (Test-Path -LiteralPath $required -PathType Leaf) "native install missing: $required"
     }
 
-    Install-Mqb $upgradeRoot $profiles
-    $upgradeMqb = Join-Path $upgradeRoot 'mqb.exe'
-    $upgradeLegacy = Join-Path $upgradeRoot 'build-legacy.ps1'
-    Assert-True ((Get-FileHash -Algorithm SHA256 -LiteralPath $priorBuild).Hash -ceq $priorHash) 'upgrade modified prior build.ps1'
-    Assert-True ((Get-FileHash -Algorithm SHA256 -LiteralPath $upgradeLegacy).Hash -ceq $priorHash) 'upgrade did not preserve prior build.ps1'
-    Assert-True ((Count-UserPathEntry $upgradeRoot) -eq 1) 'upgrade did not add installer-owned PATH'
-    $expected = Help-Line $upgradeMqb
-
-    foreach ($profile in $profiles) {
-        $content = [IO.File]::ReadAllText($profile)
-        Assert-True ($content.Contains('# user-before') -and $content.Contains('# user-after')) 'upgrade lost user profile content'
-        Assert-True $content.Contains('# >>> MQB v5 C++ default >>>') 'upgrade did not add C++ profile block'
-        $line = @(Invoke-PS5 ('. ' + (Q $profile) + '; build --help | Select-Object -First 1') "profile shim $profile")
-        Assert-True ($line.Count -gt 0 -and $line[-1] -ceq $expected) 'upgraded build function does not resolve to mqb.exe'
+    foreach ($legacyName in @('build.cmd', 'build.ps1', 'build-legacy.ps1', 'Microsoft.PowerShell_profile.ps1')) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $installRoot $legacyName))) "legacy artifact was installed: $legacyName"
     }
 
-    Maintain-Mqb $upgradeRoot $profiles -RestoreLegacy
-    Assert-True (-not (Test-Path -LiteralPath $upgradeMqb -PathType Leaf)) 'rollback left mqb.exe'
-    Assert-True (Test-Path -LiteralPath $upgradeLegacy -PathType Leaf) 'rollback removed legacy backup'
-    Assert-True ((Get-FileHash -Algorithm SHA256 -LiteralPath $priorBuild).Hash -ceq $priorHash) 'rollback modified prior build.ps1'
-    Assert-True ((Count-UserPathEntry $upgradeRoot) -eq 0) 'rollback left installer-owned PATH'
-    foreach ($profile in $profiles) {
-        $content = [IO.File]::ReadAllText($profile)
-        Assert-True (-not $content.Contains('# >>> MQB v5 C++ default >>>')) 'rollback left C++ profile block'
-        Assert-True $content.Contains('# >>> MQB v5 legacy rollback >>>') 'rollback did not install legacy fallback'
-        Assert-True ($content.Contains('# user-before') -and $content.Contains('# user-after')) 'rollback lost user profile content'
+    Assert-True ((Help-Line $installedMqb) -ceq (Help-Line $mqb)) 'installed mqb.exe identity differs from validated input binary'
+    Assert-True ((Count-UserPathEntry $installRoot) -eq 1) 'install did not own exactly one PATH entry'
+
+    # Reinstall remains idempotent without introducing compatibility artifacts.
+    Install-Mqb $installRoot
+    Assert-True ((Count-UserPathEntry $installRoot) -eq 1) 'reinstall duplicated PATH'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $installRoot 'build.cmd'))) 'reinstall introduced build compatibility shim'
+
+    Uninstall-Mqb $installRoot
+    Assert-True (-not (Test-Path -LiteralPath $installedMqb -PathType Leaf)) 'uninstall left mqb.exe behind'
+    Assert-True ((Count-UserPathEntry $installRoot) -eq 0) 'uninstall left installer-owned PATH entry'
+    foreach ($owned in @('mqb-install.ps1', 'uninstall-mqb.ps1', 'mqb-install-state.json')) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $installRoot $owned) -PathType Leaf)) "uninstall left installer-owned file: $owned"
     }
 
-    # A clean v5 install also has a package Golden Reference to roll back to.
-    $fallbackRoot = Join-Path $runRoot 'fallback\bin'
-    $fallbackProfile = Join-Path $runRoot 'fallback\PowerShell\Microsoft.PowerShell_profile.ps1'
-    Install-Mqb $fallbackRoot @($fallbackProfile)
-    Maintain-Mqb $fallbackRoot @($fallbackProfile) -RestoreLegacy
-    $fallbackLegacy = Join-Path $fallbackRoot 'build-legacy.ps1'
-    $fallbackContent = [IO.File]::ReadAllText($fallbackProfile)
-    Assert-True (Test-Path -LiteralPath $fallbackLegacy -PathType Leaf) 'clean rollback removed package Golden Reference'
-    Assert-True $fallbackContent.Contains('# >>> MQB v5 legacy rollback >>>') 'clean rollback has no legacy profile entry'
-    Assert-True $fallbackContent.Contains('build-legacy.ps1') 'clean rollback does not target build-legacy.ps1'
-    Assert-True ((Count-UserPathEntry $fallbackRoot) -eq 0) 'clean rollback left installer-owned PATH'
+    # Clean-break contract: old PowerShell-era parameters are rejected instead of migrated.
+    $legacyCommand = '& ' + (Q $installPs1) +
+        ' -Action Install -MqbPath ' + (Q $mqb) +
+        ' -InstallRoot ' + (Q (Join-Path $runRoot 'legacy-args')) +
+        ' -LegacyBuildPath ignored.ps1'
+    $legacyOutput = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $legacyCommand 2>&1 |
+        ForEach-Object { $_.ToString() })
+    Assert-True ($LASTEXITCODE -ne 0) 'legacy installer parameter unexpectedly remained supported'
+    Assert-True (($legacyOutput -join "`n") -match 'LegacyBuildPath') 'legacy parameter rejection was not explicit'
 
-    Write-Host 'installer clean-install / upgrade / rollback validation passed'
+    Write-Host 'native-only installer install / reinstall / uninstall validation passed'
 }
 finally {
     [Environment]::SetEnvironmentVariable('Path', $originalUserPath, 'User')
     Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+exit 0

@@ -192,10 +192,6 @@ if(WIN32)
         target_link_libraries(mqb_static_library_e2e_tests PRIVATE mqb_platform_windows)
         target_compile_features(mqb_static_library_e2e_tests PRIVATE cxx_std_23)
 
-        add_executable(mqb_parity_e2e_tests parity_e2e_tests.cpp)
-        target_link_libraries(mqb_parity_e2e_tests PRIVATE mqb_platform_windows)
-        target_compile_features(mqb_parity_e2e_tests PRIVATE cxx_std_23)
-
         list(APPEND MQB_TEST_TARGETS
             mqb_msvc_visual_studio_tests
             mqb_msvc_compile_integration_tests
@@ -210,7 +206,6 @@ if(WIN32)
             mqb_runtime_subsystem_config_e2e_tests
             mqb_dll_target_e2e_tests
             mqb_static_library_e2e_tests
-            mqb_parity_e2e_tests
         )
     endif()
 endif()
@@ -295,13 +290,6 @@ if(WIN32)
         add_test(
             NAME mqb.cli.static_library_e2e
             COMMAND mqb_static_library_e2e_tests $<TARGET_FILE:mqb>
-        )
-        add_test(
-            NAME mqb.parity.shared_e2e
-            COMMAND mqb_parity_e2e_tests
-                $<TARGET_FILE:mqb>
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../build.ps1"
-                "${CMAKE_CURRENT_SOURCE_DIR}/parity/fixtures"
         )
     endif()
 endif()

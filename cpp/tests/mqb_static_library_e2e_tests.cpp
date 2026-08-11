@@ -153,7 +153,7 @@ int main() {
 
     auto warm = run_process(
         runner, mqb_executable, tree.root,
-        {"math.cpp", "obsolete.cpp", "--env", "vs", "-type", "static", "-o", "math"});
+        {"math.cpp", "obsolete.cpp", "--env", "vs", "--type", "static", "-o", "math"});
     expect(warm.has_value(), "warm static-library invocation should launch");
     if (warm) {
         if (warm->exit_code != 0) dump_failure(*warm);

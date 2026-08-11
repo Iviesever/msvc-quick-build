@@ -3,10 +3,13 @@ name: C++ Release Candidate
 on:
   pull_request:
     paths:
-      - 'build.ps1'
       - 'cpp/**'
       - 'README.md'
       - 'docs/**'
+      - 'install.bat'
+      - 'install.ps1'
+      - 'uninstall.ps1'
+      - 'tests/installer/**'
       - 'release/**'
       - '.github/workflows/cpp-release.yml'
   push:

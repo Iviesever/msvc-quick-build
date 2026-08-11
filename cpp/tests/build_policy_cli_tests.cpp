@@ -64,24 +64,17 @@ int main() {
     }
 
     {
-        const std::vector arguments{
-            "main.cpp"sv,
-            "-type"sv, "dll"sv,
-            "-runtime"sv, "MDd"sv,
-            "-ltcg"sv,
-            "-subsystem"sv, "console"sv,
+        const std::vector<std::vector<std::string_view>> legacyCases{
+            {"main.cpp"sv, "-type"sv, "dll"sv},
+            {"main.cpp"sv, "-runtime"sv, "MDd"sv},
+            {"main.cpp"sv, "-ltcg"sv},
+            {"main.cpp"sv, "-subsystem"sv, "console"sv},
+            {"main.cpp"sv, "-flags"sv, "/W4"sv},
+            {"main.cpp"sv, "-link_flags"sv, "/MAP:legacy.map"sv},
         };
-        auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value(), "legacy type/runtime/LTCG/subsystem aliases should parse");
-        if (parsed) {
-            expect(parsed->target_kind_override == mqb::TargetKind::dynamic_library,
-                   "legacy -type dll should map to typed DLL output");
-            expect(parsed->runtime_override == mqb::RuntimeLibrary::mdd,
-                   "legacy -runtime MDd should map to typed runtime");
-            expect(parsed->ltcg_override == true,
-                   "legacy -ltcg should map to typed LTCG enablement");
-            expect(parsed->subsystem_override == mqb::LinkSubsystem::console,
-                   "legacy -subsystem console should map to typed subsystem");
+        for (const auto& arguments : legacyCases) {
+            auto parsed = mqb::cli::parse_arguments(arguments);
+            expect(!parsed, "PowerShell-era build-policy alias should be rejected");
         }
     }
 
@@ -104,33 +97,6 @@ int main() {
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value() && parsed->target_kind_override == mqb::TargetKind::static_library,
                "--type static should select the librarian-backed target kind");
-    }
-
-    {
-        const std::vector arguments{"main.cpp"sv, "-type"sv, "lib"sv};
-        auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value() && parsed->target_kind_override == mqb::TargetKind::static_library,
-               "legacy -type lib should map to static-library target kind");
-    }
-
-    {
-        const std::vector arguments{
-            "main.cpp"sv,
-            "-flags"sv, "/DPOLICY_VALUE=7"sv,
-            "-flags"sv, "/volatile:iso"sv,
-            "-link_flags"sv, "/MAP:legacy.map"sv,
-        };
-        auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value(), "legacy raw build-policy aliases should parse");
-        if (parsed) {
-            expect(parsed->compiler_arguments.size() == 2
-                       && parsed->compiler_arguments[0] == "/DPOLICY_VALUE=7"
-                       && parsed->compiler_arguments[1] == "/volatile:iso",
-                   "legacy -flags should mean one raw argv element per occurrence");
-            expect(parsed->linker_arguments.size() == 1
-                       && parsed->linker_arguments[0] == "/MAP:legacy.map",
-                   "legacy -link_flags should map to ordered linker arguments");
-        }
     }
 
     {

@@ -1,8 +1,6 @@
 [CmdletBinding()]
 param(
-    [switch]$RestoreLegacy,
     [string]$InstallRoot,
-    [string[]]$ProfilePaths,
     [switch]$SkipUserPath
 )
 
@@ -20,17 +18,12 @@ foreach ($candidate in $engineCandidates) {
     }
 }
 if ($null -eq $engine) {
-    throw "MQB maintenance installer not found next to this script."
+    throw 'MQB maintenance installer not found next to this script.'
 }
 
-$params = @{
-    Action = $(if ($RestoreLegacy) { 'Rollback' } else { 'Uninstall' })
-}
+$params = @{ Action = 'Uninstall' }
 if ($PSBoundParameters.ContainsKey('InstallRoot')) {
     $params.InstallRoot = $InstallRoot
-}
-if ($PSBoundParameters.ContainsKey('ProfilePaths')) {
-    $params.ProfilePaths = $ProfilePaths
 }
 if ($SkipUserPath) {
     $params.SkipUserPath = $true
