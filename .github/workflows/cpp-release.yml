@@ -1,0 +1,138 @@
+name: C++ Release Candidate
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/**'
+      - 'README.md'
+      - 'docs/**'
+      - 'release/**'
+      - '.github/workflows/cpp-release.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'release/v5.0.0-rc.1.md'
+
+jobs:
+  build-test-package:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      MQB_RELEASE_VERSION: 5.0.0-rc.1
+      MQB_PACKAGE_NAME: vscode-msvc-quick-build-v5.0.0-rc.1-windows-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure Release
+        run: >-
+          cmake -S cpp -B cpp/build-release
+          -G "Visual Studio 18 2026" -A x64
+          -DMQB_ENABLE_INSTALLED_MSVC_TESTS=ON
+          -DMQB_VERSION=${{ env.MQB_RELEASE_VERSION }}
+
+      - name: Build Release
+        run: cmake --build cpp/build-release --config Release --parallel
+
+      - name: Test Release
+        run: ctest --test-dir cpp/build-release -C Release --output-on-failure
+
+      - name: Verify embedded release version
+        shell: pwsh
+        run: |
+          $mqb = Join-Path $PWD 'cpp/build-release/apps/mqb/Release/mqb.exe'
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+            throw "Release executable not found: $mqb"
+          }
+          $help = & $mqb --help
+          if ($LASTEXITCODE -ne 0) {
+            throw "mqb --help failed with exit code $LASTEXITCODE"
+          }
+          $firstLine = @($help)[0]
+          $expected = "MQB $env:MQB_RELEASE_VERSION - MSVC Quick Build (C++ refactor)"
+          if ($firstLine -ne $expected) {
+            throw "Embedded version mismatch. Expected '$expected', got '$firstLine'"
+          }
+          Write-Host $firstLine
+
+      - name: Stage release package
+        shell: pwsh
+        run: |
+          $dist = Join-Path $PWD 'dist'
+          $stage = Join-Path $dist $env:MQB_PACKAGE_NAME
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          Copy-Item 'cpp/build-release/apps/mqb/Release/mqb.exe' (Join-Path $stage 'mqb.exe')
+          Copy-Item 'README.md' (Join-Path $stage 'README.md')
+          Copy-Item 'LICENSE' (Join-Path $stage 'LICENSE')
+          Copy-Item 'docs/MQB_CONFIG.md' (Join-Path $stage 'MQB_CONFIG.md')
+          Copy-Item 'docs/CPP_V2_ARCHITECTURE.md' (Join-Path $stage 'CPP_V2_ARCHITECTURE.md')
+          Copy-Item 'release/v5.0.0-rc.1.md' (Join-Path $stage 'RELEASE_NOTES.md')
+
+          $zip = Join-Path $dist ($env:MQB_PACKAGE_NAME + '.zip')
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
+
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          $shaPath = $zip + '.sha256'
+          "$hash  $($env:MQB_PACKAGE_NAME).zip" | Set-Content -LiteralPath $shaPath -Encoding ascii -NoNewline
+
+          Write-Host "Package: $zip"
+          Write-Host "SHA256:  $hash"
+
+      - name: Upload validated package
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.MQB_PACKAGE_NAME }}
+          path: |
+            dist/${{ env.MQB_PACKAGE_NAME }}.zip
+            dist/${{ env.MQB_PACKAGE_NAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-prerelease:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-test-package
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MQB_RELEASE_VERSION: 5.0.0-rc.1
+      MQB_PACKAGE_NAME: vscode-msvc-quick-build-v5.0.0-rc.1-windows-x64
+
+    steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v7
+
+      - name: Download validated package
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.MQB_PACKAGE_NAME }}
+          path: dist-publish
+
+      - name: Publish GitHub prerelease
+        shell: pwsh
+        run: |
+          $tag = "v$env:MQB_RELEASE_VERSION"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; leaving it unchanged."
+            exit 0
+          }
+
+          $zip = Join-Path $PWD "dist-publish/$($env:MQB_PACKAGE_NAME).zip"
+          $sha = $zip + '.sha256'
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "Missing release package: $zip" }
+          if (-not (Test-Path -LiteralPath $sha -PathType Leaf)) { throw "Missing checksum: $sha" }
+
+          gh release create $tag $zip $sha `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "$tag — C++ Refactor Release Candidate" `
+            --notes-file 'release/v5.0.0-rc.1.md' `
+            --prerelease
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
