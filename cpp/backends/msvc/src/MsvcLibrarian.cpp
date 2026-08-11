@@ -74,8 +74,11 @@ MsvcLibrarian::build_arguments(const ArchiveInvocation& invocation) {
             LibrarianErrorCode::invalid_request, "archive output path is empty"));
     }
     std::vector<std::string> arguments;
-    arguments.reserve(invocation.objects.size() + 2);
+    arguments.reserve(invocation.objects.size() + 3);
     arguments.emplace_back("/NOLOGO");
+    if (invocation.link_time_code_generation) {
+        arguments.emplace_back("/LTCG");
+    }
     arguments.push_back("/OUT:" + path_to_utf8(invocation.output));
     for (const auto& object : invocation.objects) {
         if (object.empty()) {
