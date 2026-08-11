@@ -24,6 +24,7 @@ enum class LibrarianErrorCode {
     output_prepare_failed,
     process_failed,
     archive_failed,
+    output_install_failed,
 };
 
 struct LibrarianError {
