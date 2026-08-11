@@ -21,6 +21,8 @@ void apply_build(
     append_all(effective.include_directories, overrides.include_directories);
     append_all(effective.library_directories, overrides.library_directories);
     append_all(effective.libraries, overrides.libraries);
+    append_all(effective.compiler_arguments, overrides.compiler_arguments);
+    append_all(effective.linker_arguments, overrides.linker_arguments);
 }
 
 void apply_discovery(

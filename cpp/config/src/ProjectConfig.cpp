@@ -397,6 +397,8 @@ require_paths(const fs::path& file, const fs::path& root, const JsonValue& value
     return std::nullopt;
 }
 [[nodiscard]] std::optional<CppStandard> standard(std::string_view value) {
+    if (value == "14" || value == "c++14") return CppStandard::cpp14;
+    if (value == "17" || value == "c++17") return CppStandard::cpp17;
     if (value == "20" || value == "c++20") return CppStandard::cpp20;
     if (value == "23" || value == "c++23") return CppStandard::cpp23;
     if (value == "latest" || value == "c++latest") return CppStandard::latest;
@@ -408,7 +410,8 @@ decode_build(const fs::path& file, const fs::path& root, const JsonValue& value,
     auto object = require_object(file, value, "build");
     if (!object) return std::unexpected(object.error());
     auto known = reject_unknown(file, **object,
-        {"configuration", "architecture", "standard", "output", "defines", "include_dirs", "library_dirs", "libraries"},
+        {"configuration", "architecture", "standard", "output", "defines", "include_dirs",
+         "library_dirs", "libraries", "compiler_args", "linker_args"},
         "build");
     if (!known) return std::unexpected(known.error());
 
@@ -430,7 +433,7 @@ decode_build(const fs::path& file, const fs::path& root, const JsonValue& value,
         auto text = require_string(file, it->second, "build.standard");
         if (!text) return std::unexpected(text.error());
         auto parsed = standard(*text);
-        if (!parsed) return std::unexpected(schema_error(file, it->second, "build.standard must be '20', '23', or 'latest'"));
+        if (!parsed) return std::unexpected(schema_error(file, it->second, "build.standard must be '14', '17', '20', '23', or 'latest'"));
         out.standard = *parsed;
     }
     if (auto it = (**object).find("output"); it != (**object).end()) {
@@ -457,6 +460,16 @@ decode_build(const fs::path& file, const fs::path& root, const JsonValue& value,
         auto values = require_strings(file, it->second, "build.libraries");
         if (!values) return std::unexpected(values.error());
         out.libraries = std::move(*values);
+    }
+    if (auto it = (**object).find("compiler_args"); it != (**object).end()) {
+        auto values = require_strings(file, it->second, "build.compiler_args");
+        if (!values) return std::unexpected(values.error());
+        out.compiler_arguments = std::move(*values);
+    }
+    if (auto it = (**object).find("linker_args"); it != (**object).end()) {
+        auto values = require_strings(file, it->second, "build.linker_args");
+        if (!values) return std::unexpected(values.error());
+        out.linker_arguments = std::move(*values);
     }
     return {};
 }

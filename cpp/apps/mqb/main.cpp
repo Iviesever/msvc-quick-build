@@ -340,6 +340,8 @@ int main(const int argc, char* argv[]) {
     cli_overrides.build.include_directories = options.include_directories;
     cli_overrides.build.library_directories = options.library_directories;
     cli_overrides.build.libraries = options.libraries;
+    cli_overrides.build.compiler_arguments = options.compiler_arguments;
+    cli_overrides.build.linker_arguments = options.linker_arguments;
     cli_overrides.discovery.enabled = options.discovery_override;
 
     auto effective = mqb::config::resolve_project_options(
@@ -354,6 +356,8 @@ int main(const int argc, char* argv[]) {
     options.include_directories = effective.include_directories;
     options.library_directories = effective.library_directories;
     options.libraries = effective.libraries;
+    options.compiler_arguments = effective.compiler_arguments;
+    options.linker_arguments = effective.linker_arguments;
 
     std::vector<fs::path> sources = requested_sources;
     bool discovery_requires_module_pipeline = false;
@@ -470,6 +474,7 @@ int main(const int argc, char* argv[]) {
     compiler_options.standard = options.build.standard;
     compiler_options.defines = std::move(options.defines);
     compiler_options.include_directories = std::move(options.include_directories);
+    compiler_options.additional_arguments = std::move(options.compiler_arguments);
 
     mqb::LinkOptions link_options;
     link_options.configuration = options.build.configuration;
@@ -477,6 +482,7 @@ int main(const int argc, char* argv[]) {
     link_options.subsystem = mqb::LinkSubsystem::console;
     link_options.library_directories = std::move(options.library_directories);
     link_options.libraries = std::move(options.libraries);
+    link_options.additional_arguments = std::move(options.linker_arguments);
 
     const bool module_target = discovery_requires_module_pipeline || std::any_of(
         target_sources.begin(),
@@ -528,6 +534,12 @@ int main(const int argc, char* argv[]) {
         }
         for (const auto& library : link_options.libraries) {
             std::cout << "  lib:     " << library << '\n';
+        }
+        for (const auto& argument : compiler_options.additional_arguments) {
+            std::cout << "  cl-arg:  " << argument << '\n';
+        }
+        for (const auto& argument : link_options.additional_arguments) {
+            std::cout << "  link-arg:" << argument << '\n';
         }
         std::cout << "  exe:     " << path_text(target_artifacts->executable) << '\n'
                   << "  cache:   " << path_text(target_artifacts->link_cache) << '\n';

@@ -23,7 +23,7 @@ Status meanings:
 | project-local header units | native pipeline is ready | **ready** |
 | `.c` translation units | rejected by native CLI today | **implement** |
 | `.hpp` / `.h` as positional legacy discovery seeds | native CLI treats headers as non-TU inputs | **migrate** unless a real user workflow requires positional header seeds |
-| C++14 / C++17 | ordinary native targets map to `/std:c++14` / `/std:c++17`; module pipeline remains C++20+ | **ready** for ordinary non-module targets |
+| C++14 / C++17 | ordinary native targets map to `/std:c++14` / `/std:c++17`; CLI and `mqb.json` accept both; module pipeline remains C++20+ | **ready** for ordinary non-module targets |
 | C++20 / C++23 / latest | ready | **ready** |
 
 ## Common command-line options
@@ -37,11 +37,13 @@ Status meanings:
 | default x64 | `--x64` / x64 default; legacy `-x64` accepted | **compat** |
 | `-I`, `-include` | `-I`; legacy `-include` accepted | **compat** |
 | `-L`, `-libpath` | `-L`, `--lib-path`; legacy `-libpath` accepted | **compat** |
-| `-libs` | `-l`, `--lib`; legacy `-libs <value>` accepted and repeatable | **compat** for scalar/repeated values; document that shell array tokenization is not emulated |
+| `-libs` | `-l`, `--lib`; legacy `-libs <value>` accepted and repeatable | **compat** for scalar/repeated values; shell-array tokenization is not emulated |
 | `-D`, `-defines` | `-D`; legacy `-defines` accepted | **compat** |
 | `-config debug/release` | `--debug`, `--release`, `--config`; legacy `-config` accepted | **compat** |
 | `-env vs/portable/port/p/auto` | `--env auto/vs/portable`; legacy spelling and portable aliases accepted | **compat** |
 | `-help`, `-?` | `--help`, `-h`; legacy help aliases accepted | **compat** |
+| `-flags` | `--compiler-arg <one argv>`; legacy `-flags <one argv>` accepted and repeatable | **compat** with explicit one-argv-per-occurrence semantics |
+| `-link_flags` | `--linker-arg <one argv>`; legacy alias accepted and repeatable | **compat** with explicit one-argv-per-occurrence semantics |
 | `-a "..."` single-string program arguments | structured `-- program-args...` | **migrate**: keep structured argv semantics; decide whether a compatibility tokenizer is worth the ambiguity |
 
 ## Target/output kinds
@@ -57,36 +59,39 @@ Status meanings:
 
 ## Compiler and linker policy
 
-The native backend already has typed `CompilerOptions` / `LinkOptions`, including ordered additional argument vectors. Compile and link signatures include those vectors, so future pass-through flags can remain incrementally correct.
+The native backend has typed `CompilerOptions` / `LinkOptions` plus ordered additional argument vectors. CLI and `mqb.json` expose those vectors, and compile/link signatures hash them in order. Config arguments are applied first and CLI arguments append afterward. Backend-owned artifact/topology switches are emitted after raw arguments so the BuildPlan remains authoritative.
 
 | Legacy option | Native C++ status | Stable-v5 decision |
 | --- | --- | --- |
-| `-optimize Od/O1/O2/Ox` | debug/release presets cover common cases, no first-class override | **implement** or explicitly migrate to raw compiler flags after parity E2E |
-| `-runtime MD/MDd/MT/MTd` | presets choose MDd/MD; release package itself uses static CRT only for MQB | **implement** target runtime selection |
-| `-warnings W0/W1/W3/W4/Wall` | fixed W3 today | **implement** |
-| `-WX` | not exposed | **implement** |
-| `-debug_info off/Zi/ZI/Z7` | presets use Z7 | **implement** or migrate to raw compiler flags with documented precedence |
-| `-exceptions EHsc/EHa/off` | fixed EHsc today | **implement** or migrate to raw compiler flags |
-| `-rtc1` | not exposed | **implement** or migrate to raw compiler flags |
-| `-jmc` | not exposed | **implement** or migrate to raw compiler flags |
-| `-sdl` | not exposed | **implement** or migrate to raw compiler flags |
-| `-permissive` | native currently always uses `/permissive-` | **migrate**: strict conformance is the native baseline; add an escape hatch only if parity fixtures require it |
-| `-fp precise/strict/fast` | not exposed | **implement** or migrate to raw compiler flags |
-| `-charset unicode/mbcs` | native uses UTF-8 source/execution compile policy; Windows macro charset is not exposed | **implement** if legacy projects rely on `_UNICODE/UNICODE` vs `_MBCS` macros |
-| `-ltcg` | not exposed | **implement** because it couples compile `/GL` and link `/LTCG` |
-| `-incremental` linker switch | native build engine is always incrementally cached, but linker `/INCREMENTAL` is not exposed | **migrate** terminology; expose linker incremental only if required |
-| `-flags` | Core already supports ordered compiler additional args but CLI/config do not expose them | **implement next** |
-| `-link_flags` | Core already supports ordered linker additional args but CLI/config do not expose them | **implement next** |
+| `-optimize Od/O1/O2/Ox` | debug/release presets cover common cases; raw compiler args can express an override | **migrate** long-tail override to `--compiler-arg`; typed option remains optional unless parity fixtures justify it |
+| `-runtime MD/MDd/MT/MTd` | presets choose MDd/MD | **implement** typed target runtime selection because CRT policy affects the supported target contract |
+| `-warnings W0/W1/W3/W4/Wall` | fixed W3 baseline; raw compiler args can override later in argv | **migrate** long-tail override to `--compiler-arg` |
+| `-WX` | raw compiler args support `/WX` | **migrate** to `--compiler-arg /WX` |
+| `-debug_info off/Zi/ZI/Z7` | presets use Z7; raw compiler args exist | **migrate** long-tail override, but preserve parallel-safe default recipe |
+| `-exceptions EHsc/EHa/off` | fixed EHsc baseline; raw compiler args exist | **migrate** long-tail override |
+| `-rtc1` | raw compiler args exist | **migrate** to raw build policy |
+| `-jmc` | raw compiler args exist | **migrate** to raw build policy |
+| `-sdl` | raw compiler args exist | **migrate** to raw build policy |
+| `-permissive` | native baseline is `/permissive-`; raw args can add a later MSVC conformance switch where supported | **migrate** strict conformance remains default |
+| `-fp precise/strict/fast` | raw compiler args exist | **migrate** to raw build policy |
+| `-charset unicode/mbcs` | UTF-8 source/execution is native baseline; Windows macro charset is not typed | **implement** only if parity fixtures show `_UNICODE/UNICODE` vs `_MBCS` is a required stable contract |
+| `-ltcg` | requires coupled compile `/GL` + link `/LTCG` policy | **implement** typed/coupled policy; do not rely on users manually keeping two raw lists coherent |
+| `-incremental` linker switch | native build engine is incrementally cached; linker `/INCREMENTAL` can be passed raw | **migrate** terminology; expose raw linker switch if specifically desired |
+| `-flags` / arbitrary compiler switches | ordered CLI/config pass-through is wired and cache-safe | **ready/compat** |
+| `-link_flags` / arbitrary linker switches | ordered CLI/config pass-through is wired and cache-safe | **ready/compat** |
 
 ## Project configuration
 
 | Legacy behavior | Native C++ status | Stable-v5 decision |
 | --- | --- | --- |
 | `msvc_list.json`, upward search up to five levels | native uses nearest upward `mqb.json` | **migrate** to `mqb.json`; provide upgrade guidance/tooling rather than keeping two authoritative schemas forever |
-| CLI overrides config | ready | **ready** |
+| CLI overrides scalar config | ready | **ready** |
+| additive list precedence | config lists first, CLI lists append | **ready** |
+| 14/17/20/23/latest standard config | ready | **ready** |
 | include/lib/define/library config | ready in `mqb.json` | **ready** |
+| `compiler_args` / `linker_args` | ready in strict `mqb.json` v1 schema | **ready** |
 | source discovery excludes | ready with the native discovery schema | **ready** |
-| legacy config keys for tuning/target kind | not all represented | **implement** only for capabilities accepted into the stable parity surface |
+| legacy config keys for target kind/coupled policies | not all represented | **implement** only for capabilities accepted into the stable parity surface |
 
 ## Toolchain/environment behavior
 
@@ -101,22 +106,24 @@ The native backend already has typed `CompilerOptions` / `LinkOptions`, includin
 
 ## Incremental/artifact behavior
 
-Stable v5 does not require byte-for-byte artifact layout parity with PowerShell. It requires equivalent observable correctness: cold build succeeds, warm no-op avoids unnecessary work, source/header/library/config/toolchain changes invalidate the right work, missing required artifacts repair correctly, and outputs are collision-free.
+Stable v5 does not require byte-for-byte artifact layout parity with PowerShell. It requires equivalent observable correctness: cold build succeeds, warm no-op avoids unnecessary work, source/header/library/config/toolchain/build-policy changes invalidate the right work, missing required artifacts repair correctly, and outputs are collision-free.
 
-The native `.mqb/obj`, `.mqb/deps`, `.mqb/scan`, `.mqb/ifc`, `.mqb/cache`, and `.mqb/bin` layout is therefore the stable direction rather than the old PowerShell temporary layout.
+Raw compiler argument changes are compile-recipe identity and therefore force affected compile + downstream link. Raw linker argument changes are link-recipe identity and therefore relink without recompiling otherwise-fresh TUs.
+
+The native `.mqb/obj`, `.mqb/deps`, `.mqb/scan`, `.mqb/ifc`, `.mqb/cache`, and `.mqb/bin` layout is the stable direction rather than the old PowerShell temporary layout.
 
 ## C++ Modules boundary (#16)
 
-Project-local named modules and project-local header units are in the RC/stable-capable surface, but they require C++20 or newer. C++14/17 are ordinary-target compatibility modes only; attempting to scan or compile a module/header-unit contract below C++20 fails before MSVC is launched. External/prebuilt named-module providers and `import std` remain tracked in #16. Stable v5 may ship with those cases still fail-closed if the release notes keep that boundary explicit; they must not be accidentally accepted through compatibility parsing.
+Project-local named modules and project-local header units are in the RC/stable-capable surface, but they require C++20 or newer. C++14/17 are ordinary-target compatibility modes only; attempting to scan or compile a module/header-unit contract below C++20 fails before MSVC is launched. External/prebuilt named-module providers and `import std` remain tracked in #16. Stable v5 may ship with those cases still fail-closed if release notes keep that boundary explicit; they must not be accidentally accepted through compatibility parsing.
 
 ## Parity campaign order
 
 1. Legacy CLI spelling compatibility for behaviors the native engine already supports. **Done in #27.**
 2. Restore C++14/17 ordinary-target modes while preserving the C++20+ module boundary. **Done in #28.**
-3. Raw compiler/linker pass-through with cache-invalidation E2E.
+3. Raw compiler/linker pass-through plus config build-policy expansion and cache-invalidation E2E. **Done in #29.**
 4. Add `.c` translation units.
 5. Target kinds: DLL/static plus subsystem/runtime policy.
-6. First-class/high-value MSVC tuning options; use raw flags for the long tail where that produces an explicit, testable contract.
+6. Close the remaining high-value typed/coupled MSVC policy gaps (notably runtime/LTCG and any charset requirement proven by parity fixtures).
 7. Shared PowerShell-vs-C++ fixtures for ordinary targets, config precedence, incremental rebuilds, libraries, run argv, x86/x64, Debug/Release, and failure behavior.
 8. Installer/profile/`build` command cutover and clean-machine upgrade/rollback validation.
 9. Generalize the release workflow and publish stable v5 only from the exact validated artifact.
