@@ -89,7 +89,15 @@ int main() {
     {
         const std::vector arguments{"main.cpp"sv, "--type"sv, "static"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(!parsed, "static-library target should remain fail-closed before librarian support");
+        expect(parsed.has_value() && parsed->target_kind_override == mqb::TargetKind::static_library,
+               "--type static should select the librarian-backed target kind");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "-type"sv, "lib"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value() && parsed->target_kind_override == mqb::TargetKind::static_library,
+               "legacy -type lib should map to static-library target kind");
     }
 
     {
