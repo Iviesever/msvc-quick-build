@@ -23,6 +23,8 @@ struct Options {
     std::vector<std::filesystem::path> include_directories;
     std::vector<std::filesystem::path> library_directories;
     std::vector<std::string> libraries;
+    std::vector<std::string> compiler_arguments;
+    std::vector<std::string> linker_arguments;
     msvc::ToolchainPreference toolchain_preference{msvc::ToolchainPreference::automatic};
     std::vector<std::filesystem::path> portable_roots;
     std::optional<bool> discovery_override;
