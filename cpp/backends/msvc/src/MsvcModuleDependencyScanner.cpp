@@ -6,6 +6,8 @@
 #include <string_view>
 #include <utility>
 
+#include "mqb/core/TranslationUnitClassifier.hpp"
+
 namespace mqb::msvc {
 namespace {
 
@@ -116,6 +118,11 @@ MsvcModuleDependencyScanner::build_arguments(const ModuleScanInvocation& invocat
         return std::unexpected(failure(
             ModuleScanErrorCode::invalid_request,
             "module scan output path is empty"));
+    }
+    if (is_c_translation_unit_path(invocation.source)) {
+        return std::unexpected(failure(
+            ModuleScanErrorCode::invalid_request,
+            "C translation units do not participate in C++ P1689 module scanning"));
     }
     if (predates_cpp20(invocation.options.standard)) {
         return std::unexpected(failure(
