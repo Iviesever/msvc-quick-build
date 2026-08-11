@@ -38,6 +38,18 @@ std::string_view to_string(const CppStandard value) noexcept {
     return "unknown";
 }
 
+std::string_view to_string(const TargetKind value) noexcept {
+    switch (value) {
+    case TargetKind::executable:
+        return "exe";
+    case TargetKind::dynamic_library:
+        return "dll";
+    case TargetKind::static_library:
+        return "static";
+    }
+    return "unknown";
+}
+
 std::string_view to_string(const BuildReason value) noexcept {
     switch (value) {
     case BuildReason::missing_cache_entry:
