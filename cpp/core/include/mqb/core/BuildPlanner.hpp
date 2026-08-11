@@ -6,6 +6,7 @@
 #include <span>
 #include <vector>
 
+#include "mqb/core/ArchiveCache.hpp"
 #include "mqb/core/BuildPlan.hpp"
 #include "mqb/core/CompileCache.hpp"
 #include "mqb/core/LinkCache.hpp"
@@ -19,6 +20,8 @@ enum class BuildPlannerErrorCode {
     invalid_header_unit_outputs,
     missing_link_input,
     missing_link_output,
+    missing_archive_input,
+    missing_archive_output,
 };
 
 struct BuildPlannerError {
@@ -40,6 +43,12 @@ struct LinkPlanItem {
     LinkCacheValidation cache_validation;
 };
 
+struct ArchivePlanItem {
+    std::vector<std::filesystem::path> objects;
+    std::filesystem::path output;
+    ArchiveCacheValidation cache_validation;
+};
+
 class BuildPlanner {
 public:
     [[nodiscard]] static std::expected<BuildPlan, BuildPlannerError> plan_compile(
@@ -47,6 +56,9 @@ public:
 
     [[nodiscard]] static std::expected<BuildPlan, BuildPlannerError> plan_link(
         const LinkPlanItem& item);
+
+    [[nodiscard]] static std::expected<BuildPlan, BuildPlannerError> plan_archive(
+        const ArchivePlanItem& item);
 };
 
 } // namespace mqb
