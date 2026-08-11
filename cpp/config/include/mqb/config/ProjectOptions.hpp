@@ -20,6 +20,7 @@ struct EffectiveProjectOptions {
     CppStandard standard{CppStandard::cpp23};
     std::optional<RuntimeLibrary> runtime_library;
     LinkSubsystem subsystem{LinkSubsystem::console};
+    TargetKind target_kind{TargetKind::executable};
     std::optional<std::string> output_name;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;

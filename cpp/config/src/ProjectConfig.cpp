@@ -416,13 +416,18 @@ require_paths(const fs::path& file, const fs::path& root, const JsonValue& value
     if (value == "windows") return LinkSubsystem::windows;
     return std::nullopt;
 }
+[[nodiscard]] std::optional<TargetKind> target_kind(std::string_view value) {
+    if (value == "exe" || value == "executable") return TargetKind::executable;
+    if (value == "dll" || value == "dynamic") return TargetKind::dynamic_library;
+    return std::nullopt;
+}
 
 [[nodiscard]] std::expected<void, Error>
 decode_build(const fs::path& file, const fs::path& root, const JsonValue& value, BuildOverrides& out) {
     auto object = require_object(file, value, "build");
     if (!object) return std::unexpected(object.error());
     auto known = reject_unknown(file, **object,
-        {"configuration", "architecture", "standard", "runtime", "subsystem", "output", "defines", "include_dirs",
+        {"configuration", "architecture", "standard", "runtime", "subsystem", "type", "output", "defines", "include_dirs",
          "library_dirs", "libraries", "compiler_args", "linker_args"},
         "build");
     if (!known) return std::unexpected(known.error());
@@ -461,6 +466,15 @@ decode_build(const fs::path& file, const fs::path& root, const JsonValue& value,
         auto parsed = subsystem(*text);
         if (!parsed) return std::unexpected(schema_error(file, it->second, "build.subsystem must be 'console' or 'windows'"));
         out.subsystem = *parsed;
+    }
+    if (auto it = (**object).find("type"); it != (**object).end()) {
+        auto text = require_string(file, it->second, "build.type");
+        if (!text) return std::unexpected(text.error());
+        auto parsed = target_kind(*text);
+        if (!parsed) return std::unexpected(schema_error(
+            file, it->second,
+            "build.type must be 'exe' or 'dll'; static libraries require the librarian milestone"));
+        out.target_kind = *parsed;
     }
     if (auto it = (**object).find("output"); it != (**object).end()) {
         auto text = require_string(file, it->second, "build.output");

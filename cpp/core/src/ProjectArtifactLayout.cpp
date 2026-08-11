@@ -110,17 +110,12 @@ namespace fs = std::filesystem;
     const fs::path& source) {
     const fs::path normalized_source = normalize_existing_identity(source);
 
-    // For existing inputs, prefer physical ancestry over textual prefixes.
-    // Windows scanners may return a case/8.3/canonical spelling different from
-    // the caller while still naming the same file under the same project root.
     if (auto relative = physical_relative(project_root, normalized_source)) {
         return *relative;
     }
 
     fs::path relative = normalized_source.lexically_relative(project_root);
 #ifdef _WIN32
-    // Non-existing planned inputs cannot use fs::equivalent. Keep Windows
-    // identity case-insensitive so textual aliases still converge.
     relative = windows_identity_casefold(std::move(relative));
 #endif
     if (safe_relative(relative)) {
@@ -146,6 +141,18 @@ namespace fs = std::filesystem;
 [[nodiscard]] fs::path append_suffix(fs::path path, const std::string_view suffix) {
     path += std::string{suffix};
     return path;
+}
+
+[[nodiscard]] std::string_view target_suffix(const TargetKind target_kind) {
+    switch (target_kind) {
+    case TargetKind::executable:
+        return ".exe";
+    case TargetKind::dynamic_library:
+        return ".dll";
+    case TargetKind::static_library:
+        return ".lib";
+    }
+    return ".exe";
 }
 
 } // namespace
@@ -193,7 +200,9 @@ ProjectArtifactLayout::for_source(const fs::path& source) const {
 }
 
 std::expected<TargetArtifacts, ArtifactLayoutError>
-ProjectArtifactLayout::for_target(const std::string_view target_name) const {
+ProjectArtifactLayout::for_target(
+    const std::string_view target_name,
+    const TargetKind target_kind) const {
     if (!valid_target_name(target_name)) {
         return std::unexpected(failure(
             ArtifactLayoutErrorCode::invalid_target_name,
@@ -202,7 +211,7 @@ ProjectArtifactLayout::for_target(const std::string_view target_name) const {
     }
 
     fs::path executable = artifact_root_ / "bin" / std::string{target_name};
-    executable += ".exe";
+    executable += target_suffix(target_kind);
     fs::path link_cache = artifact_root_ / "cache" / "link" / std::string{target_name};
     link_cache += ".linkcache";
     return TargetArtifacts{

@@ -17,6 +17,7 @@ struct BuildOverrides {
     std::optional<CppStandard> standard;
     std::optional<RuntimeLibrary> runtime_library;
     std::optional<LinkSubsystem> subsystem;
+    std::optional<TargetKind> target_kind;
     std::optional<std::string> output_name;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;

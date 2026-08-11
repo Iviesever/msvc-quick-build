@@ -43,6 +43,7 @@ int main() {
   "version": 1,
   "build": {
     "standard": "17",
+    "type": "dll",
     "runtime": "MT",
     "subsystem": "windows",
     "compiler_args": ["/W4", "/DCONFIG_POLICY=1"],
@@ -55,6 +56,8 @@ int main() {
     if (loaded) {
         expect(loaded->build.standard == mqb::CppStandard::cpp17,
                "mqb.json should accept C++17");
+        expect(loaded->build.target_kind == mqb::TargetKind::dynamic_library,
+               "mqb.json should decode typed DLL output");
         expect(loaded->build.runtime_library == mqb::RuntimeLibrary::mt,
                "mqb.json should decode typed MT runtime");
         expect(loaded->build.subsystem == mqb::LinkSubsystem::windows,
@@ -69,6 +72,7 @@ int main() {
 
         mqb::config::ProjectOverrides cli;
         cli.build.standard = mqb::CppStandard::cpp14;
+        cli.build.target_kind = mqb::TargetKind::executable;
         cli.build.runtime_library = mqb::RuntimeLibrary::mdd;
         cli.build.subsystem = mqb::LinkSubsystem::console;
         cli.build.compiler_arguments = {"/WX"};
@@ -76,6 +80,8 @@ int main() {
         const auto effective = mqb::config::resolve_project_options(&*loaded, cli);
         expect(effective.standard == mqb::CppStandard::cpp14,
                "CLI scalar standard should override project config");
+        expect(effective.target_kind == mqb::TargetKind::executable,
+               "CLI scalar target kind should override DLL project config");
         expect(effective.runtime_library == mqb::RuntimeLibrary::mdd,
                "CLI scalar runtime should override project config");
         expect(effective.subsystem == mqb::LinkSubsystem::console,
@@ -95,6 +101,11 @@ int main() {
     auto cpp14 = mqb::config::ProjectConfigLoader::load(file);
     expect(cpp14.has_value() && cpp14->build.standard == mqb::CppStandard::cpp14,
            "mqb.json should accept C++14");
+
+    write_text(file, R"json({"version":1,"build":{"type":"static"}})json");
+    auto static_target = mqb::config::ProjectConfigLoader::load(file);
+    expect(!static_target && static_target.error().code == mqb::config::ErrorCode::schema_error,
+           "static target must remain fail-closed before librarian support");
 
     write_text(file, R"json({"version":1,"build":{"runtime":"dynamic"}})json");
     auto bad_runtime = mqb::config::ProjectConfigLoader::load(file);

@@ -70,9 +70,6 @@ public:
         if (!identity) {
             return;
         }
-        // Preserve the exact v4 byte stream for all pre-header-unit recipes so
-        // #19 caches remain reusable. Only the new producer shape appends a
-        // versioned domain marker and its lookup identity.
         add_string("mqb.header-unit.producer.v1");
         add_string(identity->header_name);
         add_enum(identity->lookup_method);
@@ -170,22 +167,14 @@ BuildSignature BuildSignature::for_compile(
     hasher.add_enum(options.configuration);
     hasher.add_enum(options.architecture);
     if (is_c_translation_unit_path(unit.source)) {
-        // .c did not exist in any previous valid v4 recipe, so a C-only domain
-        // marker can be added without invalidating old C++ caches. The target
-        // C++ standard is intentionally absent because the C backend recipe does
-        // not emit a C++ /std switch; raw C standard switches remain represented
-        // through additional_arguments when users opt into them explicitly.
         hasher.add_string("mqb.c.language.v1");
     } else {
-        // Preserve the exact pre-C v4 byte stream for every existing C++ recipe.
         hasher.add_enum(options.standard);
     }
     hasher.add_strings(options.defines);
     hasher.add_paths(options.include_directories);
     hasher.add_strings(options.additional_arguments);
     if (options.runtime_library) {
-        // Keep all historical default v4 byte streams intact. Explicit runtime
-        // selection is a new optional recipe domain layered after old fields.
         hasher.add_string("mqb.runtime-library.v1");
         hasher.add_enum(*options.runtime_library);
     }
@@ -226,6 +215,12 @@ BuildSignature BuildSignature::for_link(
     hasher.add_paths(options.library_directories);
     hasher.add_strings(options.libraries);
     hasher.add_strings(options.additional_arguments);
+    if (options.target_kind != TargetKind::executable) {
+        // Preserve the exact historical v2 byte stream for executable links.
+        // New executable-style targets append a versioned kind domain only.
+        hasher.add_string("mqb.link.target-kind.v1");
+        hasher.add_enum(options.target_kind);
+    }
     return BuildSignature{hasher.finish()};
 }
 

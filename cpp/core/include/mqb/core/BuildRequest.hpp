@@ -15,6 +15,7 @@ struct BuildRequest {
     BuildConfiguration configuration{BuildConfiguration::debug};
     Architecture architecture{Architecture::x64};
     CppStandard standard{CppStandard::cpp23};
+    TargetKind target_kind{TargetKind::executable};
     bool run_after_build{false};
     std::vector<std::string> run_arguments;
 };

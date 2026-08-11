@@ -24,6 +24,14 @@ enum class CppStandard {
     cpp17 = 4,
 };
 
+enum class TargetKind {
+    executable,
+    dynamic_library,
+    // Reserved for the librarian-backed target slice. The public CLI/config
+    // will not accept static until the lib.exe pipeline is implemented.
+    static_library,
+};
+
 enum class BuildReason {
     missing_cache_entry,
     missing_output,
@@ -39,6 +47,7 @@ enum class BuildReason {
 [[nodiscard]] std::string_view to_string(BuildConfiguration value) noexcept;
 [[nodiscard]] std::string_view to_string(Architecture value) noexcept;
 [[nodiscard]] std::string_view to_string(CppStandard value) noexcept;
+[[nodiscard]] std::string_view to_string(TargetKind value) noexcept;
 [[nodiscard]] std::string_view to_string(BuildReason value) noexcept;
 
 } // namespace mqb

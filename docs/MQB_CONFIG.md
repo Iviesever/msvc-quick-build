@@ -23,6 +23,7 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
     "configuration": "release",
     "architecture": "x64",
     "standard": "17",
+    "type": "exe",
     "runtime": "MT",
     "subsystem": "console",
     "output": "game",
@@ -70,9 +71,10 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
 | `configuration` | string | `debug` or `release` |
 | `architecture` | string | `x86` or `x64` |
 | `standard` | string | `14`, `17`, `20`, `23`, or `latest` (`c++14`, `c++17`, `c++20`, `c++23`, `c++latest` are also accepted) |
+| `type` | string | `exe` or `dll`; static libraries remain fail-closed until the dedicated librarian pipeline lands |
 | `runtime` | string | MSVC CRT runtime: `MD`, `MDd`, `MT`, or `MTd` |
-| `subsystem` | string | executable subsystem: `console` or `windows` |
-| `output` | string | target name under `.mqb/bin/` |
+| `subsystem` | string | PE subsystem: `console` or `windows` |
+| `output` | string | target name under `.mqb/bin/`; MQB supplies the `.exe` or `.dll` suffix from `type` |
 | `defines` | string array | preprocessor definitions, without `/D` |
 | `include_dirs` | string array | include search directories |
 | `library_dirs` | string array | library search directories |
@@ -82,7 +84,9 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
 
 All path-valued config entries are resolved relative to the directory containing `mqb.json`, not the shell's current working directory.
 
-`runtime` and `subsystem` are typed policy, not shorthand for raw flags. The MSVC backend remains the sole owner of their command-line spelling. An explicit typed runtime is emitted after raw compiler arguments, and the structured subsystem is emitted after raw linker arguments, so a conflicting raw `/MD*` or `/SUBSYSTEM:*` cannot silently override the typed project policy.
+`type`, `runtime`, and `subsystem` are typed policy, not shorthand for raw flags. The MSVC backend remains the sole owner of their command-line spelling. An explicit typed runtime is emitted after raw compiler arguments; typed DLL/output/subsystem routing is emitted after raw linker arguments, so conflicting raw `/MD*`, `/DLL`, `/IMPLIB`, `/SUBSYSTEM:*`, or `/OUT:*` switches cannot silently override the typed project policy.
+
+For a DLL target that exports symbols, MQB supplies a deterministic import-library location beside the DLL (`.mqb/bin/<target>.lib`). Linker side outputs that were actually produced are recorded in the link cache; deleting a recorded import library or export file invalidates link freshness and causes a repair relink without recompiling otherwise-fresh translation units.
 
 Raw compiler/linker arguments are literal argv elements. MQB does not split one JSON string containing spaces into several switches. For example:
 
@@ -92,7 +96,7 @@ Raw compiler/linker arguments are literal argv elements. MQB does not split one 
 
 represents two compiler arguments, while `"/W4 /WX"` is one argument and is not rewritten by MQB.
 
-Backend-owned structured routing remains authoritative. Raw arguments are emitted before MQB's planned output/topology switches such as `/Fo`, `/ifcOutput`, `/scanDependencies`, `/MACHINE`, `/SUBSYSTEM`, and `/OUT`.
+Backend-owned structured routing remains authoritative. Raw arguments are emitted before MQB's planned output/topology switches such as `/Fo`, `/ifcOutput`, `/scanDependencies`, `/DLL`, `/IMPLIB`, `/MACHINE`, `/SUBSYSTEM`, and `/OUT`.
 
 ## Discovery fields
 
@@ -146,7 +150,7 @@ For scalar options:
 explicit CLI option > mqb.json > built-in default
 ```
 
-This includes `configuration`, `architecture`, `standard`, `runtime`, `subsystem`, and `output`.
+This includes `configuration`, `architecture`, `standard`, `type`, `runtime`, `subsystem`, and `output`.
 
 Examples:
 
@@ -154,10 +158,13 @@ Examples:
 # mqb.json says release; this build is debug.
 mqb main.cpp --debug
 
+# mqb.json says DLL; this invocation explicitly builds an executable.
+mqb main.cpp --type exe
+
 # mqb.json says MT; this invocation uses the dynamic CRT.
 mqb main.cpp --runtime MD
 
-# mqb.json says windows; this invocation links a console target.
+# mqb.json says windows; this invocation uses the console subsystem.
 mqb main.cpp --subsystem console
 
 # mqb.json disables discovery; this explicitly turns it back on.
@@ -210,11 +217,13 @@ The config file timestamp itself is not a special global rebuild trigger. Instea
 
 Changing `runtime` changes compiler recipe identity, recompiles affected TUs, and therefore relinks the target. Leaving `runtime` unset preserves the historical Debug `/MDd` and Release `/MD` recipes and their existing signature identity.
 
+Changing `type` changes link recipe/output identity. The historical executable signature byte stream is retained for executable targets; DLL targets add their typed target-kind identity. Changing executable↔DLL relinks without recompiling otherwise-fresh translation units when the compile recipe is unchanged.
+
 Changing only `subsystem` changes link recipe identity and relinks without recompiling otherwise-fresh TUs.
 
 Changing a compiler argument changes compiler recipe identity and recompiles affected TUs even if no source timestamp changed. The resulting fresh objects force the downstream link. Changing only a linker argument changes link recipe identity and relinks without recompiling otherwise-fresh TUs.
 
-Likewise, library names/search paths affect link recipe identity, while exact resolved `.lib` files are separately tracked as link freshness inputs.
+Likewise, library names/search paths affect link recipe identity, while exact resolved `.lib` files are separately tracked as link freshness inputs. Recorded DLL linker side outputs are separately checked for existence and repaired by relinking if missing.
 
 For named modules and header units, compile identity also includes typed provider/reference and interface-output identity. Imported IFC files participate in consumer freshness validation, and a missing provider IFC invalidates the provider's cached outputs.
 
@@ -230,7 +239,8 @@ Changing the job count does not alter compile or link signatures and therefore m
 
 ## Current boundaries
 
-- v1 config has no target-kind field yet; executable targets are the native output contract until DLL/static work lands.
+- v1 `build.type` supports `exe` and `dll`; static libraries remain fail-closed until the dedicated `lib.exe`/librarian pipeline lands.
+- `--run` is executable-only; DLL targets are built artifacts and are not launched as programs.
 - v1 config has no external/prebuilt module-provider or `import std` policy.
 - v1 config does not store parallel job count.
 - `exclude_dirs`, `extra_sources`, and `exclude_sources` are exact paths, not globs.

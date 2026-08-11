@@ -42,12 +42,17 @@ int main() {
     {
         const std::vector arguments{
             "main.cpp"sv,
+            "--type"sv, "dll"sv,
             "--runtime"sv, "MT"sv,
             "--subsystem=windows"sv,
         };
         auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value(), "typed native runtime/subsystem options should parse");
+        expect(parsed.has_value(), "typed native target/runtime/subsystem options should parse");
         if (parsed) {
+            expect(parsed->target_kind_override == mqb::TargetKind::dynamic_library,
+                   "--type dll should select typed DLL output");
+            expect(parsed->build.target_kind == mqb::TargetKind::dynamic_library,
+                   "typed DLL selection should also update BuildRequest");
             expect(parsed->runtime_override == mqb::RuntimeLibrary::mt,
                    "--runtime MT should select static release CRT");
             expect(parsed->subsystem_override == mqb::LinkSubsystem::windows,
@@ -58,17 +63,33 @@ int main() {
     {
         const std::vector arguments{
             "main.cpp"sv,
+            "-type"sv, "dll"sv,
             "-runtime"sv, "MDd"sv,
             "-subsystem"sv, "console"sv,
         };
         auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value(), "legacy runtime/subsystem aliases should parse");
+        expect(parsed.has_value(), "legacy type/runtime/subsystem aliases should parse");
         if (parsed) {
+            expect(parsed->target_kind_override == mqb::TargetKind::dynamic_library,
+                   "legacy -type dll should map to typed DLL output");
             expect(parsed->runtime_override == mqb::RuntimeLibrary::mdd,
                    "legacy -runtime MDd should map to typed runtime");
             expect(parsed->subsystem_override == mqb::LinkSubsystem::console,
                    "legacy -subsystem console should map to typed subsystem");
         }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--type=exe"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value() && parsed->target_kind_override == mqb::TargetKind::executable,
+               "--type=exe should explicitly select executable output");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--type"sv, "static"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "static-library target should remain fail-closed before librarian support");
     }
 
     {

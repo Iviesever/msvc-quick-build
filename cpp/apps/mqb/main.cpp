@@ -335,6 +335,7 @@ int main(const int argc, char* argv[]) {
     cli_overrides.build.configuration = options.configuration_override;
     cli_overrides.build.architecture = options.architecture_override;
     cli_overrides.build.standard = options.standard_override;
+    cli_overrides.build.target_kind = options.target_kind_override;
     cli_overrides.build.runtime_library = options.runtime_override;
     cli_overrides.build.subsystem = options.subsystem_override;
     cli_overrides.build.output_name = options.build.output_name;
@@ -352,6 +353,7 @@ int main(const int argc, char* argv[]) {
     options.build.configuration = effective.configuration;
     options.build.architecture = effective.architecture;
     options.build.standard = effective.standard;
+    options.build.target_kind = effective.target_kind;
     options.runtime_override = effective.runtime_library;
     options.subsystem_override = effective.subsystem;
     options.build.output_name = effective.output_name;
@@ -362,6 +364,12 @@ int main(const int argc, char* argv[]) {
     options.libraries = effective.libraries;
     options.compiler_arguments = effective.compiler_arguments;
     options.linker_arguments = effective.linker_arguments;
+
+    if (options.build.run_after_build
+        && options.build.target_kind != mqb::TargetKind::executable) {
+        std::cerr << "error: --run is only valid for executable targets\n";
+        return 2;
+    }
 
     std::vector<fs::path> sources = requested_sources;
     bool discovery_requires_module_pipeline = false;
@@ -443,7 +451,7 @@ int main(const int argc, char* argv[]) {
 
     const std::string target_name = options.build.output_name.value_or(
         requested_sources.front().stem().string());
-    auto target_artifacts = layout->for_target(target_name);
+    auto target_artifacts = layout->for_target(target_name, options.build.target_kind);
     if (!target_artifacts) {
         std::cerr << "error: " << target_artifacts.error().message << '\n';
         return 2;
@@ -484,6 +492,7 @@ int main(const int argc, char* argv[]) {
     mqb::LinkOptions link_options;
     link_options.configuration = options.build.configuration;
     link_options.architecture = options.build.architecture;
+    link_options.target_kind = options.build.target_kind;
     link_options.subsystem = options.subsystem_override.value_or(mqb::LinkSubsystem::console);
     link_options.library_directories = std::move(options.library_directories);
     link_options.libraries = std::move(options.libraries);
@@ -524,7 +533,8 @@ int main(const int argc, char* argv[]) {
         if (project_config) {
             std::cout << "  config:  " << path_text(project_config->file) << '\n';
         }
-        std::cout << "  jobs:    " << compile_jobs
+        std::cout << "  type:    " << mqb::to_string(options.build.target_kind) << '\n'
+                  << "  jobs:    " << compile_jobs
                   << (options.jobs ? "" : " (auto)") << '\n'
                   << "  cl:      " << path_text(toolchain->identity.compiler) << '\n'
                   << "  link:    " << path_text(toolchain->linker) << '\n';
@@ -546,7 +556,7 @@ int main(const int argc, char* argv[]) {
         for (const auto& argument : link_options.additional_arguments) {
             std::cout << "  link-arg:" << argument << '\n';
         }
-        std::cout << "  exe:     " << path_text(target_artifacts->executable) << '\n'
+        std::cout << "  output:  " << path_text(target_artifacts->executable) << '\n'
                   << "  cache:   " << path_text(target_artifacts->link_cache) << '\n';
     }
 
@@ -602,7 +612,7 @@ int main(const int argc, char* argv[]) {
         std::cout << "[up-to-date] " << path_text(request.target.executable.filename()) << '\n';
     }
 
-    std::cout << "executable: " << path_text(request.target.executable) << '\n';
+    std::cout << "output: " << path_text(request.target.executable) << '\n';
 
     if (!options.build.run_after_build) {
         return 0;
