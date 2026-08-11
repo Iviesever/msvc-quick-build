@@ -8,17 +8,14 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 
 namespace {
-
 namespace fs = std::filesystem;
 int failures = 0;
-
 void expect(const bool condition, const std::string_view message) {
     if (!condition) {
         ++failures;
         std::cerr << "FAIL: " << message << '\n';
     }
 }
-
 } // namespace
 
 int main() {
@@ -73,19 +70,27 @@ int main() {
                "external IFCs should share the stable external-source namespace");
     }
 
-    auto target = layout->for_target("demo");
-    expect(target.has_value(), "simple target name should map to target artifacts");
-    if (target) {
-        expect(target->executable == root / ".mqb" / "bin" / "demo.exe",
-               "target executable should live in project-level bin directory");
-        expect(target->link_cache == root / ".mqb" / "cache" / "link" / "demo.linkcache",
-               "link cache should be isolated from compile cache metadata");
+    auto executable = layout->for_target("demo", mqb::TargetKind::executable);
+    auto dll = layout->for_target("demo", mqb::TargetKind::dynamic_library);
+    auto static_library = layout->for_target("demo", mqb::TargetKind::static_library);
+    expect(executable.has_value() && dll.has_value() && static_library.has_value(),
+           "all typed target kinds should map to deterministic artifacts");
+    if (executable && dll && static_library) {
+        expect(executable->executable == root / ".mqb" / "bin" / "demo.exe",
+               "executable target should retain historical output path");
+        expect(dll->executable == root / ".mqb" / "bin" / "demo.dll",
+               "DLL target should map to .dll output");
+        expect(static_library->executable == root / ".mqb" / "bin" / "demo.lib",
+               "static target should map to .lib output");
+        expect(executable->link_cache == root / ".mqb" / "cache" / "link" / "demo.linkcache"
+                   && dll->link_cache == executable->link_cache,
+               "exe/DLL should preserve the established link-cache path");
+        expect(static_library->link_cache
+                   == root / ".mqb" / "cache" / "archive" / "demo.archivecache",
+               "static target should use its own archive-cache namespace");
     }
 
 #ifdef _WIN32
-    // Existing physical paths are normalized before deriving source identity.
-    // This prevents scanner/user aliases (case differences, 8.3/long-path or
-    // other canonical spellings) from splitting one source into two caches.
     const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
     const fs::path physical_root = fs::temp_directory_path()
         / ("MqB_Artifact_Alias_" + std::to_string(tick));
