@@ -89,8 +89,14 @@ function Invoke-SelfBuild {
     try {
         Write-Host "[$Label] builder: $Builder"
         Write-Host "[$Label] release define: $VersionDefine"
-        & $Builder 'apps/mqb/main.cpp' '--env' 'vs' '--verbose' '-D' $VersionDefine
+
+        # Keep the native process output visible without allowing PowerShell's
+        # function-output semantics to mix log lines into the returned path.
+        $buildOutput = @(& $Builder 'apps/mqb/main.cpp' '--env' 'vs' '--verbose' '-D' $VersionDefine 2>&1)
         $exitCode = $LASTEXITCODE
+        foreach ($line in $buildOutput) {
+            Write-Host $line
+        }
         if ($exitCode -ne 0) {
             throw "$Label self-build failed with exit code $exitCode"
         }
