@@ -147,3 +147,5 @@ finally {
     [Environment]::SetEnvironmentVariable('Path', $originalUserPath, 'User')
     Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+exit 0
