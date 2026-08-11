@@ -23,7 +23,7 @@ Status meanings:
 | project-local header units | native pipeline is ready | **ready** |
 | `.c` translation units | rejected by native CLI today | **implement** |
 | `.hpp` / `.h` as positional legacy discovery seeds | native CLI treats headers as non-TU inputs | **migrate** unless a real user workflow requires positional header seeds |
-| C++14 / C++17 | native CLI currently supports 20/23/latest | **implement** for ordinary non-module targets |
+| C++14 / C++17 | ordinary native targets map to `/std:c++14` / `/std:c++17`; module pipeline remains C++20+ | **ready** for ordinary non-module targets |
 | C++20 / C++23 / latest | ready | **ready** |
 
 ## Common command-line options
@@ -32,7 +32,7 @@ Status meanings:
 | --- | --- | --- |
 | `-o`, `-output` | `-o`, `--output`; legacy `-output` accepted | **compat** |
 | `-run` | `--run`; legacy `-run` accepted | **compat** |
-| `-std` | `--std`; legacy `-std` accepted for current native standards | **compat**, plus C++14/17 work above |
+| `-std` | `--std`; legacy `-std` accepts 14/17/20/23/latest | **compat** |
 | `-x86` | `--x86`; legacy spelling accepted | **compat** |
 | default x64 | `--x64` / x64 default; legacy `-x64` accepted | **compat** |
 | `-I`, `-include` | `-I`; legacy `-include` accepted | **compat** |
@@ -107,15 +107,16 @@ The native `.mqb/obj`, `.mqb/deps`, `.mqb/scan`, `.mqb/ifc`, `.mqb/cache`, and `
 
 ## C++ Modules boundary (#16)
 
-Project-local named modules and project-local header units are in the RC/stable-capable surface. External/prebuilt named-module providers and `import std` remain tracked in #16. Stable v5 may ship with those cases still fail-closed if the release notes keep that boundary explicit; they must not be accidentally accepted through compatibility parsing.
+Project-local named modules and project-local header units are in the RC/stable-capable surface, but they require C++20 or newer. C++14/17 are ordinary-target compatibility modes only; attempting to scan or compile a module/header-unit contract below C++20 fails before MSVC is launched. External/prebuilt named-module providers and `import std` remain tracked in #16. Stable v5 may ship with those cases still fail-closed if the release notes keep that boundary explicit; they must not be accidentally accepted through compatibility parsing.
 
 ## Parity campaign order
 
-1. Legacy CLI spelling compatibility for behaviors the native engine already supports.
-2. Raw compiler/linker pass-through with cache-invalidation E2E.
-3. C++14/17 ordinary-target support and `.c` translation units.
-4. Target kinds: DLL/static plus subsystem/runtime policy.
-5. First-class/high-value MSVC tuning options; use raw flags for the long tail where that produces an explicit, testable contract.
-6. Shared PowerShell-vs-C++ fixtures for ordinary targets, config precedence, incremental rebuilds, libraries, run argv, x86/x64, Debug/Release, and failure behavior.
-7. Installer/profile/`build` command cutover and clean-machine upgrade/rollback validation.
-8. Generalize the release workflow and publish stable v5 only from the exact validated artifact.
+1. Legacy CLI spelling compatibility for behaviors the native engine already supports. **Done in #27.**
+2. Restore C++14/17 ordinary-target modes while preserving the C++20+ module boundary. **Done in #28.**
+3. Raw compiler/linker pass-through with cache-invalidation E2E.
+4. Add `.c` translation units.
+5. Target kinds: DLL/static plus subsystem/runtime policy.
+6. First-class/high-value MSVC tuning options; use raw flags for the long tail where that produces an explicit, testable contract.
+7. Shared PowerShell-vs-C++ fixtures for ordinary targets, config precedence, incremental rebuilds, libraries, run argv, x86/x64, Debug/Release, and failure behavior.
+8. Installer/profile/`build` command cutover and clean-machine upgrade/rollback validation.
+9. Generalize the release workflow and publish stable v5 only from the exact validated artifact.
