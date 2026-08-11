@@ -51,6 +51,7 @@ int main() {
     "configuration": "release",
     "architecture": "x86",
     "standard": "latest",
+    "type": "static",
     "output": "demo",
     "defines": ["ONE=1", "TEXT=\u6d4b\u8bd5"],
     "include_dirs": ["include", "unicode/\u6d4b\u8bd5"],
@@ -85,6 +86,8 @@ int main() {
                "x86 override should decode");
         expect(loaded->build.standard == mqb::CppStandard::latest,
                "latest standard override should decode");
+        expect(loaded->build.target_kind == mqb::TargetKind::static_library,
+               "static target kind should decode");
         expect(loaded->build.output_name && *loaded->build.output_name == "demo",
                "output override should decode");
         expect(loaded->build.defines.size() == 2,
@@ -129,12 +132,19 @@ int main() {
                "excluded source should resolve from config directory");
     }
 
+    write_text(config_file, R"json({"version":1,"build":{"type":"lib"}})json");
+    auto static_alias = mqb::config::ProjectConfigLoader::load(config_file);
+    expect(static_alias.has_value()
+               && static_alias->build.target_kind == mqb::TargetKind::static_library,
+           "lib alias should decode to static target kind");
+
     write_text(config_file, R"json({"version":1})json");
     auto minimal = mqb::config::ProjectConfigLoader::load(config_file);
     expect(minimal.has_value(), "minimal version-only config should load");
     if (minimal) {
         expect(!minimal->build.configuration && !minimal->build.architecture
-                   && !minimal->build.standard && !minimal->build.output_name,
+                   && !minimal->build.standard && !minimal->build.target_kind
+                   && !minimal->build.output_name,
                "missing build scalar fields must remain unset rather than receiving defaults");
         expect(minimal->build.defines.empty() && minimal->build.include_directories.empty()
                    && minimal->build.library_directories.empty() && minimal->build.libraries.empty(),
