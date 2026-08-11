@@ -116,12 +116,16 @@ int main(int argc, char* argv[]) {
     fs::create_directories(tree.root);
 
     write_text(tree.root / "main.cpp", R"cpp(#include <cstdio>
+#include <windows.h>
 #ifndef POLICY_VALUE
 #error POLICY_VALUE must be supplied by raw build policy
 #endif
 int main() {
     std::printf("policy=%d\n", POLICY_VALUE);
     return 0;
+}
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    return POLICY_VALUE > 0 ? 0 : 1;
 }
 )cpp");
 
@@ -180,11 +184,6 @@ int main() {
                "changed raw compiler argument should affect executable behavior");
     }
 
-    // Change link recipe identity independently from the compiler recipe while
-    // retaining the already-proven /MAP argument. Delete the map first so the
-    // relink must recreate it; this verifies the changed linker invocation was
-    // actually executed without depending on link.exe's semantics for swapping
-    // /MAP output filenames across consecutive links.
     std::error_code remove_error;
     fs::remove(map_file, remove_error);
     expect(!remove_error && !fs::exists(map_file),
@@ -206,6 +205,58 @@ int main() {
     }
     expect(fs::is_regular_file(map_file),
            "linker-only rebuild should execute raw /MAP policy and recreate its side artifact");
+
+    auto runtime_policy = raw_policy(2, map_file);
+    runtime_policy.emplace_back("--runtime");
+    runtime_policy.emplace_back("MT");
+    auto runtime_changed = run_mqb(runner, mqb_executable, tree.root, runtime_policy);
+    expect(runtime_changed.has_value(), "runtime-policy change invocation should launch");
+    if (runtime_changed) {
+        if (runtime_changed->exit_code != 0) dump_failure(*runtime_changed);
+        expect(runtime_changed->exit_code == 0, "typed runtime changed build should succeed");
+        expect(runtime_changed->stdout_text.find("[compile] main.cpp") != std::string::npos
+                   && runtime_changed->stdout_text.find("compiler options changed") != std::string::npos,
+               "typed runtime change should invalidate compile recipe identity");
+        expect(runtime_changed->stdout_text.find("[link] policy.exe") != std::string::npos,
+               "typed runtime change should relink after recompilation");
+    }
+
+    auto runtime_warm = run_mqb(runner, mqb_executable, tree.root, runtime_policy);
+    expect(runtime_warm.has_value(), "warm typed-runtime invocation should launch");
+    if (runtime_warm) {
+        if (runtime_warm->exit_code != 0) dump_failure(*runtime_warm);
+        expect(runtime_warm->exit_code == 0, "warm typed-runtime build should succeed");
+        expect(contains_line(runtime_warm->stdout_text, "[up-to-date] main.cpp"),
+               "unchanged typed runtime should reuse compile cache");
+        expect(contains_line(runtime_warm->stdout_text, "[up-to-date] policy.exe"),
+               "unchanged typed runtime should reuse link cache");
+    }
+
+    auto windows_policy = runtime_policy;
+    windows_policy.emplace_back("--subsystem");
+    windows_policy.emplace_back("windows");
+    auto subsystem_changed = run_mqb(runner, mqb_executable, tree.root, windows_policy);
+    expect(subsystem_changed.has_value(), "subsystem-policy change invocation should launch");
+    if (subsystem_changed) {
+        if (subsystem_changed->exit_code != 0) dump_failure(*subsystem_changed);
+        expect(subsystem_changed->exit_code == 0, "Windows-subsystem target should link successfully");
+        expect(contains_line(subsystem_changed->stdout_text, "[up-to-date] main.cpp"),
+               "subsystem-only change must not recompile the TU");
+        expect(subsystem_changed->stdout_text.find("[link] policy.exe") != std::string::npos
+                   && subsystem_changed->stdout_text.find("linker options changed") != std::string::npos,
+               "typed subsystem change should invalidate link recipe identity only");
+    }
+
+    auto subsystem_warm = run_mqb(runner, mqb_executable, tree.root, windows_policy);
+    expect(subsystem_warm.has_value(), "warm Windows-subsystem invocation should launch");
+    if (subsystem_warm) {
+        if (subsystem_warm->exit_code != 0) dump_failure(*subsystem_warm);
+        expect(subsystem_warm->exit_code == 0, "warm Windows-subsystem build should succeed");
+        expect(contains_line(subsystem_warm->stdout_text, "[up-to-date] main.cpp"),
+               "unchanged subsystem should keep compile cache warm");
+        expect(contains_line(subsystem_warm->stdout_text, "[up-to-date] policy.exe"),
+               "unchanged subsystem should keep link cache warm");
+    }
 
     const fs::path config_map = tree.root / "config-policy.map";
     const std::string config = std::string{R"json({

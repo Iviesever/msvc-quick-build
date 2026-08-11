@@ -272,7 +272,7 @@ int main(const int argc, char* argv[]) {
             return 2;
         }
         if (!supported_source(*source)) {
-            std::cerr << "error: only .cpp, .cc, .cxx, .ixx, .cppm, and .mpp sources are supported: "
+            std::cerr << "error: only .c, .cpp, .cc, .cxx, .ixx, .cppm, and .mpp sources are supported: "
                       << path_text(*source) << '\n';
             return 2;
         }
@@ -472,6 +472,7 @@ int main(const int argc, char* argv[]) {
     compiler_options.configuration = options.build.configuration;
     compiler_options.architecture = options.build.architecture;
     compiler_options.standard = options.build.standard;
+    compiler_options.runtime_library = options.runtime_override;
     compiler_options.defines = std::move(options.defines);
     compiler_options.include_directories = std::move(options.include_directories);
     compiler_options.additional_arguments = std::move(options.compiler_arguments);
@@ -479,7 +480,7 @@ int main(const int argc, char* argv[]) {
     mqb::LinkOptions link_options;
     link_options.configuration = options.build.configuration;
     link_options.architecture = options.build.architecture;
-    link_options.subsystem = mqb::LinkSubsystem::console;
+    link_options.subsystem = options.subsystem_override.value_or(mqb::LinkSubsystem::console);
     link_options.library_directories = std::move(options.library_directories);
     link_options.libraries = std::move(options.libraries);
     link_options.additional_arguments = std::move(options.linker_arguments);

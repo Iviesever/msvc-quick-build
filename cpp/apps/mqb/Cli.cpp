@@ -57,6 +57,26 @@ parse_configuration(const std::string_view value) {
         + "' (expected debug or release)"));
 }
 
+[[nodiscard]] std::expected<RuntimeLibrary, Error>
+parse_runtime(const std::string_view value) {
+    if (value == "MD" || value == "md") return RuntimeLibrary::md;
+    if (value == "MDd" || value == "mdd") return RuntimeLibrary::mdd;
+    if (value == "MT" || value == "mt") return RuntimeLibrary::mt;
+    if (value == "MTd" || value == "mtd") return RuntimeLibrary::mtd;
+    return std::unexpected(error(
+        "unsupported runtime library '" + std::string{value}
+        + "' (expected MD, MDd, MT, or MTd)"));
+}
+
+[[nodiscard]] std::expected<LinkSubsystem, Error>
+parse_subsystem(const std::string_view value) {
+    if (value == "console") return LinkSubsystem::console;
+    if (value == "windows") return LinkSubsystem::windows;
+    return std::unexpected(error(
+        "unsupported subsystem '" + std::string{value}
+        + "' (expected console or windows)"));
+}
+
 [[nodiscard]] std::expected<std::size_t, Error>
 parse_jobs(const std::string_view value) {
     std::size_t jobs = 0;
@@ -215,6 +235,38 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.standard_override = *standard;
             continue;
         }
+        if (argument == "--runtime" || argument == "-runtime") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            auto runtime = parse_runtime(*value);
+            if (!runtime) return std::unexpected(runtime.error());
+            options.runtime_override = *runtime;
+            continue;
+        }
+        if (argument.starts_with("--runtime=")) {
+            auto value = long_equals_value(argument, "--runtime=");
+            if (!value) return std::unexpected(value.error());
+            auto runtime = parse_runtime(*value);
+            if (!runtime) return std::unexpected(runtime.error());
+            options.runtime_override = *runtime;
+            continue;
+        }
+        if (argument == "--subsystem" || argument == "-subsystem") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            auto subsystem = parse_subsystem(*value);
+            if (!subsystem) return std::unexpected(subsystem.error());
+            options.subsystem_override = *subsystem;
+            continue;
+        }
+        if (argument.starts_with("--subsystem=")) {
+            auto value = long_equals_value(argument, "--subsystem=");
+            if (!value) return std::unexpected(value.error());
+            auto subsystem = parse_subsystem(*value);
+            if (!subsystem) return std::unexpected(subsystem.error());
+            options.subsystem_override = *subsystem;
+            continue;
+        }
         if (argument == "--compiler-arg" || argument == "-flags") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
@@ -347,7 +399,7 @@ Project configuration:
   Config paths are relative to mqb.json; CLI paths are relative to the invocation directory.
 
 Source selection:
-  One positional source       Smart-discover connected C++ TUs and reachable project-local named-module providers (default)
+  One positional source       Smart-discover connected C/C++ TUs and reachable project-local named-module providers (default)
   Multiple positional sources Build exactly that explicit ordered source set
   Explicit module source(s)   Route targets containing .ixx/.cppm/.mpp through P1689 named-module scanning
   --discover                  Explicitly enable smart discovery for one ordinary source
@@ -367,6 +419,10 @@ Options:
   --config <debug|release> Select compile/link preset (legacy -config alias accepted)
   --std <14|17|20|23|latest>
                            Explicitly select C++ language standard (legacy -std accepted)
+  --runtime <MD|MDd|MT|MTd>
+                           Explicitly select MSVC CRT runtime (legacy -runtime accepted)
+  --subsystem <console|windows>
+                           Explicitly select executable subsystem (legacy -subsystem accepted)
   --x86 | --x64            Explicitly select target architecture (legacy -x86/-x64 accepted)
   -j, --jobs <N>           Maximum concurrent TU scans/compiles (default: hardware concurrency)
   -o, --output <name>      Set target executable name under .mqb/bin/ (legacy -output accepted)
@@ -391,8 +447,8 @@ append afterward. Structured artifact routing such as /Fo, /scanDependencies, /M
 is emitted after raw arguments so the BuildPlan remains authoritative.
 
 Legacy compatibility aliases intentionally cover spelling only. Legacy-only semantics such as
--a string splitting, DLL/static output kinds, and MSVC tuning switches remain tracked by the
-stable-v5 parity inventory and are not silently accepted here.
+-a string splitting and DLL/static output kinds remain tracked by the stable-v5 parity inventory
+and are not silently accepted here.
 
 Job count is execution policy only; changing -j does not invalidate build caches.
 Discovery is source selection only. Incremental header freshness continues to use

@@ -183,6 +183,12 @@ BuildSignature BuildSignature::for_compile(
     hasher.add_strings(options.defines);
     hasher.add_paths(options.include_directories);
     hasher.add_strings(options.additional_arguments);
+    if (options.runtime_library) {
+        // Keep all historical default v4 byte streams intact. Explicit runtime
+        // selection is a new optional recipe domain layered after old fields.
+        hasher.add_string("mqb.runtime-library.v1");
+        hasher.add_enum(*options.runtime_library);
+    }
 
     return BuildSignature{hasher.finish()};
 }

@@ -42,6 +42,38 @@ int main() {
     {
         const std::vector arguments{
             "main.cpp"sv,
+            "--runtime"sv, "MT"sv,
+            "--subsystem=windows"sv,
+        };
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "typed native runtime/subsystem options should parse");
+        if (parsed) {
+            expect(parsed->runtime_override == mqb::RuntimeLibrary::mt,
+                   "--runtime MT should select static release CRT");
+            expect(parsed->subsystem_override == mqb::LinkSubsystem::windows,
+                   "--subsystem=windows should select Windows subsystem");
+        }
+    }
+
+    {
+        const std::vector arguments{
+            "main.cpp"sv,
+            "-runtime"sv, "MDd"sv,
+            "-subsystem"sv, "console"sv,
+        };
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "legacy runtime/subsystem aliases should parse");
+        if (parsed) {
+            expect(parsed->runtime_override == mqb::RuntimeLibrary::mdd,
+                   "legacy -runtime MDd should map to typed runtime");
+            expect(parsed->subsystem_override == mqb::LinkSubsystem::console,
+                   "legacy -subsystem console should map to typed subsystem");
+        }
+    }
+
+    {
+        const std::vector arguments{
+            "main.cpp"sv,
             "-flags"sv, "/DPOLICY_VALUE=7"sv,
             "-flags"sv, "/volatile:iso"sv,
             "-link_flags"sv, "/MAP:legacy.map"sv,
@@ -57,6 +89,18 @@ int main() {
                        && parsed->linker_arguments[0] == "/MAP:legacy.map",
                    "legacy -link_flags should map to ordered linker arguments");
         }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--runtime"sv, "dynamic"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "unknown runtime should be rejected");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--subsystem"sv, "gui"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "unknown subsystem should be rejected");
     }
 
     {

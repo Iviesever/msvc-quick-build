@@ -50,6 +50,8 @@ int main() {
                "C source must not receive C++ __cplusplus policy");
         expect(!contains(*arguments, "/Zc:preprocessor"),
                "C source keeps the MSVC C preprocessor baseline rather than the C++ recipe");
+        expect(contains(*arguments, "/MDd"),
+               "unoverridden Debug recipe should preserve historical /MDd runtime");
         expect(contains(*arguments, "/sourceDependencies"),
                "C source should keep normal incremental dependency metadata");
         expect(contains(*arguments, "/DC_POLICY=1"),
@@ -62,6 +64,25 @@ int main() {
                    && structural_tc != arguments->end()
                    && raw_tp < structural_tc,
                "structured /TC must follow raw /TP so .c language ownership cannot be overridden silently");
+    }
+
+    {
+        auto static_runtime = c;
+        static_runtime.options.additional_arguments.emplace_back("/MD");
+        static_runtime.options.runtime_library = mqb::RuntimeLibrary::mtd;
+        auto recipe = mqb::msvc::MsvcCompiler::build_arguments(static_runtime);
+        expect(recipe.has_value(), "explicit MTd runtime should produce a valid recipe");
+        if (recipe) {
+            const auto preset = std::find(recipe->begin(), recipe->end(), "/MDd");
+            const auto raw_runtime = std::find(recipe->begin(), recipe->end(), "/MD");
+            const auto override_argument = std::find(recipe->begin(), recipe->end(), "/MTd");
+            expect(preset != recipe->end()
+                       && raw_runtime != recipe->end()
+                       && override_argument != recipe->end()
+                       && preset < raw_runtime
+                       && raw_runtime < override_argument,
+                   "typed runtime override must follow preset and raw CRT switches and therefore win");
+        }
     }
 
     {

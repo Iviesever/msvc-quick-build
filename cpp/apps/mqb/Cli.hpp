@@ -10,6 +10,8 @@
 #include <vector>
 
 #include "mqb/core/BuildRequest.hpp"
+#include "mqb/core/CompilerOptions.hpp"
+#include "mqb/core/LinkOptions.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 
 namespace mqb::cli {
@@ -19,6 +21,8 @@ struct Options {
     std::optional<BuildConfiguration> configuration_override;
     std::optional<Architecture> architecture_override;
     std::optional<CppStandard> standard_override;
+    std::optional<RuntimeLibrary> runtime_override;
+    std::optional<LinkSubsystem> subsystem_override;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;
     std::vector<std::filesystem::path> library_directories;

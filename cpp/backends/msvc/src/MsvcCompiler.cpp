@@ -49,6 +49,20 @@ namespace fs = std::filesystem;
     return "/std:c++23preview";
 }
 
+[[nodiscard]] std::string runtime_argument(const RuntimeLibrary runtime) {
+    switch (runtime) {
+    case RuntimeLibrary::md:
+        return "/MD";
+    case RuntimeLibrary::mdd:
+        return "/MDd";
+    case RuntimeLibrary::mt:
+        return "/MT";
+    case RuntimeLibrary::mtd:
+        return "/MTd";
+    }
+    return "/MD";
+}
+
 void append_configuration_arguments(
     std::vector<std::string>& arguments,
     const BuildConfiguration configuration) {
@@ -110,6 +124,13 @@ void append_configuration_arguments(
             return std::unexpected(invalid_request("additional compiler argument must not be empty"));
         }
         arguments.push_back(argument);
+    }
+
+    if (options.runtime_library) {
+        // Typed runtime policy has higher precedence than the raw escape hatch.
+        // Emitting it last keeps the explicit CRT selection authoritative while
+        // leaving the historical default preset byte-for-byte unchanged.
+        arguments.push_back(runtime_argument(*options.runtime_library));
     }
 
     return {};
@@ -270,7 +291,7 @@ MsvcCompiler::build_arguments(const CompileInvocation& invocation) {
     const bool c_translation_unit = is_c_translation_unit_path(invocation.source);
     std::vector<std::string> arguments;
     arguments.reserve(
-        21
+        22
         + invocation.options.defines.size()
         + invocation.options.include_directories.size()
         + invocation.options.additional_arguments.size()
@@ -342,7 +363,7 @@ MsvcCompiler::build_header_unit_arguments(const HeaderUnitCompileInvocation& inv
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        22
+        23
         + invocation.options.defines.size()
         + invocation.options.include_directories.size()
         + invocation.options.additional_arguments.size());
