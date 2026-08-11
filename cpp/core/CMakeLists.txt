@@ -1,4 +1,6 @@
 add_library(mqb_core STATIC
+    src/ArchiveCache.cpp
+    src/ArchiveCacheFile.cpp
     src/BuildPlanner.cpp
     src/BuildSignature.cpp
     src/BuildTypes.cpp
