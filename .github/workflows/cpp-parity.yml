@@ -42,3 +42,11 @@ jobs:
           & (Join-Path $PWD 'cpp/tests/parity/shared_incremental_run.ps1') `
             -MqbPath $mqb `
             -RepoRoot $PWD
+
+      - name: Run shared library architecture and failure parity
+        shell: pwsh
+        run: |
+          $mqb = Join-Path $PWD "cpp/build-parity/apps/mqb/${{ matrix.configuration }}/mqb.exe"
+          & (Join-Path $PWD 'cpp/tests/parity/shared_library_arch_failure.ps1') `
+            -MqbPath $mqb `
+            -RepoRoot $PWD
