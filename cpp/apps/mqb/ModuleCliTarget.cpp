@@ -174,6 +174,7 @@ int run_module_target(
                   << "  project: " << path_text(request.project_root) << '\n';
         if (request.config_file) std::cout << "  config:  " << path_text(*request.config_file) << '\n';
         std::cout << "  pipeline: named-modules\n"
+                  << "  type:    " << to_string(request.link_options.target_kind) << '\n'
                   << "  jobs:    " << request.max_parallel_jobs
                   << (request.jobs_explicit ? "" : " (auto)") << '\n'
                   << "  cl:      " << path_text(toolchain.identity.compiler) << '\n'
@@ -193,7 +194,7 @@ int run_module_target(
             std::cout << "  libpath: " << path_text(directory) << '\n';
         }
         for (const auto& library : request.link_options.libraries) std::cout << "  lib:     " << library << '\n';
-        std::cout << "  exe:     " << path_text(request.target.executable) << '\n'
+        std::cout << "  output:  " << path_text(request.target.executable) << '\n'
                   << "  cache:   " << path_text(request.target.link_cache) << '\n';
     }
 
@@ -264,7 +265,7 @@ int run_module_target(
     } else {
         std::cout << "[up-to-date] " << path_text(target_request.target.executable.filename()) << '\n';
     }
-    std::cout << "executable: " << path_text(target_request.target.executable) << '\n';
+    std::cout << "output: " << path_text(target_request.target.executable) << '\n';
 
     if (!request.run_after_build) return 0;
     std::cout << "[run] " << path_text(target_request.target.executable.filename()) << '\n';
