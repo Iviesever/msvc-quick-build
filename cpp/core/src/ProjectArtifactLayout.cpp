@@ -1,13 +1,12 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 
-#include <algorithm>
+#include <array>
 #include <cctype>
-#include <cstdint>
+#include <cstddef>
 #include <filesystem>
-#include <iomanip>
-#include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace mqb {
@@ -26,33 +25,37 @@ namespace fs = std::filesystem;
     };
 }
 
-[[nodiscard]] fs::path normalize_existing_identity(const fs::path& path) {
-    fs::path normalized = path.lexically_normal();
-    std::error_code error_code;
-    if (!fs::exists(normalized, error_code) || error_code) {
-        return normalized;
-    }
-
-    error_code.clear();
-    fs::path canonical = fs::weakly_canonical(normalized, error_code);
-    if (error_code || canonical.empty()) {
-        return normalized;
-    }
-    return canonical.lexically_normal();
+[[nodiscard]] char ascii_lower(const char value) noexcept {
+    const unsigned char byte = static_cast<unsigned char>(value);
+    return static_cast<char>(std::tolower(byte));
 }
 
-[[nodiscard]] fs::path windows_identity_casefold(fs::path path) {
-#ifdef _WIN32
-    std::string value = path.generic_string();
-    std::transform(
-        value.begin(),
-        value.end(),
-        value.begin(),
-        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return fs::path{value};
-#else
-    return path;
-#endif
+[[nodiscard]] std::string lower_ascii(std::string value) {
+    for (char& ch : value) {
+        ch = ascii_lower(ch);
+    }
+    return value;
+}
+
+[[nodiscard]] std::string path_text(const fs::path& path) {
+    const auto bytes = path.lexically_normal().generic_u8string();
+    return std::string{
+        reinterpret_cast<const char*>(bytes.data()),
+        bytes.size()};
+}
+
+[[nodiscard]] fs::path normalize_existing_identity(fs::path path) {
+    std::error_code error_code;
+    fs::path absolute = fs::absolute(path, error_code);
+    if (!error_code) {
+        path = std::move(absolute);
+    }
+    error_code.clear();
+    fs::path canonical = fs::weakly_canonical(path, error_code);
+    if (!error_code) {
+        return canonical.lexically_normal();
+    }
+    return path.lexically_normal();
 }
 
 [[nodiscard]] bool safe_relative(const fs::path& relative) {
@@ -67,65 +70,42 @@ namespace fs = std::filesystem;
     return true;
 }
 
-[[nodiscard]] std::optional<fs::path> physical_relative(
-    const fs::path& project_root,
-    const fs::path& source) {
-    std::error_code error_code;
-    if (!fs::exists(project_root, error_code) || error_code) return std::nullopt;
-    error_code.clear();
-    if (!fs::exists(source, error_code) || error_code) return std::nullopt;
-
-    fs::path current = source.parent_path();
-    fs::path relative = source.filename();
-    while (!current.empty()) {
-        error_code.clear();
-        if (fs::equivalent(current, project_root, error_code) && !error_code) {
-            return windows_identity_casefold(relative.lexically_normal());
-        }
-        const fs::path parent = current.parent_path();
-        if (parent.empty() || parent == current) break;
-        relative = current.filename() / relative;
-        current = parent;
+[[nodiscard]] std::uint64_t fnv1a64(std::string_view value) noexcept {
+    std::uint64_t hash = 14695981039346656037ull;
+    for (const unsigned char byte : value) {
+        hash ^= byte;
+        hash *= 1099511628211ull;
     }
-    return std::nullopt;
+    return hash;
 }
 
-[[nodiscard]] std::string stable_path_hash(const fs::path& path) {
-    constexpr std::uint64_t offset = 14695981039346656037ull;
-    constexpr std::uint64_t prime = 1099511628211ull;
-    std::uint64_t hash = offset;
-    const auto bytes = windows_identity_casefold(path.lexically_normal()).generic_u8string();
-    for (const char8_t byte : bytes) {
-        hash ^= static_cast<std::uint8_t>(byte);
-        hash *= prime;
+[[nodiscard]] std::string hex64(const std::uint64_t value) {
+    static constexpr std::array<char, 16> digits{
+        '0', '1', '2', '3', '4', '5', '6', '7',
+        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    std::string result(16, '0');
+    std::uint64_t remaining = value;
+    for (std::size_t index = result.size(); index > 0; --index) {
+        result[index - 1] = digits[remaining & 0x0fu];
+        remaining >>= 4u;
     }
-
-    std::ostringstream stream;
-    stream << std::hex << std::setfill('0') << std::setw(16) << hash;
-    return stream.str();
+    return result;
 }
 
 [[nodiscard]] fs::path source_key(
     const fs::path& project_root,
     const fs::path& source) {
     const fs::path normalized_source = normalize_existing_identity(source);
-
-    if (auto relative = physical_relative(project_root, normalized_source)) {
-        return *relative;
-    }
-
-    fs::path relative = normalized_source.lexically_relative(project_root);
-#ifdef _WIN32
-    relative = windows_identity_casefold(std::move(relative));
-#endif
+    const fs::path normalized_root = normalize_existing_identity(project_root);
+    const fs::path relative = normalized_source.lexically_relative(normalized_root);
     if (safe_relative(relative)) {
         return relative;
     }
 
-    const fs::path identity = windows_identity_casefold(normalized_source);
-    return fs::path{".external"}
-        / stable_path_hash(identity)
-        / identity.filename();
+    const std::string normalized = lower_ascii(path_text(normalized_source));
+    const std::string filename = normalized_source.filename().string();
+    return fs::path{"external"}
+        / (hex64(fnv1a64(normalized)) + "_" + filename);
 }
 
 [[nodiscard]] bool valid_target_name(const std::string_view target_name) {
@@ -212,11 +192,19 @@ ProjectArtifactLayout::for_target(
 
     fs::path executable = artifact_root_ / "bin" / std::string{target_name};
     executable += target_suffix(target_kind);
-    fs::path link_cache = artifact_root_ / "cache" / "link" / std::string{target_name};
-    link_cache += ".linkcache";
+
+    fs::path cache;
+    if (target_kind == TargetKind::static_library) {
+        cache = artifact_root_ / "cache" / "archive" / std::string{target_name};
+        cache += ".archivecache";
+    } else {
+        cache = artifact_root_ / "cache" / "link" / std::string{target_name};
+        cache += ".linkcache";
+    }
+
     return TargetArtifacts{
         .executable = std::move(executable),
-        .link_cache = std::move(link_cache),
+        .link_cache = std::move(cache),
     };
 }
 
