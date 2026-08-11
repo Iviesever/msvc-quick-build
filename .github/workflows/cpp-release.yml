@@ -256,6 +256,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             throw "Release $tag already exists. Stable release publication is immutable; refusing to overwrite it."
           }
+          exit 0
 
       - name: Publish validated GitHub release
         shell: pwsh
