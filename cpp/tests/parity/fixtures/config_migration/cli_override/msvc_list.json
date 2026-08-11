@@ -1,8 +1,0 @@
-{
-  "config": "release",
-  "std": "17",
-  "type": "static",
-  "output": "should_not_win",
-  "defines": ["PARITY_CONFIG=41"],
-  "include": ["include"]
-}
