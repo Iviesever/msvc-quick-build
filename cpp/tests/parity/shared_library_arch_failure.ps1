@@ -27,7 +27,7 @@ if (-not (Test-Path -LiteralPath $fixturesRoot -PathType Container)) {
 function Invoke-Captured {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory
     )
 
@@ -182,10 +182,10 @@ try {
     Assert-ContainsLine $psLibraryRun 'library=73' 'PowerShell library consumer program'
     Assert-ContainsLine $cppLibraryRun 'library=73' 'C++ library consumer program'
 
-    # Architecture parity: both public CLIs must produce runnable x64 and x86 targets
-    # exposing the architecture selected through MSVC predefined macros.
+    # Architecture parity: legacy default is x64; both public CLIs must also
+    # produce a runnable x86 target exposing the selected MSVC architecture macro.
     $architectures = @(
-        [pscustomobject]@{ Name = 'x64'; GoldenFlag = '-x64'; NativeFlag = '--x64'; Expected = 'arch=x64' },
+        [pscustomobject]@{ Name = 'x64'; GoldenFlag = $null; NativeFlag = '--x64'; Expected = 'arch=x64' },
         [pscustomobject]@{ Name = 'x86'; GoldenFlag = '-x86'; NativeFlag = '--x86'; Expected = 'arch=x86' }
     )
     foreach ($architecture in $architectures) {
@@ -196,9 +196,12 @@ try {
         Copy-Fixture -Name 'architecture' -Destination $archCppRoot
 
         $outputName = "parity_arch_$($architecture.Name)"
-        $psArch = Invoke-GoldenBuild -WorkingDirectory $archPsRoot -Arguments @(
-            'main.cpp', $architecture.GoldenFlag, '-o', $outputName
-        )
+        $psArchArguments = @('main.cpp')
+        if ($architecture.GoldenFlag) {
+            $psArchArguments += $architecture.GoldenFlag
+        }
+        $psArchArguments += @('-o', $outputName)
+        $psArch = Invoke-GoldenBuild -WorkingDirectory $archPsRoot -Arguments $psArchArguments
         $cppArch = Invoke-NativeBuild -WorkingDirectory $archCppRoot -Arguments @(
             'main.cpp', '--env', 'vs', $architecture.NativeFlag, '-o', $outputName
         )
