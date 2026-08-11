@@ -188,9 +188,20 @@ int main() {
     expect(has_reason(mutated->compiles[0].result.validation, mqb::BuildReason::explicit_rebuild),
            "consumer rebuild propagation should remain an explicit typed reason");
 
-    const auto header_time = fs::last_write_time(header, time_error);
+    // The mutation was deliberately future-dated only to make the stale check
+    // deterministic. After the rebuild, restore the source to a timestamp just
+    // before the newly created IFC. Do not push the IFC itself into the future:
+    // consumers track that IFC as a dependency, so doing so would correctly
+    // make their existing object stale again.
     time_error.clear();
-    fs::last_write_time(header_artifacts->module_interface, header_time + std::chrono::seconds{1}, time_error);
+    const auto rebuilt_ifc_time = fs::last_write_time(
+        header_artifacts->module_interface,
+        time_error);
+    expect(!time_error, "rebuilt fixture requires the new header-unit IFC timestamp");
+    time_error.clear();
+    fs::last_write_time(header, rebuilt_ifc_time - std::chrono::seconds{1}, time_error);
+    expect(!time_error, "test should normalize the header timestamp behind the rebuilt IFC");
+
     auto warm_again = wave.run(request);
     if (!warm_again) { print_error(warm_again.error()); return 1; }
     expect(!warm_again->header_unit_compiles[0].result.compiled
