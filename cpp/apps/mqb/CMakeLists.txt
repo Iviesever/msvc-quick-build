@@ -24,6 +24,7 @@ target_compile_definitions(mqb_cli PRIVATE MQB_VERSION="${MQB_VERSION}")
 add_executable(mqb
     main.cpp
     ModuleCliTarget.cpp
+    StaticCliTarget.cpp
 )
 
 target_link_libraries(mqb
