@@ -13,6 +13,7 @@
 
 #include "Cli.hpp"
 #include "ModuleCliTarget.hpp"
+#include "StaticCliTarget.hpp"
 #include "mqb/config/ProjectConfig.hpp"
 #include "mqb/config/ProjectOptions.hpp"
 #include "mqb/core/BuildTypes.hpp"
@@ -327,6 +328,8 @@ int main(const int argc, char* argv[]) {
         project_config = std::move(*loaded);
     }
 
+    const bool subsystem_explicit = options.subsystem_override.has_value()
+        || (project_config && project_config->build.subsystem.has_value());
     const fs::path project_root = project_config
         ? project_config->project_root
         : invocation_directory;
@@ -489,6 +492,40 @@ int main(const int argc, char* argv[]) {
     compiler_options.include_directories = std::move(options.include_directories);
     compiler_options.additional_arguments = std::move(options.compiler_arguments);
 
+    const bool module_target = discovery_requires_module_pipeline || std::any_of(
+        target_sources.begin(),
+        target_sources.end(),
+        [](const mqb::orchestration::TargetSourceRequest& source) {
+            return mqb::cli::is_module_interface_source(source.source);
+        });
+
+    if (options.build.target_kind == mqb::TargetKind::static_library) {
+        if (module_target) {
+            std::cerr << "error: static-library targets do not yet support the Modules/Header Unit pipeline\n";
+            return 2;
+        }
+        if (subsystem_explicit
+            || !options.library_directories.empty()
+            || !options.libraries.empty()
+            || !options.linker_arguments.empty()) {
+            std::cerr << "error: static-library targets do not accept linker-only policy "
+                         "(subsystem, library paths/libraries, or linker args)\n";
+            return 2;
+        }
+        return mqb::cli::run_static_target(
+            mqb::cli::StaticCliTargetRequest{
+                .sources = std::move(target_sources),
+                .target = std::move(*target_artifacts),
+                .compiler_options = std::move(compiler_options),
+                .project_root = project_root,
+                .target_name = target_name,
+                .max_parallel_jobs = compile_jobs,
+                .verbose = options.verbose,
+            },
+            *toolchain,
+            runner);
+    }
+
     mqb::LinkOptions link_options;
     link_options.configuration = options.build.configuration;
     link_options.architecture = options.build.architecture;
@@ -498,12 +535,6 @@ int main(const int argc, char* argv[]) {
     link_options.libraries = std::move(options.libraries);
     link_options.additional_arguments = std::move(options.linker_arguments);
 
-    const bool module_target = discovery_requires_module_pipeline || std::any_of(
-        target_sources.begin(),
-        target_sources.end(),
-        [](const mqb::orchestration::TargetSourceRequest& source) {
-            return mqb::cli::is_module_interface_source(source.source);
-        });
     if (module_target) {
         return mqb::cli::run_module_target(
             mqb::cli::ModuleCliTargetRequest{

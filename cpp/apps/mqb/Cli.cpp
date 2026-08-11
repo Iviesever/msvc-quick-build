@@ -61,13 +61,10 @@ parse_configuration(const std::string_view value) {
 parse_target_kind(const std::string_view value) {
     if (value == "exe" || value == "executable") return TargetKind::executable;
     if (value == "dll" || value == "dynamic") return TargetKind::dynamic_library;
-    if (value == "static" || value == "lib") {
-        return std::unexpected(error(
-            "static-library targets require the upcoming MSVC librarian pipeline"));
-    }
+    if (value == "static" || value == "lib") return TargetKind::static_library;
     return std::unexpected(error(
         "unsupported target kind '" + std::string{value}
-        + "' (expected exe or dll)"));
+        + "' (expected exe, dll, or static)"));
 }
 
 [[nodiscard]] std::expected<RuntimeLibrary, Error>
@@ -443,6 +440,8 @@ stay outside TU discovery but route through the P1689 module pipeline, where the
 built and cached automatically. Modules and header units require C++20 or newer; selecting
 C++14/17 for a target that requires the module pipeline fails closed before MSVC is invoked.
 External/prebuilt named-module providers and import std remain unsupported and fail closed.
+Static-library targets currently accept ordinary C/C++ translation units; static targets that
+require the Modules/Header Unit pipeline fail closed until archive topology is validated.
 
 Options:
   --debug                  Explicitly select Debug compile/link preset
@@ -450,11 +449,11 @@ Options:
   --config <debug|release> Select compile/link preset (legacy -config alias accepted)
   --std <14|17|20|23|latest>
                            Explicitly select C++ language standard (legacy -std accepted)
-  --type <exe|dll>         Select executable or DLL output kind (legacy -type accepted)
+  --type <exe|dll|static>  Select executable, DLL, or static-library output (legacy -type accepted)
   --runtime <MD|MDd|MT|MTd>
                            Explicitly select MSVC CRT runtime (legacy -runtime accepted)
   --subsystem <console|windows>
-                           Explicitly select PE subsystem (legacy -subsystem accepted)
+                           Explicitly select PE subsystem for executable/DLL targets (legacy -subsystem accepted)
   --x86 | --x64            Explicitly select target architecture (legacy -x86/-x64 accepted)
   -j, --jobs <N>           Maximum concurrent TU scans/compiles (default: hardware concurrency)
   -o, --output <name>      Set target name under .mqb/bin/ (legacy -output accepted)
@@ -473,14 +472,17 @@ Options:
   -h, --help               Show this help and the embedded build version (-help/-? accepted)
   --                       Pass all remaining argv elements to an executable program
 
+Static libraries are produced by MSVC lib.exe from the compiled object set. Linker-only policy
+(libraries, library search paths, subsystem, and raw linker arguments) does not apply to a static
+archive and is rejected when explicitly supplied for a static target.
+
 Raw compiler/linker arguments are one argv element per option occurrence; MQB does not split a
 quoted string into multiple switches. Project config entries are applied first and CLI raw args
 append afterward. Structured artifact routing such as /Fo, /scanDependencies, /DLL, /IMPLIB,
 /MACHINE and /OUT is emitted after raw arguments so the BuildPlan remains authoritative.
 
 Legacy compatibility aliases intentionally cover spelling only. Legacy-only semantics such as
--a string splitting and static-library output remain tracked by the stable-v5 parity inventory
-and are not silently accepted here.
+-a string splitting remain tracked by the stable-v5 parity inventory and are not silently accepted here.
 
 Job count is execution policy only; changing -j does not invalidate build caches.
 Discovery is source selection only. Incremental header freshness continues to use
@@ -491,8 +493,8 @@ Generated state:
   .mqb/deps/   compiler dependency metadata
   .mqb/scan/   module dependency scan metadata
   .mqb/ifc/    module/header-unit interface artifacts
-  .mqb/cache/  compile and link cache metadata
-  .mqb/bin/    linked executable/DLL and DLL import-library artifacts
+  .mqb/cache/  compile, link, and archive cache metadata
+  .mqb/bin/    executable, DLL/import-library, or static-library target artifacts
 )";
 }
 

@@ -224,4 +224,18 @@ BuildSignature BuildSignature::for_link(
     return BuildSignature{hasher.finish()};
 }
 
+BuildSignature BuildSignature::for_archive(
+    const std::span<const std::filesystem::path> objects,
+    const std::filesystem::path& output,
+    const LibrarianIdentity& librarian) {
+    StableHasher hasher;
+    hasher.add_string("mqb.archive.signature.v1");
+    hasher.add_paths(objects);
+    hasher.add_path(output);
+    hasher.add_path(librarian.librarian);
+    hasher.add_string(librarian.version);
+    hasher.add_string(librarian.binary_stamp);
+    return BuildSignature{hasher.finish()};
+}
+
 } // namespace mqb

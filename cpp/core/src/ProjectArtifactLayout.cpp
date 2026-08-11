@@ -212,11 +212,19 @@ ProjectArtifactLayout::for_target(
 
     fs::path executable = artifact_root_ / "bin" / std::string{target_name};
     executable += target_suffix(target_kind);
-    fs::path link_cache = artifact_root_ / "cache" / "link" / std::string{target_name};
-    link_cache += ".linkcache";
+
+    fs::path target_cache;
+    if (target_kind == TargetKind::static_library) {
+        target_cache = artifact_root_ / "cache" / "archive" / std::string{target_name};
+        target_cache += ".archivecache";
+    } else {
+        target_cache = artifact_root_ / "cache" / "link" / std::string{target_name};
+        target_cache += ".linkcache";
+    }
+
     return TargetArtifacts{
         .executable = std::move(executable),
-        .link_cache = std::move(link_cache),
+        .link_cache = std::move(target_cache),
     };
 }
 

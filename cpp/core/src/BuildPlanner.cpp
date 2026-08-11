@@ -117,4 +117,37 @@ std::expected<BuildPlan, BuildPlannerError> BuildPlanner::plan_link(
     return plan;
 }
 
+std::expected<BuildPlan, BuildPlannerError> BuildPlanner::plan_archive(
+    const ArchivePlanItem& item) {
+    BuildPlan plan;
+    if (item.cache_validation.reusable()) {
+        return plan;
+    }
+
+    if (item.objects.empty()) {
+        return std::unexpected(BuildPlannerError{
+            .code = BuildPlannerErrorCode::missing_archive_input,
+        });
+    }
+    for (const auto& object : item.objects) {
+        if (object.empty()) {
+            return std::unexpected(BuildPlannerError{
+                .code = BuildPlannerErrorCode::missing_archive_input,
+            });
+        }
+    }
+    if (item.output.empty()) {
+        return std::unexpected(BuildPlannerError{
+            .code = BuildPlannerErrorCode::missing_archive_output,
+        });
+    }
+
+    plan.actions.emplace_back(ArchiveAction{
+        .objects = item.objects,
+        .output = item.output,
+        .reasons = item.cache_validation.reasons,
+    });
+    return plan;
+}
+
 } // namespace mqb

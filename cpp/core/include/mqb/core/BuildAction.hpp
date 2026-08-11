@@ -23,11 +23,17 @@ struct LinkAction {
     std::vector<BuildReason> reasons;
 };
 
+struct ArchiveAction {
+    std::vector<std::filesystem::path> objects;
+    std::filesystem::path output;
+    std::vector<BuildReason> reasons;
+};
+
 struct RunAction {
     std::filesystem::path executable;
     std::vector<std::string> arguments;
 };
 
-using BuildAction = std::variant<CompileAction, LinkAction, RunAction>;
+using BuildAction = std::variant<CompileAction, LinkAction, ArchiveAction, RunAction>;
 
 } // namespace mqb

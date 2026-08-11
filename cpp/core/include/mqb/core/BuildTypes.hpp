@@ -27,8 +27,6 @@ enum class CppStandard {
 enum class TargetKind {
     executable,
     dynamic_library,
-    // Reserved for the librarian-backed target slice. The public CLI/config
-    // will not accept static until the lib.exe pipeline is implemented.
     static_library,
 };
 
@@ -41,6 +39,8 @@ enum class BuildReason {
     compiler_options_changed,
     link_inputs_changed,
     linker_options_changed,
+    archive_inputs_changed,
+    archive_recipe_changed,
     explicit_rebuild,
 };
 

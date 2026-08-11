@@ -68,6 +68,10 @@ std::string_view to_string(const BuildReason value) noexcept {
         return "link inputs changed";
     case BuildReason::linker_options_changed:
         return "linker options changed";
+    case BuildReason::archive_inputs_changed:
+        return "archive inputs changed";
+    case BuildReason::archive_recipe_changed:
+        return "archive recipe changed";
     case BuildReason::explicit_rebuild:
         return "explicit rebuild";
     }
