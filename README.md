@@ -5,9 +5,9 @@
 > **当前迁移状态**
 >
 > - `cpp/` 中的 **C++23 重构版 (`mqb.exe`)** 已具备普通 C/C++、project-local named modules 与 project-local header units 的端到端构建链，并由 Visual Studio 2026 真实工具链 E2E 持续验证。
-> - `v5.0.0-rc.2` 是 C++ 重构版的第二个可分发 Release Candidate；它新增原生 `.c`、typed runtime/subsystem CLI 与 `mqb.json` policy，**尚不代表 PowerShell → C++ 的最终 cutover**。
-> - **当前 `main` 已领先于 rc.2**：普通 C/C++ 目标已具备 typed `exe` / `dll` / `static` 输出，以及耦合的 typed LTCG（compile `/GL` + downstream `/LTCG`）；CLI 与 strict `mqb.json` 都可表达这些 policy。这些能力尚未作为新的 prerelease 发布。
-> - `build.ps1` 仍保留为 **PowerShell Golden Reference / 过渡期稳定入口**；现有 `install.bat` 和 PowerShell profile 不会被 RC 静默替换。
+> - `v5.0.0-rc.2` 是 C++ 重构版的第二个已发布 Release Candidate；它**不包含**后续 mainline 的最终 installer/default-entry cutover。
+> - **当前 `main` 已领先于 rc.2**：普通 C/C++ 目标已具备 typed `exe` / `dll` / `static`、typed LTCG，以及完成的 PowerShell ↔ C++ shared parity campaign；stable-v5 安装入口也已切换为 native `mqb.exe`，同时保留 `build` compatibility shim 与明确 rollback 路径。这些 post-rc.2 能力尚未作为正式 stable 包发布。
+> - `build.ps1` 继续保留为 **PowerShell Golden Reference / rollback implementation**，但不再是新的 stable-v5 安装默认入口。
 > - MQB 不宣称与 MSBuild “1:1 等价”。当前原则是：显式建模已支持的常用 MSVC 语义，并用真实编译器回归测试证明行为。
 
 ## v5.0.0-rc.2 C++ Release Candidate
@@ -38,7 +38,7 @@ MQB 5.0.0-rc.2 - MSVC Quick Build (C++ refactor)
 
 发布二进制使用静态 MSVC runtime，避免要求用户额外安装 Visual C++ Redistributable。Release Candidate 的完整边界见 [`release/v5.0.0-rc.2.md`](release/v5.0.0-rc.2.md)。
 
-> 本节描述**已发布的 rc.2 包**。下面“现在能做什么”描述的是**当前仓库 mainline**，因此会包含 rc.2 之后已经合入但尚未重新发布的能力。
+> 本节描述**已发布的 rc.2 包**。下面“现在能做什么”和 stable-v5 cutover 说明描述的是**当前仓库 mainline**，因此会包含 rc.2 之后已经合入但尚未重新发布的能力。
 
 ---
 
@@ -70,9 +70,9 @@ MQB 5.0.0-rc.2 - MSVC Quick Build (C++ refactor)
 - external / prebuilt named-module providers；
 - `import std;`；
 - 需要 named-module / header-unit pipeline 的 static-library target（普通 C/C++ static target 已支持）；
-- 将当前 C++ mainline 宣称为 PowerShell 版本的完整行为替代品。
+- 将 native v5 宣称为旧 PowerShell / MSBuild 的无差异完整行为复制品；稳定边界以 `docs/V5_PARITY.md` 中已测试的 compat/migration 分类为准。
 
-Modules 剩余扩展策略跟踪在 Issue #16；最终 stable v5 还需要 PowerShell ↔ C++ parity / installer / default-entry cutover 的独立验收。
+Modules 剩余扩展策略跟踪在 Issue #16；stable-v5 的普通目标 parity 与 installer/default-entry cutover 已完成，剩余发布门主要是 stable release workflow generalization 与 exact-artifact publication。
 
 ---
 
@@ -86,7 +86,7 @@ cmake --build cpp/build --config Release --target mqb
 .\cpp\build\apps\mqb\Release\mqb.exe --help
 ```
 
-默认开发构建版本为 `5.0.0-dev`。发布流水线会显式传入 `-DMQB_VERSION=5.0.0-rc.2`，因此开发二进制不会冒充已发布版本。
+默认开发构建版本为 `5.0.0-dev`。当前 RC 发布流水线仍显式传入 `-DMQB_VERSION=5.0.0-rc.2`，因此开发二进制不会冒充已发布版本；stable workflow generalization 会在正式 `v5.0.0` 发布前独立收口。
 
 ### 运行完整测试
 
@@ -265,7 +265,7 @@ C++ 重构版使用根目录 `mqb.json`，不是 PowerShell 版本的 `msvc_list
 }
 ```
 
-MQB 从 invocation directory 向上查找最近的 `mqb.json`；配置文件所在目录成为 project root 和 `.mqb/` 根。`build.type` 支持 `exe` / `dll` / `static`（以及 `executable` / `dynamic` / `lib` aliases）；`build.ltcg` 是 strict boolean typed policy。完整 schema、路径基准、precedence 与 cache 行为见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
+MQB 从 invocation directory 向上查找最近的 `mqb.json`；配置文件所在目录成为 project root 和 `.mqb/` 根。`build.type` 支持 `exe` / `dll` / `static`（以及 `executable` / `dynamic` / `lib` aliases）；`build.ltcg` 是 strict boolean typed policy。完整 schema、路径基准、precedence 与 cache 行为见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。PowerShell `msvc_list.json` → native `mqb.json` 的迁移边界与 paired parity 见 [`docs/V5_CONFIG_MIGRATION.md`](docs/V5_CONFIG_MIGRATION.md)。
 
 ---
 
@@ -346,24 +346,53 @@ Optional executable run
 
 ---
 
-## PowerShell Golden Reference（过渡期）
+## Stable-v5 installer / PowerShell Golden Reference
 
-根目录的 `build.ps1`、`install.bat`、`Microsoft.PowerShell_profile.ps1` 仍属于旧 PowerShell 实现。它们继续保持已有用户的稳定入口、作为 C++ 迁移 Golden Reference，并支撑后续 parity campaign。
+当前 mainline 的安装默认入口已经切到 native `mqb.exe`：
 
-**`v5.0.0-rc.2` 不修改这套安装入口。** RC 用户应直接解压 `mqb.exe` 并自行加入 PATH；在 stable v5 的 parity/cutover 通过之前，不应把 `install.bat` 理解为 C++ `mqb.exe` 的安装器。
+```powershell
+.\install.bat
+```
 
-旧 `msvc_list.json` / PowerShell 参数体系也不等于 C++ 的 `mqb.json` schema；不要混用两套配置契约。
+默认安装根仍是 `%USERPROFILE%\bin`。安装后：
+
+- `mqb` 是 canonical 命令；
+- `build` 由 `build.cmd` 作为 compatibility shim 直接转发到 `mqb.exe`；
+- 安装器只在需要迁移已知 legacy profile 时添加带 marker 的受控 block，不再覆盖整个 PowerShell profile；
+- 安装器不会覆盖或删除已有 `%USERPROFILE%\bin\build.ps1`；升级时会保留 `build-legacy.ps1` 供 rollback；
+- user PATH 只在缺失时添加，并记录 ownership；uninstall / rollback 只撤销 v5 自己拥有的状态。
+
+显式卸载：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File "$HOME\bin\uninstall-mqb.ps1"
+```
+
+回滚到 PowerShell Golden Reference：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File "$HOME\bin\uninstall-mqb.ps1" `
+  -RestoreLegacy
+```
+
+根目录的 `build.ps1` 继续作为 shared parity 的 PowerShell Golden Reference；它被保留用于迁移验证和 rollback，而不是新的 stable-v5 默认执行路径。
+
+完整安装、profile ownership、PATH ownership、clean install、upgrade 与 rollback 契约见 [`docs/V5_INSTALL_CUTOVER.md`](docs/V5_INSTALL_CUTOVER.md)。
+
+> **发布边界：** 已发布的 `v5.0.0-rc.2` 仍是 standalone C++ candidate，并不包含上述 post-rc.2 installer cutover。正式 stable `v5.0.0` 必须由后续 generalized release workflow 把**同一份已验证 binary + installer files**打包并发布。
 
 ---
 
 ## 当前路线
 
-- **已发布 `v5.0.0-rc.2`**：交付原生 C translation units 与 typed runtime/subsystem policy 的 C++ standalone candidate；
-- **当前 mainline**：普通 C/C++ `exe` / `dll` / `static` typed target-kind parity 与 typed LTCG 已完成，CLI + strict `mqb.json` + compile/link/archive identity + 真实 MSVC executable/static consumer E2E 已合入，但尚未重新发布；
-- **下一主线**：shared PowerShell ↔ C++ parity fixtures/harness，用同一批 observable fixtures 对照普通目标、config precedence、incremental rebuild、libraries、run argv、x86/x64、Debug/Release 与失败行为；
-- **随后**：installer/profile/default-entry cutover → stable release workflow generalization；
+- **已发布 `v5.0.0-rc.2`**：保留为已验证的 standalone C++ Release Candidate，不追写 post-rc.2 installer 能力；
+- **shared parity campaign**：single/multi-TU、Debug/Release、incremental no-op/source mutation、run argv、static library consumer、x64/x86、compile failure、`msvc_list.json` → `mqb.json` config migration 已完成；
+- **installer/profile/default-entry cutover**：当前 mainline 已切换到 native `mqb.exe` + `build.cmd` compatibility shim，并具备 clean install / legacy upgrade / uninstall / rollback Windows gate；
+- **下一主线**：generalize stable release workflow，打包经过同一 gate 验证的 binary + installer/rollback files，补 stable migration/release notes，并从 exact artifact 发布 `v5.0.0`；
 - **Issue #16**：独立继续 external/prebuilt named-module providers 与 `import std`；
-- 满足 stable gate 后，从**同一份已验证 artifact** 发布正式 `v5.0.0`，再逐步收缩 PowerShell Golden Reference。
+- stable 发布后再逐步收缩 PowerShell Golden Reference，同时保留 v4.x → v5 的历史迁移指导。
 
 ## License
 
