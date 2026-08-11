@@ -16,6 +16,7 @@ enum class LinkSubsystem {
 struct LinkOptions {
     BuildConfiguration configuration{BuildConfiguration::debug};
     Architecture architecture{Architecture::x64};
+    TargetKind target_kind{TargetKind::executable};
     LinkSubsystem subsystem{LinkSubsystem::console};
     std::vector<std::filesystem::path> library_directories;
     std::vector<std::string> libraries;
