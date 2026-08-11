@@ -248,3 +248,8 @@ try {
 finally {
     Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# The final parity scenario intentionally invokes failing compiler processes.
+# Normalize the script result only after every assertion above has completed;
+# any thrown assertion skips this line and still fails the workflow step.
+exit 0
