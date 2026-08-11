@@ -44,7 +44,7 @@ Status meanings:
 | `-runtime MD/MDd/MT/MTd` | `--runtime`; legacy `-runtime` accepted | **compat** |
 | `-ltcg` | `--ltcg` / `--no-ltcg`; legacy `-ltcg` enables the same coupled typed policy | **compat** |
 | `-subsystem console/windows` | `--subsystem`; legacy `-subsystem` accepted | **compat** |
-| `-env vs/portable/port/p/auto` | `--env auto/vs/portable`; legacy spelling and portable aliases accepted | **compat** |
+| PowerShell `-env vs/portable/port/p/auto` | native `--env auto/vs/portable` (and parser-compatible `-env`) is invocation-scoped, while PowerShell `-env` writes/removes a persistent preference file and exits | **migrate** semantics; keep native invocation-scoped selection and document the legacy preference-file transition |
 | `-help`, `-?` | `--help`, `-h`; legacy help aliases accepted | **compat** |
 | `-flags` | `--compiler-arg <one argv>`; legacy `-flags <one argv>` accepted and repeatable | **compat** with explicit one-argv-per-occurrence semantics |
 | `-link_flags` | `--linker-arg <one argv>`; legacy alias accepted and repeatable | **compat** with explicit one-argv-per-occurrence semantics |
@@ -113,9 +113,11 @@ Typed LTCG is a single coupled policy, not two user-maintained raw lists. Enabli
 | Visual Studio discovery | ready | **ready** |
 | portable MSVC discovery | ready | **ready** |
 | automatic preference | ready | **ready** |
-| environment aliases `portable/port/p` | parser compatibility added | **compat** |
+| environment aliases `portable/port/p` | native parser accepts the legacy spellings for invocation-scoped selection | **compat spelling only**; PowerShell `-env` command semantics still migrate |
 | legacy `.msvc_build_env` preference file | native does not use it | **migrate** to explicit CLI/config/environment contract; document upgrade |
 | cached vcvars environment text file | native locator owns process environment differently | **migrate** implementation detail; no parity requirement |
+
+The installed PowerShell profile prefers `pwsh.exe -NoProfile -File build.ps1` and falls back to the current host only when PowerShell 7 is unavailable. Shared parity tests mirror that host-selection behavior. They intentionally do not invoke `build.ps1 -env vs` as part of a build, because that legacy command persists the preference and exits instead of selecting Visual Studio for only that invocation.
 
 ## Incremental/artifact behavior
 
@@ -143,6 +145,6 @@ Project-local named modules and project-local header units are in the RC/stable-
 8. Native DLL target kind with typed linker routing, deterministic import library, and side-output repair. **Done in #35.**
 9. Static-library target with an explicit `lib.exe`/librarian backend, archive cache owner, strict `mqb.json` target kind, and real CLI/config consumer coverage. **Done in #36 + #37.**
 10. Close the high-value coupled MSVC LTCG gap with typed `/GL` + downstream `/LTCG`, config/CLI precedence, cache identities, and real executable/static E2E. **Done in #39.** Charset remains evidence-driven rather than an automatic typed-surface requirement.
-11. Shared PowerShell-vs-C++ fixtures for ordinary targets, config precedence, incremental rebuilds, libraries, run argv, x86/x64, Debug/Release, and failure behavior.
+11. Shared PowerShell-vs-C++ fixtures for ordinary targets, config precedence, incremental rebuilds, libraries, run argv, x86/x64, Debug/Release, and failure behavior. **Harness foundation in #40:** same committed fixtures run through isolated PowerShell/C++ sandboxes with observable-result comparison; initial single-TU, explicit multi-TU, Debug, and Release scenarios are covered. Config/incremental/libraries/run argv/x86/x64/failure scenarios remain follow-up slices.
 12. Installer/profile/`build` command cutover and clean-machine upgrade/rollback validation.
 13. Generalize the release workflow and publish stable v5 only from the exact validated artifact.

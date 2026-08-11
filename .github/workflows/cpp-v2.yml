@@ -7,6 +7,7 @@ on:
       - refactor/cpp-v2
   pull_request:
     paths:
+      - 'build.ps1'
       - 'cpp/**'
       - 'README.md'
       - 'docs/CPP_V2_ARCHITECTURE.md'

@@ -3,6 +3,7 @@ name: C++ Release Candidate
 on:
   pull_request:
     paths:
+      - 'build.ps1'
       - 'cpp/**'
       - 'README.md'
       - 'docs/**'
