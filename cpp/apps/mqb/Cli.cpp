@@ -46,6 +46,15 @@ parse_standard(const std::string_view value) {
         + "' (expected 20, 23, or latest)"));
 }
 
+[[nodiscard]] std::expected<BuildConfiguration, Error>
+parse_configuration(const std::string_view value) {
+    if (value == "debug") return BuildConfiguration::debug;
+    if (value == "release") return BuildConfiguration::release;
+    return std::unexpected(error(
+        "unsupported build configuration '" + std::string{value}
+        + "' (expected debug or release)"));
+}
+
 [[nodiscard]] std::expected<std::size_t, Error>
 parse_jobs(const std::string_view value) {
     std::size_t jobs = 0;
@@ -64,7 +73,9 @@ parse_jobs(const std::string_view value) {
 parse_toolchain_preference(const std::string_view value) {
     if (value == "auto") return msvc::ToolchainPreference::automatic;
     if (value == "vs") return msvc::ToolchainPreference::visual_studio;
-    if (value == "portable") return msvc::ToolchainPreference::portable;
+    if (value == "portable" || value == "port" || value == "p") {
+        return msvc::ToolchainPreference::portable;
+    }
     return std::unexpected(error(
         "unsupported toolchain preference '" + std::string{value}
         + "' (expected auto, vs, or portable)"));
@@ -107,7 +118,8 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             }
             break;
         }
-        if (argument == "-h" || argument == "--help") {
+        if (argument == "-h" || argument == "--help"
+            || argument == "-help" || argument == "-?") {
             options.show_help = true;
             continue;
         }
@@ -125,7 +137,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.discovery_override = false;
             continue;
         }
-        if (argument == "--run") {
+        if (argument == "--run" || argument == "-run") {
             options.build.run_after_build = true;
             continue;
         }
@@ -151,7 +163,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.jobs = *jobs;
             continue;
         }
-        if (argument == "-o" || argument == "--output") {
+        if (argument == "-o" || argument == "--output" || argument == "-output") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             options.build.output_name = std::string{*value};
@@ -173,17 +185,26 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.configuration_override = BuildConfiguration::release;
             continue;
         }
-        if (argument == "--x86") {
+        if (argument == "--config" || argument == "-config") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            auto configuration = parse_configuration(*value);
+            if (!configuration) return std::unexpected(configuration.error());
+            options.build.configuration = *configuration;
+            options.configuration_override = *configuration;
+            continue;
+        }
+        if (argument == "--x86" || argument == "-x86") {
             options.build.architecture = Architecture::x86;
             options.architecture_override = Architecture::x86;
             continue;
         }
-        if (argument == "--x64") {
+        if (argument == "--x64" || argument == "-x64") {
             options.build.architecture = Architecture::x64;
             options.architecture_override = Architecture::x64;
             continue;
         }
-        if (argument == "--std") {
+        if (argument == "--std" || argument == "-std") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             auto standard = parse_standard(*value);
@@ -192,7 +213,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.standard_override = *standard;
             continue;
         }
-        if (argument == "--env") {
+        if (argument == "--env" || argument == "-env") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             auto preference = parse_toolchain_preference(*value);
@@ -206,7 +227,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.portable_roots.emplace_back(std::string{*value});
             continue;
         }
-        if (argument == "--lib-path") {
+        if (argument == "--lib-path" || argument == "-libpath") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             options.library_directories.emplace_back(std::string{*value});
@@ -218,7 +239,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.library_directories.emplace_back(std::string{*value});
             continue;
         }
-        if (argument == "--lib") {
+        if (argument == "--lib" || argument == "-libs") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
             options.libraries.emplace_back(*value);
@@ -228,6 +249,18 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto value = long_equals_value(argument, "--lib=");
             if (!value) return std::unexpected(value.error());
             options.libraries.emplace_back(*value);
+            continue;
+        }
+        if (argument == "-include") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            options.include_directories.emplace_back(std::string{*value});
+            continue;
+        }
+        if (argument == "-defines") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            options.defines.emplace_back(*value);
             continue;
         }
         if (argument == "-I" || argument.starts_with("-I")) {
@@ -304,22 +337,27 @@ remain unsupported and fail closed.
 Options:
   --debug                  Explicitly select Debug compile/link preset
   --release                Explicitly select Release compile/link preset
-  --std <20|23|latest>     Explicitly select C++ language standard
-  --x86 | --x64            Explicitly select target architecture
+  --config <debug|release> Select compile/link preset (legacy -config alias accepted)
+  --std <20|23|latest>     Explicitly select C++ language standard (legacy -std accepted)
+  --x86 | --x64            Explicitly select target architecture (legacy -x86/-x64 accepted)
   -j, --jobs <N>           Maximum concurrent TU scans/compiles (default: hardware concurrency)
-  -o, --output <name>      Set target executable name under .mqb/bin/
-  --run                    Run the executable after a successful build
-  -I <dir>, -I<dir>        Add an include directory
-  -D <value>, -D<value>    Add a preprocessor definition
-  -L <dir>, -L<dir>        Add a library search directory
+  -o, --output <name>      Set target executable name under .mqb/bin/ (legacy -output accepted)
+  --run                    Run the executable after a successful build (legacy -run accepted)
+  -I <dir>, -I<dir>        Add an include directory (legacy -include accepted)
+  -D <value>, -D<value>    Add a preprocessor definition (legacy -defines accepted)
+  -L <dir>, -L<dir>        Add a library search directory (legacy -libpath accepted)
   --lib-path <dir>         Add a library search directory
   -l <name>, -l<name>      Link a library ('.lib' is optional)
-  --lib <name>             Link a library (name or explicit path)
-  --env <auto|vs|portable> Toolchain selection (default: auto)
+  --lib <name>             Link a library (legacy -libs accepted; repeat for multiple values)
+  --env <auto|vs|portable> Toolchain selection (legacy -env and portable/port/p accepted)
   --portable-root <dir>    Add a portable_msvc root candidate
   -v, --verbose            Show config, discovery, toolchain, and artifact details
-  -h, --help               Show this help and the embedded build version
+  -h, --help               Show this help and the embedded build version (-help/-? accepted)
   --                       Pass all remaining argv elements to the program
+
+Legacy compatibility aliases intentionally cover spelling only. Legacy-only semantics such as
+-a string splitting, DLL/static output kinds, C++14/17, and MSVC tuning switches remain tracked
+by the stable-v5 parity inventory and are not silently accepted here.
 
 Job count is execution policy only; changing -j does not invalidate build caches.
 Discovery is source selection only. Incremental header freshness continues to use
