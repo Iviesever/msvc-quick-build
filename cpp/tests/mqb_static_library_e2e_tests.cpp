@@ -91,24 +91,35 @@ int main(int argc, char* argv[]) {
     return 42;
 }
 )cpp");
+    write_text(tree.root / "obsolete.cpp", R"cpp(extern "C" int mqb_obsolete() {
+    return 7;
+}
+)cpp");
     write_text(tree.root / "consumer.cpp", R"cpp(extern "C" int mqb_answer();
 int main() {
     return mqb_answer();
 }
 )cpp");
+    write_text(tree.root / "obsolete_consumer.cpp", R"cpp(extern "C" int mqb_obsolete();
+int main() {
+    return mqb_obsolete();
+}
+)cpp");
 
     const fs::path library = tree.root / ".mqb" / "bin" / "math.lib";
     const fs::path consumer = tree.root / ".mqb" / "bin" / "consumer.exe";
+    const fs::path obsolete_consumer = tree.root / ".mqb" / "bin" / "obsolete_consumer.exe";
 
     auto cold = run_process(
         runner, mqb_executable, tree.root,
-        {"math.cpp", "--no-discover", "--env", "vs", "--type", "static", "-o", "math"});
+        {"math.cpp", "obsolete.cpp", "--env", "vs", "--type", "static", "-o", "math"});
     expect(cold.has_value(), "cold static-library invocation should launch");
     if (cold) {
         if (cold->exit_code != 0) dump_failure(*cold);
         expect(cold->exit_code == 0, "cold static-library target should succeed");
-        expect(cold->stdout_text.find("[compile] math.cpp") != std::string::npos,
-               "cold static target should compile source");
+        expect(cold->stdout_text.find("[compile] math.cpp") != std::string::npos
+                   && cold->stdout_text.find("[compile] obsolete.cpp") != std::string::npos,
+               "cold static target should compile its object set");
         expect(cold->stdout_text.find("[archive] math.lib") != std::string::npos,
                "cold static target should archive with lib.exe");
     }
@@ -127,14 +138,28 @@ int main() {
     expect(consumer_run.has_value() && consumer_run->exit_code == 42,
            "consumer should execute symbol from generated static library");
 
+    auto obsolete_consumer_build = run_process(
+        runner, mqb_executable, tree.root,
+        {"obsolete_consumer.cpp", "--no-discover", "--env", "vs", "-L", ".mqb/bin", "-l", "math", "-o", "obsolete_consumer"});
+    expect(obsolete_consumer_build.has_value(), "obsolete-symbol consumer build should launch");
+    if (obsolete_consumer_build) {
+        if (obsolete_consumer_build->exit_code != 0) dump_failure(*obsolete_consumer_build);
+        expect(obsolete_consumer_build->exit_code == 0,
+               "initial archive should expose the second object member");
+    }
+    auto obsolete_consumer_run = run_process(runner, obsolete_consumer, tree.root);
+    expect(obsolete_consumer_run.has_value() && obsolete_consumer_run->exit_code == 7,
+           "initial archive should execute symbol from its second object member");
+
     auto warm = run_process(
         runner, mqb_executable, tree.root,
-        {"math.cpp", "--no-discover", "--env", "vs", "-type", "static", "-o", "math"});
+        {"math.cpp", "obsolete.cpp", "--env", "vs", "-type", "static", "-o", "math"});
     expect(warm.has_value(), "warm static-library invocation should launch");
     if (warm) {
         if (warm->exit_code != 0) dump_failure(*warm);
         expect(warm->exit_code == 0, "warm static target should succeed");
-        expect(contains_line(warm->stdout_text, "[up-to-date] math.cpp"),
+        expect(contains_line(warm->stdout_text, "[up-to-date] math.cpp")
+                   && contains_line(warm->stdout_text, "[up-to-date] obsolete.cpp"),
                "warm static target should reuse compile cache");
         expect(contains_line(warm->stdout_text, "[up-to-date] math.lib"),
                "warm static target should reuse archive cache");
@@ -145,13 +170,14 @@ int main() {
     expect(!ec && !fs::exists(library), "test should remove static archive");
     auto repair = run_process(
         runner, mqb_executable, tree.root,
-        {"math.cpp", "--no-discover", "--env", "vs", "--type=static", "-o", "math"});
+        {"math.cpp", "obsolete.cpp", "--env", "vs", "--type=static", "-o", "math"});
     expect(repair.has_value(), "missing-archive repair invocation should launch");
     if (repair) {
         if (repair->exit_code != 0) dump_failure(*repair);
         expect(repair->exit_code == 0, "missing static archive should repair");
-        expect(contains_line(repair->stdout_text, "[up-to-date] math.cpp"),
-               "missing archive should not recompile fresh source");
+        expect(contains_line(repair->stdout_text, "[up-to-date] math.cpp")
+                   && contains_line(repair->stdout_text, "[up-to-date] obsolete.cpp"),
+               "missing archive should not recompile fresh sources");
         expect(repair->stdout_text.find("[archive] math.lib") != std::string::npos
                    && repair->stdout_text.find("missing output") != std::string::npos,
                "missing archive should invalidate archive freshness");
@@ -164,7 +190,7 @@ int main() {
 )cpp");
     auto mutated = run_process(
         runner, mqb_executable, tree.root,
-        {"math.cpp", "--no-discover", "--env", "vs", "--type", "static", "-o", "math"});
+        {"math.cpp", "obsolete.cpp", "--env", "vs", "--type", "static", "-o", "math"});
     expect(mutated.has_value(), "mutated static-library invocation should launch");
     if (mutated) {
         if (mutated->exit_code != 0) dump_failure(*mutated);
@@ -190,6 +216,34 @@ int main() {
     auto consumer_run_after_mutation = run_process(runner, consumer, tree.root);
     expect(consumer_run_after_mutation.has_value() && consumer_run_after_mutation->exit_code == 43,
            "consumer should observe mutated static-library behavior");
+
+    auto shrunk = run_process(
+        runner, mqb_executable, tree.root,
+        {"math.cpp", "--no-discover", "--env", "vs", "--type", "static", "-o", "math"});
+    expect(shrunk.has_value(), "source-set shrink invocation should launch");
+    if (shrunk) {
+        if (shrunk->exit_code != 0) dump_failure(*shrunk);
+        expect(shrunk->exit_code == 0, "source-set shrink should rebuild archive successfully");
+        expect(contains_line(shrunk->stdout_text, "[up-to-date] math.cpp"),
+               "source-set shrink should reuse the remaining fresh object");
+        expect(shrunk->stdout_text.find("[archive] math.lib") != std::string::npos
+                   && shrunk->stdout_text.find("archive inputs changed") != std::string::npos,
+               "source-set shrink should invalidate archive input identity");
+    }
+
+    ec.clear();
+    fs::remove(obsolete_consumer, ec);
+    expect(!ec && !fs::exists(obsolete_consumer),
+           "test should remove old obsolete-symbol consumer output");
+    auto stale_member_probe = run_process(
+        runner, mqb_executable, tree.root,
+        {"obsolete_consumer.cpp", "--no-discover", "--env", "vs", "-L", ".mqb/bin", "-l", "math", "-o", "obsolete_consumer"});
+    expect(stale_member_probe.has_value(), "stale-member probe should launch");
+    if (stale_member_probe) {
+        expect(stale_member_probe->exit_code == 5,
+               "shrunk archive must not retain an object member removed from the current source set");
+        if (stale_member_probe->exit_code == 0) dump_failure(*stale_member_probe);
+    }
 
     auto invalid_policy = run_process(
         runner, mqb_executable, tree.root,
