@@ -32,29 +32,52 @@ class StableHasher {
 public:
     void add_string(const std::string_view value) noexcept {
         add_u64(static_cast<std::uint64_t>(value.size()));
-        for (const unsigned char byte : value) add_byte(byte);
+        for (const unsigned char byte : value) {
+            add_byte(byte);
+        }
     }
+
     void add_path(const std::filesystem::path& value) noexcept {
         const auto normalized = value.lexically_normal().generic_u8string();
         add_u64(static_cast<std::uint64_t>(normalized.size()));
-        for (const char8_t byte : normalized) add_byte(static_cast<std::uint8_t>(byte));
+        for (const char8_t byte : normalized) {
+            add_byte(static_cast<std::uint8_t>(byte));
+        }
     }
-    template <typename Enum> requires std::is_enum_v<Enum>
-    void add_enum(const Enum value) noexcept { add_u64(static_cast<std::uint64_t>(value)); }
+
+    template <typename Enum>
+        requires std::is_enum_v<Enum>
+    void add_enum(const Enum value) noexcept {
+        add_u64(static_cast<std::uint64_t>(value));
+    }
+
     void add_strings(const std::vector<std::string>& values) noexcept {
         add_u64(static_cast<std::uint64_t>(values.size()));
-        for (const auto& value : values) add_string(value);
+        for (const auto& value : values) {
+            add_string(value);
+        }
     }
+
     void add_paths(const std::span<const std::filesystem::path> values) noexcept {
         add_u64(static_cast<std::uint64_t>(values.size()));
-        for (const auto& value : values) add_path(value);
+        for (const auto& value : values) {
+            add_path(value);
+        }
     }
-    void add_header_unit_identity(const std::optional<HeaderUnitIdentity>& identity) noexcept {
-        if (!identity) return;
+
+    void add_header_unit_identity(
+        const std::optional<HeaderUnitIdentity>& identity) noexcept {
+        if (!identity) {
+            return;
+        }
+        // Preserve the exact v4 byte stream for all pre-header-unit recipes so
+        // #19 caches remain reusable. Only the new producer shape appends a
+        // versioned domain marker and its lookup identity.
         add_string("mqb.header-unit.producer.v1");
         add_string(identity->header_name);
         add_enum(identity->lookup_method);
     }
+
     void add_module_references(const std::vector<ModuleReference>& references) noexcept {
         add_u64(static_cast<std::uint64_t>(references.size()));
         for (const auto& reference : references) {
@@ -62,7 +85,9 @@ public:
             add_path(reference.interface_file);
         }
     }
-    void add_header_unit_references(const std::vector<HeaderUnitReference>& references) noexcept {
+
+    void add_header_unit_references(
+        const std::vector<HeaderUnitReference>& references) noexcept {
         add_u64(static_cast<std::uint64_t>(references.size()));
         for (const auto& reference : references) {
             add_string(reference.header_name);
@@ -70,26 +95,46 @@ public:
             add_path(reference.interface_file);
         }
     }
+
     void add_module_outputs(const std::vector<Artifact>& outputs) noexcept {
         std::uint64_t count = 0;
-        for (const auto& output : outputs) if (output.kind == ArtifactKind::module_interface) ++count;
+        for (const auto& output : outputs) {
+            if (output.kind == ArtifactKind::module_interface) {
+                ++count;
+            }
+        }
         add_u64(count);
-        for (const auto& output : outputs) if (output.kind == ArtifactKind::module_interface) add_path(output.path);
+        for (const auto& output : outputs) {
+            if (output.kind == ArtifactKind::module_interface) {
+                add_path(output.path);
+            }
+        }
     }
+
     [[nodiscard]] SignatureDigest finish() const noexcept {
-        return SignatureDigest{.high = avalanche(primary_), .low = avalanche(secondary_)};
+        return SignatureDigest{
+            .high = avalanche(primary_),
+            .low = avalanche(secondary_),
+        };
     }
+
 private:
     void add_u64(const std::uint64_t value) noexcept {
-        for (std::uint32_t shift = 0; shift < 64u; shift += 8u) add_byte(static_cast<std::uint8_t>((value >> shift) & 0xffu));
+        for (std::uint32_t shift = 0; shift < 64u; shift += 8u) {
+            add_byte(static_cast<std::uint8_t>((value >> shift) & 0xffu));
+        }
     }
+
     void add_byte(const std::uint8_t byte) noexcept {
         primary_ ^= byte;
         primary_ *= fnv_prime;
-        secondary_ ^= static_cast<std::uint64_t>(byte) + secondary_seed + (secondary_ << 6u) + (secondary_ >> 2u);
+
+        secondary_ ^= static_cast<std::uint64_t>(byte) + secondary_seed
+            + (secondary_ << 6u) + (secondary_ >> 2u);
         secondary_ = std::rotl(secondary_, 13);
         secondary_ *= secondary_multiplier;
     }
+
     std::uint64_t primary_{fnv_offset_basis};
     std::uint64_t secondary_{secondary_seed};
 };
@@ -98,7 +143,9 @@ private:
 
 std::string SignatureDigest::hex() const {
     std::ostringstream stream;
-    stream << std::hex << std::setfill('0') << std::setw(16) << high << std::setw(16) << low;
+    stream << std::hex << std::setfill('0')
+           << std::setw(16) << high
+           << std::setw(16) << low;
     return stream.str();
 }
 
@@ -108,31 +155,41 @@ BuildSignature BuildSignature::for_compile(
     const CompilerOptions& options) {
     StableHasher hasher;
     hasher.add_string("mqb.compile.signature.v4");
+
     hasher.add_path(unit.source);
     hasher.add_enum(unit.kind);
     hasher.add_module_references(unit.module_references);
     hasher.add_header_unit_references(unit.header_unit_references);
     hasher.add_module_outputs(unit.outputs);
     hasher.add_header_unit_identity(unit.header_unit);
+
     hasher.add_path(toolchain.compiler);
     hasher.add_string(toolchain.version);
     hasher.add_string(toolchain.binary_stamp);
+
     hasher.add_enum(options.configuration);
     hasher.add_enum(options.architecture);
     if (is_c_translation_unit_path(unit.source)) {
+        // .c did not exist in any previous valid v4 recipe, so a C-only domain
+        // marker can be added without invalidating old C++ caches. The target
+        // C++ standard is intentionally absent because the C backend recipe does
+        // not emit a C++ /std switch; raw C standard switches remain represented
+        // through additional_arguments when users opt into them explicitly.
         hasher.add_string("mqb.c.language.v1");
     } else {
+        // Preserve the exact pre-C v4 byte stream for every existing C++ recipe.
         hasher.add_enum(options.standard);
     }
     hasher.add_strings(options.defines);
     hasher.add_paths(options.include_directories);
     hasher.add_strings(options.additional_arguments);
     if (options.runtime_library) {
-        // Keep every historical default v4 byte stream intact. Explicit runtime
+        // Keep all historical default v4 byte streams intact. Explicit runtime
         // selection is a new optional recipe domain layered after old fields.
         hasher.add_string("mqb.runtime-library.v1");
         hasher.add_enum(*options.runtime_library);
     }
+
     return BuildSignature{hasher.finish()};
 }
 
@@ -141,7 +198,12 @@ BuildSignature BuildSignature::for_link(
     const std::filesystem::path& output,
     const LinkerIdentity& linker,
     const LinkOptions& options) {
-    return for_link(objects, std::span<const std::filesystem::path>{}, output, linker, options);
+    return for_link(
+        objects,
+        std::span<const std::filesystem::path>{},
+        output,
+        linker,
+        options);
 }
 
 BuildSignature BuildSignature::for_link(
