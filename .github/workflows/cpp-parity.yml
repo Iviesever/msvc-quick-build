@@ -1,0 +1,44 @@
+name: Shared PowerShell C++ Parity
+
+on:
+  pull_request:
+    paths:
+      - 'build.ps1'
+      - 'cpp/**'
+      - '.github/workflows/cpp-parity.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'build.ps1'
+      - 'cpp/**'
+      - '.github/workflows/cpp-parity.yml'
+
+jobs:
+  shared-parity:
+    name: ${{ matrix.configuration }} shared parity
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration:
+          - Debug
+          - Release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure
+        run: cmake -S cpp -B cpp/build-parity -G "Visual Studio 18 2026" -A x64
+
+      - name: Build mqb
+        run: cmake --build cpp/build-parity --config ${{ matrix.configuration }} --target mqb --parallel
+
+      - name: Run shared incremental and argv parity
+        shell: pwsh
+        run: |
+          $mqb = Join-Path $PWD "cpp/build-parity/apps/mqb/${{ matrix.configuration }}/mqb.exe"
+          & (Join-Path $PWD 'cpp/tests/parity/shared_incremental_run.ps1') `
+            -MqbPath $mqb `
+            -RepoRoot $PWD
