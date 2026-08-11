@@ -46,6 +46,10 @@ add_executable(mqb_process_model_tests process_model_tests.cpp)
 target_link_libraries(mqb_process_model_tests PRIVATE mqb_process)
 target_compile_features(mqb_process_model_tests PRIVATE cxx_std_23)
 
+add_executable(mqb_build_policy_config_tests ../config/tests/build_policy_config_tests.cpp)
+target_link_libraries(mqb_build_policy_config_tests PRIVATE mqb_config)
+target_compile_features(mqb_build_policy_config_tests PRIVATE cxx_std_23)
+
 set(MQB_TEST_TARGETS
     mqb_core_tests
     mqb_build_plan_tests
@@ -59,6 +63,7 @@ set(MQB_TEST_TARGETS
     mqb_project_artifact_layout_tests
     mqb_translation_unit_classifier_tests
     mqb_process_model_tests
+    mqb_build_policy_config_tests
 )
 
 if(WIN32)
@@ -101,6 +106,10 @@ if(WIN32)
     target_link_libraries(mqb_cli_argument_tests PRIVATE mqb_cli)
     target_compile_features(mqb_cli_argument_tests PRIVATE cxx_std_23)
 
+    add_executable(mqb_build_policy_cli_tests build_policy_cli_tests.cpp)
+    target_link_libraries(mqb_build_policy_cli_tests PRIVATE mqb_cli)
+    target_compile_features(mqb_build_policy_cli_tests PRIVATE cxx_std_23)
+
     list(APPEND MQB_TEST_TARGETS
         mqb_windows_command_line_tests
         mqb_process_echo_helper
@@ -112,6 +121,7 @@ if(WIN32)
         mqb_msvc_compile_executor_tests
         mqb_msvc_source_dependencies_tests
         mqb_cli_argument_tests
+        mqb_build_policy_cli_tests
     )
 
     if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
@@ -147,6 +157,10 @@ if(WIN32)
         target_link_libraries(mqb_module_cli_e2e_tests PRIVATE mqb_platform_windows)
         target_compile_features(mqb_module_cli_e2e_tests PRIVATE cxx_std_23)
 
+        add_executable(mqb_build_policy_e2e_tests mqb_build_policy_e2e_tests.cpp)
+        target_link_libraries(mqb_build_policy_e2e_tests PRIVATE mqb_platform_windows)
+        target_compile_features(mqb_build_policy_e2e_tests PRIVATE cxx_std_23)
+
         list(APPEND MQB_TEST_TARGETS
             mqb_msvc_visual_studio_tests
             mqb_msvc_compile_integration_tests
@@ -156,6 +170,7 @@ if(WIN32)
             mqb_project_config_e2e_tests
             mqb_parallel_cli_e2e_tests
             mqb_module_cli_e2e_tests
+            mqb_build_policy_e2e_tests
         )
     endif()
 endif()
@@ -180,6 +195,7 @@ add_test(NAME mqb.core.link_cache_file COMMAND mqb_link_cache_file_tests)
 add_test(NAME mqb.core.project_artifact_layout COMMAND mqb_project_artifact_layout_tests)
 add_test(NAME mqb.core.translation_unit_classifier COMMAND mqb_translation_unit_classifier_tests)
 add_test(NAME mqb.process.model COMMAND mqb_process_model_tests)
+add_test(NAME mqb.config.build_policy COMMAND mqb_build_policy_config_tests)
 
 if(WIN32)
     add_test(NAME mqb.windows.command_line COMMAND mqb_windows_command_line_tests)
@@ -194,6 +210,7 @@ if(WIN32)
     add_test(NAME mqb.msvc.compile_executor COMMAND mqb_msvc_compile_executor_tests)
     add_test(NAME mqb.msvc.source_dependencies COMMAND mqb_msvc_source_dependencies_tests)
     add_test(NAME mqb.cli.arguments COMMAND mqb_cli_argument_tests)
+    add_test(NAME mqb.cli.build_policy COMMAND mqb_build_policy_cli_tests)
 
     if(MQB_ENABLE_INSTALLED_MSVC_TESTS)
         add_test(NAME mqb.msvc.visual_studio COMMAND mqb_msvc_visual_studio_tests)
@@ -215,6 +232,10 @@ if(WIN32)
         add_test(
             NAME mqb.cli.module_e2e
             COMMAND mqb_module_cli_e2e_tests $<TARGET_FILE:mqb>
+        )
+        add_test(
+            NAME mqb.cli.build_policy_e2e
+            COMMAND mqb_build_policy_e2e_tests $<TARGET_FILE:mqb>
         )
     endif()
 endif()
