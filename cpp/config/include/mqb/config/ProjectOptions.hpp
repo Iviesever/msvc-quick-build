@@ -23,6 +23,8 @@ struct EffectiveProjectOptions {
     std::vector<std::filesystem::path> include_directories;
     std::vector<std::filesystem::path> library_directories;
     std::vector<std::string> libraries;
+    std::vector<std::string> compiler_arguments;
+    std::vector<std::string> linker_arguments;
 
     bool discovery_enabled{true};
     std::vector<std::filesystem::path> discovery_exclude_directories;
