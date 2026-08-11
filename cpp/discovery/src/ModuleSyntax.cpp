@@ -336,8 +336,10 @@ NamedModuleSyntax ModuleSyntaxParser::parse(const std::string_view source_text) 
         if (name_index >= tokens.size()) continue;
         if (tokens[name_index].kind == TokenKind::less
             || tokens[name_index].kind == TokenKind::string_literal) {
-            // Header units are intentionally not source-discovery named-module
-            // edges. The real module pipeline continues to fail them closed.
+            // Header-unit imports are deliberately not named-module discovery
+            // edges. They still force the module pipeline so the real P1689
+            // scan can resolve source-path and lookup-method authoritatively.
+            syntax.imports_header_unit = true;
             continue;
         }
 
