@@ -10,6 +10,10 @@ add_executable(mqb_build_signature_tests build_signature_tests.cpp)
 target_link_libraries(mqb_build_signature_tests PRIVATE mqb_core)
 target_compile_features(mqb_build_signature_tests PRIVATE cxx_std_23)
 
+add_executable(mqb_c_compile_signature_tests c_compile_signature_tests.cpp)
+target_link_libraries(mqb_c_compile_signature_tests PRIVATE mqb_core)
+target_compile_features(mqb_c_compile_signature_tests PRIVATE cxx_std_23)
+
 add_executable(mqb_dependency_graph_tests dependency_graph_tests.cpp)
 target_link_libraries(mqb_dependency_graph_tests PRIVATE mqb_core)
 target_compile_features(mqb_dependency_graph_tests PRIVATE cxx_std_23)
@@ -54,6 +58,7 @@ set(MQB_TEST_TARGETS
     mqb_core_tests
     mqb_build_plan_tests
     mqb_build_signature_tests
+    mqb_c_compile_signature_tests
     mqb_dependency_graph_tests
     mqb_compile_cache_tests
     mqb_compile_cache_file_tests
@@ -196,6 +201,7 @@ endforeach()
 add_test(NAME mqb.core.build_request COMMAND mqb_core_tests)
 add_test(NAME mqb.core.build_plan COMMAND mqb_build_plan_tests)
 add_test(NAME mqb.core.build_signature COMMAND mqb_build_signature_tests)
+add_test(NAME mqb.core.c_compile_signature COMMAND mqb_c_compile_signature_tests)
 add_test(NAME mqb.core.dependency_graph COMMAND mqb_dependency_graph_tests)
 add_test(NAME mqb.core.compile_cache COMMAND mqb_compile_cache_tests)
 add_test(NAME mqb.core.compile_cache_file COMMAND mqb_compile_cache_file_tests)
