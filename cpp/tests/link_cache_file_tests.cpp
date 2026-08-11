@@ -44,13 +44,15 @@ int main() {
 
     const std::vector<fs::path> objects{"obj/main.cpp.obj", "obj/math.cpp.obj"};
     const std::vector<fs::path> libraries{"vendor/math.lib", "vendor/codec.lib"};
-    const fs::path output{"bin/app.exe"};
+    const fs::path output{"bin/plugin.dll"};
+    const std::vector<fs::path> side_outputs{"bin/plugin.lib", "bin/plugin.exp"};
     const mqb::LinkerIdentity linker{
         .linker = "C:/msvc/link.exe",
         .version = "14.51",
         .binary_stamp = "stamp-a",
     };
     mqb::LinkOptions options;
+    options.target_kind = mqb::TargetKind::dynamic_library;
     options.library_directories = {"vendor"};
     options.libraries = {"math.lib", "codec.lib"};
     const auto signature = mqb::BuildSignature::for_link(
@@ -61,9 +63,10 @@ int main() {
         .objects = objects,
         .output = output,
         .libraries = libraries,
+        .side_outputs = side_outputs,
     };
 
-    const fs::path file = tree.root / "cache" / "app.linkcache";
+    const fs::path file = tree.root / "cache" / "plugin.linkcache";
     const auto missing = mqb::LinkCacheFile::load(file);
     expect(missing.has_value() && !missing->has_value(),
            "missing link cache should be a normal cache miss");
@@ -80,6 +83,8 @@ int main() {
         expect((*loaded)->objects == objects, "object inputs should round-trip");
         expect((*loaded)->libraries == libraries, "resolved library inputs should round-trip");
         expect((*loaded)->output == output, "link output should round-trip");
+        expect((*loaded)->side_outputs == side_outputs,
+               "observed linker side outputs should round-trip in cache v3");
     }
 
     {
@@ -89,10 +94,10 @@ int main() {
         stream.write(old_version, 4);
     }
     const auto old_version = mqb::LinkCacheFile::load(file);
-    expect(!old_version.has_value(), "older link-cache format should be rejected safely");
+    expect(!old_version.has_value(), "unsupported link-cache format should be rejected safely");
     if (!old_version) {
         expect(old_version.error().code == mqb::LinkCacheFileErrorCode::unsupported_version,
-               "old cache version should report unsupported_version");
+               "unsupported cache version should report unsupported_version");
     }
 
     const auto restored_after_version = mqb::LinkCacheFile::save(file, entry);
