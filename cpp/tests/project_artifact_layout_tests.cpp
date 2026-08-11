@@ -8,14 +8,17 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 
 namespace {
+
 namespace fs = std::filesystem;
 int failures = 0;
+
 void expect(const bool condition, const std::string_view message) {
     if (!condition) {
         ++failures;
         std::cerr << "FAIL: " << message << '\n';
     }
 }
+
 } // namespace
 
 int main() {
@@ -91,6 +94,9 @@ int main() {
     }
 
 #ifdef _WIN32
+    // Existing physical paths are normalized before deriving source identity.
+    // This prevents scanner/user aliases (case differences, 8.3/long-path or
+    // other canonical spellings) from splitting one source into two caches.
     const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
     const fs::path physical_root = fs::temp_directory_path()
         / ("MqB_Artifact_Alias_" + std::to_string(tick));
