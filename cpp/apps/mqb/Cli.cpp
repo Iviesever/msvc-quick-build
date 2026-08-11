@@ -173,6 +173,14 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.build.run_after_build = true;
             continue;
         }
+        if (argument == "--ltcg" || argument == "-ltcg") {
+            options.ltcg_override = true;
+            continue;
+        }
+        if (argument == "--no-ltcg") {
+            options.ltcg_override = false;
+            continue;
+        }
         if (argument == "-j" || argument == "--jobs") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
@@ -452,6 +460,7 @@ Options:
   --type <exe|dll|static>  Select executable, DLL, or static-library output (legacy -type accepted)
   --runtime <MD|MDd|MT|MTd>
                            Explicitly select MSVC CRT runtime (legacy -runtime accepted)
+  --ltcg | --no-ltcg      Enable/disable coupled /GL + downstream /LTCG (legacy -ltcg enables)
   --subsystem <console|windows>
                            Explicitly select PE subsystem for executable/DLL targets (legacy -subsystem accepted)
   --x86 | --x64            Explicitly select target architecture (legacy -x86/-x64 accepted)
@@ -474,12 +483,14 @@ Options:
 
 Static libraries are produced by MSVC lib.exe from the compiled object set. Linker-only policy
 (libraries, library search paths, subsystem, and raw linker arguments) does not apply to a static
-archive and is rejected when explicitly supplied for a static target.
+archive and is rejected when explicitly supplied for a static target. Typed LTCG remains valid
+for static targets and couples /GL compilation with lib.exe /LTCG archive policy.
 
 Raw compiler/linker arguments are one argv element per option occurrence; MQB does not split a
 quoted string into multiple switches. Project config entries are applied first and CLI raw args
-append afterward. Structured artifact routing such as /Fo, /scanDependencies, /DLL, /IMPLIB,
-/MACHINE and /OUT is emitted after raw arguments so the BuildPlan remains authoritative.
+append afterward. Typed runtime/LTCG and structured artifact routing such as /Fo,
+/scanDependencies, /DLL, /IMPLIB, /MACHINE and /OUT are emitted after raw arguments so the
+BuildPlan remains authoritative.
 
 Legacy compatibility aliases intentionally cover spelling only. Legacy-only semantics such as
 -a string splitting remain tracked by the stable-v5 parity inventory and are not silently accepted here.

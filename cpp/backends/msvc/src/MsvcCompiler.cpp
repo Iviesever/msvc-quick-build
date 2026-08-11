@@ -132,6 +132,11 @@ void append_configuration_arguments(
         // leaving the historical default preset byte-for-byte unchanged.
         arguments.push_back(runtime_argument(*options.runtime_library));
     }
+    if (options.link_time_code_generation) {
+        // LTCG is coupled typed policy. Emit /GL after raw compiler arguments so
+        // a raw escape-hatch flag cannot silently disable the compile half.
+        arguments.emplace_back("/GL");
+    }
 
     return {};
 }
@@ -291,7 +296,7 @@ MsvcCompiler::build_arguments(const CompileInvocation& invocation) {
     const bool c_translation_unit = is_c_translation_unit_path(invocation.source);
     std::vector<std::string> arguments;
     arguments.reserve(
-        22
+        23
         + invocation.options.defines.size()
         + invocation.options.include_directories.size()
         + invocation.options.additional_arguments.size()
@@ -363,7 +368,7 @@ MsvcCompiler::build_header_unit_arguments(const HeaderUnitCompileInvocation& inv
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        23
+        24
         + invocation.options.defines.size()
         + invocation.options.include_directories.size()
         + invocation.options.additional_arguments.size());

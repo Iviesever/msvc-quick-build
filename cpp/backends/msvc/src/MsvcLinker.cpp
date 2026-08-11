@@ -146,7 +146,7 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        14
+        15
         + invocation.objects.size()
         + invocation.options.library_directories.size()
         + invocation.libraries.size()
@@ -155,7 +155,10 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
     arguments.emplace_back("/NOLOGO");
     if (invocation.options.configuration == BuildConfiguration::debug) {
         arguments.emplace_back("/DEBUG");
-        arguments.emplace_back("/INCREMENTAL");
+        arguments.emplace_back(
+            invocation.options.link_time_code_generation
+                ? "/INCREMENTAL:NO"
+                : "/INCREMENTAL");
     } else {
         arguments.emplace_back("/INCREMENTAL:NO");
         arguments.emplace_back("/OPT:REF");
@@ -180,6 +183,12 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
                 "additional linker argument must not be empty"));
         }
         arguments.push_back(argument);
+    }
+
+    // Typed LTCG is downstream structured policy and therefore follows raw
+    // linker arguments. This keeps the coupled /GL + /LTCG contract authoritative.
+    if (invocation.options.link_time_code_generation) {
+        arguments.emplace_back("/LTCG");
     }
 
     // Structured routing is emitted after raw flags so the BuildPlan owns the

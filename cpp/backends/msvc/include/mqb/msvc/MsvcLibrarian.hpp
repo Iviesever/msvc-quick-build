@@ -16,6 +16,7 @@ struct ArchiveInvocation {
     std::vector<std::filesystem::path> objects;
     std::filesystem::path output;
     std::filesystem::path working_directory;
+    bool link_time_code_generation{false};
 };
 
 enum class LibrarianErrorCode {

@@ -97,7 +97,8 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
         cached_entry,
         output_snapshot,
         object_snapshots,
-        request.force_archive);
+        request.force_archive,
+        request.link_time_code_generation);
 
     auto plan = BuildPlanner::plan_archive(ArchivePlanItem{
         .objects = request.objects,
@@ -131,6 +132,7 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
         .objects = action->objects,
         .output = action->output,
         .working_directory = request.working_directory,
+        .link_time_code_generation = request.link_time_code_generation,
     });
     if (!archived) {
         return std::unexpected(IncrementalArchiveError{
@@ -144,7 +146,11 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
 
     const ArchiveCacheEntry entry{
         .librarian = *librarian_identity,
-        .signature = BuildSignature::for_archive(action->objects, action->output, *librarian_identity),
+        .signature = BuildSignature::for_archive(
+            action->objects,
+            action->output,
+            *librarian_identity,
+            request.link_time_code_generation),
         .objects = action->objects,
         .output = action->output,
     };

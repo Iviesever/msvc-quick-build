@@ -16,6 +16,7 @@ struct BuildOverrides {
     std::optional<Architecture> architecture;
     std::optional<CppStandard> standard;
     std::optional<RuntimeLibrary> runtime_library;
+    std::optional<bool> link_time_code_generation;
     std::optional<LinkSubsystem> subsystem;
     std::optional<TargetKind> target_kind;
     std::optional<std::string> output_name;

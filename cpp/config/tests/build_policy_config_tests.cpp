@@ -45,6 +45,7 @@ int main() {
     "standard": "17",
     "type": "dll",
     "runtime": "MT",
+    "ltcg": true,
     "subsystem": "windows",
     "compiler_args": ["/W4", "/DCONFIG_POLICY=1"],
     "linker_args": ["/OPT:NOREF"]
@@ -60,6 +61,8 @@ int main() {
                "mqb.json should decode typed DLL output");
         expect(loaded->build.runtime_library == mqb::RuntimeLibrary::mt,
                "mqb.json should decode typed MT runtime");
+        expect(loaded->build.link_time_code_generation == true,
+               "mqb.json should decode typed LTCG enablement");
         expect(loaded->build.subsystem == mqb::LinkSubsystem::windows,
                "mqb.json should decode typed Windows subsystem");
         expect(loaded->build.compiler_arguments.size() == 2
@@ -74,6 +77,7 @@ int main() {
         cli.build.standard = mqb::CppStandard::cpp14;
         cli.build.target_kind = mqb::TargetKind::executable;
         cli.build.runtime_library = mqb::RuntimeLibrary::mdd;
+        cli.build.link_time_code_generation = false;
         cli.build.subsystem = mqb::LinkSubsystem::console;
         cli.build.compiler_arguments = {"/WX"};
         cli.build.linker_arguments = {"/MAP:cli.map"};
@@ -84,6 +88,8 @@ int main() {
                "CLI scalar target kind should override DLL project config");
         expect(effective.runtime_library == mqb::RuntimeLibrary::mdd,
                "CLI scalar runtime should override project config");
+        expect(!effective.link_time_code_generation,
+               "CLI scalar --no-ltcg should override project config");
         expect(effective.subsystem == mqb::LinkSubsystem::console,
                "CLI scalar subsystem should override project config");
         expect(effective.compiler_arguments.size() == 3
@@ -108,6 +114,11 @@ int main() {
                && static_target->build.target_kind == mqb::TargetKind::static_library,
            "mqb.json should accept static target kind after librarian support");
 
+    write_text(file, R"json({"version":1,"build":{"ltcg":false}})json");
+    auto ltcg_false = mqb::config::ProjectConfigLoader::load(file);
+    expect(ltcg_false.has_value() && ltcg_false->build.link_time_code_generation == false,
+           "mqb.json should accept explicit LTCG disablement");
+
     write_text(file, R"json({"version":1,"build":{"runtime":"dynamic"}})json");
     auto bad_runtime = mqb::config::ProjectConfigLoader::load(file);
     expect(!bad_runtime && bad_runtime.error().code == mqb::config::ErrorCode::schema_error,
@@ -122,6 +133,11 @@ int main() {
     auto runtime_type = mqb::config::ProjectConfigLoader::load(file);
     expect(!runtime_type && runtime_type.error().code == mqb::config::ErrorCode::schema_error,
            "runtime must be a JSON string");
+
+    write_text(file, R"json({"version":1,"build":{"ltcg":"true"}})json");
+    auto ltcg_type = mqb::config::ProjectConfigLoader::load(file);
+    expect(!ltcg_type && ltcg_type.error().code == mqb::config::ErrorCode::schema_error,
+           "ltcg must be a JSON boolean");
 
     write_text(file, R"json({"version":1,"build":{"compiler_args":[""]}})json");
     auto empty = mqb::config::ProjectConfigLoader::load(file);

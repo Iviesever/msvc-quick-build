@@ -258,11 +258,37 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                "unchanged subsystem should keep link cache warm");
     }
 
+    auto ltcg_policy = windows_policy;
+    ltcg_policy.emplace_back("--ltcg");
+    auto ltcg_changed = run_mqb(runner, mqb_executable, tree.root, ltcg_policy);
+    expect(ltcg_changed.has_value(), "typed-LTCG invocation should launch");
+    if (ltcg_changed) {
+        if (ltcg_changed->exit_code != 0) dump_failure(*ltcg_changed);
+        expect(ltcg_changed->exit_code == 0, "typed LTCG executable build should succeed");
+        expect(ltcg_changed->stdout_text.find("[compile] main.cpp") != std::string::npos
+                   && ltcg_changed->stdout_text.find("compiler options changed") != std::string::npos,
+               "enabling typed LTCG should invalidate compile identity for /GL");
+        expect(ltcg_changed->stdout_text.find("[link] policy.exe") != std::string::npos,
+               "enabling typed LTCG should relink with /LTCG");
+    }
+
+    auto ltcg_warm = run_mqb(runner, mqb_executable, tree.root, ltcg_policy);
+    expect(ltcg_warm.has_value(), "warm typed-LTCG invocation should launch");
+    if (ltcg_warm) {
+        if (ltcg_warm->exit_code != 0) dump_failure(*ltcg_warm);
+        expect(ltcg_warm->exit_code == 0, "warm typed LTCG executable build should succeed");
+        expect(contains_line(ltcg_warm->stdout_text, "[up-to-date] main.cpp"),
+               "unchanged typed LTCG should reuse /GL compile cache");
+        expect(contains_line(ltcg_warm->stdout_text, "[up-to-date] policy.exe"),
+               "unchanged typed LTCG should reuse /LTCG link cache");
+    }
+
     const fs::path config_map = tree.root / "config-policy.map";
     const std::string config = std::string{R"json({
   "version": 1,
   "build": {
     "standard": "17",
+    "ltcg": true,
     "output": "config_policy",
     "compiler_args": ["/DPOLICY_VALUE=3"],
     "linker_args": ["/MAP:)json"}
@@ -278,9 +304,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         if (config_cold->exit_code != 0) dump_failure(*config_cold);
         expect(config_cold->exit_code == 0, "C++17 config build-policy target should succeed");
         expect(config_cold->stdout_text.find("[compile] main.cpp") != std::string::npos,
-               "config standard/compiler policy should produce a fresh compile");
+               "config standard/compiler/LTCG policy should produce a fresh compile");
         expect(config_cold->stdout_text.find("[link] config_policy.exe") != std::string::npos,
-               "config linker policy should produce the configured target");
+               "config linker/LTCG policy should produce the configured target");
     }
     expect(fs::is_regular_file(config_map), "mqb.json linker_args should reach link.exe");
 
@@ -299,9 +325,26 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         if (config_warm->exit_code != 0) dump_failure(*config_warm);
         expect(config_warm->exit_code == 0, "warm config build-policy target should succeed");
         expect(contains_line(config_warm->stdout_text, "[up-to-date] main.cpp"),
-               "unchanged config compiler policy should be reusable");
+               "unchanged config compiler/LTCG policy should be reusable");
         expect(contains_line(config_warm->stdout_text, "[up-to-date] config_policy.exe"),
-               "unchanged config linker policy should be reusable");
+               "unchanged config linker/LTCG policy should be reusable");
+    }
+
+    auto config_cli_disable = run_mqb(
+        runner,
+        mqb_executable,
+        tree.root,
+        {"--no-ltcg"});
+    expect(config_cli_disable.has_value(), "CLI LTCG-disable override invocation should launch");
+    if (config_cli_disable) {
+        if (config_cli_disable->exit_code != 0) dump_failure(*config_cli_disable);
+        expect(config_cli_disable->exit_code == 0,
+               "--no-ltcg should override build.ltcg=true and remain buildable");
+        expect(config_cli_disable->stdout_text.find("[compile] main.cpp") != std::string::npos
+                   && config_cli_disable->stdout_text.find("compiler options changed") != std::string::npos,
+               "CLI disablement should invalidate the config-driven /GL compile identity");
+        expect(config_cli_disable->stdout_text.find("[link] config_policy.exe") != std::string::npos,
+               "CLI disablement should relink without typed /LTCG");
     }
 
     if (failures != 0) {

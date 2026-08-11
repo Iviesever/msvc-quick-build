@@ -34,7 +34,8 @@ public:
         const std::optional<ArchiveCacheEntry>& cached_entry,
         const FileSnapshot& output_snapshot,
         std::span<const FileSnapshot> object_snapshots,
-        bool force_archive = false);
+        bool force_archive = false,
+        bool link_time_code_generation = false);
 };
 
 } // namespace mqb

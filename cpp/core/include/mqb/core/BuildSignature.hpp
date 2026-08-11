@@ -45,7 +45,8 @@ public:
     [[nodiscard]] static BuildSignature for_archive(
         std::span<const std::filesystem::path> objects,
         const std::filesystem::path& output,
-        const LibrarianIdentity& librarian);
+        const LibrarianIdentity& librarian,
+        bool link_time_code_generation = false);
 
     [[nodiscard]] static BuildSignature from_digest(const SignatureDigest digest) noexcept {
         return BuildSignature{digest};

@@ -44,10 +44,11 @@ int main() {
             "main.cpp"sv,
             "--type"sv, "dll"sv,
             "--runtime"sv, "MT"sv,
+            "--ltcg"sv,
             "--subsystem=windows"sv,
         };
         auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value(), "typed native target/runtime/subsystem options should parse");
+        expect(parsed.has_value(), "typed native target/runtime/LTCG/subsystem options should parse");
         if (parsed) {
             expect(parsed->target_kind_override == mqb::TargetKind::dynamic_library,
                    "--type dll should select typed DLL output");
@@ -55,6 +56,8 @@ int main() {
                    "typed DLL selection should also update BuildRequest");
             expect(parsed->runtime_override == mqb::RuntimeLibrary::mt,
                    "--runtime MT should select static release CRT");
+            expect(parsed->ltcg_override == true,
+                   "--ltcg should enable the coupled LTCG policy");
             expect(parsed->subsystem_override == mqb::LinkSubsystem::windows,
                    "--subsystem=windows should select Windows subsystem");
         }
@@ -65,18 +68,28 @@ int main() {
             "main.cpp"sv,
             "-type"sv, "dll"sv,
             "-runtime"sv, "MDd"sv,
+            "-ltcg"sv,
             "-subsystem"sv, "console"sv,
         };
         auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value(), "legacy type/runtime/subsystem aliases should parse");
+        expect(parsed.has_value(), "legacy type/runtime/LTCG/subsystem aliases should parse");
         if (parsed) {
             expect(parsed->target_kind_override == mqb::TargetKind::dynamic_library,
                    "legacy -type dll should map to typed DLL output");
             expect(parsed->runtime_override == mqb::RuntimeLibrary::mdd,
                    "legacy -runtime MDd should map to typed runtime");
+            expect(parsed->ltcg_override == true,
+                   "legacy -ltcg should map to typed LTCG enablement");
             expect(parsed->subsystem_override == mqb::LinkSubsystem::console,
                    "legacy -subsystem console should map to typed subsystem");
         }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--ltcg"sv, "--no-ltcg"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value() && parsed->ltcg_override == false,
+               "later --no-ltcg should override earlier CLI enablement");
     }
 
     {

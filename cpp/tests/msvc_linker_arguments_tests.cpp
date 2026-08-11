@@ -45,6 +45,7 @@ int main() {
         expect(contains(*result, "/NOLOGO"), "link should suppress banner");
         expect(contains(*result, "/DEBUG"), "debug link should emit /DEBUG");
         expect(contains(*result, "/INCREMENTAL"), "debug link should be incremental");
+        expect(!contains(*result, "/LTCG"), "default link recipe should preserve non-LTCG behavior");
         expect(contains(*result, "/LIBPATH:vendor libs"), "library path should stay one argv element");
         expect(contains(*result, "C:/sdk libs/user32.lib"),
                "linker should consume exact resolved library path");
@@ -58,6 +59,24 @@ int main() {
         const auto planned_out = std::find(result->begin(), result->end(), "/OUT:bin/my app.exe");
         expect(raw_out != result->end() && planned_out != result->end() && raw_out < planned_out,
                "planned output must override a conflicting raw /OUT");
+    }
+
+    auto ltcg = invocation;
+    ltcg.options.link_time_code_generation = true;
+    ltcg.options.additional_arguments = {"/LTCG:OFF"};
+    const auto ltcg_result = mqb::msvc::MsvcLinker::build_arguments(ltcg);
+    expect(ltcg_result.has_value(), "typed LTCG link invocation should produce argv");
+    if (ltcg_result) {
+        expect(contains(*ltcg_result, "/LTCG"), "typed LTCG should emit /LTCG");
+        expect(contains(*ltcg_result, "/INCREMENTAL:NO"),
+               "debug LTCG should disable incremental linking");
+        expect(!contains(*ltcg_result, "/INCREMENTAL"),
+               "debug LTCG must not retain the incompatible /INCREMENTAL recipe");
+        const auto raw_ltcg = std::find(ltcg_result->begin(), ltcg_result->end(), "/LTCG:OFF");
+        const auto typed_ltcg = std::find(ltcg_result->begin(), ltcg_result->end(), "/LTCG");
+        expect(raw_ltcg != ltcg_result->end() && typed_ltcg != ltcg_result->end()
+                   && raw_ltcg < typed_ltcg,
+               "typed /LTCG must follow raw linker arguments and remain authoritative");
     }
 
     auto dll = invocation;

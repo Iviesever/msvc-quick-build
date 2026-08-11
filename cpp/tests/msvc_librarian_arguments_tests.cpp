@@ -27,9 +27,19 @@ int main() {
     expect(arguments.has_value(), "valid archive invocation should build argv");
     if (arguments) {
         expect(contains(*arguments, "/NOLOGO"), "librarian should suppress banner");
+        expect(!contains(*arguments, "/LTCG"), "default archive recipe should preserve non-LTCG behavior");
         expect(contains(*arguments, "/OUT:bin/math.lib"), "librarian should own archive output");
         expect(contains(*arguments, "obj/math one.obj"), "object path with spaces should stay one argv element");
         expect(contains(*arguments, "obj/math-two.obj"), "all object inputs should be emitted");
+    }
+
+    auto ltcg = invocation;
+    ltcg.link_time_code_generation = true;
+    const auto ltcg_arguments = mqb::msvc::MsvcLibrarian::build_arguments(ltcg);
+    expect(ltcg_arguments.has_value(), "LTCG archive invocation should build argv");
+    if (ltcg_arguments) {
+        expect(contains(*ltcg_arguments, "/LTCG"),
+               "typed static LTCG should emit lib.exe /LTCG");
     }
 
     auto empty = invocation;

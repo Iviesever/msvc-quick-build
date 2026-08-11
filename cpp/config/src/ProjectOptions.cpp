@@ -17,6 +17,9 @@ void apply_build(
     if (overrides.architecture) effective.architecture = *overrides.architecture;
     if (overrides.standard) effective.standard = *overrides.standard;
     if (overrides.runtime_library) effective.runtime_library = overrides.runtime_library;
+    if (overrides.link_time_code_generation) {
+        effective.link_time_code_generation = *overrides.link_time_code_generation;
+    }
     if (overrides.subsystem) effective.subsystem = *overrides.subsystem;
     if (overrides.target_kind) effective.target_kind = *overrides.target_kind;
     if (overrides.output_name) effective.output_name = overrides.output_name;

@@ -23,6 +23,7 @@ struct Options {
     std::optional<CppStandard> standard_override;
     std::optional<TargetKind> target_kind_override;
     std::optional<RuntimeLibrary> runtime_override;
+    std::optional<bool> ltcg_override;
     std::optional<LinkSubsystem> subsystem_override;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;

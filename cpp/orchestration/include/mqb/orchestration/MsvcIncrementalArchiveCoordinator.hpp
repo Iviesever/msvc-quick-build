@@ -19,6 +19,7 @@ struct IncrementalArchiveRequest {
     std::filesystem::path output;
     std::filesystem::path cache_file;
     std::filesystem::path working_directory;
+    bool link_time_code_generation{false};
     bool force_archive{false};
 };
 
