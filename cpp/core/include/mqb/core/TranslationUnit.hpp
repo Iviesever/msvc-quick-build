@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,11 @@ struct ModuleReference {
     std::filesystem::path interface_file;
 };
 
+struct HeaderUnitIdentity {
+    std::string header_name;
+    HeaderUnitLookupMethod lookup_method{HeaderUnitLookupMethod::quote};
+};
+
 struct HeaderUnitReference {
     std::string header_name;
     HeaderUnitLookupMethod lookup_method{HeaderUnitLookupMethod::quote};
@@ -32,6 +38,7 @@ struct HeaderUnitReference {
 struct TranslationUnit {
     std::filesystem::path source;
     TranslationUnitKind kind{TranslationUnitKind::source};
+    std::optional<HeaderUnitIdentity> header_unit;
     std::vector<std::filesystem::path> dependencies;
     std::vector<ModuleReference> module_references;
     std::vector<HeaderUnitReference> header_unit_references;

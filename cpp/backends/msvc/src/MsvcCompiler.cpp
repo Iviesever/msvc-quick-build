@@ -42,9 +42,6 @@ namespace fs = std::filesystem;
 void append_configuration_arguments(
     std::vector<std::string>& arguments,
     const BuildConfiguration configuration) {
-    // /Z7 keeps compiler debug information inside each object instead of
-    // writing a shared compiler PDB. This makes each TU artifact self-contained
-    // and removes cross-process PDB write contention during parallel builds.
     switch (configuration) {
     case BuildConfiguration::debug:
         arguments.emplace_back("/Od");
@@ -253,8 +250,6 @@ MsvcCompiler::build_arguments(const CompileInvocation& invocation) {
     auto common = append_common_compile_arguments(arguments, invocation.options);
     if (!common) return std::unexpected(common.error());
 
-    // Module/header-unit inputs and structured outputs are emitted after raw
-    // additional arguments so the BuildPlan remains authoritative over semantic routing.
     if (invocation.kind == TranslationUnitKind::module_interface) {
         arguments.emplace_back("/interface");
         arguments.emplace_back("/TP");
@@ -298,10 +293,13 @@ MsvcCompiler::build_header_unit_arguments(const HeaderUnitCompileInvocation& inv
     if (invocation.object && invocation.object->empty()) {
         return std::unexpected(invalid_request("header-unit object output path must not be empty"));
     }
+    if (invocation.source_dependencies && invocation.source_dependencies->empty()) {
+        return std::unexpected(invalid_request("sourceDependencies output path is empty"));
+    }
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        20
+        22
         + invocation.options.defines.size()
         + invocation.options.include_directories.size()
         + invocation.options.additional_arguments.size());
@@ -314,6 +312,10 @@ MsvcCompiler::build_header_unit_arguments(const HeaderUnitCompileInvocation& inv
     arguments.push_back(invocation.header_name);
     arguments.emplace_back("/ifcOutput");
     arguments.push_back(path_to_utf8(invocation.interface_output));
+    if (invocation.source_dependencies) {
+        arguments.emplace_back("/sourceDependencies");
+        arguments.push_back(path_to_utf8(*invocation.source_dependencies));
+    }
     if (invocation.object) {
         arguments.push_back("/Fo" + path_to_utf8(*invocation.object));
     }
@@ -361,6 +363,14 @@ MsvcCompiler::compile_header_unit(const HeaderUnitCompileInvocation& invocation)
     auto prepared_interface = prepare_parent_directory(invocation.interface_output, "header-unit interface");
     if (!prepared_interface) {
         return std::unexpected(prepared_interface.error());
+    }
+    if (invocation.source_dependencies) {
+        auto prepared_dependencies = prepare_parent_directory(
+            *invocation.source_dependencies,
+            "sourceDependencies");
+        if (!prepared_dependencies) {
+            return std::unexpected(prepared_dependencies.error());
+        }
     }
     if (invocation.object) {
         auto prepared_object = prepare_parent_directory(*invocation.object, "header-unit object");
