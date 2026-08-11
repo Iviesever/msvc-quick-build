@@ -19,6 +19,8 @@ struct BuildOverrides {
     std::vector<std::filesystem::path> include_directories;
     std::vector<std::filesystem::path> library_directories;
     std::vector<std::string> libraries;
+    std::vector<std::string> compiler_arguments;
+    std::vector<std::string> linker_arguments;
 };
 
 struct DiscoveryOverrides {
