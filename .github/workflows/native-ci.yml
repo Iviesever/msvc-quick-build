@@ -17,7 +17,7 @@ on:
       - 'release/**'
       - '.github/workflows/native-ci.yml'
       - '.github/workflows/native-installer.yml'
-      - '.github/workflows/cpp-release.yml'
+      - '.github/workflows/native-release.yml'
 
 jobs:
   build-and-test:

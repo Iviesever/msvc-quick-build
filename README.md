@@ -256,6 +256,8 @@ Optional executable run
 3. `Native Release`：完整 Release tests、Stage 0 → Stage 1 → clean Stage 1 → Stage 2 self-host closure、exact package manifest、SHA-256、Stage 1 byte identity 与 packaged-installer validation；
 4. 匹配 `release/VERSION` 的 `vX.Y.Z` tag 才能触发 publication；publication job 只发布同一 workflow run 已验证的 artifact，不二次 rebuild。
 
+三条稳定 workflow 的定义文件都属于 `Native C++` 的 PR 触发范围；release / installer workflow 的变更不能绕过 Debug installed-MSVC gate。
+
 历史 `v5.0.0-rc.1` / `v5.0.0-rc.2` release notes 保留原样。Issue #16 独立跟踪 external/prebuilt named-module providers 与 `import std`。
 
 ## License
