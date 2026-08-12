@@ -51,9 +51,10 @@ $versionDefine = 'MQB_VERSION=' + $quote + $Version + $quote
 $configArg = if ($Configuration -eq 'Debug') { '--debug' } else { '--release' }
 $runtime = if ($Configuration -eq 'Debug') { 'MTd' } else { 'MT' }
 
-$arguments = @()
-$arguments += $sources
-$arguments += @(
+# The single explicit entry plus cpp/mqb.json is the authoritative project
+# description. discovery.extra_sources owns the remaining 41 production TUs.
+$arguments = @(
+    'apps/mqb/main.cpp',
     '--env', 'vs',
     $configArg,
     '--runtime', $runtime,
@@ -66,7 +67,7 @@ try {
     Write-Host "Building MQB with MQB: $BuilderMqbPath"
     Write-Host "Configuration: $Configuration"
     Write-Host "Version: $Version"
-    Write-Host "Production translation units: $($sources.Count)"
+    Write-Host "Verified project manifest: $($sources.Count) production translation units"
 
     $buildOutput = @(& $BuilderMqbPath @arguments 2>&1)
     $exitCode = $LASTEXITCODE
