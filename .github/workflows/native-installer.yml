@@ -1,0 +1,49 @@
+name: Native Installer
+
+on:
+  pull_request:
+    paths:
+      - 'install.bat'
+      - 'install.ps1'
+      - 'uninstall.ps1'
+      - 'tests/installer/**'
+      - 'docs/INSTALLATION.md'
+      - 'README.md'
+      - '.github/workflows/native-installer.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'install.bat'
+      - 'install.ps1'
+      - 'uninstall.ps1'
+      - 'tests/installer/**'
+      - 'docs/INSTALLATION.md'
+      - 'README.md'
+      - '.github/workflows/native-installer.yml'
+
+jobs:
+  install-reinstall-uninstall:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure Release mqb
+        shell: pwsh
+        run: |
+          cmake -S cpp -B cpp/build-installer `
+            -G "Visual Studio 18 2026" -A x64 `
+            -DMQB_ENABLE_INSTALLED_MSVC_TESTS=OFF
+
+      - name: Build Release mqb
+        run: cmake --build cpp/build-installer --config Release --target mqb --parallel
+
+      - name: Validate native installer lifecycle
+        shell: pwsh
+        run: |
+          $mqb = Join-Path $PWD 'cpp/build-installer/apps/mqb/Release/mqb.exe'
+          & (Join-Path $PWD 'tests/installer/native_installer_lifecycle.ps1') `
+            -MqbPath $mqb `
+            -RepoRoot $PWD
