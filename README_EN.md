@@ -321,4 +321,4 @@ Historical `v5.0.0-rc.1` / `v5.0.0-rc.2` remain unchanged.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+Apache License 2.0 (SPDX: `Apache-2.0`) — Copyright 2026 Iviesever. See [`LICENSE`](LICENSE) for the full terms.
