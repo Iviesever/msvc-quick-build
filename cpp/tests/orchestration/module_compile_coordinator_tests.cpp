@@ -325,6 +325,109 @@ int main() {
                "downstream provider rebuild should propagate as explicit_rebuild");
     }
 
+    {
+        const fs::path std_source = root / "transitive" / "std.ixx";
+        const fs::path partition_source = root / "transitive" / "M-part.ixx";
+        const fs::path primary_source = root / "transitive" / "M.ixx";
+        write_text(std_source, "export module std;\n");
+        write_text(partition_source, "export module M:part; import std;\n");
+        write_text(primary_source, "export module M; export import :part;\n");
+
+        auto std_artifacts = layout->for_source(std_source);
+        auto partition_artifacts = layout->for_source(partition_source);
+        auto primary_artifacts = layout->for_source(primary_source);
+        expect(std_artifacts && partition_artifacts && primary_artifacts,
+               "transitive module-reference fixture should receive unique artifacts");
+        if (!std_artifacts || !partition_artifacts || !primary_artifacts) return 1;
+
+        mqb::modules::ModuleDependencyPlan transitive_plan;
+        transitive_plan.compile_levels = {
+            {std_source},
+            {partition_source},
+            {primary_source},
+        };
+        transitive_plan.resolved_dependencies = {
+            mqb::modules::ResolvedModuleDependency{
+                .consumer_source = partition_source,
+                .provider_source = std_source,
+                .logical_name = "std",
+            },
+            mqb::modules::ResolvedModuleDependency{
+                .consumer_source = primary_source,
+                .provider_source = partition_source,
+                .logical_name = "M:part",
+            },
+        };
+
+        mqb::orchestration::ModuleCompileWaveRequest transitive_request;
+        transitive_request.sources = {
+            mqb::orchestration::ModuleCompileSourceRequest{
+                .source = primary_source,
+                .artifacts = *primary_artifacts,
+                .kind = mqb::TranslationUnitKind::module_interface,
+            },
+            mqb::orchestration::ModuleCompileSourceRequest{
+                .source = partition_source,
+                .artifacts = *partition_artifacts,
+                .kind = mqb::TranslationUnitKind::module_interface,
+            },
+            mqb::orchestration::ModuleCompileSourceRequest{
+                .source = std_source,
+                .artifacts = *std_artifacts,
+                .kind = mqb::TranslationUnitKind::module_interface,
+            },
+        };
+        transitive_request.plan = transitive_plan;
+        transitive_request.compiler_options = options;
+        transitive_request.working_directory = root;
+        transitive_request.max_parallel_compiles = 2;
+
+        const int calls_before_transitive = runner.calls();
+        const auto transitive = modules.run(transitive_request);
+        expect(transitive.has_value(),
+               "transitive named-module reference closure should compile successfully");
+        if (!transitive) return 1;
+        expect(runner.calls() == calls_before_transitive + 3,
+               "cold transitive fixture should compile all three dependency levels exactly once");
+
+        const auto transitive_records = runner.records();
+        expect(has_reference_argument(
+                   transitive_records,
+                   partition_source,
+                   "std",
+                   std_artifacts->module_interface),
+               "direct partition consumer should receive /reference std=<IFC>");
+        expect(has_reference_argument(
+                   transitive_records,
+                   primary_source,
+                   "M:part",
+                   partition_artifacts->module_interface),
+               "primary interface should receive its direct partition reference");
+        expect(has_reference_argument(
+                   transitive_records,
+                   primary_source,
+                   "std",
+                   std_artifacts->module_interface),
+               "primary interface should inherit the partition's transitive std reference");
+    }
+
+    {
+        auto unicode_collision = request;
+        const fs::path unicode_artifact =
+            root / L"\u4ea7\u7269" / L"\u5171\u4eab.obj";
+        unicode_collision.sources[0].artifacts.object = unicode_artifact;
+        unicode_collision.sources[1].artifacts.object = unicode_artifact;
+
+        const int calls_before_unicode_collision = runner.calls();
+        const auto collision = modules.run(unicode_collision);
+        expect(!collision
+                   && collision.error().code
+                       == mqb::orchestration::ModuleCompileErrorCode::artifact_collision,
+               "Unicode artifact paths should participate in collision detection without narrow conversion");
+        expect(runner.calls() == calls_before_unicode_collision,
+               "Unicode artifact collision should fail before launching the compiler");
+    }
+
     auto unsupported = request;
     unsupported.plan.unresolved_requirements.push_back(
         mqb::modules::UnresolvedModuleRequirement{

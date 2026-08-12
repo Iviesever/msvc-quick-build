@@ -159,6 +159,63 @@ int main() {
                "discovery output ordering should be deterministic");
     }
 
+    {
+        TempTree traversal_tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_source_discovery_deep_" + std::to_string(unique)),
+        };
+        const fs::path deep_entry = traversal_tree.root / "a" / "b" / "c" / "main.cpp";
+        const fs::path root_header = traversal_tree.root / "tail.hpp";
+        const fs::path root_source = traversal_tree.root / "tail.cpp";
+        write_text(
+            deep_entry,
+            "#include \"../../../tail.hpp\"\n"
+            "int main() { return tail(); }\n");
+        write_text(root_header, "#pragma once\nint tail();\n");
+        write_text(root_source, "#include \"tail.hpp\"\nint tail() { return 0; }\n");
+
+        const auto traversal = mqb::discovery::SourceDiscovery::discover({
+            .project_root = traversal_tree.root,
+            .entry = deep_entry,
+            .include_directories = {},
+        });
+        expect(traversal.has_value(),
+               "discovery should resume at parent directories after finishing a deep subtree");
+        if (traversal) {
+            expect(traversal->indexed_files == 3,
+                   "deep-subtree traversal should still index root-level header and source files");
+            expect(contains_source(traversal->sources, root_source),
+                   "root-level source reached after a deep subtree should participate in discovery");
+        }
+    }
+
+    {
+        TempTree unicode_tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_source_discovery_unicode_" + std::to_string(unique)),
+        };
+        const fs::path unicode_entry = unicode_tree.root / "main.cpp";
+        const fs::path unicode_source =
+            unicode_tree.root / L"\u68c0\u6d4bsmart_handle.cpp";
+        write_text(unicode_entry, "int main() { return 0; }\n");
+        write_text(unicode_source, "int unicode_probe() { return 0; }\n");
+
+        const auto unicode_discovery = mqb::discovery::SourceDiscovery::discover({
+            .project_root = unicode_tree.root,
+            .entry = unicode_entry,
+            .include_directories = {},
+        });
+        expect(unicode_discovery.has_value(),
+               "discovery should index Unicode filenames without narrow path conversion");
+        if (unicode_discovery) {
+            expect(unicode_discovery->indexed_files == 2,
+                   "Unicode-named translation unit should be indexed");
+            expect(unicode_discovery->sources.size() == 1
+                       && unicode_discovery->sources.front() == unicode_entry,
+                   "disconnected Unicode-named source should not change selected closure");
+        }
+    }
+
     const auto invalid_root = mqb::discovery::SourceDiscovery::discover({
         .project_root = tree.root / "missing-root",
         .entry = main_source,
