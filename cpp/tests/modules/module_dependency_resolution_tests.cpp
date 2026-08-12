@@ -62,6 +62,21 @@ void expect(const bool condition, const std::string_view message) {
         });
 }
 
+[[nodiscard]] bool has_external_edge(
+    const mqb::modules::ModuleDependencyPlan& plan,
+    const fs::path& consumer,
+    const fs::path& interface_file,
+    const std::string_view logical_name) {
+    return std::any_of(
+        plan.resolved_external_dependencies.begin(),
+        plan.resolved_external_dependencies.end(),
+        [&](const mqb::modules::ResolvedExternalModuleDependency& dependency) {
+            return dependency.consumer_source == consumer
+                && dependency.interface_file == interface_file
+                && dependency.logical_name == logical_name;
+        });
+}
+
 } // namespace
 
 int main() {
@@ -104,6 +119,70 @@ int main() {
                    "ordinary consumer should reference the selected interface provider");
             expect(!has_edge(*plan, "consumer.cpp", "M_impl.cpp", "M"),
                    "non-interface same-name unit must not leak into provider resolution");
+        }
+    }
+
+    {
+        const std::vector units{
+            unit("consumer.cpp", {}, {require_named("vendor.math")}),
+        };
+        const std::vector external{
+            mqb::ExternalModuleProvider{
+                .logical_name = "vendor.math",
+                .interface_file = "prebuilt/vendor.math.ifc",
+            },
+        };
+        const auto plan = ModuleDependencyGraphBuilder::build(units, external);
+        expect(plan.has_value(), "explicit external provider should resolve a named requirement");
+        if (plan) {
+            expect(plan->unresolved_requirements.empty(),
+                   "configured external provider should remove the matching unresolved requirement");
+            expect(plan->resolved_external_dependencies.size() == 1,
+                   "external provider should create one typed external dependency");
+            expect(has_external_edge(
+                       *plan, "consumer.cpp", "prebuilt/vendor.math.ifc", "vendor.math"),
+                   "external dependency should retain consumer, logical name, and exact IFC identity");
+            expect(plan->compile_levels.size() == 1 && plan->compile_levels.front().size() == 1,
+                   "read-only external provider must not become an MQB compile-level node");
+        }
+    }
+
+    {
+        const std::vector units{
+            unit("local.ixx", {provide("vendor.math")}),
+            unit("consumer.cpp", {}, {require_named("vendor.math")}),
+        };
+        const std::vector external{
+            mqb::ExternalModuleProvider{
+                .logical_name = "vendor.math",
+                .interface_file = "prebuilt/vendor.math.ifc",
+            },
+        };
+        const auto plan = ModuleDependencyGraphBuilder::build(units, external);
+        expect(!plan.has_value(),
+               "project-local and configured external providers for one logical name must be ambiguous");
+        if (!plan) {
+            expect(plan.error().code == mqb::modules::ModuleGraphErrorCode::ambiguous_named_provider,
+                   "local/external provider conflict should preserve named-provider ambiguity diagnostics");
+        }
+    }
+
+    {
+        const std::vector units{
+            unit("consumer.cpp", {}, {require_named("std")}),
+        };
+        const std::vector external{
+            mqb::ExternalModuleProvider{
+                .logical_name = "std",
+                .interface_file = "prebuilt/std.ifc",
+            },
+        };
+        const auto plan = ModuleDependencyGraphBuilder::build(units, external);
+        expect(!plan.has_value(),
+               "standard-library modules must not be smuggled through generic external provider policy");
+        if (!plan) {
+            expect(plan.error().code == mqb::modules::ModuleGraphErrorCode::toolchain_owned_provider,
+                   "import std boundary should remain explicitly toolchain-owned for the next slice");
         }
     }
 
