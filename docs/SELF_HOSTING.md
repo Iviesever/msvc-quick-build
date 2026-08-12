@@ -42,6 +42,20 @@ Stage 2（干净自举闭包证明）
 
 Stage 0、Stage 1、Stage 2 都来自当前源码，且每一代构建都由 MQB 完成。
 
+### 物理源码结构
+
+`cpp/` 只有一套产品源码树：
+
+```text
+cpp/
+├─ include/   # 唯一跨组件头文件根
+├─ src/       # 唯一产品实现根
+├─ tests/     # 唯一 C++ 测试根
+└─ mqb.json   # 唯一 production manifest
+```
+
+`include/`、`src/`、`tests/` 内部再按 `core / config / discovery / modules / orchestration / msvc / platform` 等职责分层。禁止恢复组件级 `cpp/<component>/include`、`src` 或 `tests` 树。完整目录契约见 [`cpp/README.md`](../cpp/README.md)。
+
 ### 原生项目描述
 
 `cpp/mqb.json` 是 MQB 构建自身的项目描述。它声明：
@@ -49,13 +63,13 @@ Stage 0、Stage 1、Stage 2 都来自当前源码，且每一代构建都由 MQB
 - x64 / C++23；
 - executable target；
 - MSVC runtime 与 console subsystem；
-- 生产 include roots；
+- 统一的 production include roots；
 - `/W4` 与 `/permissive-`；
 - 完整 production translation-unit manifest。
 
 `tests/native/build_mqb.ps1` 会读取此文件，并要求：
 
-- `apps/mqb/main.cpp` 加上 `discovery.extra_sources` 恰好组成 42 个 production translation units；
+- `src/app/main.cpp` 加上 `discovery.extra_sources` 恰好组成 42 个 production translation units；
 - 每个源文件真实存在；
 - 构建产物能运行；
 - 内嵌版本与请求版本完全一致。
@@ -69,7 +83,7 @@ release version 唯一来源仍是 `release/VERSION`。构建 driver 通过结�
 它会：
 
 1. 从 `cpp/mqb.json` 取得 41 个 non-main production translation units；
-2. 递归枚举并强制要求恰好存在 67 个 `*_tests.cpp`；
+2. 递归枚举 `cpp/tests/` 并强制要求恰好存在 67 个 `*_tests.cpp`；
 3. 用当前 MQB 为每个 test entry 构建独立测试可执行文件；
 4. 复用 `.mqb` incremental object/cache；
 5. 向 CLI E2E 测试传入正在验证的当前 MQB；
@@ -97,7 +111,7 @@ $quote = [char]34
 $define = 'MQB_VERSION=' + $quote + $version + $quote
 
 Push-Location .\cpp
-mqb apps\mqb\main.cpp --env vs --release --runtime MT -D $define
+mqb src\app\main.cpp --env vs --release --runtime MT -D $define
 Pop-Location
 ```
 
@@ -141,7 +155,9 @@ Stage 1 self-hosted release candidate
 Stage 2 clean self-host closure
 ```
 
-`cpp/mqb.json` is the exact 42-production-TU native self-build manifest. `tests/native/build_mqb.ps1` builds MQB from it, while `tests/native/run_native_tests.ps1` requires exactly 67 `*_tests.cpp` entries, builds every test executable with MQB, and runs the full graph directly.
+The physical source layout is deliberately singular: `cpp/include` is the only cross-component header root, `cpp/src` is the only product implementation root, and `cpp/tests` is the only C++ test root. Responsibilities are mirrored beneath those roots. Component-local `include/src/tests` trees are forbidden; see `cpp/README.md`.
+
+`cpp/mqb.json` is the exact 42-production-TU native self-build manifest. `tests/native/build_mqb.ps1` uses `src/app/main.cpp` plus the 41 non-main production units, while `tests/native/run_native_tests.ps1` requires exactly 67 `*_tests.cpp` entries under `cpp/tests`, builds every test executable with MQB, and runs the full graph directly.
 
 For local development, run:
 
