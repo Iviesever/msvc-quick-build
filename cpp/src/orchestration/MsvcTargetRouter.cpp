@@ -99,8 +99,17 @@ MsvcTargetRouter::run(const RoutedTargetRequest& request) const {
     routed.pipeline = MsvcTargetPipeline::named_modules;
     routed.any_compiled = result->compiles.any_compiled;
     routed.link = std::move(result->link);
-    routed.compiles.reserve(result->compiles.compiles.size());
-    for (auto& compile : result->compiles.compiles) {
+
+    // Module-target execution may append toolchain-owned std/std.compat sources
+    // after the caller's source prefix. Keep public compile ordering scoped to
+    // the original target while still letting provider rebuilds affect
+    // any_compiled and downstream link freshness.
+    const std::size_t public_source_count = std::min(
+        request.sources.size(),
+        result->compiles.compiles.size());
+    routed.compiles.reserve(public_source_count);
+    for (std::size_t index = 0; index < public_source_count; ++index) {
+        auto& compile = result->compiles.compiles[index];
         routed.compiles.push_back(TargetCompileResult{
             .source = std::move(compile.source),
             .result = std::move(compile.result),

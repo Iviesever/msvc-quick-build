@@ -59,6 +59,10 @@ public:
     [[nodiscard]] std::expected<ModuleScanResult, ModuleScanError>
     scan(const ModuleScanInvocation& invocation) const;
 
+    [[nodiscard]] const MsvcToolchain& toolchain() const noexcept {
+        return toolchain_;
+    }
+
 private:
     const MsvcToolchain& toolchain_;
     process::ProcessRunner& runner_;

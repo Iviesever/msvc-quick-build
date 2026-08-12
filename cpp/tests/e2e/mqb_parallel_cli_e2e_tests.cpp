@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -49,6 +50,29 @@ void dump_failure(const mqb::process::ProcessResult& result) {
     return false;
 }
 
+[[nodiscard]] std::optional<fs::path> find_generated_artifact(
+    const fs::path& root,
+    const fs::path& category,
+    const std::string_view filename) {
+    const fs::path artifact_root = root / ".mqb" / category;
+    std::error_code error_code;
+    fs::recursive_directory_iterator iterator{
+        artifact_root,
+        fs::directory_options::skip_permission_denied,
+        error_code};
+    if (error_code) return std::nullopt;
+    const fs::recursive_directory_iterator end;
+    for (; iterator != end; iterator.increment(error_code)) {
+        if (error_code) return std::nullopt;
+        if (iterator->is_regular_file(error_code) && !error_code
+            && iterator->path().filename().generic_string() == filename) {
+            return iterator->path();
+        }
+        error_code.clear();
+    }
+    return std::nullopt;
+}
+
 struct TempTree {
     fs::path root;
     ~TempTree() {
@@ -82,6 +106,37 @@ struct TempTree {
     spec.capture_stderr = true;
     auto result = runner.run(spec);
     if (!result) return std::unexpected("failed to launch mqb: " + result.error().message);
+    return std::move(*result);
+}
+
+[[nodiscard]] std::expected<mqb::process::ProcessResult, std::string> run_std_mqb(
+    mqb::platform::windows::WindowsProcessRunner& runner,
+    const fs::path& mqb,
+    const fs::path& root,
+    const std::string& jobs,
+    const std::string& standard,
+    const std::string& output_name,
+    const bool run_after_build) {
+    mqb::process::ProcessSpec spec;
+    spec.executable = mqb;
+    spec.arguments = {
+        "main.cpp",
+        "--env",
+        "vs",
+        "--std",
+        standard,
+        "--jobs",
+        jobs,
+        "--verbose",
+        "-o",
+        output_name,
+    };
+    if (run_after_build) spec.arguments.push_back("--run");
+    spec.working_directory = root;
+    spec.capture_stdout = true;
+    spec.capture_stderr = true;
+    auto result = runner.run(spec);
+    if (!result) return std::unexpected("failed to launch mqb import-std target: " + result.error().message);
     return std::move(*result);
 }
 
@@ -186,6 +241,97 @@ int main() {
     if (warm_run) {
         expect(warm_run->stdout_text.find("parallel=10") != std::string::npos,
                "warm reused executable behavior should remain unchanged");
+    }
+
+    // `import std` is deliberately public-CLI coverage: source discovery sees
+    // only one project TU, /scanDependencies identifies the requirement, and
+    // the selected VS toolchain supplies std.ixx as a generated provider under
+    // the project's own .mqb artifact root.
+    TempTree std_tree{
+        .root = fs::temp_directory_path() / ("mqb_import_std_cli_e2e_" + std::to_string(unique)),
+    };
+    fs::create_directories(std_tree.root);
+    write_text(
+        std_tree.root / "main.cpp",
+        "import std;\n"
+        "int main() {\n"
+        "    std::vector<int> values{1, 2, 3};\n"
+        "    return values.size() == 3 ? 0 : 1;\n"
+        "}\n");
+
+    auto std_cold = run_std_mqb(
+        runner,
+        mqb_executable,
+        std_tree.root,
+        "2",
+        "latest",
+        "import-std",
+        true);
+    expect(std_cold.has_value(), "cold import std public CLI invocation should launch");
+    if (std_cold) {
+        if (std_cold->exit_code != 0) dump_failure(*std_cold);
+        expect(std_cold->exit_code == 0,
+               "cold import std target should build and run with the selected VS toolchain");
+        expect(std_cold->stdout_text.find("  pipeline: named-modules") != std::string::npos,
+               "import std must route through the authoritative P1689 module pipeline");
+        expect(std_cold->stdout_text.find("[compile] main.cpp") != std::string::npos,
+               "cold import std target should compile its project consumer");
+        expect(std_cold->stdout_text.find("[link] import-std.exe") != std::string::npos,
+               "cold import std target should link the std provider object with the consumer");
+        expect(std_cold->stdout_text.find("[run] import-std.exe") != std::string::npos,
+               "import std should preserve public --run behavior");
+    }
+
+    const auto std_ifc = find_generated_artifact(std_tree.root, "ifc", "std.ixx.ifc");
+    const auto std_object = find_generated_artifact(std_tree.root, "obj", "std.ixx.obj");
+    expect(std_ifc && fs::is_regular_file(*std_ifc),
+           "import std should materialize a project-local cached std IFC");
+    expect(std_object && fs::is_regular_file(*std_object),
+           "import std should materialize the std object required by final linking");
+
+    auto std_warm = run_std_mqb(
+        runner,
+        mqb_executable,
+        std_tree.root,
+        "1",
+        "latest",
+        "import-std",
+        true);
+    expect(std_warm.has_value(), "warm import std public CLI invocation should launch");
+    if (std_warm) {
+        if (std_warm->exit_code != 0) dump_failure(*std_warm);
+        expect(std_warm->exit_code == 0,
+               "warm import std target should reuse toolchain-provider and consumer caches");
+        expect(contains_line(std_warm->stdout_text, "[up-to-date] main.cpp"),
+               "warm import std consumer should remain compile-cache clean when only -j changes");
+        expect(contains_line(std_warm->stdout_text, "[up-to-date] import-std.exe"),
+               "warm import std target should preserve final link cache");
+    }
+
+    TempTree wrong_std_mode_tree{
+        .root = fs::temp_directory_path() / ("mqb_import_std_mode_e2e_" + std::to_string(unique)),
+    };
+    fs::create_directories(wrong_std_mode_tree.root);
+    write_text(
+        wrong_std_mode_tree.root / "main.cpp",
+        "import std;\n"
+        "int main() { return 0; }\n");
+    auto wrong_std_mode = run_std_mqb(
+        runner,
+        mqb_executable,
+        wrong_std_mode_tree.root,
+        "1",
+        "23",
+        "import-std-wrong-mode",
+        false);
+    expect(wrong_std_mode.has_value(), "unsupported import std language-mode invocation should launch");
+    if (wrong_std_mode) {
+        expect(wrong_std_mode->exit_code != 0,
+               "MSVC import std under a non-latest language mode must fail closed");
+        expect(wrong_std_mode->stderr_text.find("requires --std latest") != std::string::npos,
+               "unsupported import std language mode should expose the MQB-owned diagnostic");
+        expect(wrong_std_mode->stdout_text.find("[link] import-std-wrong-mode.exe") == std::string::npos,
+               "unsupported import std mode must fail before final link");
     }
 
     if (failures != 0) {

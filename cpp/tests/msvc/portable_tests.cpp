@@ -79,6 +79,10 @@ int main() {
     touch(tool_bin / "cl.exe");
     touch(tool_bin / "link.exe");
     touch(tool_bin / "lib.exe");
+    const fs::path std_source = latest_vc / "modules" / "std.ixx";
+    const fs::path std_compat_source = latest_vc / "modules" / "std.compat.ixx";
+    touch(std_source);
+    touch(std_compat_source);
 
     make_sdk_version(portable, "10.0.20000.0");
     make_sdk_version(portable, "10.0.30000.0");
@@ -114,6 +118,33 @@ int main() {
                "portable environment should expose PATH first");
         expect(result->environment[0].value.find("10.0.30000.0") != std::string::npos,
                "portable PATH should use the latest Windows Kit version");
+        expect(result->standard_library_modules.std
+                   && *result->standard_library_modules.std == std_source.lexically_normal(),
+               "portable discovery should expose std.ixx from the selected VC Tools version");
+        expect(result->standard_library_modules.std_compat
+                   && *result->standard_library_modules.std_compat == std_compat_source.lexically_normal(),
+               "portable discovery should expose std.compat.ixx from the selected VC Tools version");
+    }
+
+    TemporaryDirectory no_modules_fixture;
+    const fs::path no_modules = no_modules_fixture.path() / "portable_msvc";
+    const fs::path no_modules_vc = no_modules / "VC" / "Tools" / "MSVC" / "14.50.20000";
+    const fs::path no_modules_bin = no_modules_vc / "bin" / "Hostx64" / "x64";
+    touch(no_modules_bin / "cl.exe");
+    touch(no_modules_bin / "link.exe");
+    touch(no_modules_bin / "lib.exe");
+    make_sdk_version(no_modules, "10.0.30000.0");
+
+    mqb::msvc::DiscoveryOptions no_modules_options;
+    no_modules_options.preference = mqb::msvc::ToolchainPreference::portable;
+    no_modules_options.portable_roots = {no_modules};
+    const auto no_modules_result = locator.discover(no_modules_options);
+    expect(no_modules_result.has_value(),
+           "missing standard-library module sources must not invalidate an otherwise usable toolchain");
+    if (no_modules_result) {
+        expect(!no_modules_result->standard_library_modules.std
+                   && !no_modules_result->standard_library_modules.std_compat,
+               "standard-library module capability should remain explicitly unavailable when sources are absent");
     }
 
     TemporaryDirectory broken_fixture;
