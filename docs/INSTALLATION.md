@@ -90,8 +90,10 @@ install.bat
 install.ps1
 uninstall.ps1
 README.md
+README_EN.md
 LICENSE
 MQB_CONFIG.md
+MQB_CONFIG_EN.md
 ARCHITECTURE.md
 INSTALLATION.md
 SELF_HOSTING.md

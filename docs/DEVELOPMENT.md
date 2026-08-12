@@ -1,6 +1,6 @@
 # 开发 / Development
 
-## 简体中文
+**语言：简体中文 | [English](DEVELOPMENT_EN.md)**
 
 MQB 使用 MQB 自身进行日常开发构建与测试。
 
@@ -40,25 +40,3 @@ cpp/
 - `acquire_seed.ps1`：CI 固定历史 seed 的获取与校验。
 
 `cpp/mqb.json` 是 MQB 自身的权威 native project description。当前 production manifest 以 `src/app/main.cpp` 为入口，并使用统一的 `include` 与 `src/app` include roots。
-
-## English
-
-MQB uses MQB itself for day-to-day development builds and tests.
-
-Recommended entry point:
-
-```powershell
-.\tests\native\develop.ps1
-```
-
-Or provide a seed explicitly:
-
-```powershell
-.\tests\native\develop.ps1 -SeedMqbPath C:\path\to\mqb.exe
-```
-
-The seed builds the current-source MQB, then that current MQB builds and directly executes the complete 67-test graph. The development/test chain does not invoke CMake or CTest.
-
-The C++ tree is deliberately singular: `cpp/include` is the only cross-component header root, `cpp/src` is the only product implementation root, and `cpp/tests` is the only C++ test root. Responsibilities are mirrored beneath them; component-local `include/src/tests` trees are forbidden. See `cpp/README.md` for the enforced layout contract.
-
-`cpp/mqb.json` is MQB's authoritative native project description, with `src/app/main.cpp` as the executable entry and only `include` plus `src/app` as include roots.

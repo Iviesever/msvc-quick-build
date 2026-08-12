@@ -1,8 +1,6 @@
 # MQB 自举契约 / Self-hosting contract
 
-**简体中文优先。English summary is included below.**
-
-## 简体中文
+**语言：简体中文 | [English](SELF_HOSTING_EN.md)**
 
 MQB 的稳定版、日常开发构建和测试构建都以 MQB 自身作为构建系统。CMake/CTest 不属于 stable-v5 的开发、测试或发布链。
 
@@ -136,39 +134,3 @@ stable ZIP 只能包含 Stage 1，不能包含固定 seed 或 Stage 0。
 - Stage 1 / Stage 2 报告相同 release version；
 - ZIP 中 `mqb.exe` 与已验证 Stage 1 byte-identical；
 - exact ZIP checksum、manifest 和 installer lifecycle 全部成功。
-
-## English
-
-MQB is its own development, test, and stable-release build system. CMake/CTest are not part of the stable-v5 development, test, or publication chain.
-
-The first stable release solves the bootstrap problem with a **pinned historical `v5.0.0-rc.2` MQB seed** whose release ZIP SHA-256 and executable identity are verified. That seed only builds current-source Stage 0 and is never packaged.
-
-The required chain is:
-
-```text
-pinned historical seed MQB
-        ↓  MQB + cpp/mqb.json
-Stage 0 (current source)
-        ↓  Stage 0 builds and runs all 67 Release tests with MQB
-Stage 1 self-hosted release candidate
-        ↓  delete cpp/.mqb
-Stage 2 clean self-host closure
-```
-
-The physical source layout is deliberately singular: `cpp/include` is the only cross-component header root, `cpp/src` is the only product implementation root, and `cpp/tests` is the only C++ test root. Responsibilities are mirrored beneath those roots. Component-local `include/src/tests` trees are forbidden; see `cpp/README.md`.
-
-`cpp/mqb.json` is the exact 42-production-TU native self-build manifest. `tests/native/build_mqb.ps1` uses `src/app/main.cpp` plus the 41 non-main production units, while `tests/native/run_native_tests.ps1` requires exactly 67 `*_tests.cpp` entries under `cpp/tests`, builds every test executable with MQB, and runs the full graph directly.
-
-For local development, run:
-
-```powershell
-.\tests\native\develop.ps1
-```
-
-or provide an explicit seed:
-
-```powershell
-.\tests\native\develop.ps1 -SeedMqbPath C:\path\to\mqb.exe
-```
-
-Only Stage 1 may be placed in the stable ZIP. The release workflow additionally verifies the exact ZIP checksum/manifest, Stage 1 byte identity, and the install/reinstall/uninstall lifecycle before publication.

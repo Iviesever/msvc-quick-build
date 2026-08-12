@@ -1,6 +1,6 @@
 # MQB 架构 / Architecture
 
-**简体中文优先。English summary is included below.**
+**语言：简体中文 | [English](ARCHITECTURE_EN.md)**
 
 ## 1. 总原则
 
@@ -285,17 +285,3 @@ Stage 1 builds Stage 2 with MQB
 - exact package manifest / SHA-256 / Stage 1 byte identity。
 
 只有 Stage 1 可以进入 stable package。完整契约见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
-
-## English summary
-
-MQB is one native C++23 executable, not a collection of independently shipped libraries. Its architecture is intentionally visible in the filesystem:
-
-- `cpp/include` is the single cross-component header root;
-- `cpp/src` is the single product implementation root;
-- `cpp/tests` is the single C++ test root;
-- responsibilities are mirrored underneath those roots;
-- component-local `include/src/tests` trees are forbidden.
-
-Logical dependency boundaries remain equally strict: `core` is toolchain-independent, `config` owns project policy, `discovery` selects source candidates, `modules` owns P1689 topology, `orchestration` composes build pipelines, `msvc` owns MSVC primitives, `process` is platform-neutral, and `platform/windows` owns the Windows execution boundary.
-
-MQB is also its own development, test, and release build system. CMake/CTest are not part of the current authoritative chain. The stable gate is pinned seed → MQB-built Stage 0 → 67 Release tests → Stage 1 → clean Stage 2, with exact artifact and installer validation.

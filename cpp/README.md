@@ -1,6 +1,6 @@
-# C++ 目录契约 / C++ layout contract
+# C++ 目录契约
 
-## 简体中文
+**语言：简体中文 | [English](README_EN.md)**
 
 `cpp/` 只维护一套原生 MQB 源码树。目录按**文件角色 + 代码职责**分层，不允许每个组件再复制一套 `include/` / `src/` / `tests/`。
 
@@ -57,15 +57,3 @@ cpp/
 8. 新代码必须先选择职责目录，再选择文件；不得以“方便”为理由创建新的平级杂项目录。
 9. `cpp/mqb.json` 必须精确列出 production translation units，并保持一个稳定、少量的 include-root 集合。
 10. 目录重构不得降低 `67/67 Debug + 67/67 Release + self-host` 门禁。
-
-## English
-
-`cpp/` has one native MQB source tree. Physical layout is organized by **file role and code responsibility**; components must not grow private copies of `include/`, `src/`, or `tests/`.
-
-- `cpp/include`: the single cross-component header root.
-- `cpp/src`: the single implementation root.
-- `cpp/src/app`: executable-private CLI/composition code; `main.cpp` stays a thin entry and app-private headers stay out of the public include tree.
-- `cpp/tests`: the single C++ test root, mirrored by responsibility.
-- `cpp/mqb.json`: the authoritative self-build production manifest.
-
-Do not reintroduce component-local `include/src/tests` trees. Dependency direction must remain visible in the physical layout, and every layout change remains subject to the full MQB-native Debug/Release/self-host gates.
