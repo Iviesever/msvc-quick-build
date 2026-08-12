@@ -321,4 +321,4 @@ msvc-quick-build-v5.0.0-windows-x64.zip
 
 ## 许可证
 
-MIT — 见 [`LICENSE`](LICENSE)。
+Apache License 2.0（SPDX: `Apache-2.0`）— Copyright 2026 Iviesever。完整条款见 [`LICENSE`](LICENSE)。
