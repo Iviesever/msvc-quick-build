@@ -28,46 +28,64 @@ if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
     throw "MQB self-build config not found: $configPath"
 }
 
+# cpp/mqb.json remains the source of truth for the production manifest and
+# native build policy. The historical seed is intentionally invoked from the
+# repository root, where no mqb.json is auto-loaded, so an old seed never has
+# to understand a newer project-config schema.
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-$sources = @('apps/mqb/main.cpp') + @($config.discovery.extra_sources)
-$sources = @($sources | ForEach-Object { $_.Replace('\', '/') } | Sort-Object -Unique)
-if ($sources.Count -ne 42) {
-    throw "MQB self-build manifest must contain exactly 42 production translation units; found $($sources.Count)."
+$relativeSources = @('apps/mqb/main.cpp') + @($config.discovery.extra_sources)
+$relativeSources = @($relativeSources | ForEach-Object { $_.Replace('\', '/') } | Sort-Object -Unique)
+if ($relativeSources.Count -ne 42) {
+    throw "MQB self-build manifest must contain exactly 42 production translation units; found $($relativeSources.Count)."
 }
 
-foreach ($source in $sources) {
+foreach ($source in $relativeSources) {
     if (-not (Test-Path -LiteralPath (Join-Path $cppRoot $source) -PathType Leaf)) {
         throw "MQB self-build source is missing: $source"
     }
 }
 
-$mqbState = Join-Path $cppRoot '.mqb'
-if ($Clean -and (Test-Path -LiteralPath $mqbState)) {
-    Remove-Item -LiteralPath $mqbState -Recurse -Force
+$includeDirs = @($config.build.include_dirs)
+if ($includeDirs.Count -eq 0) { throw 'MQB self-build config has no include_dirs.' }
+foreach ($include in $includeDirs) {
+    if (-not (Test-Path -LiteralPath (Join-Path $cppRoot $include) -PathType Container)) {
+        throw "MQB self-build include directory is missing: $include"
+    }
+}
+
+$stateRoot = Join-Path $RepoRoot '.mqb'
+if ($Clean -and (Test-Path -LiteralPath $stateRoot)) {
+    Remove-Item -LiteralPath $stateRoot -Recurse -Force
 }
 
 $quote = [char]34
 $versionDefine = 'MQB_VERSION=' + $quote + $Version + $quote
 $configArg = if ($Configuration -eq 'Debug') { '--debug' } else { '--release' }
 $runtime = if ($Configuration -eq 'Debug') { 'MTd' } else { 'MT' }
+$standard = [string]$config.build.standard
+$subsystem = [string]$config.build.subsystem
 
-# The single explicit entry plus cpp/mqb.json is the authoritative project
-# description. discovery.extra_sources owns the remaining 41 production TUs.
-$arguments = @(
-    'apps/mqb/main.cpp',
-    '--env', 'vs',
-    $configArg,
-    '--runtime', $runtime,
-    '-D', $versionDefine,
-    '-o', 'mqb'
-)
+$arguments = @()
+$arguments += @($relativeSources | ForEach-Object { 'cpp/' + $_ })
+$arguments += @('--env', 'vs', $configArg, '--std', $standard, '--runtime', $runtime)
+if (-not [string]::IsNullOrWhiteSpace($subsystem)) {
+    $arguments += @('--subsystem', $subsystem)
+}
+foreach ($include in $includeDirs) {
+    $arguments += @('-I', ('cpp/' + ([string]$include).Replace('\', '/')))
+}
+foreach ($compilerArg in @($config.build.compiler_args)) {
+    $arguments += @('--compiler-arg', [string]$compilerArg)
+}
+$arguments += @('-D', $versionDefine, '-o', 'mqb')
 
-Push-Location $cppRoot
+Push-Location $RepoRoot
 try {
     Write-Host "Building MQB with MQB: $BuilderMqbPath"
     Write-Host "Configuration: $Configuration"
     Write-Host "Version: $Version"
-    Write-Host "Verified project manifest: $($sources.Count) production translation units"
+    Write-Host "Verified project manifest: $($relativeSources.Count) production translation units"
+    Write-Host 'Invocation deliberately bypasses automatic config loading for seed-schema independence.'
 
     $buildOutput = @(& $BuilderMqbPath @arguments 2>&1)
     $exitCode = $LASTEXITCODE
@@ -80,7 +98,7 @@ finally {
     Pop-Location
 }
 
-$built = Join-Path $cppRoot '.mqb/bin/mqb.exe'
+$built = Join-Path $RepoRoot '.mqb/bin/mqb.exe'
 if (-not (Test-Path -LiteralPath $built -PathType Leaf)) {
     throw "MQB-native build did not produce: $built"
 }
