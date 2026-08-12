@@ -1,8 +1,6 @@
-# `mqb.json` Project Configuration v1
+# `mqb.json` project configuration v1
 
-`mqb.json` is the C++ V2 project configuration file for MSVC Quick Build.
-
-MQB searches upward from the directory where it is invoked and uses the nearest `mqb.json`. The directory containing that file becomes the project root and the root of `.mqb/` artifacts.
+`mqb.json` is MQB's project configuration file. MQB searches upward from the invocation directory for the nearest `mqb.json`; the directory containing that file becomes the project root and the root of `.mqb/` artifacts.
 
 ## Minimal file
 
@@ -22,45 +20,24 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
   "build": {
     "configuration": "release",
     "architecture": "x64",
-    "standard": "17",
+    "standard": "23",
     "type": "exe",
     "runtime": "MT",
     "ltcg": true,
     "subsystem": "console",
     "output": "game",
-    "defines": [
-      "GAME_BUILD=1"
-    ],
-    "include_dirs": [
-      "include",
-      "third_party/include"
-    ],
-    "library_dirs": [
-      "third_party/lib"
-    ],
-    "libraries": [
-      "math",
-      "codec.lib"
-    ],
-    "compiler_args": [
-      "/W4"
-    ],
-    "linker_args": [
-      "/OPT:NOREF"
-    ]
+    "defines": ["GAME_BUILD=1"],
+    "include_dirs": ["include", "third_party/include"],
+    "library_dirs": ["third_party/lib"],
+    "libraries": ["math", "codec.lib"],
+    "compiler_args": ["/W4"],
+    "linker_args": ["/OPT:NOREF"]
   },
   "discovery": {
     "enabled": true,
-    "exclude_dirs": [
-      "tests",
-      "tools"
-    ],
-    "extra_sources": [
-      "src/manual_adapter.cpp"
-    ],
-    "exclude_sources": [
-      "src/legacy.cpp"
-    ]
+    "exclude_dirs": ["tests", "tools"],
+    "extra_sources": ["src/manual_adapter.cpp"],
+    "exclude_sources": ["src/legacy.cpp"]
   }
 }
 ```
@@ -71,49 +48,39 @@ MQB searches upward from the directory where it is invoked and uses the nearest 
 |---|---|---|
 | `configuration` | string | `debug` or `release` |
 | `architecture` | string | `x86` or `x64` |
-| `standard` | string | `14`, `17`, `20`, `23`, or `latest` (`c++14`, `c++17`, `c++20`, `c++23`, `c++latest` are also accepted) |
-| `type` | string | `exe`, `dll`, or `static` (`executable`, `dynamic`, and `lib` aliases are also accepted) |
-| `runtime` | string | MSVC CRT runtime: `MD`, `MDd`, `MT`, or `MTd` |
-| `ltcg` | boolean | enable/disable coupled MSVC link-time code generation; `true` emits compile `/GL` plus downstream `/LTCG` |
-| `subsystem` | string | PE subsystem: `console` or `windows`; not valid for a static target |
-| `output` | string | target name under `.mqb/bin/`; MQB supplies the `.exe`, `.dll`, or `.lib` suffix from `type` |
-| `defines` | string array | preprocessor definitions, without `/D` |
+| `standard` | string | `14`, `17`, `20`, `23`, or `latest`; `c++...` spellings are also accepted |
+| `type` | string | `exe`, `dll`, or `static`; `executable`, `dynamic`, and `lib` aliases are also accepted |
+| `runtime` | string | `MD`, `MDd`, `MT`, or `MTd` |
+| `ltcg` | boolean | coupled `/GL` compile + downstream `/LTCG` policy |
+| `subsystem` | string | `console` or `windows`; invalid for static targets |
+| `output` | string | target name under `.mqb/bin/`; MQB supplies the target suffix |
+| `defines` | string array | preprocessor definitions without `/D` |
 | `include_dirs` | string array | include search directories |
-| `library_dirs` | string array | library search directories; linker-only and therefore invalid for a static target |
-| `libraries` | string array | requested libraries; `.lib` is optional for ordinary names; linker-only and invalid for a static target |
+| `library_dirs` | string array | library search directories; invalid for static targets |
+| `libraries` | string array | requested libraries; invalid for static targets |
 | `compiler_args` | string array | ordered raw `cl.exe` argv elements |
-| `linker_args` | string array | ordered raw `link.exe` argv elements; invalid for a static target |
+| `linker_args` | string array | ordered raw `link.exe` argv elements; invalid for static targets |
 
 All path-valued config entries are resolved relative to the directory containing `mqb.json`, not the shell's current working directory.
 
-`type`, `runtime`, `ltcg`, and `subsystem` are typed policy, not shorthand for raw flags. The MSVC backend remains the sole owner of their command-line spelling. Explicit typed runtime and LTCG compile policy are emitted after raw compiler arguments; typed LTCG downstream policy and DLL/output/subsystem routing are emitted after raw linker arguments. Therefore conflicting raw `/MD*`, `/GL-`, `/LTCG:*`, `/DLL`, `/IMPLIB`, `/SUBSYSTEM:*`, or `/OUT:*` switches cannot silently override the corresponding typed project policy.
+`type`, `runtime`, `ltcg`, and `subsystem` are typed policy. The MSVC backend owns their command-line spelling, and typed policy remains authoritative over conflicting raw arguments.
 
-Typed LTCG is intentionally coupled. `build.ltcg: true` means `/GL` is part of every affected compilation and `/LTCG` is part of the downstream target recipe. Executable/DLL targets pass `/LTCG` to `link.exe`; static targets pass `/LTCG` to `lib.exe`. Debug executable/DLL LTCG disables MSVC incremental linking (`/INCREMENTAL:NO`) because the typed LTCG contract must not produce an internally incompatible linker recipe.
+Typed LTCG is coupled: `build.ltcg: true` adds `/GL` to affected compilation and `/LTCG` to the downstream target recipe. Executable/DLL targets pass `/LTCG` to `link.exe`; static targets pass it to `lib.exe`.
 
-For a DLL target that exports symbols, MQB supplies a deterministic import-library location beside the DLL (`.mqb/bin/<target>.lib`). Linker side outputs that were actually produced are recorded in the link cache; deleting a recorded import library or export file invalidates link freshness and causes a repair relink without recompiling otherwise-fresh translation units.
+DLL import libraries are placed deterministically beside the DLL under `.mqb/bin/`. Static targets use the dedicated `lib.exe` archive pipeline and separate archive cache metadata.
 
-For a static target, MQB routes the compiled ordinary C/C++ object set to the dedicated `lib.exe` librarian pipeline. Static archive metadata lives under `.mqb/cache/archive/<target>.archivecache`, separate from executable/DLL link cache metadata. Linker-only policy (`subsystem`, `library_dirs`, `libraries`, or `linker_args`) is rejected for static targets rather than silently ignored. `ltcg` is not linker-only policy: it remains valid for static targets because it couples `/GL` compilation with the librarian `/LTCG` archive recipe. Static targets that require the named-module/header-unit pipeline remain fail-closed until archive topology is explicitly validated.
-
-Raw compiler/linker arguments are literal argv elements. MQB does not split one JSON string containing spaces into several switches. For example:
-
-```json
-"compiler_args": ["/W4", "/WX"]
-```
-
-represents two compiler arguments, while `"/W4 /WX"` is one argument and is not rewritten by MQB.
-
-Backend-owned typed policy and structured routing remain authoritative. Raw arguments are emitted before typed `/GL`/`/LTCG` and planned output/topology switches such as `/Fo`, `/ifcOutput`, `/scanDependencies`, `/DLL`, `/IMPLIB`, `/MACHINE`, `/SUBSYSTEM`, and `/OUT`.
+Raw compiler/linker arguments are literal argv elements. MQB does not split one JSON string containing spaces into several switches.
 
 ## Discovery fields
 
 | Field | Type | Meaning |
 |---|---|---|
-| `enabled` | boolean | enable or disable single-entry smart source discovery |
-| `exclude_dirs` | string array | exact project directories to prune before discovery graph construction |
-| `extra_sources` | string array | exact supported C/C++ translation units to add even when disconnected from the entry graph |
-| `exclude_sources` | string array | exact supported C/C++ translation units to exclude and treat as traversal barriers |
+| `enabled` | boolean | enable or disable single-entry smart discovery |
+| `exclude_dirs` | string array | exact project directories to prune before graph construction |
+| `extra_sources` | string array | exact supported translation units to add even when disconnected from the entry graph |
+| `exclude_sources` | string array | exact supported translation units to exclude and treat as traversal barriers |
 
-Supported translation-unit extensions in the current V2 source classifier are:
+Supported translation-unit extensions are:
 
 ```text
 C ordinary source:     .c
@@ -121,32 +88,19 @@ C++ ordinary source:   .cpp .cc .cxx
 module interface:      .ixx .cppm .mpp
 ```
 
-C sources participate in ordinary include/main smart discovery but are never parsed as C++ module syntax. This keeps legal C identifiers such as `module`, `import`, or `export` from routing a C target into the P1689 module pipeline.
+C sources participate in ordinary include/main discovery but are never parsed as C++ module syntax.
 
-Version 1 intentionally uses exact paths rather than a glob language. This keeps correction semantics deterministic while the discovery model is still being stabilized.
+Version 1 uses exact paths rather than a glob language. An ordinary `extra_sources` entry may not define another `main()`. The entry TU itself may not be excluded. A source may not appear in both `extra_sources` and `exclude_sources`.
 
-An ordinary `extra_sources` entry may not define another `main()`. The entry TU itself may not be excluded. A source may not appear in both `extra_sources` and `exclude_sources`.
-
-Built-in directory exclusions such as `.mqb`, `.git`, `.vs`, `build`, `out`, and `cmake-build-*` remain active in addition to configured exclusions.
+Built-in exclusions such as `.mqb`, `.git`, `.vs`, `build`, `out`, and `cmake-build-*` remain active in addition to configured exclusions.
 
 ### Named modules and header units
 
-Project-local named modules and project-local header units do **not** require separate v1 config sections.
+Project-local named modules and project-local header units do not require separate v1 config sections. Smart discovery may select reachable local module-provider candidates, but MSVC `/scanDependencies` P1689 metadata remains authoritative for provider selection, dependency ordering, ambiguity/cycle diagnostics, and unresolved requirements.
 
-For a single ordinary entry such as:
+Project-local header-unit IFCs are allocated, built, freshness-tracked, and repaired automatically. Modules and header units require C++20 or newer.
 
-```cpp
-import math;
-int main() { return answer(); }
-```
-
-smart discovery may select a reachable local `.ixx/.cppm/.mpp` provider candidate. Discovery does not decide which candidate is authoritative; MSVC `/scanDependencies` P1689 metadata remains responsible for provider selection, dependency ordering, ambiguity/cycle diagnostics, and unresolved requirements.
-
-Header-unit lexical syntax stays out of ordinary TU discovery edges, but it routes the target through the same authoritative P1689 module pipeline. Project-local header-unit IFCs are allocated, built, freshness-tracked, and repaired automatically.
-
-Modules and header units require C++20 or newer. Selecting `standard: "14"` or `"17"` for an ordinary target is supported; if that target requires module/header-unit scanning, MQB fails closed before launching the unsupported module operation.
-
-If a selected source contains named-module syntax but no supported local provider is found, the target fails closed. External/prebuilt named-module providers and `import std` remain tracked separately in issue #16.
+External/prebuilt named-module providers and `import std` remain unsupported and fail closed; that feature boundary is tracked in Issue #16.
 
 ## Precedence
 
@@ -158,43 +112,13 @@ explicit CLI option > mqb.json > built-in default
 
 This includes `configuration`, `architecture`, `standard`, `type`, `runtime`, `ltcg`, `subsystem`, and `output`.
 
-Examples:
-
-```powershell
-# mqb.json says release; this build is debug.
-mqb main.cpp --debug
-
-# mqb.json says DLL or static; this invocation explicitly builds an executable.
-mqb main.cpp --type exe
-
-# mqb.json says MT; this invocation uses the dynamic CRT.
-mqb main.cpp --runtime MD
-
-# mqb.json enables LTCG; this invocation explicitly disables it.
-mqb main.cpp --no-ltcg
-
-# mqb.json disables LTCG; this invocation enables the coupled /GL + /LTCG policy.
-mqb main.cpp --ltcg
-
-# mqb.json says windows; this invocation uses the console subsystem.
-mqb main.cpp --subsystem console
-
-# mqb.json disables discovery; this explicitly turns it back on.
-mqb main.cpp --discover
-
-# mqb.json output is ignored for this invocation.
-mqb main.cpp -o scratch
-```
-
-MQB tracks whether scalar CLI options were explicitly supplied, so parser defaults do not overwrite project configuration.
-
-List-like options are additive rather than replacing the config list. The effective order is:
+List-like options are additive in deterministic order:
 
 ```text
 mqb.json entries, then CLI entries
 ```
 
-This applies to defines, include directories, library directories, libraries, `compiler_args`, and `linker_args`. For example, a CLI `--compiler-arg /WX` is appended after project `compiler_args` entries. If the effective target kind is `static`, any effective linker-only list remains invalid and fails closed.
+This applies to defines, include directories, library directories, libraries, `compiler_args`, and `linker_args`.
 
 ## Path bases
 
@@ -205,7 +129,7 @@ CLI relative paths      -> invocation directory
 mqb.json relative paths -> mqb.json directory
 ```
 
-This makes nested-directory invocation predictable. For example, with:
+For example, with:
 
 ```text
 project/
@@ -221,45 +145,41 @@ running from `project/nested/work`:
 mqb ../../main.cpp
 ```
 
-still loads `project/mqb.json`, places artifacts under `project/.mqb/`, and interprets config `"include_dirs": ["include"]` as `project/include`.
+still loads `project/mqb.json`, places artifacts under `project/.mqb/`, and interprets `"include_dirs": ["include"]` as `project/include`.
 
 ## Cache behavior
 
-The config file timestamp itself is not a special global rebuild trigger. Instead, the effective typed build options produced from the file participate in the existing compile/link/archive identities.
+The config file timestamp is not a global rebuild trigger. Effective typed options participate in compile/link/archive identity instead.
 
-Changing `runtime` changes compiler recipe identity, recompiles affected TUs, and therefore rebuilds the downstream target. Leaving `runtime` unset preserves the historical Debug `/MDd` and Release `/MD` recipes and their existing signature identity.
+- changing `runtime` changes compile recipe identity;
+- changing `ltcg` changes compile identity and downstream link/archive identity;
+- changing `type` changes downstream target ownership without forcing unrelated recompilation when compile policy is unchanged;
+- changing only `subsystem` changes link identity and relinks;
+- changing compiler arguments changes compile identity;
+- changing linker arguments or explicit libraries/search paths changes link identity;
+- named-module/header-unit compile identity includes typed provider/reference and IFC output identity.
 
-Changing `ltcg` changes both halves of the coupled policy. Enabling it changes compile identity because `/GL` becomes part of the typed compiler recipe, then changes executable/DLL link identity or static archive identity because downstream `/LTCG` becomes part of that target recipe. Repeating the same LTCG policy is cache-reusable. Leaving `ltcg` unset (or setting it to `false`) preserves the historical non-LTCG recipe/signature byte stream.
-
-Changing `type` changes target output/recipe ownership. The historical executable signature byte stream is retained for executable targets; DLL targets add typed link target-kind identity. Static targets use a separate archive identity/cache and the `lib.exe` pipeline. Switching among executable/DLL/static does not recompile otherwise-fresh translation units when the compile recipe is unchanged, but it does build the appropriate downstream target artifact.
-
-Changing only `subsystem` changes link recipe identity and relinks without recompiling otherwise-fresh TUs. `subsystem` is not valid when the effective target kind is static.
-
-Changing a compiler argument changes compiler recipe identity and recompiles affected TUs even if no source timestamp changed. The resulting fresh objects force the downstream target action. Changing only a linker argument changes link recipe identity and relinks without recompiling otherwise-fresh TUs; linker arguments are invalid for static targets.
-
-Likewise, library names/search paths affect link recipe identity, while exact resolved `.lib` files are separately tracked as link freshness inputs. Recorded DLL linker side outputs are separately checked for existence and repaired by relinking if missing. Static archive freshness separately checks its current object inputs, archive output, librarian identity, and typed LTCG archive recipe.
-
-For named modules and header units, compile identity also includes typed provider/reference and interface-output identity. Imported IFC files participate in consumer freshness validation, and a missing provider IFC invalidates the provider's cached outputs.
+Missing recorded outputs invalidate freshness and are repaired by the appropriate compile, link, or archive action.
 
 ## Parallelism
 
-`-j/--jobs` is intentionally **not** a v1 config field. It is execution policy only:
+`-j/--jobs` is execution policy only and is intentionally not a v1 config field:
 
 ```powershell
 mqb main.cpp -j 8
 ```
 
-Changing the job count does not alter compile, link, or archive signatures and therefore must not invalidate an otherwise reusable build cache.
+Changing job count does not change compile, link, or archive signatures.
 
 ## Current boundaries
 
-- v1 `build.type` supports `exe`, `dll`, and `static`; `lib` is accepted as a static-library alias.
-- v1 `build.ltcg` is a boolean coupled policy: `/GL` at compile time plus `/LTCG` at executable/DLL link or static archive time.
-- Static targets currently support ordinary C/C++ translation units; static targets requiring named Modules/Header Units fail closed until archive topology is explicitly validated.
-- `--run` is executable-only; DLL/static targets are built artifacts and are not launched as programs.
+- `build.type` supports `exe`, `dll`, and `static`.
+- `build.ltcg` is a coupled compile/downstream boolean policy.
+- Static targets support ordinary C/C++ translation units; static targets requiring named Modules/Header Units fail closed until archive topology is explicitly validated.
+- `--run` is executable-only.
 - v1 config has no external/prebuilt module-provider or `import std` policy.
 - v1 config does not store parallel job count.
-- `exclude_dirs`, `extra_sources`, and `exclude_sources` are exact paths, not globs.
-- Explicit user libraries are freshness-tracked; indirect `/DEFAULTLIB` transitive dependencies are not claimed as fully tracked.
+- discovery correction fields use exact paths, not globs.
+- explicit user libraries are freshness-tracked; indirect `/DEFAULTLIB` transitive dependencies are not claimed as fully tracked.
 
-For stable-v5 migration decisions, see [`V5_PARITY.md`](V5_PARITY.md). For the broader build/module/cache architecture, see [`CPP_V2_ARCHITECTURE.md`](CPP_V2_ARCHITECTURE.md).
+For the broader build/module/cache architecture, see [`ARCHITECTURE.md`](ARCHITECTURE.md). For stable self-hosting, see [`SELF_HOSTING.md`](SELF_HOSTING.md).
