@@ -1,86 +1,196 @@
-# MQB architecture
+# MQB 架构 / Architecture
 
-This document defines the stable native C++23 architecture of MSVC Quick Build.
+**简体中文优先。English summary is included below.**
 
-MQB has one supported implementation: `mqb.exe`. Build inputs, process arguments, artifacts, caches, and toolchain state are modeled as structured data; there is no fallback build implementation.
+## 1. 总原则
 
-## Goals
+MQB 是一个单一原生 C++23 产品：`mqb.exe`。仓库不再把内部职责伪装成一组独立安装库，也不维护第二套 CMake 工程结构。
 
-- Separate source selection, build policy, dependency topology, compiler/linker execution, and process execution.
-- Keep MSVC-specific switches out of the Core model.
-- Make compile/link/archive cache invalidation explainable and regression-testable.
-- Treat paths and argv as structured data rather than shell command strings.
-- Prefer conservative rebuild/relink or an explicit unsupported error over uncertain artifact reuse.
-- Keep one authoritative native execution path.
+架构必须同时在两处清晰：
 
-## Layers
+1. **逻辑依赖清晰**：上层只依赖下层能力，平台/工具链细节不能泄漏进核心模型；
+2. **物理目录清晰**：目录树直接表达文件角色和代码职责，不依赖构建系统才能理解项目。
+
+## 2. 物理目录是架构的一部分
+
+`cpp/` 的顶层结构是固定契约：
 
 ```text
-CLI (mqb.exe)
-    |
-    +--> Project Config (mqb_config)
-    |      mqb.json locator/parser
-    |      CLI > config > defaults resolver
-    |
-    +--> Source Discovery (mqb_discovery)
-    |      ordinary C/C++ candidate selection
-    |      reachable project-local named-module candidates
-    |      module/header-unit routing requirement
-    |
-    v
-Target routing
-    +--> Ordinary target orchestration
-    |      bounded parallel compile -> deterministic results -> link/archive
-    |
-    +--> Module target orchestration
-           parallel /scanDependencies
-               -> P1689 typed model
-               -> named-module + project-local header-unit graph
-               -> deterministic compile levels
-               -> bounded dependency waves
-               -> incremental link
-    |
-    +--------------------+--------------------+
-    v                    v                    v
-Core                  Modules              MSVC backend
-  BuildRequest           P1689 parser          MsvcToolchainLocator
-  Artifact / TU          provider graph        MsvcCompiler
-  ProjectArtifactLayout  compile levels        MsvcCompileExecutor
-  BuildSignature                               MsvcModuleDependencyScanner
-  CompileCache                                 MsvcLibraryResolver
-  Link/Archive cache                            MsvcLinker / MsvcLibrarian
-  DependencyGraph                                  |
-  BuildPlanner                                     v
-    +----------------------------------------> Process abstraction
-                                              ProcessSpec { executable, argv, cwd, env }
-                                                    |
-                                                    v
-                                             WindowsProcessRunner
-                                             CreateProcessW
+cpp/
+├─ include/                 # 唯一跨组件头文件根
+│  └─ mqb/
+│     ├─ core/             # 工具链无关模型、规划、缓存、artifact identity
+│     ├─ config/           # mqb.json model / policy resolution
+│     ├─ discovery/        # source / module candidate discovery
+│     ├─ json/             # 内部 JSON parser
+│     ├─ modules/          # P1689 与 module dependency graph
+│     ├─ orchestration/    # incremental / module / target pipeline coordination
+│     ├─ msvc/             # MSVC primitive invocation 与 toolchain discovery
+│     ├─ process/          # 平台无关 process model
+│     └─ platform/windows/ # Windows process / quoting boundary
+│
+├─ src/                    # 唯一产品实现根
+│  ├─ app/                 # CLI、target composition、main；可含 app-private headers
+│  ├─ core/
+│  ├─ config/
+│  ├─ discovery/
+│  ├─ json/
+│  ├─ modules/
+│  ├─ orchestration/
+│  ├─ msvc/
+│  └─ platform/windows/
+│
+├─ tests/                  # 唯一 C++ 测试根，按职责镜像
+│  ├─ app/
+│  ├─ core/
+│  ├─ config/
+│  ├─ discovery/
+│  ├─ json/
+│  ├─ modules/
+│  ├─ orchestration/
+│  ├─ msvc/
+│  ├─ process/
+│  ├─ platform/windows/
+│  └─ e2e/
+│
+├─ README.md               # 强制目录契约
+└─ mqb.json                # MQB 自构建的唯一 production manifest
 ```
 
-## Architectural rules
+因此以下结构明确禁止重新出现：
 
-1. Core does not know `cl.exe`, `link.exe`, or `lib.exe` spelling.
-2. Planner does not execute; it produces typed actions and outputs.
-3. Correctness beats cache hit rate.
-4. No internal shell-command API.
-5. Compile, link, and archive state are independent.
-6. A fresh compile is an explicit downstream rebuild signal.
-7. Source identity is not a basename.
-8. Windows physical aliases must converge to one artifact identity.
-9. Writable artifacts are exclusive and preflighted.
-10. Runtime argv and job count are execution policy, not build identity.
-11. Discovery chooses candidate sources; `/sourceDependencies` owns header freshness.
-12. `/scanDependencies`/P1689 owns module topology.
-13. Provider selection has one owner: `ModuleDependencyGraphBuilder`.
-14. Header units are typed separately from named modules.
-15. Unsupported module requirements fail closed.
-16. Stable v5 has one native parser and one native executor.
+```text
+cpp/core/include + cpp/core/src
+cpp/config/include + cpp/config/src
+cpp/<任何组件>/tests
+```
 
-## Project configuration
+这类布局适合独立 library target；MQB 当前不是这种产品形态。完整强制规则见 [`cpp/README.md`](../cpp/README.md)。
 
-`mqb_config` owns versioned `mqb.json`. MQB searches upward from the invocation directory for the nearest config.
+## 3. 逻辑分层
+
+```text
+src/app
+  CLI / mqb.json composition / executable entry
+        |
+        +---------------------+
+        |                     |
+        v                     v
+   config + discovery      target routing
+                                |
+                  +-------------+-------------+
+                  |                           |
+                  v                           v
+            orchestration                modules
+      incremental compile/link        P1689 / provider graph
+      archive / module waves               |
+                  |                         |
+                  +------------+------------+
+                               v
+                              msvc
+               compiler / linker / librarian /
+               source-deps / scan / toolchain
+                               |
+                               v
+                         process model
+                               |
+                               v
+                      platform/windows
+                         CreateProcessW
+
+core  <---- shared typed build model, planner, cache and artifact rules
+```
+
+这不是“目录之间互相平级随便调用”。依赖方向必须保持明确。
+
+## 4. 各职责边界
+
+### `app`
+
+`src/app` 是 executable composition layer。它负责 CLI parsing、把 CLI/config/discovery 结果组装成 target request、选择高层执行流程以及 `main()`。
+
+它不是公共 library API，因此 app-private headers 与实现共同放在 `src/app`，不进入 `cpp/include`。
+
+### `core`
+
+`core` 只描述工具链无关的构建语义：
+
+- `BuildRequest` / `BuildPlan` / `BuildPlanner`；
+- translation-unit 与 artifact identity；
+- compiler/link policy data；
+- compile/link/archive cache；
+- dependency graph；
+- project artifact layout。
+
+**Core 不得知道 `cl.exe`、`link.exe`、`lib.exe`、Windows quoting 或 `CreateProcessW`。**
+
+### `config`
+
+`config` 拥有 versioned `mqb.json` model、解析和 CLI > config > defaults 的 policy resolution。未知字段、错误类型、重复 key 和不支持 schema 必须 fail closed。
+
+### `discovery`
+
+`discovery` 负责候选 source selection，不负责最终 MSVC module topology。普通 include traversal、project corrections、secondary-main barrier 以及 module syntax candidate detection 属于这里。
+
+### `modules`
+
+`modules` 负责 P1689 typed model 与 module dependency graph。provider ownership 只有一个权威实现；named modules 与 header units 必须保持类型区别。
+
+### `orchestration`
+
+`orchestration` 负责**组合执行流程**，而不是直接实现编译器参数：
+
+- bounded work scheduling；
+- incremental compile / link / archive；
+- ordinary target pipeline；
+- module scan/compile waves；
+- target routing。
+
+当前 orchestration 面向 MSVC，因此类名中可以出现 `Msvc*`；但 primitive command construction 仍属于 `msvc`。
+
+### `msvc`
+
+`msvc` 是 MSVC 后端 primitive layer：
+
+- toolchain discovery；
+- compiler / linker / librarian argument construction；
+- process invocation adapters；
+- `/sourceDependencies` reader；
+- `/scanDependencies` scanner；
+- library resolution。
+
+它可以依赖 core/process/modules 所需的 typed data，但不拥有 CLI policy。
+
+### `process` 与 `platform/windows`
+
+`process` 只定义结构化 process data，例如 executable、argv、cwd、environment 与结果/error model。
+
+`platform/windows` 才拥有 Windows command-line encoding 与 `CreateProcessW`。内部禁止以 shell command string 作为通用执行 API。
+
+## 5. 架构不变量
+
+1. Core 不知道 MSVC executable spelling。
+2. Planner 只产生 typed plan，不直接执行。
+3. Correctness 优先于 cache hit rate。
+4. 内部没有 shell-command API；路径和 argv 始终是结构化数据。
+5. Compile、link、archive cache state 独立。
+6. fresh compile 是明确 downstream rebuild signal。
+7. source identity 不能退化成 basename。
+8. Windows physical aliases 必须收敛为同一 artifact identity。
+9. writable artifacts 必须独占并 preflight。
+10. runtime argv 与 job count 是 execution policy，不进入 build identity。
+11. discovery 只选择 candidate；header freshness 由 `/sourceDependencies` 拥有。
+12. module topology 由 `/scanDependencies` / P1689 拥有。
+13. module provider selection 只有一个 owner。
+14. header units 与 named modules 类型分离。
+15. unsupported module requirements fail closed。
+16. stable v5 只有一个 native parser、一个 native executor、一个 C++ 源码树。
+17. `cpp/include`、`cpp/src`、`cpp/tests` 分别只有一个物理根。
+18. 不允许为了“方便”重新制造组件级 `include/src/tests`。
+
+## 6. Project configuration
+
+MQB 从 invocation directory 向上查找最近的 `mqb.json`。
 
 ```text
 CLI relative path --------> invocation directory
@@ -88,93 +198,104 @@ mqb.json relative path ---> directory containing mqb.json
 artifact project root ----> directory containing mqb.json (when present)
 ```
 
-Scalar precedence is `explicit CLI > mqb.json > built-in defaults`. List-like inputs are additive and deterministic. Unknown fields, duplicate keys, wrong types, malformed JSON, and unsupported schema versions are rejected. See `docs/MQB_CONFIG.md`.
+Scalar precedence：`explicit CLI > mqb.json > built-in defaults`。List-like inputs additive 且 deterministic。
 
-## Smart source discovery
-
-With one positional ordinary source, MQB smart-discovers a target by default. Multiple positional sources remain an explicit ordered source set.
-
-Ordinary discovery uses local includes, configured include directories, same-basename ownership, deterministic traversal, project corrections, and a secondary-`main()` traversal barrier.
-
-The discovery index classifies `.c`, `.cpp/.cc/.cxx`, and `.ixx/.cppm/.mpp`. Its lexical module pass selects candidates and routing state only; MSVC P1689 scanning remains authoritative for module topology.
-
-## Build identity and cache
-
-`BuildSignature::for_compile` models a versioned compiler recipe. Identity includes source/TU kind, compiler/toolchain identity, configuration, architecture, language standard, ordered compiler options, typed module/header-unit references, and required outputs.
+MQB 自身的 `cpp/mqb.json` 也是自构建 production manifest。当前物理结构只需要两个 include roots：
 
 ```text
-compiler recipe identity ----> BuildSignature
-source/header/IFC freshness --> CompileCacheValidator
-artifact placement -----------> ProjectArtifactLayout
+include
+src/app
 ```
 
-Link and archive targets use separate downstream identities and caches. Link-only changes do not force unrelated compilation. Typed target kind, runtime, subsystem, and LTCG remain authoritative over conflicting raw escape-hatch arguments.
+前者是唯一跨组件头文件根，后者仅服务 app-private headers。
 
-## Named modules and header units
+## 7. Source discovery 与 module topology
 
-The module pipeline supports project-local named modules and project-local header units:
+普通单入口 source 默认启用 smart discovery；多个 positional sources 表示显式有序 source set。
+
+Module pipeline：
 
 ```text
-selected TU requests
-      -> writable-artifact preflight
-      -> bounded parallel /scanDependencies
-      -> P1689 typed rules
-      -> ModuleDependencyGraphBuilder
-      -> dynamic IFC artifact assignment
-      -> dependency-level compile waves
-      -> incremental final link
+selected source candidates
+       ↓
+writable-artifact preflight
+       ↓
+bounded /scanDependencies
+       ↓
+P1689 typed rules
+       ↓
+ModuleDependencyGraphBuilder
+       ↓
+dynamic IFC assignment
+       ↓
+dependency-level compile waves
+       ↓
+incremental final link
 ```
 
-Supported behavior includes interfaces, partitions, implementation units, consumers, quote/angle project-local header units, source-identity IFC routing, bounded same-level parallelism, incremental caches, mutation propagation, and missing-IFC repair.
+稳定版支持 project-local named modules 与 project-local header units。External/prebuilt named-module providers 与 `import std` 当前仍 fail closed，并由 Issue #16 独立跟踪。
 
-Deliberate fail-closed boundaries remain external/prebuilt named-module providers and `import std`.
+## 8. Build identity 与 artifact layout
 
-## Project artifact layout
+`BuildSignature` 表示 versioned compiler recipe。Identity 覆盖 source/TU kind、toolchain identity、configuration、architecture、language standard、ordered compiler options、typed module/header-unit references 与 required outputs。
+
+所有 writable build state 统一位于项目 `.mqb/`：
 
 ```text
-project/
-  .mqb/
-    obj/
-    deps/
-    scan/
-    ifc/
-    cache/
-      compile/
-      link/
-      archive/
-    bin/
+.mqb/
+├─ obj/
+├─ deps/
+├─ scan/
+├─ ifc/
+├─ cache/
+│  ├─ compile/
+│  ├─ link/
+│  └─ archive/
+└─ bin/
 ```
 
-All writable build state lives under `.mqb/` rather than being scattered through source directories.
+源码目录不承载编译中间产物。
 
-## Process and toolchain boundary
+## 9. 开发、测试与发布门禁
 
-`mqb_process` carries executable, argv, working directory, environment overrides, and capture policy. `mqb_platform_windows` owns Windows quoting and `CreateProcessW` execution.
+MQB 自身就是 MQB 的构建系统。CMake/CTest **不属于**当前开发、测试、自举或发布链。
 
-`MsvcToolchainLocator` supports automatic, forced Visual Studio, and forced portable toolchain tracks. Toolchain identity participates in build/cache correctness.
+```text
+pinned historical MQB seed
+        ↓
+MQB builds current Stage 0
+        ↓
+67/67 MQB-built Release tests
+        ↓
+Stage 0 builds Stage 1 with MQB
+        ↓
+clean MQB state
+        ↓
+Stage 1 builds Stage 2 with MQB
+```
 
-## CLI boundary
+稳定候选必须同时通过：
 
-Stable v5 accepts the native option set documented by `mqb --help`. Normal short options such as `-h`, `-v`, `-j`, `-o`, `-I`, `-D`, `-L`, and `-l` are native UX.
+- current Debug MQB 由 MQB 构建；
+- 67/67 Debug tests 由 MQB 构建并直接执行；
+- current Release/Stage 0 由 MQB 构建；
+- 67/67 Release tests；
+- Stage 0 → Stage 1 → clean Stage 2 self-host closure；
+- installer lifecycle；
+- exact package manifest / SHA-256 / Stage 1 byte identity。
 
-Known obsolete single-dash spellings are rejected as unknown options. There is no second parser or fallback executor.
+只有 Stage 1 可以进入 stable package。完整契约见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
 
-## Verification and release gate
+## English summary
 
-A stable release requires all of the following:
+MQB is one native C++23 executable, not a collection of independently shipped libraries. Its architecture is intentionally visible in the filesystem:
 
-1. full installed-MSVC Debug tests;
-2. full installed-MSVC Release tests;
-3. native installer install/reinstall/uninstall validation;
-4. embedded version verification;
-5. Stage 0 -> Stage 1 MQB self-build through `cpp/mqb.json`;
-6. deletion of `cpp/.mqb`, followed by Stage 1 -> Stage 2 clean self-host closure;
-7. packaging of Stage 1 only, with byte-identity verification;
-8. exact package manifest and SHA-256 validation;
-9. publication of the exact validated artifact from the tag workflow.
+- `cpp/include` is the single cross-component header root;
+- `cpp/src` is the single product implementation root;
+- `cpp/tests` is the single C++ test root;
+- responsibilities are mirrored underneath those roots;
+- component-local `include/src/tests` trees are forbidden.
 
-CMake remains the bootstrap/test harness for Stage 0 and the unit/integration test graph; it is not the producer of the `mqb.exe` shipped in stable releases. See `docs/SELF_HOSTING.md`.
+Logical dependency boundaries remain equally strict: `core` is toolchain-independent, `config` owns project policy, `discovery` selects source candidates, `modules` owns P1689 topology, `orchestration` composes build pipelines, `msvc` owns MSVC primitives, `process` is platform-neutral, and `platform/windows` owns the Windows execution boundary.
 
-## Stable v5 status
-
-The native architecture, installer lifecycle, exact-artifact release workflow, and self-hosting gate are complete for the v5.0.0 scope. Remaining feature work such as external/prebuilt named-module providers and `import std` is tracked independently in Issue #16.
+MQB is also its own development, test, and release build system. CMake/CTest are not part of the current authoritative chain. The stable gate is pinned seed → MQB-built Stage 0 → 67 Release tests → Stage 1 → clean Stage 2, with exact artifact and installer validation.
