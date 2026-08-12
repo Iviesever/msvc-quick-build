@@ -551,6 +551,34 @@ decode_discovery(const fs::path& file, const fs::path& root, const JsonValue& va
     return {};
 }
 
+[[nodiscard]] std::expected<void, Error>
+decode_modules(const fs::path& file, const fs::path& root, const JsonValue& value, ModuleOverrides& out) {
+    auto object = require_object(file, value, "modules");
+    if (!object) return std::unexpected(object.error());
+    auto known = reject_unknown(file, **object, {"external"}, "modules");
+    if (!known) return std::unexpected(known.error());
+
+    const auto external_it = (**object).find("external");
+    if (external_it == (**object).end()) return {};
+    auto external = require_object(file, external_it->second, "modules.external");
+    if (!external) return std::unexpected(external.error());
+
+    out.external_providers.reserve((*external)->size());
+    for (const auto& [logical_name, provider_value] : **external) {
+        if (logical_name.empty()) {
+            return std::unexpected(schema_error(
+                file, provider_value, "modules.external logical module name must not be empty"));
+        }
+        auto path = require_string(file, provider_value, "modules.external provider IFC");
+        if (!path) return std::unexpected(path.error());
+        out.external_providers.push_back(ExternalModuleProvider{
+            .logical_name = logical_name,
+            .interface_file = resolve_path(root, *path),
+        });
+    }
+    return {};
+}
+
 } // namespace
 
 std::expected<std::optional<fs::path>, Error>
@@ -596,7 +624,7 @@ ProjectConfigLoader::load(const fs::path& requested_file) {
     if (!root) return std::unexpected(root.error());
     auto object = require_object(file, *root, "project config root");
     if (!object) return std::unexpected(object.error());
-    auto known = reject_unknown(file, **object, {"version", "build", "discovery"}, "root");
+    auto known = reject_unknown(file, **object, {"version", "build", "discovery", "modules"}, "root");
     if (!known) return std::unexpected(known.error());
 
     const auto version_it = (**object).find("version");
@@ -632,6 +660,10 @@ ProjectConfigLoader::load(const fs::path& requested_file) {
     }
     if (auto it = (**object).find("discovery"); it != (**object).end()) {
         auto decoded = decode_discovery(file, config.project_root, it->second, config.discovery);
+        if (!decoded) return std::unexpected(decoded.error());
+    }
+    if (auto it = (**object).find("modules"); it != (**object).end()) {
+        auto decoded = decode_modules(file, config.project_root, it->second, config.modules);
         if (!decoded) return std::unexpected(decoded.error());
     }
     return config;

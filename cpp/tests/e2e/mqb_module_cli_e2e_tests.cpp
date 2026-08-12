@@ -114,6 +114,37 @@ struct TempTree {
     return std::move(*result);
 }
 
+[[nodiscard]] std::expected<mqb::process::ProcessResult, std::string> run_external_cli_mqb(
+    mqb::platform::windows::WindowsProcessRunner& runner,
+    const fs::path& mqb,
+    const fs::path& root,
+    const fs::path& interface_file,
+    const std::string& output_name) {
+    mqb::process::ProcessSpec spec;
+    spec.executable = mqb;
+    spec.arguments = {
+        "main.cpp",
+        "--module-ifc",
+        "math=" + interface_file.generic_string(),
+        "--env",
+        "vs",
+        "--std",
+        "latest",
+        "--jobs",
+        "2",
+        "--verbose",
+        "-o",
+        output_name,
+        "--run",
+    };
+    spec.working_directory = root;
+    spec.capture_stdout = true;
+    spec.capture_stderr = true;
+    auto result = runner.run(spec);
+    if (!result) return std::unexpected("failed to launch mqb: " + result.error().message);
+    return std::move(*result);
+}
+
 } // namespace
 
 int main(const int argc, char* argv[]) {
@@ -458,6 +489,232 @@ int main(const int argc, char* argv[]) {
                 const auto repaired_header_ifc = first_ifc(tree.root);
                 expect(repaired_header_ifc.has_value() && fs::is_regular_file(*repaired_header_ifc),
                        "missing header IFC should be recreated by the public CLI");
+            }
+        }
+    }
+
+    // Build one named module in an independent project, then consume only its
+    // read-only IFC from a second project. This proves that external providers
+    // are not source-discovered, are not scheduled as MQB-owned compile nodes,
+    // and still participate in consumer cache freshness.
+    {
+        TempTree provider_tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_external_provider_e2e_" + std::to_string(unique)),
+        };
+        TempTree consumer_tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_external_consumer_e2e_" + std::to_string(unique)),
+        };
+        TempTree cli_consumer_tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_external_cli_consumer_e2e_" + std::to_string(unique)),
+        };
+        fs::create_directories(provider_tree.root);
+        fs::create_directories(consumer_tree.root);
+        fs::create_directories(cli_consumer_tree.root);
+
+        write_text(
+            provider_tree.root / "math.ixx",
+            "export module math;\n"
+            "export constexpr int answer() { return 42; }\n");
+        write_text(
+            provider_tree.root / "main.cpp",
+            "import math;\n"
+            "int main() { return answer() >= 40 ? 0 : 1; }\n");
+
+        auto provider_cold = run_mqb(
+            runner,
+            mqb_executable,
+            provider_tree.root,
+            "2",
+            true,
+            "external-provider");
+        expect(provider_cold.has_value(), "prebuilt provider project should launch");
+        if (provider_cold) {
+            if (provider_cold->exit_code != 0) dump_failure(*provider_cold);
+            expect(provider_cold->exit_code == 0,
+                   "independent provider project should build a real VS named-module IFC");
+        }
+
+        auto external_ifc = first_ifc(provider_tree.root);
+        expect(external_ifc.has_value() && fs::is_regular_file(*external_ifc),
+               "independent provider build should yield a reusable IFC");
+        if (external_ifc) {
+            write_text(
+                consumer_tree.root / "main.cpp",
+                "import math;\n"
+                "int main() { return answer() >= 42 ? 0 : 1; }\n");
+            const std::string config_text =
+                "{\n"
+                "  \"version\": 1,\n"
+                "  \"modules\": {\n"
+                "    \"external\": {\n"
+                "      \"math\": \"" + external_ifc->generic_string() + "\"\n"
+                "    }\n"
+                "  }\n"
+                "}\n";
+            write_text(consumer_tree.root / "mqb.json", config_text);
+
+            auto external_cold = run_mqb(
+                runner,
+                mqb_executable,
+                consumer_tree.root,
+                "2",
+                false,
+                "external-config");
+            expect(external_cold.has_value(), "external config consumer should launch");
+            if (external_cold) {
+                if (external_cold->exit_code != 0) dump_failure(*external_cold);
+                expect(external_cold->exit_code == 0,
+                       "mqb.json external provider consumer should build and run");
+                expect(external_cold->stdout_text.find("  pipeline: named-modules")
+                           != std::string::npos,
+                       "external-only consumer should route through P1689 named-module pipeline");
+                expect(external_cold->stdout_text.find("[compile] main.cpp") != std::string::npos,
+                       "cold external consumer should compile its ordinary TU");
+                expect(external_cold->stdout_text.find("math.ixx") == std::string::npos,
+                       "external IFC provider source must not become a consumer compile node");
+                expect(external_cold->stdout_text.find("[run] external-config.exe")
+                           != std::string::npos,
+                       "external config consumer should preserve --run behavior");
+            }
+
+            auto external_warm = run_mqb(
+                runner,
+                mqb_executable,
+                consumer_tree.root,
+                "1",
+                false,
+                "external-config");
+            expect(external_warm.has_value(), "warm external config consumer should launch");
+            if (external_warm) {
+                if (external_warm->exit_code != 0) dump_failure(*external_warm);
+                expect(external_warm->exit_code == 0,
+                       "unchanged external provider consumer should remain runnable");
+                expect(contains_line(external_warm->stdout_text, "[up-to-date] main.cpp"),
+                       "unchanged external IFC should preserve consumer compile cache");
+                expect(contains_line(external_warm->stdout_text, "[up-to-date] external-config.exe"),
+                       "warm external consumer should preserve link cache across job-count changes");
+            }
+
+            write_text(
+                cli_consumer_tree.root / "main.cpp",
+                "import math;\n"
+                "int main() { return answer() >= 42 ? 0 : 1; }\n");
+            auto cli_external = run_external_cli_mqb(
+                runner,
+                mqb_executable,
+                cli_consumer_tree.root,
+                *external_ifc,
+                "external-cli");
+            expect(cli_external.has_value(), "--module-ifc consumer should launch");
+            if (cli_external) {
+                if (cli_external->exit_code != 0) dump_failure(*cli_external);
+                expect(cli_external->exit_code == 0,
+                       "--module-ifc should build and run a real external IFC consumer");
+                expect(cli_external->stdout_text.find("  pipeline: named-modules")
+                           != std::string::npos,
+                       "CLI external provider should force P1689 routing");
+            }
+
+            std::error_code time_error;
+            const auto old_ifc_time = fs::last_write_time(*external_ifc, time_error);
+            expect(!time_error, "external provider replacement fixture requires original IFC timestamp");
+            write_text(
+                provider_tree.root / "math.ixx",
+                "export module math;\n"
+                "export constexpr int answer() { return 43; }\n");
+            time_error.clear();
+            fs::last_write_time(
+                provider_tree.root / "math.ixx",
+                old_ifc_time + std::chrono::seconds{2},
+                time_error);
+            expect(!time_error,
+                   "test should make external provider source deterministically newer than its IFC");
+
+            auto provider_rebuilt = run_mqb(
+                runner,
+                mqb_executable,
+                provider_tree.root,
+                "2",
+                true,
+                "external-provider");
+            expect(provider_rebuilt.has_value(), "external provider replacement build should launch");
+            if (provider_rebuilt) {
+                if (provider_rebuilt->exit_code != 0) dump_failure(*provider_rebuilt);
+                expect(provider_rebuilt->exit_code == 0,
+                       "provider source mutation should replace the real prebuilt IFC");
+                expect(provider_rebuilt->stdout_text.find("[compile] math.ixx")
+                           != std::string::npos,
+                       "provider replacement fixture should actually rebuild the module interface");
+            }
+
+            auto rebuilt_external_ifc = first_ifc(provider_tree.root);
+            expect(rebuilt_external_ifc.has_value() && fs::is_regular_file(*rebuilt_external_ifc),
+                   "provider replacement should leave a reusable IFC");
+            if (rebuilt_external_ifc) {
+                expect(rebuilt_external_ifc->lexically_normal() == external_ifc->lexically_normal(),
+                       "same provider identity should replace the IFC at a stable artifact path");
+                const fs::path consumer_executable =
+                    consumer_tree.root / ".mqb" / "bin" / "external-config.exe";
+                time_error.clear();
+                const auto consumer_time = fs::last_write_time(consumer_executable, time_error);
+                expect(!time_error,
+                       "external provider freshness fixture requires consumer executable timestamp");
+                if (!time_error) {
+                    time_error.clear();
+                    fs::last_write_time(
+                        *rebuilt_external_ifc,
+                        consumer_time + std::chrono::seconds{2},
+                        time_error);
+                    expect(!time_error,
+                           "test should make replacement IFC deterministically newer than consumer outputs");
+                }
+
+                auto external_replacement = run_mqb(
+                    runner,
+                    mqb_executable,
+                    consumer_tree.root,
+                    "2",
+                    false,
+                    "external-config");
+                expect(external_replacement.has_value(),
+                       "external provider replacement consumer should launch");
+                if (external_replacement) {
+                    if (external_replacement->exit_code != 0) dump_failure(*external_replacement);
+                    expect(external_replacement->exit_code == 0,
+                           "replacement external IFC should rebuild and run its consumer");
+                    expect(external_replacement->stdout_text.find("[compile] main.cpp")
+                               != std::string::npos,
+                           "replacement external IFC must invalidate the consumer compile cache");
+                    expect(external_replacement->stdout_text.find("[link] external-config.exe")
+                               != std::string::npos,
+                           "external IFC replacement should relink the final executable");
+                }
+
+                time_error.clear();
+                fs::remove(*rebuilt_external_ifc, time_error);
+                expect(!time_error, "test should be able to remove the external provider IFC");
+                auto external_missing = run_mqb(
+                    runner,
+                    mqb_executable,
+                    consumer_tree.root,
+                    "1",
+                    false,
+                    "external-config");
+                expect(external_missing.has_value(), "missing external IFC consumer should launch");
+                if (external_missing) {
+                    expect(external_missing->exit_code != 0,
+                           "missing configured external IFC must fail closed");
+                    expect(external_missing->stdout_text.find("[link] external-config.exe")
+                               == std::string::npos,
+                           "missing external IFC must fail before final link");
+                    expect(external_missing->stderr_text.find(
+                               "external/prebuilt named-module provider IFC is not an existing regular file")
+                               != std::string::npos,
+                           "missing external IFC should surface the MQB-owned provider diagnostic");
+                }
             }
         }
     }

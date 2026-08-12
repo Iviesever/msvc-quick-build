@@ -12,6 +12,7 @@ namespace mqb::config {
 struct ProjectOverrides {
     BuildOverrides build;
     DiscoveryOverrides discovery;
+    ModuleOverrides modules;
 };
 
 struct EffectiveProjectOptions {
@@ -34,6 +35,8 @@ struct EffectiveProjectOptions {
     std::vector<std::filesystem::path> discovery_exclude_directories;
     std::vector<std::filesystem::path> discovery_extra_sources;
     std::vector<std::filesystem::path> discovery_exclude_sources;
+
+    std::vector<ExternalModuleProvider> external_module_providers;
 };
 
 [[nodiscard]] EffectiveProjectOptions resolve_project_options(

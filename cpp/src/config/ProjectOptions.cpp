@@ -1,5 +1,6 @@
 #include "mqb/config/ProjectOptions.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace mqb::config {
@@ -40,6 +41,24 @@ void apply_discovery(
     append_all(effective.discovery_exclude_sources, overrides.exclude_sources);
 }
 
+void apply_modules(
+    EffectiveProjectOptions& effective,
+    const ModuleOverrides& overrides) {
+    for (const auto& provider : overrides.external_providers) {
+        const auto existing = std::find_if(
+            effective.external_module_providers.begin(),
+            effective.external_module_providers.end(),
+            [&provider](const ExternalModuleProvider& current) {
+                return current.logical_name == provider.logical_name;
+            });
+        if (existing == effective.external_module_providers.end()) {
+            effective.external_module_providers.push_back(provider);
+        } else {
+            *existing = provider;
+        }
+    }
+}
+
 } // namespace
 
 EffectiveProjectOptions resolve_project_options(
@@ -49,9 +68,11 @@ EffectiveProjectOptions resolve_project_options(
     if (project_config != nullptr) {
         apply_build(effective, project_config->build);
         apply_discovery(effective, project_config->discovery);
+        apply_modules(effective, project_config->modules);
     }
     apply_build(effective, cli_overrides.build);
     apply_discovery(effective, cli_overrides.discovery);
+    apply_modules(effective, cli_overrides.modules);
     return effective;
 }
 

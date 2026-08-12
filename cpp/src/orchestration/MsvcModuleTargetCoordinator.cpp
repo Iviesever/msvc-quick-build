@@ -224,7 +224,9 @@ MsvcModuleTargetCoordinator::run(const IncrementalModuleTargetRequest& request) 
         });
     }
 
-    auto plan = modules::ModuleDependencyGraphBuilder::build(scanned_units);
+    auto plan = modules::ModuleDependencyGraphBuilder::build(
+        scanned_units,
+        request.compiler_options.external_module_providers);
     if (!plan) {
         IncrementalModuleTargetError error = failure(
             IncrementalModuleTargetErrorCode::graph_failed,

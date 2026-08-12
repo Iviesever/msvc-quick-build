@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -364,6 +365,47 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
             .interface_file = provider_request.artifacts.module_interface,
         });
         provider_indices[consumer->second].push_back(provider->second);
+    }
+
+    for (const auto& dependency : request.plan.resolved_external_dependencies) {
+        const auto consumer = source_by_key.find(windows_path_key(dependency.consumer_source));
+        if (consumer == source_by_key.end()) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::plan_source_missing,
+                "resolved external module dependency references a consumer absent from the compile request",
+                dependency.consumer_source,
+                dependency.interface_file,
+                dependency.logical_name));
+        }
+        std::error_code ec;
+        const bool regular = fs::is_regular_file(dependency.interface_file, ec);
+        if (ec || !regular) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::invalid_provider,
+                "external/prebuilt named-module provider IFC is not an existing regular file",
+                dependency.consumer_source,
+                dependency.interface_file,
+                dependency.logical_name));
+        }
+
+        auto& references = module_references[consumer->second];
+        const auto duplicate = std::find_if(
+            references.begin(), references.end(),
+            [&dependency](const ModuleReference& reference) {
+                return reference.logical_name == dependency.logical_name;
+            });
+        if (duplicate != references.end()) {
+            return std::unexpected(failure(
+                ModuleCompileErrorCode::duplicate_reference,
+                "module dependency plan resolves the same logical name more than once for one consumer",
+                dependency.consumer_source,
+                dependency.interface_file,
+                dependency.logical_name));
+        }
+        references.push_back(ModuleReference{
+            .logical_name = dependency.logical_name,
+            .interface_file = dependency.interface_file,
+        });
     }
 
     for (const auto& dependency : request.plan.resolved_header_unit_dependencies) {

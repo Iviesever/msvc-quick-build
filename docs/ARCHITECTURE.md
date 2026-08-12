@@ -134,7 +134,7 @@ core  <---- shared typed build model, planner, cache and artifact rules
 
 ### `modules`
 
-`modules` 负责 P1689 typed model 与 module dependency graph。provider ownership 只有一个权威实现；named modules 与 header units 必须保持类型区别。
+`modules` 负责 P1689 typed model 与 module dependency graph。provider ownership 只有一个权威实现；named modules 与 header units 必须保持类型区别。项目内 provider 与显式 external/prebuilt provider 的选择、冲突和歧义也只在这里裁决；discovery/orchestration 不允许通过猜测 IFC 路径来补 provider。
 
 ### `orchestration`
 
@@ -184,9 +184,11 @@ core  <---- shared typed build model, planner, cache and artifact rules
 13. module provider selection 只有一个 owner。
 14. header units 与 named modules 类型分离。
 15. unsupported module requirements fail closed。
-16. stable v5 只有一个 native parser、一个 native executor、一个 C++ 源码树。
-17. `cpp/include`、`cpp/src`、`cpp/tests` 分别只有一个物理根。
-18. 不允许为了“方便”重新制造组件级 `include/src/tests`。
+16. external/prebuilt named-module IFC 只能通过 typed project/CLI policy 显式声明；它是只读 dependency，不能变成 MQB-owned writable artifact。
+17. `std` / `std.compat` provider 属于 toolchain policy，不能由 generic external-provider 配置伪造。
+18. stable v5 只有一个 native parser、一个 native executor、一个 C++ 源码树。
+19. `cpp/include`、`cpp/src`、`cpp/tests` 分别只有一个物理根。
+20. 不允许为了“方便”重新制造组件级 `include/src/tests`。
 
 ## 6. Project configuration
 
@@ -198,7 +200,7 @@ mqb.json relative path ---> directory containing mqb.json
 artifact project root ----> directory containing mqb.json (when present)
 ```
 
-Scalar precedence：`explicit CLI > mqb.json > built-in defaults`。List-like inputs additive 且 deterministic。
+Scalar precedence：`explicit CLI > mqb.json > built-in defaults`。List-like inputs additive 且 deterministic。External module provider registry 以 logical module name 为 key：`mqb.json` 可在 `modules.external` 中声明 `name -> IFC path`，CLI 可重复使用 `--module-ifc name=path.ifc`；同名 CLI 项定点覆盖 config，CLI 自身重复同名项则 fail closed。
 
 MQB 自身的 `cpp/mqb.json` 也是自构建 production manifest。当前物理结构只需要两个 include roots：
 
@@ -225,15 +227,19 @@ bounded /scanDependencies
 P1689 typed rules
        ↓
 ModuleDependencyGraphBuilder
+       ├─ project-local provider -> graph compile dependency
+       └─ explicit external IFC  -> read-only typed ModuleReference
        ↓
-dynamic IFC assignment
+dynamic IFC assignment (MQB-owned providers only)
        ↓
 dependency-level compile waves
        ↓
 incremental final link
 ```
 
-稳定版支持 project-local named modules 与 project-local header units。External/prebuilt named-module providers 与 `import std` 当前仍 fail closed，并由 Issue #16 独立跟踪。
+稳定版支持 project-local named modules、project-local header units，以及显式配置的 external/prebuilt named-module IFC provider。External IFC 不参与 source discovery，不加入 compile levels，也不由 MQB 写入；实际 consumer 通过现有 `ModuleReference` 进入 compile signature 和 `/sourceDependencies` cache dependency，因此 provider 替换会失效对应 consumer cache，provider 缺失会在进入编译器前 fail closed。
+
+`import std` / `std.compat` 仍未在这一层实现：标准库 module provider 明确保留给 toolchain-owned policy，不允许借 generic external provider 逃逸。Issue #16 的下一 slice 单独负责其 VS/MSVC discovery、version identity 与 cold/warm E2E。
 
 ## 8. Build identity 与 artifact layout
 

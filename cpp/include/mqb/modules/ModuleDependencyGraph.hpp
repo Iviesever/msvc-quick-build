@@ -3,9 +3,11 @@
 #include <expected>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
+#include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/DependencyGraph.hpp"
 #include "mqb/modules/P1689.hpp"
 
@@ -33,6 +35,12 @@ struct ResolvedModuleDependency {
     std::string logical_name;
 };
 
+struct ResolvedExternalModuleDependency {
+    std::filesystem::path consumer_source;
+    std::string logical_name;
+    std::filesystem::path interface_file;
+};
+
 struct PlannedHeaderUnit {
     std::filesystem::path source;
     std::string header_name;
@@ -53,6 +61,9 @@ struct ModuleDependencyPlan {
     std::vector<std::vector<std::filesystem::path>> compile_levels;
     // Named-module imports that were resolved to another source in this plan.
     std::vector<ResolvedModuleDependency> resolved_dependencies;
+    // Explicit read-only external/prebuilt providers selected for consumers.
+    // They do not become compile-level nodes because MQB does not own them.
+    std::vector<ResolvedExternalModuleDependency> resolved_external_dependencies;
     // Unique project-local header-unit producer recipes selected from P1689
     // source-path identities. Execution assigns artifacts in a later layer.
     std::vector<PlannedHeaderUnit> header_units;
@@ -67,6 +78,9 @@ enum class ModuleGraphErrorCode {
     duplicate_source,
     duplicate_interface_provider,
     ambiguous_named_provider,
+    invalid_external_provider,
+    duplicate_external_provider,
+    toolchain_owned_provider,
     header_unit_source_conflict,
     conflicting_header_unit_identity,
     dependency_cycle,
@@ -83,7 +97,9 @@ struct ModuleGraphError {
 class ModuleDependencyGraphBuilder {
 public:
     [[nodiscard]] static std::expected<ModuleDependencyPlan, ModuleGraphError>
-    build(const std::vector<ScannedModuleUnit>& units);
+    build(
+        const std::vector<ScannedModuleUnit>& units,
+        std::span<const ExternalModuleProvider> external_providers = {});
 };
 
 } // namespace mqb::modules

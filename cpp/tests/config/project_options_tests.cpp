@@ -32,6 +32,8 @@ int main() {
                "smart discovery should be enabled by default");
         expect(!effective.output_name,
                "output should remain unset by default");
+        expect(effective.external_module_providers.empty(),
+               "external module provider registry should be empty by default");
     }
 
     mqb::config::ProjectConfig project;
@@ -48,6 +50,16 @@ int main() {
     project.discovery.exclude_directories = {fs::path{"tests"}};
     project.discovery.extra_sources = {fs::path{"src/config-extra.cpp"}};
     project.discovery.exclude_sources = {fs::path{"src/config-old.cpp"}};
+    project.modules.external_providers = {
+        mqb::ExternalModuleProvider{
+            .logical_name = "vendor.math",
+            .interface_file = fs::path{"config/vendor.math.ifc"},
+        },
+        mqb::ExternalModuleProvider{
+            .logical_name = "config.only",
+            .interface_file = fs::path{"config/config.only.ifc"},
+        },
+    };
 
     {
         const mqb::config::ProjectOverrides cli;
@@ -66,6 +78,10 @@ int main() {
                "project config should disable discovery");
         expect(effective.defines == project.build.defines,
                "project list values should populate effective options");
+        expect(effective.external_module_providers.size() == 2
+                   && effective.external_module_providers[0].logical_name == "vendor.math"
+                   && effective.external_module_providers[1].logical_name == "config.only",
+               "project external module registry should populate effective provider policy");
     }
 
     {
@@ -83,6 +99,16 @@ int main() {
         cli.discovery.exclude_directories = {fs::path{"cli-tests"}};
         cli.discovery.extra_sources = {fs::path{"src/cli-extra.cpp"}};
         cli.discovery.exclude_sources = {fs::path{"src/cli-old.cpp"}};
+        cli.modules.external_providers = {
+            mqb::ExternalModuleProvider{
+                .logical_name = "vendor.math",
+                .interface_file = fs::path{"cli/vendor.math.ifc"},
+            },
+            mqb::ExternalModuleProvider{
+                .logical_name = "cli.only",
+                .interface_file = fs::path{"cli/cli.only.ifc"},
+            },
+        };
 
         const auto effective = mqb::config::resolve_project_options(&project, cli);
         expect(effective.configuration == mqb::BuildConfiguration::debug,
@@ -121,6 +147,22 @@ int main() {
                "discovery extra sources should be additive");
         expect(effective.discovery_exclude_sources.size() == 2,
                "discovery excluded sources should be additive");
+        expect(effective.external_module_providers.size() == 3,
+               "CLI external module providers should override by logical name without dropping config-only providers");
+        if (effective.external_module_providers.size() == 3) {
+            expect(effective.external_module_providers[0].logical_name == "vendor.math"
+                       && effective.external_module_providers[0].interface_file
+                           == fs::path{"cli/vendor.math.ifc"},
+                   "CLI provider should replace the matching config provider in-place");
+            expect(effective.external_module_providers[1].logical_name == "config.only"
+                       && effective.external_module_providers[1].interface_file
+                           == fs::path{"config/config.only.ifc"},
+                   "config-only provider should remain available after CLI override resolution");
+            expect(effective.external_module_providers[2].logical_name == "cli.only"
+                       && effective.external_module_providers[2].interface_file
+                           == fs::path{"cli/cli.only.ifc"},
+                   "CLI-only provider should append deterministically after config registry entries");
+        }
     }
 
     if (failures != 0) {
