@@ -1,130 +1,114 @@
-# MQB Self-Hosting Contract
+# MQB Self-Hosting and Release Contract
 
-**Language: [简体中文](SELF_HOSTING.md) | English**
+**[简体中文](SELF_HOSTING.md) | English**
 
-MQB is its own development, test, and stable-release build system. CMake/CTest are not part of the stable-v5 development, test, or publication chain.
+This document defines the **bootstrap, validation, and publication boundary** for stable releases. Day-to-day development lives in [`DEVELOPMENT_EN.md`](DEVELOPMENT_EN.md); CLI, source-layout, and configuration details are intentionally not repeated here.
 
-This is a release-blocking contract, not an optional demo.
+## 1. Why a seed is required
 
-### Bootstrap Problem
+MQB builds itself with MQB, so the first generation of the current source must be started by an already-existing trusted `mqb.exe`.
 
-Any self-hosting compiler or build tool requires an existing executable version as its first seed. The first stable v5 release uses historical `v5.0.0-rc.2` `mqb.exe` as the **pinned seed**:
+Stable v5 pins the historical `v5.0.0-rc.2` release binary as the bootstrap seed. CI validates:
 
-- CI fetches the historical ZIP from GitHub Release;
-- Enforces verification of the pinned SHA-256;
-- Enforces verification of the `MQB 5.0.0-rc.2` identity;
-- The seed is used only to build Stage 0 of current source code;
-- The seed never enters the stable package.
+- the fixed Release ZIP SHA-256;
+- the executable's expected MQB version identity.
 
-For local development, an installed stable MQB should be preferred as the seed.
+The seed is used only to build **Stage 0** from the current source. It never enters the stable package.
 
-### Four Generations
+## 2. Bootstrap chain
 
 ```text
-pinned historical seed MQB
-        ↓  MQB + cpp/mqb.json
-Stage 0 (current source)
-        ↓  Stage 0 builds and runs all 67 Release tests with MQB
-Stage 1 self-hosted release candidate ---> stable package mqb.exe
-        ↓  delete cpp/.mqb
-Stage 2 clean self-host closure proof
+pinned historical MQB seed
+          ↓
+      Stage 0
+          ↓
+  full Release test suite
+          ↓
+      Stage 1  ─────> mqb.exe used by the stable package
+          ↓
+    clear MQB build state
+          ↓
+      Stage 2
 ```
 
-Stage 0, Stage 1, and Stage 2 all come from current source code, and each generation is built by MQB.
+Stage 0, Stage 1, and Stage 2 all come from the **same candidate commit's current source**, and every generation is built by MQB.
 
-### Physical Source Structure
+Meaning:
 
-`cpp/` has only one product source tree:
+- **Stage 0** proves that the historical seed can build the current implementation;
+- **Stage 1** is built again by the current implementation and becomes the release candidate;
+- **Stage 2** is built by Stage 1 after clearing MQB build state, proving that clean self-host closure still holds.
+
+## 3. Project description and version source
+
+MQB builds itself from:
 
 ```text
-cpp/
-├─ include/   # single cross-component header root
-├─ src/       # single product implementation root
-├─ tests/     # single C++ test root
-└─ mqb.json   # single production manifest
+cpp/mqb.json
 ```
 
-`include/`, `src/`, and `tests/` are layered by responsibility (`core / config / discovery / modules / orchestration / msvc / platform`). Re-introducing component-local `cpp/<component>/include`, `src`, or `tests` trees is forbidden. See [`cpp/README_EN.md`](../cpp/README_EN.md) for the full layout contract.
+That manifest must match the real production source set, but the number of production translation units is not a stable contract.
 
-### Native Project Description
+The repository's single release-version source is:
 
-`cpp/mqb.json` is the native project description used by MQB to build itself. It specifies:
+```text
+release/VERSION
+```
 
-- x64 / C++23;
-- executable target;
-- MSVC runtime and console subsystem;
-- unified production include roots;
-- `/W4` and `/permissive-`;
-- complete production translation-unit manifest.
+The build driver injects that value as a structured `MQB_VERSION` definition. `cpp/mqb.json` does not duplicate the release version.
 
-`tests/native/build_mqb.ps1` reads this file and requires:
+## 4. Release-blocking validation
 
-- `src/app/main.cpp` plus `discovery.extra_sources` must exactly match the actual `cpp/src/**/*.cpp` production source set;
-- Every source file actually exists;
-- Build outputs can be executed;
-- Embedded version matches requested version exactly.
+A stable candidate must prove, on the same candidate commit, that:
 
-The production TU count is intentionally not a stable contract or hard-coded magic number; responsibility-driven file splits only need to keep the manifest identical to the actual production source set.
+1. the pinned seed checksum and executable identity are correct;
+2. the seed can build the current Stage 0;
+3. Stage 0 passes the full Release native test suite;
+4. Stage 0 can build Stage 1;
+5. after clearing MQB build state, Stage 1 can build Stage 2;
+6. Stage 1 and Stage 2 report the correct release version;
+7. the `mqb.exe` inside the stable ZIP is byte-identical to the already-validated Stage 1 binary;
+8. the exact package manifest and SHA-256 sidecar are correct;
+9. the packaged installer passes install / reinstall / uninstall lifecycle validation.
 
-The single source of release version truth remains `release/VERSION`. Build drivers inject the version via structured `MQB_VERSION="<version>"` definitions, so `cpp/mqb.json` does not duplicate version numbers.
+Any failure blocks stable publication.
 
-### Native Test Graph
+## 5. Stable package rules
 
-`tests/native/run_native_tests.ps1` is the authoritative test driver for stable-v5. It does not generate Visual Studio solutions, call CMake, or invoke CTest.
+The stable ZIP:
 
-It will:
+- contains the already-validated Stage 1 `mqb.exe`;
+- does not contain the historical seed;
+- does not contain Stage 0;
+- does not rebuild the binary during publication.
 
-1. Retrieve all non-main production translation units from `cpp/mqb.json` and verify that set against the actual non-main `cpp/src/**/*.cpp` source set;
-2. Recursively enumerate `cpp/tests/` and enforce exactly 67 `*_tests.cpp` entries;
-3. Build an independent test executable for each test entry using current MQB;
-4. Reuse `.mqb` incremental object/cache;
-5. Pass the current MQB under verification to CLI E2E tests;
-6. Run all tests directly and require 67/67 success.
+For version `X.Y.Z`:
 
-Local development entry:
+```text
+msvc-quick-build-vX.Y.Z-windows-x64.zip
+msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
+```
+
+See [`INSTALLATION_EN.md`](INSTALLATION_EN.md) for installation behavior.
+
+## 6. Tag publication
+
+Stable publication uses an immutable-artifact model:
+
+- the pushed `vX.Y.Z` tag must exactly match `release/VERSION`;
+- the publication job consumes the ZIP and checksum that were **already validated by the same workflow run**;
+- publication does not rebuild, avoiding a situation where one artifact is validated and a different artifact is released.
+
+Historical releases and tags are not rewritten when later documentation or implementation changes.
+
+## 7. Development vs. stable release
+
+Day-to-day development only needs to validate the current MQB and native test suite, normally through:
 
 ```powershell
 .\tests\native\develop.ps1
 ```
 
-Or provide a seed explicitly:
+Stable release adds the pinned-seed bootstrap, Stage 1/Stage 2 closure, exact package/checksum validation, and installer lifecycle gates.
 
-```powershell
-.\tests\native\develop.ps1 -SeedMqbPath C:\path\to\mqb.exe
-```
-
-### Manual MQB Self-Build
-
-Given a runnable MQB:
-
-```powershell
-$version = (Get-Content .\release\VERSION -Raw).Trim()
-$quote = [char]34
-$define = 'MQB_VERSION=' + $quote + $version + $quote
-
-Push-Location .\cpp
-mqb src\app\main.cpp --env vs --release --runtime MT -D $define
-Pop-Location
-```
-
-Native output:
-
-```text
-cpp\.mqb\bin\mqb.exe
-```
-
-`$define` contains literal quote characters. Do not pre-insert backslashes for shell; MQB handles Windows argv encoding internally.
-
-### Release Artifact Rules
-
-The stable ZIP can only contain Stage 1, not the pinned seed or Stage 0.
-
-Pre-release workflow must prove:
-
-- Stage 0 has been built by the pinned seed MQB;
-- Stage 0's 67/67 Release tests were all built and executed by MQB;
-- Stage 0 → Stage 1 succeeded;
-- After clearing `cpp/.mqb`, Stage 1 → Stage 2 succeeded;
-- Stage 1 / Stage 2 report identical release version;
-- `mqb.exe` in ZIP is byte-identical with verified Stage 1;
-- Exact ZIP checksum, manifest, and installer lifecycle all succeeded.
+See [`DEVELOPMENT_EN.md`](DEVELOPMENT_EN.md) for development workflow and [`ARCHITECTURE_EN.md`](ARCHITECTURE_EN.md) for the internal build model.
