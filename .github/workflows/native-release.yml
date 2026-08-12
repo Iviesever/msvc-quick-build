@@ -42,7 +42,7 @@ jobs:
           }
 
           $tag = "v$version"
-          $packageName = "vscode-msvc-quick-build-$tag-windows-x64"
+          $packageName = "msvc-quick-build-$tag-windows-x64"
           $notesFile = "release/$tag.md"
           if (-not (Test-Path -LiteralPath $notesFile -PathType Leaf)) {
             throw "Release notes not found: $notesFile"
