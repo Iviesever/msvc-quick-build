@@ -37,6 +37,9 @@ foreach ($source in $productionSources) {
     }
 }
 
+$includeDirs = @($config.build.include_dirs)
+if ($includeDirs.Count -eq 0) { throw 'Native test config has no include_dirs.' }
+
 $testFiles = @(Get-ChildItem -LiteralPath $cppRoot -Recurse -File -Filter '*_tests.cpp' |
     Where-Object { $_.FullName -notmatch '[\\/]\.mqb[\\/]' } |
     Sort-Object FullName)
@@ -48,6 +51,7 @@ $quote = [char]34
 $versionDefine = 'MQB_VERSION=' + $quote + 'native-tests' + $quote
 $configArg = if ($Configuration -eq 'Debug') { '--debug' } else { '--release' }
 $runtime = if ($Configuration -eq 'Debug') { 'MTd' } else { 'MT' }
+$standard = [string]$config.build.standard
 
 function Get-TestOutputName {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
@@ -61,20 +65,25 @@ function Invoke-MqbTestBuild {
         [Parameter(Mandatory = $true)][string]$OutputName
     )
 
-    # The explicit test entry is included even though test directories are
-    # excluded from discovery. cpp/mqb.json injects the 41 shared production
-    # translation units and excludes every other test source.
-    $arguments = @(
-        $EntrySource,
-        '--env', 'vs',
-        $configArg,
-        '--runtime', $runtime,
+    # Invoke from repository root, where no mqb.json is auto-loaded. The
+    # current cpp/mqb.json is still the source of truth for the shared
+    # production manifest and policy, but old/new builders see only native CLI.
+    $arguments = @('cpp/' + $EntrySource)
+    $arguments += @($productionSources | ForEach-Object { 'cpp/' + $_ })
+    $arguments += @('--env', 'vs', $configArg, '--std', $standard, '--runtime', $runtime)
+    foreach ($include in $includeDirs) {
+        $arguments += @('-I', ('cpp/' + ([string]$include).Replace('\', '/')))
+    }
+    foreach ($compilerArg in @($config.build.compiler_args)) {
+        $arguments += @('--compiler-arg', [string]$compilerArg)
+    }
+    $arguments += @(
         '-D', $versionDefine,
         '--linker-arg', 'shell32.lib',
         '-o', $OutputName
     )
 
-    Push-Location $cppRoot
+    Push-Location $RepoRoot
     try {
         $buildOutput = @(& $BuilderMqbPath @arguments 2>&1)
         $exitCode = $LASTEXITCODE
@@ -87,7 +96,7 @@ function Invoke-MqbTestBuild {
         Pop-Location
     }
 
-    $exe = Join-Path $cppRoot ".mqb/bin/$OutputName.exe"
+    $exe = Join-Path $RepoRoot ".mqb/bin/$OutputName.exe"
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
         throw "Native test build did not produce: $exe"
     }
