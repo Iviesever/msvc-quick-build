@@ -52,7 +52,7 @@ if ($manifestDiff.Count -ne 0) {
     $details = @(
         $manifestDiff | ForEach-Object {
             $kind = if ($_.SideIndicator -eq '<=') { 'missing from manifest' } else { 'not a production source' }
-            "  $kind: $($_.InputObject)"
+            "  ${kind}: $($_.InputObject)"
         }
     ) -join [Environment]::NewLine
     throw "MQB self-build manifest does not exactly match cpp/src production translation units:`n$details"
