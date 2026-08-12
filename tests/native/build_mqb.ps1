@@ -67,9 +67,12 @@ try {
     Write-Host "Configuration: $Configuration"
     Write-Host "Version: $Version"
     Write-Host "Production translation units: $($sources.Count)"
-    & $BuilderMqbPath @arguments
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+
+    $buildOutput = @(& $BuilderMqbPath @arguments 2>&1)
+    $exitCode = $LASTEXITCODE
+    foreach ($line in $buildOutput) { Write-Host $line }
+    if ($exitCode -ne 0) {
+        exit $exitCode
     }
 }
 finally {
