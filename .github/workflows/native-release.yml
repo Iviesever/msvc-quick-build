@@ -10,6 +10,7 @@ on:
       - 'install.ps1'
       - 'uninstall.ps1'
       - 'tests/installer/**'
+      - 'tests/native/**'
       - 'tests/selfhost/**'
       - 'release/**'
       - '.github/workflows/native-release.yml'
@@ -22,6 +23,8 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
     outputs:
       version: ${{ steps.meta.outputs.version }}
       package_name: ${{ steps.meta.outputs.package_name }}
@@ -65,41 +68,42 @@ jobs:
           Write-Host "Release version: $version"
           Write-Host "Package: $packageName"
 
-      # Stage 0 is only a bootstrap/test vehicle. It is never packaged.
-      - name: Configure bootstrap Release
+      - name: Acquire pinned historical MQB seed
+        id: seed
+        shell: pwsh
+        run: |
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD `
+            -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$seed" >> $env:GITHUB_OUTPUT
+
+      # Stage 0 is built by MQB, not CMake. It is a test/bootstrap generation only.
+      - name: Build Stage 0 Release MQB with MQB
+        id: stage0
         shell: pwsh
         env:
           MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          cmake -S cpp -B cpp/build-release `
-            -G "Visual Studio 18 2026" -A x64 `
-            -DMQB_ENABLE_INSTALLED_MSVC_TESTS=ON `
-            "-DMQB_VERSION=$env:MQB_RELEASE_VERSION"
+          $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+            -RepoRoot $PWD `
+            -Version $env:MQB_RELEASE_VERSION `
+            -Configuration Release `
+            -Clean `
+            -OutputPath (Join-Path $PWD 'native-out/release/stage0/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$mqb" >> $env:GITHUB_OUTPUT
 
-      - name: Build bootstrap Release
-        run: cmake --build cpp/build-release --config Release --parallel
-
-      - name: Test bootstrap source graph
-        run: ctest --test-dir cpp/build-release -C Release --output-on-failure
-
-      - name: Verify bootstrap embedded release version
+      - name: Run 67 MQB-native Release tests
         shell: pwsh
-        env:
-          MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          $mqb = Join-Path $PWD 'cpp/build-release/apps/mqb/Release/mqb.exe'
-          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
-            throw "Bootstrap executable not found: $mqb"
-          }
-          $help = @(& $mqb --help 2>&1 | ForEach-Object { $_.ToString() })
-          if ($LASTEXITCODE -ne 0 -or $help.Count -eq 0) {
-            throw "bootstrap mqb --help failed with exit code $LASTEXITCODE"
-          }
-          $expected = "MQB $env:MQB_RELEASE_VERSION - MSVC Quick Build (C++ refactor)"
-          if ($help[0] -ne $expected) {
-            throw "Bootstrap embedded version mismatch. Expected '$expected', got '$($help[0])'"
-          }
-          Write-Host $help[0]
+          & (Join-Path $PWD 'tests/native/run_native_tests.ps1') `
+            -BuilderMqbPath '${{ steps.stage0.outputs.path }}' `
+            -TestMqbPath '${{ steps.stage0.outputs.path }}' `
+            -RepoRoot $PWD `
+            -Configuration Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Self-host stable release with MQB
         shell: pwsh
@@ -107,7 +111,7 @@ jobs:
           MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
         run: |
           & (Join-Path $PWD 'tests/selfhost/selfhost.ps1') `
-            -BootstrapMqbPath (Join-Path $PWD 'cpp/build-release/apps/mqb/Release/mqb.exe') `
+            -BootstrapMqbPath '${{ steps.stage0.outputs.path }}' `
             -RepoRoot $PWD `
             -ReleaseVersion $env:MQB_RELEASE_VERSION `
             -OutputRoot (Join-Path $PWD 'selfhost-out')
