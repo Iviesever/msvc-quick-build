@@ -1,87 +1,158 @@
-# MQB stable self-hosting contract
+# MQB 自举契约 / Self-hosting contract
 
-A stable MQB release must be able to build MQB itself without consulting `CMakeLists.txt` for the self-host build.
+**简体中文优先。English summary is included below.**
 
-This is a release-blocking contract, not an optional demonstration.
+## 简体中文
 
-## What "self-hosted release" means
+MQB 的稳定版、日常开发构建和测试构建都以 MQB 自身作为构建系统。CMake/CTest 不属于 stable-v5 的开发、测试或发布链。
 
-The release workflow uses three logical stages:
+这是一条 release-blocking 契约，不是可选演示。
 
-1. **Stage 0 — bootstrap/test binary**
-   - built by CMake on the Windows CI runner;
-   - used to run the full Release CTest suite;
-   - used only to start the self-host chain;
-   - **never packaged or published**.
-2. **Stage 1 — self-hosted release candidate**
-   - built by Stage 0 by invoking MQB on `cpp/apps/mqb/main.cpp`;
-   - build policy and production source manifest come from `cpp/mqb.json`;
-   - `CMakeLists.txt` is not read or invoked for this build;
-   - this is the `mqb.exe` placed in the stable ZIP.
-3. **Stage 2 — closure proof**
-   - after Stage 1 is copied outside the project build state, `cpp/.mqb` is deleted;
-   - Stage 1 then builds MQB again from the same source/config from a clean MQB state;
-   - Stage 2 must report the same release version.
+### Bootstrap 问题
+
+任何自举编译器/构建工具都需要一个已经存在的可执行版本作为第一颗 seed。首个 stable v5 发布使用历史 `v5.0.0-rc.2` 的 `mqb.exe` 作为**固定 seed**：
+
+- CI 从 GitHub Release 取得历史 ZIP；
+- 强制校验固定 SHA-256；
+- 强制校验 `MQB 5.0.0-rc.2` 身份；
+- seed 只用于构建当前源码的 Stage 0；
+- seed 永远不会进入 stable package。
+
+稳定版发布后，本地开发应优先使用已安装的 stable MQB 作为 seed。
+
+### 四代关系
 
 ```text
-bootstrap Stage 0
-      |
-      | mqb + cpp/mqb.json
-      v
-self-hosted Stage 1  ---> stable package mqb.exe
-      |
-      | delete cpp/.mqb, then mqb + cpp/mqb.json
-      v
-Stage 2 closure proof
+固定历史 seed MQB
+        |
+        | MQB + cpp/mqb.json
+        v
+Stage 0（当前源码）
+        |
+        | Stage 0 构建并运行 67 个 Release tests
+        | Stage 0 + cpp/mqb.json
+        v
+Stage 1（正式发布候选） ---> stable package mqb.exe
+        |
+        | 删除 cpp/.mqb
+        | Stage 1 + cpp/mqb.json
+        v
+Stage 2（干净自举闭包证明）
 ```
 
-The stable package is rejected if Stage 0 cannot build Stage 1, if Stage 1 cannot build Stage 2, or if either self-hosted binary reports the wrong embedded version.
+Stage 0、Stage 1、Stage 2 都来自当前源码，且每一代构建都由 MQB 完成。
 
-## Native project description
+### 原生项目描述
 
-`cpp/mqb.json` is the native project description for building MQB with MQB. It declares:
+`cpp/mqb.json` 是 MQB 构建自身的项目描述。它声明：
 
-- Release configuration;
-- x64 architecture;
-- C++23;
-- executable target;
-- static `MT` runtime;
-- console subsystem;
-- MQB's production include roots;
-- `/W4` and `/permissive-`;
-- the complete production translation-unit set outside tests.
+- x64 / C++23；
+- executable target；
+- MSVC runtime 与 console subsystem；
+- 生产 include roots；
+- `/W4` 与 `/permissive-`；
+- 完整 production translation-unit manifest。
 
-`tests/selfhost/selfhost.ps1` independently enumerates the production source directories and requires the `mqb.json` entry source plus `discovery.extra_sources` to exactly cover that set. Adding or removing a production `.cpp` without updating the native self-host manifest fails the gate.
+`tests/native/build_mqb.ps1` 会读取此文件，并要求：
 
-The release version remains sourced from `release/VERSION`. The self-host harness supplies it as the structured `MQB_VERSION` preprocessor definition, so `cpp/mqb.json` does not duplicate the release number.
+- `apps/mqb/main.cpp` 加上 `discovery.extra_sources` 恰好组成 42 个 production translation units；
+- 每个源文件真实存在；
+- 构建产物能运行；
+- 内嵌版本与请求版本完全一致。
 
-## Manual self-build
+release version 唯一来源仍是 `release/VERSION`。构建 driver 通过结构化 `MQB_VERSION="<version>"` definition 注入版本，因此 `cpp/mqb.json` 不重复保存版本号。
 
-Given an MQB executable and a checkout of the matching source tag, a self-build can be performed without CMake:
+### 原生测试图
+
+`tests/native/run_native_tests.ps1` 是 stable-v5 的权威测试 driver。它不生成 Visual Studio solution，不调用 CMake，也不调用 CTest。
+
+它会：
+
+1. 从 `cpp/mqb.json` 取得 41 个 non-main production translation units；
+2. 递归枚举并强制要求恰好存在 67 个 `*_tests.cpp`；
+3. 用当前 MQB 为每个 test entry 构建独立测试可执行文件；
+4. 复用 `.mqb` incremental object/cache；
+5. 向 CLI E2E 测试传入正在验证的当前 MQB；
+6. 直接运行全部测试并要求 67/67 success。
+
+日常开发入口：
 
 ```powershell
-Set-Location cpp
-$version = (Get-Content ..\release\VERSION -Raw).Trim()
+.\tests\native\develop.ps1
+```
+
+也可指定 seed：
+
+```powershell
+.\tests\native\develop.ps1 -SeedMqbPath C:\path\to\mqb.exe
+```
+
+### 手工构建 MQB
+
+给定一个可运行的 MQB：
+
+```powershell
+$version = (Get-Content .\release\VERSION -Raw).Trim()
 $quote = [char]34
 $define = 'MQB_VERSION=' + $quote + $version + $quote
 
-& C:\path\to\mqb.exe apps\mqb\main.cpp --env vs -D $define
+Push-Location .\cpp
+mqb apps\mqb\main.cpp --env vs --release --runtime MT -D $define
+Pop-Location
 ```
 
-The native self-host result is:
+原生产物：
 
 ```text
 cpp\.mqb\bin\mqb.exe
 ```
 
-The literal quote characters in `$define` are intentional. Do not pre-escape them with backslashes: MQB owns Windows argv encoding and passes the structured definition to `cl.exe`.
+`$define` 中是 literal quote characters。不要为 shell 预先插入反斜杠；MQB 自己负责 Windows argv encoding。
 
-Running the result with `--help` must report the same version. Running the same command again with that newly built executable from a clean `cpp/.mqb` state is the closure proof used by CI.
+### Release artifact 规则
 
-## Release artifact rule
+stable ZIP 只能包含 Stage 1，不能包含固定 seed 或 Stage 0。
 
-The stable ZIP must contain the Stage 1 binary, not the Stage 0 bootstrap binary.
+发布前 workflow 必须证明：
 
-Before upload, the release workflow verifies that the ZIP's `mqb.exe` is byte-identical to the validated Stage 1 executable, then runs the packaged install/reinstall/uninstall lifecycle against that exact ZIP.
+- Stage 0 已由固定 seed MQB 构建；
+- Stage 0 的 67/67 Release tests 全部由 MQB 构建并运行；
+- Stage 0 → Stage 1 成功；
+- 清空 `cpp/.mqb` 后 Stage 1 → Stage 2 成功；
+- Stage 1 / Stage 2 报告相同 release version；
+- ZIP 中 `mqb.exe` 与已验证 Stage 1 byte-identical；
+- exact ZIP checksum、manifest 和 installer lifecycle 全部成功。
 
-CMake remains useful as a development/test bootstrap and for the unit/integration test graph, but it is not the producer of the `mqb.exe` shipped in a stable release.
+## English
+
+MQB is its own development, test, and stable-release build system. CMake/CTest are not part of the stable-v5 development, test, or publication chain.
+
+The first stable release solves the bootstrap problem with a **pinned historical `v5.0.0-rc.2` MQB seed** whose release ZIP SHA-256 and executable identity are verified. That seed only builds current-source Stage 0 and is never packaged.
+
+The required chain is:
+
+```text
+pinned historical seed MQB
+        ↓  MQB + cpp/mqb.json
+Stage 0 (current source)
+        ↓  Stage 0 builds and runs all 67 Release tests with MQB
+Stage 1 self-hosted release candidate
+        ↓  delete cpp/.mqb
+Stage 2 clean self-host closure
+```
+
+`cpp/mqb.json` is the exact 42-production-TU native self-build manifest. `tests/native/build_mqb.ps1` builds MQB from it, while `tests/native/run_native_tests.ps1` requires exactly 67 `*_tests.cpp` entries, builds every test executable with MQB, and runs the full graph directly.
+
+For local development, run:
+
+```powershell
+.\tests\native\develop.ps1
+```
+
+or provide an explicit seed:
+
+```powershell
+.\tests\native\develop.ps1 -SeedMqbPath C:\path\to\mqb.exe
+```
+
+Only Stage 1 may be placed in the stable ZIP. The release workflow additionally verifies the exact ZIP checksum/manifest, Stage 1 byte identity, and the install/reinstall/uninstall lifecycle before publication.
