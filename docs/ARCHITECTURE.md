@@ -1,8 +1,8 @@
-# MQB C++ Architecture
+# MQB architecture
 
-This document defines the current native C++23 architecture of MSVC Quick Build.
+This document defines the stable native C++23 architecture of MSVC Quick Build.
 
-Stable v5 has one implementation: `mqb.exe`. The former PowerShell implementation is no longer a runtime, migration, rollback, or parity dependency.
+MQB has one supported implementation: `mqb.exe`. Build inputs, process arguments, artifacts, caches, and toolchain state are modeled as structured data; there is no fallback build implementation.
 
 ## Goals
 
@@ -76,7 +76,7 @@ Core                  Modules              MSVC backend
 13. Provider selection has one owner: `ModuleDependencyGraphBuilder`.
 14. Header units are typed separately from named modules.
 15. Unsupported module requirements fail closed.
-16. Stable v5 has no PowerShell fallback path or legacy CLI compatibility parser.
+16. Stable v5 has one native parser and one native executor.
 
 ## Project configuration
 
@@ -89,8 +89,6 @@ artifact project root ----> directory containing mqb.json (when present)
 ```
 
 Scalar precedence is `explicit CLI > mqb.json > built-in defaults`. List-like inputs are additive and deterministic. Unknown fields, duplicate keys, wrong types, malformed JSON, and unsupported schema versions are rejected. See `docs/MQB_CONFIG.md`.
-
-The old `msvc_list.json` format is not part of the native architecture and is not searched, parsed, or migrated by stable v5.
 
 ## Smart source discovery
 
@@ -147,7 +145,7 @@ project/
     bin/
 ```
 
-All native writable build state lives under `.mqb/` rather than being scattered through source directories.
+All writable build state lives under `.mqb/` rather than being scattered through source directories.
 
 ## Process and toolchain boundary
 
@@ -155,31 +153,28 @@ All native writable build state lives under `.mqb/` rather than being scattered 
 
 `MsvcToolchainLocator` supports automatic, forced Visual Studio, and forced portable toolchain tracks. Toolchain identity participates in build/cache correctness.
 
-## Native CLI boundary
+## CLI boundary
 
-Stable v5 accepts the native option set documented by `mqb --help`.
+Stable v5 accepts the native option set documented by `mqb --help`. Normal short options such as `-h`, `-v`, `-j`, `-o`, `-I`, `-D`, `-L`, and `-l` are native UX.
 
-Normal short options such as `-h`, `-v`, `-j`, `-o`, `-I`, `-D`, `-L`, and `-l` are native UX. PowerShell-era compatibility spellings such as `-config`, `-std`, `-type`, `-runtime`, `-run`, `-env`, `-flags`, and `-link_flags` are rejected as unknown options.
-
-There is no second parser or fallback executor.
+Known obsolete single-dash spellings are rejected as unknown options. There is no second parser or fallback executor.
 
 ## Verification and release gate
 
-The native release gate consists of:
+A stable release requires all of the following:
 
 1. full installed-MSVC Debug tests;
 2. full installed-MSVC Release tests;
 3. native installer install/reinstall/uninstall validation;
 4. embedded version verification;
-5. exact package staging and SHA-256;
-6. publication of the exact tested artifact.
+5. Stage 0 -> Stage 1 MQB self-build through `cpp/mqb.json`;
+6. deletion of `cpp/.mqb`, followed by Stage 1 -> Stage 2 clean self-host closure;
+7. packaging of Stage 1 only, with byte-identity verification;
+8. exact package manifest and SHA-256 validation;
+9. publication of the exact validated artifact from the tag workflow.
 
-The already-published `v5.0.0-rc.2` remains historical and is not rewritten. Final stable `v5.0.0` must be produced from the native-only mainline.
+CMake remains the bootstrap/test harness for Stage 0 and the unit/integration test graph; it is not the producer of the `mqb.exe` shipped in stable releases. See `docs/SELF_HOSTING.md`.
 
-## Current roadmap
+## Stable v5 status
 
-1. Native C++ architecture and build pipelines — complete for current v5 scope.
-2. Ordinary C/C++ target parity work used during refactor — completed and retired as a live compatibility gate.
-3. Native-only installer/default entry — current mainline policy.
-4. Stable release workflow generalization and exact-artifact publication — next mainline.
-5. External/prebuilt named-module providers and `import std` — tracked independently in Issue #16.
+The native architecture, installer lifecycle, exact-artifact release workflow, and self-hosting gate are complete for the v5.0.0 scope. Remaining feature work such as external/prebuilt named-module providers and `import std` is tracked independently in Issue #16.

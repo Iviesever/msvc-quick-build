@@ -7,9 +7,9 @@ on:
       - 'install.ps1'
       - 'uninstall.ps1'
       - 'tests/installer/**'
-      - 'docs/V5_INSTALL_CUTOVER.md'
+      - 'docs/INSTALLATION.md'
       - 'README.md'
-      - '.github/workflows/install-cutover.yml'
+      - '.github/workflows/native-installer.yml'
   push:
     branches:
       - main
@@ -18,9 +18,9 @@ on:
       - 'install.ps1'
       - 'uninstall.ps1'
       - 'tests/installer/**'
-      - 'docs/V5_INSTALL_CUTOVER.md'
+      - 'docs/INSTALLATION.md'
       - 'README.md'
-      - '.github/workflows/install-cutover.yml'
+      - '.github/workflows/native-installer.yml'
 
 jobs:
   install-reinstall-uninstall:
@@ -40,10 +40,10 @@ jobs:
       - name: Build Release mqb
         run: cmake --build cpp/build-installer --config Release --target mqb --parallel
 
-      - name: Validate native-only installer lifecycle
+      - name: Validate native installer lifecycle
         shell: pwsh
         run: |
           $mqb = Join-Path $PWD 'cpp/build-installer/apps/mqb/Release/mqb.exe'
-          & (Join-Path $PWD 'tests/installer/installer_cutover.ps1') `
+          & (Join-Path $PWD 'tests/installer/native_installer_lifecycle.ps1') `
             -MqbPath $mqb `
             -RepoRoot $PWD

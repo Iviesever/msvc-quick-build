@@ -12,7 +12,7 @@ on:
       - 'tests/installer/**'
       - 'tests/selfhost/**'
       - 'release/**'
-      - '.github/workflows/cpp-release.yml'
+      - '.github/workflows/native-release.yml'
   push:
     tags:
       - 'v*'
@@ -132,8 +132,8 @@ jobs:
           Copy-Item 'README.md' (Join-Path $stage 'README.md')
           Copy-Item 'LICENSE' (Join-Path $stage 'LICENSE')
           Copy-Item 'docs/MQB_CONFIG.md' (Join-Path $stage 'MQB_CONFIG.md')
-          Copy-Item 'docs/CPP_V2_ARCHITECTURE.md' (Join-Path $stage 'CPP_V2_ARCHITECTURE.md')
-          Copy-Item 'docs/V5_INSTALL_CUTOVER.md' (Join-Path $stage 'V5_INSTALL_CUTOVER.md')
+          Copy-Item 'docs/ARCHITECTURE.md' (Join-Path $stage 'ARCHITECTURE.md')
+          Copy-Item 'docs/INSTALLATION.md' (Join-Path $stage 'INSTALLATION.md')
           Copy-Item 'docs/SELF_HOSTING.md' (Join-Path $stage 'SELF_HOSTING.md')
           Copy-Item $env:MQB_NOTES_FILE (Join-Path $stage 'RELEASE_NOTES.md')
 
@@ -170,7 +170,8 @@ jobs:
 
           Expand-Archive -LiteralPath $zip -DestinationPath $verifyRoot
           $expectedFiles = @(
-            'CPP_V2_ARCHITECTURE.md',
+            'ARCHITECTURE.md',
+            'INSTALLATION.md',
             'install.bat',
             'install.ps1',
             'LICENSE',
@@ -179,14 +180,13 @@ jobs:
             'README.md',
             'RELEASE_NOTES.md',
             'SELF_HOSTING.md',
-            'uninstall.ps1',
-            'V5_INSTALL_CUTOVER.md'
+            'uninstall.ps1'
           ) | Sort-Object
           $actualFiles = @(Get-ChildItem -LiteralPath $verifyRoot -File | Select-Object -ExpandProperty Name | Sort-Object)
           $manifestDiff = @(Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $actualFiles)
           if ($manifestDiff.Count -ne 0) {
             $manifestDiff | Format-Table | Out-String | Write-Host
-            throw 'Release package manifest differs from the native-only self-hosting contract.'
+            throw 'Release package manifest differs from the stable native self-hosting contract.'
           }
 
           $selfHostedMqb = Join-Path $PWD 'selfhost-out/stage1/mqb.exe'
@@ -204,7 +204,7 @@ jobs:
             throw "Packaged embedded version mismatch. Expected '$expectedHelp', got '$($help[0])'"
           }
 
-          & (Join-Path $PWD 'tests/installer/installer_cutover.ps1') `
+          & (Join-Path $PWD 'tests/installer/native_installer_lifecycle.ps1') `
             -MqbPath $packagedMqb `
             -RepoRoot $verifyRoot
           if ($LASTEXITCODE -ne 0) {
@@ -284,7 +284,7 @@ jobs:
           $title = if ($env:MQB_PRERELEASE -eq 'true') {
             "$tag — Native Prerelease"
           } else {
-            "$tag — Native Stable Release"
+            "$tag — Stable Release"
           }
 
           $arguments = @(

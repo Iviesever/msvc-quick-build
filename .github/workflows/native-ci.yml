@@ -1,25 +1,23 @@
-name: C++ V2
+name: Native C++
 
 on:
   push:
     branches:
       - main
-      - refactor/cpp-v2
   pull_request:
     paths:
       - 'cpp/**'
       - 'README.md'
-      - 'docs/CPP_V2_ARCHITECTURE.md'
-      - 'docs/MQB_CONFIG.md'
-      - 'docs/V5_INSTALL_CUTOVER.md'
+      - 'docs/**'
       - 'install.bat'
       - 'install.ps1'
       - 'uninstall.ps1'
       - 'tests/installer/**'
+      - 'tests/selfhost/**'
       - 'release/**'
-      - '.github/workflows/cpp-v2.yml'
+      - '.github/workflows/native-ci.yml'
+      - '.github/workflows/native-installer.yml'
       - '.github/workflows/cpp-release.yml'
-      - '.github/workflows/install-cutover.yml'
 
 jobs:
   build-and-test:

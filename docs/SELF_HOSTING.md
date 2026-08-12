@@ -10,20 +10,18 @@ The release workflow uses three logical stages:
 
 1. **Stage 0 — bootstrap/test binary**
    - built by CMake on the Windows CI runner;
-   - used to run the existing full Release CTest suite;
+   - used to run the full Release CTest suite;
    - used only to start the self-host chain;
    - **never packaged or published**.
 2. **Stage 1 — self-hosted release candidate**
    - built by Stage 0 by invoking MQB on `cpp/apps/mqb/main.cpp`;
    - build policy and production source manifest come from `cpp/mqb.json`;
    - `CMakeLists.txt` is not read or invoked for this build;
-   - this is the `mqb.exe` that is placed in the stable ZIP.
+   - this is the `mqb.exe` placed in the stable ZIP.
 3. **Stage 2 — closure proof**
    - after Stage 1 is copied outside the project build state, `cpp/.mqb` is deleted;
    - Stage 1 then builds MQB again from the same source/config from a clean MQB state;
    - Stage 2 must report the same release version.
-
-The required chain is therefore:
 
 ```text
 bootstrap Stage 0
@@ -62,10 +60,11 @@ The release version remains sourced from `release/VERSION`. The self-host harnes
 Given an MQB executable and a checkout of the matching source tag, a self-build can be performed without CMake:
 
 ```powershell
-$version = (Get-Content ..\release\VERSION -Raw).Trim()
-$define = 'MQB_VERSION=\"' + $version + '\"'
-
 Set-Location cpp
+$version = (Get-Content ..\release\VERSION -Raw).Trim()
+$quote = [char]34
+$define = 'MQB_VERSION=' + $quote + $version + $quote
+
 & C:\path\to\mqb.exe apps\mqb\main.cpp --env vs -D $define
 ```
 
@@ -75,12 +74,14 @@ The native self-host result is:
 cpp\.mqb\bin\mqb.exe
 ```
 
-Running that result with `--help` must report the same version. Running the same command again with that newly built executable from a clean `cpp/.mqb` state is the closure proof used by CI.
+The literal quote characters in `$define` are intentional. Do not pre-escape them with backslashes: MQB owns Windows argv encoding and passes the structured definition to `cl.exe`.
+
+Running the result with `--help` must report the same version. Running the same command again with that newly built executable from a clean `cpp/.mqb` state is the closure proof used by CI.
 
 ## Release artifact rule
 
 The stable ZIP must contain the Stage 1 binary, not the Stage 0 bootstrap binary.
 
-Before upload, the release workflow verifies that the ZIP's `mqb.exe` is byte-identical to the validated Stage 1 executable, then runs the normal packaged install/reinstall/uninstall lifecycle against that exact ZIP.
+Before upload, the release workflow verifies that the ZIP's `mqb.exe` is byte-identical to the validated Stage 1 executable, then runs the packaged install/reinstall/uninstall lifecycle against that exact ZIP.
 
-CMake remains useful as a development/test bootstrap and for the existing unit/integration test graph, but it is not the producer of the `mqb.exe` shipped in a stable release.
+CMake remains useful as a development/test bootstrap and for the unit/integration test graph, but it is not the producer of the `mqb.exe` shipped in a stable release.

@@ -93,7 +93,6 @@ $originalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 try {
     $installRoot = Join-Path $runRoot 'bin'
 
-    # Public batch entry must install only the native command and native maintenance files.
     $output = @(& $installBat `
         -MqbPath $mqb `
         -InstallRoot $installRoot 2>&1 | ForEach-Object { $_.ToString() })
@@ -119,7 +118,6 @@ try {
     Assert-True ((Help-Line $installedMqb) -ceq (Help-Line $mqb)) 'installed mqb.exe identity differs from validated input binary'
     Assert-True ((Count-UserPathEntry $installRoot) -eq 1) 'install did not own exactly one PATH entry'
 
-    # Reinstall remains idempotent without introducing compatibility artifacts.
     Install-Mqb $installRoot
     Assert-True ((Count-UserPathEntry $installRoot) -eq 1) 'reinstall duplicated PATH'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $installRoot 'build.cmd'))) 'reinstall introduced build compatibility shim'
@@ -131,17 +129,17 @@ try {
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $installRoot $owned) -PathType Leaf)) "uninstall left installer-owned file: $owned"
     }
 
-    # Clean-break contract: old PowerShell-era parameters are rejected instead of migrated.
+    # Obsolete installer parameters must fail closed instead of activating a migration path.
     $legacyCommand = '& ' + (Q $installPs1) +
         ' -Action Install -MqbPath ' + (Q $mqb) +
         ' -InstallRoot ' + (Q (Join-Path $runRoot 'legacy-args')) +
         ' -LegacyBuildPath ignored.ps1'
     $legacyOutput = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $legacyCommand 2>&1 |
         ForEach-Object { $_.ToString() })
-    Assert-True ($LASTEXITCODE -ne 0) 'legacy installer parameter unexpectedly remained supported'
-    Assert-True (($legacyOutput -join "`n") -match 'LegacyBuildPath') 'legacy parameter rejection was not explicit'
+    Assert-True ($LASTEXITCODE -ne 0) 'obsolete installer parameter unexpectedly remained supported'
+    Assert-True (($legacyOutput -join "`n") -match 'LegacyBuildPath') 'obsolete parameter rejection was not explicit'
 
-    Write-Host 'native-only installer install / reinstall / uninstall validation passed'
+    Write-Host 'native installer install / reinstall / uninstall validation passed'
 }
 finally {
     [Environment]::SetEnvironmentVariable('Path', $originalUserPath, 'User')
