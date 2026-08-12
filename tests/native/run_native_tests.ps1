@@ -108,7 +108,7 @@ Write-Host "Verified shared production manifest: $($productionSources.Count) non
 Write-Host "Builder MQB: $BuilderMqbPath"
 Write-Host "Tested MQB:  $TestMqbPath"
 
-$helperSource = 'tests/process_echo_helper.cpp'
+$helperSource = 'tests/process/process_echo_helper.cpp'
 $helperExe = Invoke-MqbTestBuild -EntrySource $helperSource -OutputName 'native_test_process_echo_helper'
 
 $workRoot = Join-Path $RepoRoot "native-test-work/$($Configuration.ToLowerInvariant())"
