@@ -31,6 +31,11 @@ $productionSources = @($config.discovery.extra_sources | ForEach-Object { $_.Rep
 if ($productionSources.Count -ne 41) {
     throw "Native test runner requires exactly 41 non-main production translation units; found $($productionSources.Count)."
 }
+foreach ($source in $productionSources) {
+    if (-not (Test-Path -LiteralPath (Join-Path $cppRoot $source) -PathType Leaf)) {
+        throw "Native test production source is missing: $source"
+    }
+}
 
 $testFiles = @(Get-ChildItem -LiteralPath $cppRoot -Recurse -File -Filter '*_tests.cpp' |
     Where-Object { $_.FullName -notmatch '[\\/]\.mqb[\\/]' } |
@@ -56,10 +61,11 @@ function Invoke-MqbTestBuild {
         [Parameter(Mandatory = $true)][string]$OutputName
     )
 
-    $sources = @($EntrySource) + $productionSources
-    $arguments = @()
-    $arguments += $sources
-    $arguments += @(
+    # The explicit test entry is included even though test directories are
+    # excluded from discovery. cpp/mqb.json injects the 41 shared production
+    # translation units and excludes every other test source.
+    $arguments = @(
+        $EntrySource,
         '--env', 'vs',
         $configArg,
         '--runtime', $runtime,
@@ -89,6 +95,7 @@ function Invoke-MqbTestBuild {
 }
 
 Write-Host "MQB-native test graph: $($testFiles.Count) tests / configuration $Configuration"
+Write-Host "Verified shared production manifest: $($productionSources.Count) non-main translation units"
 Write-Host "Builder MQB: $BuilderMqbPath"
 Write-Host "Tested MQB:  $TestMqbPath"
 
