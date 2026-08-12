@@ -10,9 +10,6 @@ dist/
 # Local worktrees / caches
 .worktrees/
 .cache/
-test_compile_out/
-test_out/
-test_out2/
 
 # 编译中间产物和可执行文件
 *.exe
@@ -24,8 +21,5 @@ test_out2/
 .vscode/
 .vs/
 .idea/
-msvc_build_scan_*/
-msvc_std_module_cache/
 
-portable_msvc.zip
 portable_msvc/
