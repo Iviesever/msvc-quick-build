@@ -13,6 +13,7 @@ $OutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 $seedTag = 'v5.0.0-rc.2'
 $seedAsset = 'vscode-msvc-quick-build-v5.0.0-rc.2-windows-x64.zip'
 $seedSha256 = 'a094261e2c1cc2fb90e6e8c8ed2933ffa88a0ccbd376dfd7c6d16c405d8d6eeb'
+$repository = if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) { 'Iviesever/msvc-quick-build' } else { $env:GITHUB_REPOSITORY }
 
 $gh = Get-Command gh -ErrorAction SilentlyContinue
 if ($null -eq $gh) {
@@ -29,12 +30,14 @@ $extractDir = Join-Path $OutputRoot 'extracted'
 New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
 
 Write-Host "Acquiring pinned MQB seed: $seedTag / $seedAsset"
-& gh release download $seedTag `
-    --repo $env:GITHUB_REPOSITORY `
+$downloadOutput = @(& gh release download $seedTag `
+    --repo $repository `
     --pattern $seedAsset `
-    --dir $downloadDir
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+    --dir $downloadDir 2>&1)
+$exitCode = $LASTEXITCODE
+foreach ($line in $downloadOutput) { Write-Host $line }
+if ($exitCode -ne 0) {
+    exit $exitCode
 }
 
 $zip = Join-Path $downloadDir $seedAsset
