@@ -59,10 +59,12 @@ cpp/
 
 `tests/native/build_mqb.ps1` reads this file and requires:
 
-- `src/app/main.cpp` plus `discovery.extra_sources` must form exactly 42 production translation units;
+- `src/app/main.cpp` plus `discovery.extra_sources` must exactly match the actual `cpp/src/**/*.cpp` production source set;
 - Every source file actually exists;
 - Build outputs can be executed;
 - Embedded version matches requested version exactly.
+
+The production TU count is intentionally not a stable contract or hard-coded magic number; responsibility-driven file splits only need to keep the manifest identical to the actual production source set.
 
 The single source of release version truth remains `release/VERSION`. Build drivers inject the version via structured `MQB_VERSION="<version>"` definitions, so `cpp/mqb.json` does not duplicate version numbers.
 
@@ -72,7 +74,7 @@ The single source of release version truth remains `release/VERSION`. Build driv
 
 It will:
 
-1. Retrieve 41 non-main production translation units from `cpp/mqb.json`;
+1. Retrieve all non-main production translation units from `cpp/mqb.json` and verify that set against the actual non-main `cpp/src/**/*.cpp` source set;
 2. Recursively enumerate `cpp/tests/` and enforce exactly 67 `*_tests.cpp` entries;
 3. Build an independent test executable for each test entry using current MQB;
 4. Reuse `.mqb` incremental object/cache;
