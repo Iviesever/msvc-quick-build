@@ -1,14 +1,13 @@
 # MQB — MSVC Quick Build
 
-面向 Windows + MSVC 的轻量 C/C++ 构建工具。目标是在不维护 `.sln` / `.vcxproj` / CMakeLists.txt 的情况下，直接从源文件完成发现、增量编译、模块拓扑、链接和运行。
+面向 Windows + MSVC 的轻量 C/C++ 构建工具。无需维护 `.sln` / `.vcxproj` / CMakeLists.txt，即可直接从源文件完成发现、增量编译、模块拓扑、链接和运行。
 
-> **v5 policy：native only**
+> **Stable v5：native only**
 >
-> - 当前主线只支持 C++23 重构版 `mqb.exe`。
+> - `mqb.exe` 是唯一受支持的构建实现。
 > - `mqb` 是唯一受支持的安装命令入口。
 > - `mqb.json` 是唯一受支持的项目配置格式。
-> - 旧 PowerShell `build.ps1`、`build` compatibility shim、PowerShell profile 注入、legacy rollback、`msvc_list.json` migration、PowerShell-era CLI aliases 均不再支持。
-> - 已发布的 `v5.0.0-rc.2` 仍保留为历史 prerelease；stable release pipeline 只从 native-only mainline 生成并验证发布包，不会为了兼容旧版本重新打包旧实现。
+> - 已淘汰的 PowerShell 构建入口、兼容 shim、profile 注入和旧配置格式不会被静默接管。
 > - stable release 必须 self-host：最终 ZIP 中的 `mqb.exe` 必须由 MQB 自身构建，而不是由 CMake 直接产出。
 
 ## 主要能力
@@ -23,13 +22,13 @@
 - Typed MSVC runtime、LTCG、subsystem policy。
 - `mqb.json` strict project configuration。
 - `--run -- arg1 "arg 2"` 结构化运行参数。
-- 所有 native build state 隔离在项目 `.mqb/` 目录。
+- 所有 build state 隔离在项目 `.mqb/` 目录。
 
 当前明确 fail closed 的范围包括 external/prebuilt named-module providers、`import std;`，以及需要 Modules/Header Unit pipeline 的 static-library target。
 
 ## 从源码构建
 
-要求：Windows、Visual Studio 2026 / MSVC、C++23 编译能力。开发测试还使用 CMake 3.25+ 作为 bootstrap/test harness；稳定版发布的最终 `mqb.exe` 不由 CMake 直接产出。
+要求：Windows、Visual Studio 2026 / MSVC、C++23 编译能力。开发测试仍使用 CMake 3.25+ 作为 bootstrap/test harness；稳定版发布的最终 `mqb.exe` 不由 CMake 直接产出。
 
 ### 开发 / 测试 bootstrap
 
@@ -47,7 +46,8 @@ cmake --build cpp/build --config Release --target mqb
 
 ```powershell
 $version = (Get-Content .\release\VERSION -Raw).Trim()
-$define = 'MQB_VERSION=\"' + $version + '\"'
+$quote = [char]34
+$define = 'MQB_VERSION=' + $quote + $version + $quote
 
 Push-Location .\cpp
 & C:\path\to\mqb.exe apps\mqb\main.cpp --env vs -D $define
@@ -99,13 +99,8 @@ mqb main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
 ### Target kind
 
 ```powershell
-# executable
 mqb main.cpp -o app
-
-# DLL
 mqb api.cpp --type dll -o codec
-
-# ordinary static library
 mqb math.cpp vector.cpp --type static -o math
 ```
 
@@ -168,7 +163,7 @@ MQB 从 invocation directory 向上查找最近的 `mqb.json`；配置文件所�
 
 完整 schema、路径基准、precedence 与 cache 行为见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
 
-旧 `msvc_list.json` **不会被读取或迁移**。
+旧 `msvc_list.json` 不会被读取或迁移。
 
 ## 常用 CLI
 
@@ -203,11 +198,11 @@ mqb <source.c|source.cpp|module.ixx|module.cppm|module.mpp> <more-sources...> [o
 | `-h, --help` | 帮助与内嵌版本 |
 | `--` | 后续 argv 传给目标程序 |
 
-PowerShell-era aliases（例如 `-config`、`-std`、`-type`、`-run`、`-env`、`-flags`、`-link_flags` 等）会被当作 unknown option 拒绝。
+已淘汰的单横线别名会被当作 unknown option 拒绝，不会进入兼容执行路径。
 
 ## 安装
 
-stable-v5 的安装策略是 native-only。发布包解压后运行：
+发布包解压后运行：
 
 ```powershell
 .\install.bat
@@ -219,16 +214,7 @@ stable-v5 的安装策略是 native-only。发布包解压后运行：
 %USERPROFILE%\bin
 ```
 
-安装器只部署：
-
-```text
-mqb.exe
-mqb-install.ps1
-uninstall-mqb.ps1
-mqb-install-state.json
-```
-
-不会创建 `build.cmd`、`build.ps1`、`build-legacy.ps1`，也不会修改 PowerShell profile。
+安装器部署 `mqb.exe` 与 installer-owned maintenance/state files，不创建 `build` 兼容命令，也不修改 PowerShell profile。
 
 卸载：
 
@@ -237,7 +223,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File "$HOME\bin\uninstall-mqb.ps1"
 ```
 
-没有 legacy rollback 或自动旧版本迁移。完整契约见 [`docs/V5_INSTALL_CUTOVER.md`](docs/V5_INSTALL_CUTOVER.md)。
+完整安装契约见 [`docs/INSTALLATION.md`](docs/INSTALLATION.md)。
 
 ## 架构原则
 
@@ -259,16 +245,18 @@ Incremental link / archive
 Optional executable run
 ```
 
-更详细的模块、缓存和 orchestration 设计见 [`docs/CPP_V2_ARCHITECTURE.md`](docs/CPP_V2_ARCHITECTURE.md)。
+更详细的模块、缓存和 orchestration 设计见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
-## 发布状态
+## Stable release gate
 
-- `v5.0.0-rc.2`：已经发布的历史 C++ Release Candidate；不会被追写。
-- `release/VERSION`：当前 stable release target 为 `5.0.0`；对应 release notes 为 `release/v5.0.0.md`。
-- `Native Release`：PR 上完成 bootstrap Release tests 后，必须通过 Stage 0 → Stage 1 → clean Stage 1 → Stage 2 的 MQB self-host closure；只有 Stage 1 可以进入最终 ZIP。
-- 最终 ZIP 继续经过 checksum、解包 manifest、Stage 1 byte identity 与 packaged-installer lifecycle 验证后才上传 artifact。
-- 正式发布只由匹配 `release/VERSION` 的 `vX.Y.Z` tag 触发；发布 job 直接下载同一 workflow run 已验证的 artifact，不做二次 rebuild。
-- Issue #16：独立跟踪 external/prebuilt named-module providers 与 `import std`。
+`v5.0.0` 的正式发布要求同一候选提交同时通过：
+
+1. `Native C++`：完整 installed-MSVC Debug tests；
+2. `Native Installer`：install / reinstall / uninstall lifecycle；
+3. `Native Release`：完整 Release tests、Stage 0 → Stage 1 → clean Stage 1 → Stage 2 self-host closure、exact package manifest、SHA-256、Stage 1 byte identity 与 packaged-installer validation；
+4. 匹配 `release/VERSION` 的 `vX.Y.Z` tag 才能触发 publication；publication job 只发布同一 workflow run 已验证的 artifact，不二次 rebuild。
+
+历史 `v5.0.0-rc.1` / `v5.0.0-rc.2` release notes 保留原样。Issue #16 独立跟踪 external/prebuilt named-module providers 与 `import std`。
 
 ## License
 
