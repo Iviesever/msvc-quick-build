@@ -308,7 +308,7 @@ Extract and run:
 .\install.bat
 ```
 
-Default install destination is `%USERPROFILE%\bin`. The installer does not create legacy `build` compatibility commands or modify PowerShell profiles. See [`docs/INSTALLATION.md`](docs/INSTALLATION.md) for details.
+Default install destination is `%USERPROFILE%\bin`. The installer does not create legacy `build` compatibility commands or modify PowerShell profiles. See [`docs/INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) for details.
 
 ## Release Gates
 
