@@ -1,1 +1,0 @@
-MQB-native development and tests do not invoke CMake or CTest.
