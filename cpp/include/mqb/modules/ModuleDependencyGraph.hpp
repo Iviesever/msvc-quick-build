@@ -16,6 +16,10 @@ namespace mqb::modules {
 struct ScannedModuleUnit {
     std::filesystem::path source;
     P1689Rule rule;
+    // std/std.compat providers injected from the selected MSVC toolchain carry
+    // explicit ownership so project sources cannot impersonate toolchain-owned
+    // standard-library modules.
+    bool toolchain_owned{false};
 };
 
 enum class UnresolvedRequirementKind {

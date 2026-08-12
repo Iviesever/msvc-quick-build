@@ -20,9 +20,9 @@ namespace mqb::orchestration {
 struct IncrementalModuleTargetRequest {
     std::vector<ModuleCompileSourceRequest> sources;
     TargetArtifacts target;
-    // Header-unit providers are discovered only after P1689 scanning. When a
-    // graph contains project-local header units, the target coordinator uses
-    // this layout to assign their IFC/dependency/cache artifacts dynamically.
+    // Header-unit and toolchain-owned standard-library module providers are
+    // discovered only after P1689 scanning. The target coordinator uses this
+    // layout to assign their project-local generated artifacts dynamically.
     std::optional<ProjectArtifactLayout> artifact_layout;
     CompilerOptions compiler_options;
     LinkOptions link_options;
@@ -45,6 +45,8 @@ enum class IncrementalModuleTargetErrorCode {
     artifact_layout_missing,
     artifact_layout_failed,
     invalid_header_unit,
+    standard_library_module_unavailable,
+    standard_library_module_standard_unsupported,
     scheduling_failed,
     scan_failed,
     invalid_scan_result,
@@ -66,9 +68,10 @@ struct IncrementalModuleTargetError {
 };
 
 struct IncrementalModuleTargetResult {
-    // Scan and ordinary/module compile results preserve request.sources order.
-    // Dynamically discovered header-unit compile results preserve graph
-    // header_units order through ModuleCompileWaveResult.
+    // Public source scans preserve request.sources order. Compile waves may also
+    // contain dynamically injected toolchain-owned module providers after the
+    // original source prefix; routers can keep those implementation details out
+    // of ordinary CLI compile-result ordering while still honoring any_compiled.
     std::vector<ModuleTargetScanResult> scans;
     modules::ModuleDependencyPlan plan;
     ModuleCompileWaveResult compiles;

@@ -37,13 +37,15 @@ void expect(const bool condition, const std::string_view message) {
 [[nodiscard]] mqb::modules::ScannedModuleUnit unit(
     fs::path source,
     std::vector<mqb::modules::ProvidedModule> provided = {},
-    std::vector<mqb::modules::RequiredModule> required = {}) {
+    std::vector<mqb::modules::RequiredModule> required = {},
+    const bool toolchain_owned = false) {
     mqb::modules::P1689Rule rule;
     rule.provided_modules = std::move(provided);
     rule.required_modules = std::move(required);
     return mqb::modules::ScannedModuleUnit{
         .source = std::move(source),
         .rule = std::move(rule),
+        .toolchain_owned = toolchain_owned,
     };
 }
 
@@ -99,7 +101,7 @@ int main() {
             expect(has_edge(*plan, "app.cpp", "stats.ixx", "stats"),
                    "app should retain the exact provider source selected for logical module stats");
             expect(!has_edge(*plan, "app.cpp", {}, "std"),
-                   "unresolved external modules must not be fabricated as resolved edges");
+                   "unresolved standard modules must not be fabricated as resolved edges");
         }
     }
 
@@ -182,7 +184,37 @@ int main() {
                "standard-library modules must not be smuggled through generic external provider policy");
         if (!plan) {
             expect(plan.error().code == mqb::modules::ModuleGraphErrorCode::toolchain_owned_provider,
-                   "import std boundary should remain explicitly toolchain-owned for the next slice");
+                   "generic external configuration must keep std provider ownership toolchain-only");
+        }
+    }
+
+    {
+        const std::vector units{
+            unit("fake-std.ixx", {provide("std")}),
+            unit("consumer.cpp", {}, {require_named("std")}),
+        };
+        const auto plan = ModuleDependencyGraphBuilder::build(units);
+        expect(!plan.has_value(),
+               "project sources must not impersonate the standard-library module provider");
+        if (!plan) {
+            expect(plan.error().code == mqb::modules::ModuleGraphErrorCode::toolchain_owned_provider,
+                   "project-local std provider should report the toolchain ownership boundary");
+        }
+    }
+
+    {
+        const std::vector units{
+            unit("vc/modules/std.ixx", {provide("std")}, {}, true),
+            unit("consumer.cpp", {}, {require_named("std")}),
+        };
+        const auto plan = ModuleDependencyGraphBuilder::build(units);
+        expect(plan.has_value(),
+               "explicit toolchain-owned std source should participate in the authoritative provider graph");
+        if (plan) {
+            expect(plan->unresolved_requirements.empty(),
+                   "toolchain-owned std provider should resolve import std");
+            expect(has_edge(*plan, "consumer.cpp", "vc/modules/std.ixx", "std"),
+                   "consumer should retain the exact selected toolchain std provider source");
         }
     }
 

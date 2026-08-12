@@ -124,6 +124,25 @@ using process::ProcessSpec;
     return directories.front();
 }
 
+[[nodiscard]] StandardLibraryModuleSources discover_standard_library_modules(
+    const fs::path& vc_tools_root) {
+    StandardLibraryModuleSources sources;
+    const fs::path modules = vc_tools_root / "modules";
+    std::error_code error_code;
+
+    const fs::path std_source = modules / "std.ixx";
+    if (fs::is_regular_file(std_source, error_code) && !error_code) {
+        sources.std = std_source.lexically_normal();
+    }
+
+    error_code.clear();
+    const fs::path std_compat_source = modules / "std.compat.ixx";
+    if (fs::is_regular_file(std_compat_source, error_code) && !error_code) {
+        sources.std_compat = std_compat_source.lexically_normal();
+    }
+    return sources;
+}
+
 [[nodiscard]] std::expected<std::string, ToolchainError> binary_stamp(const fs::path& file) {
     std::error_code error_code;
     const auto size = fs::file_size(file, error_code);
@@ -232,6 +251,7 @@ using process::ProcessSpec;
         .linker = linker,
         .librarian = librarian,
         .vc_tools_root = *vc_tools,
+        .standard_library_modules = discover_standard_library_modules(*vc_tools),
         .source = ToolchainSource::portable,
         .environment = {
             EnvironmentVariable{"PATH", prepend_environment(path_prefixes, "PATH")},
@@ -638,6 +658,7 @@ private:
         .linker = linker,
         .librarian = librarian,
         .vc_tools_root = vc_tools_root,
+        .standard_library_modules = discover_standard_library_modules(vc_tools_root),
         .source = ToolchainSource::visual_studio,
         .environment = std::move(captured->variables),
     };

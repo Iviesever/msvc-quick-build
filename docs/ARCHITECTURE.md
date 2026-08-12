@@ -134,7 +134,7 @@ core  <---- shared typed build model, planner, cache and artifact rules
 
 ### `modules`
 
-`modules` 负责 P1689 typed model 与 module dependency graph。provider ownership 只有一个权威实现；named modules 与 header units 必须保持类型区别。项目内 provider 与显式 external/prebuilt provider 的选择、冲突和歧义也只在这里裁决；discovery/orchestration 不允许通过猜测 IFC 路径来补 provider。
+`modules` 负责 P1689 typed model 与 module dependency graph。provider ownership 只有一个权威实现；named modules 与 header units 必须保持类型区别。项目内 provider、显式 external/prebuilt provider 和 toolchain-owned 标准库 provider 的选择、冲突和歧义也只在这里裁决；discovery/orchestration 不允许通过猜测 IFC 路径来补 provider。
 
 ### `orchestration`
 
@@ -144,7 +144,8 @@ core  <---- shared typed build model, planner, cache and artifact rules
 - incremental compile / link / archive；
 - ordinary target pipeline；
 - module scan/compile waves；
-- target routing。
+- target routing；
+- 在 P1689 明确要求 `std` / `std.compat` 时，把当前 toolchain 对应的 module source 注入同一 provider graph。
 
 当前 orchestration 面向 MSVC，因此类名中可以出现 `Msvc*`；但 primitive command construction 仍属于 `msvc`。
 
@@ -153,6 +154,7 @@ core  <---- shared typed build model, planner, cache and artifact rules
 `msvc` 是 MSVC 后端 primitive layer：
 
 - toolchain discovery；
+- 当前 VC Tools 版本的 `modules/std.ixx` / `modules/std.compat.ixx` capability discovery；
 - compiler / linker / librarian argument construction；
 - process invocation adapters；
 - `/sourceDependencies` reader；
@@ -185,10 +187,12 @@ core  <---- shared typed build model, planner, cache and artifact rules
 14. header units 与 named modules 类型分离。
 15. unsupported module requirements fail closed。
 16. external/prebuilt named-module IFC 只能通过 typed project/CLI policy 显式声明；它是只读 dependency，不能变成 MQB-owned writable artifact。
-17. `std` / `std.compat` provider 属于 toolchain policy，不能由 generic external-provider 配置伪造。
-18. stable v5 只有一个 native parser、一个 native executor、一个 C++ 源码树。
-19. `cpp/include`、`cpp/src`、`cpp/tests` 分别只有一个物理根。
-20. 不允许为了“方便”重新制造组件级 `include/src/tests`。
+17. `std` / `std.compat` provider 属于当前 MSVC toolchain；project source 与 generic external-provider 配置都不能伪造它们。
+18. toolchain-owned 标准库 module 只有在 P1689 requirement 实际出现时才注入；provider source 也必须经过 P1689，再进入同一 graph/compile/cache/link 流程。
+19. 标准库 module 的生成 IFC/OBJ/cache 属于当前项目 `.mqb`，其 identity 同时受 provider source、完整 compiler recipe 和 selected toolchain identity 约束。
+20. stable v5 只有一个 native parser、一个 native executor、一个 C++ 源码树。
+21. `cpp/include`、`cpp/src`、`cpp/tests` 分别只有一个物理根。
+22. 不允许为了“方便”重新制造组件级 `include/src/tests`。
 
 ## 6. Project configuration
 
@@ -201,6 +205,8 @@ artifact project root ----> directory containing mqb.json (when present)
 ```
 
 Scalar precedence：`explicit CLI > mqb.json > built-in defaults`。List-like inputs additive 且 deterministic。External module provider registry 以 logical module name 为 key：`mqb.json` 可在 `modules.external` 中声明 `name -> IFC path`，CLI 可重复使用 `--module-ifc name=path.ifc`；同名 CLI 项定点覆盖 config，CLI 自身重复同名项则 fail closed。
+
+`std` / `std.compat` 不属于这个 registry。它们由 selected MSVC toolchain 的 `VCToolsInstallDir/modules` capability 决定，用户不能通过 `modules.external` 或 `--module-ifc` 覆盖。
 
 MQB 自身的 `cpp/mqb.json` 也是自构建 production manifest。当前物理结构只需要两个 include roots：
 
@@ -226,20 +232,32 @@ bounded /scanDependencies
        ↓
 P1689 typed rules
        ↓
+std/std.compat requirement?
+       ├─ no  ───────────────────────────────┐
+       └─ yes -> selected VC Tools module source
+                    ↓
+              /scanDependencies
+                    ↓
+          repeat to fixed point              │
+       ┌─────────────────────────────────────┘
+       ↓
 ModuleDependencyGraphBuilder
        ├─ project-local provider -> graph compile dependency
-       └─ explicit external IFC  -> read-only typed ModuleReference
+       ├─ explicit external IFC  -> read-only typed ModuleReference
+       └─ toolchain std provider -> graph compile dependency
        ↓
-dynamic IFC assignment (MQB-owned providers only)
+dynamic artifact assignment (MQB-owned/generated providers)
        ↓
 dependency-level compile waves
        ↓
 incremental final link
 ```
 
-稳定版支持 project-local named modules、project-local header units，以及显式配置的 external/prebuilt named-module IFC provider。External IFC 不参与 source discovery，不加入 compile levels，也不由 MQB 写入；实际 consumer 通过现有 `ModuleReference` 进入 compile signature 和 `/sourceDependencies` cache dependency，因此 provider 替换会失效对应 consumer cache，provider 缺失会在进入编译器前 fail closed。
+稳定版支持 project-local named modules、project-local header units，以及显式配置的 external/prebuilt named-module IFC provider。External IFC 不参与 source discovery，不加入 compile levels，也不由 MQB 写入；实际 consumer 通过现有 `ModuleReference` 进入 compile signature 和 cache dependency，因此 provider 替换会失效对应 consumer cache，provider 缺失会在进入编译器前 fail closed。
 
-`import std` / `std.compat` 仍未在这一层实现：标准库 module provider 明确保留给 toolchain-owned policy，不允许借 generic external provider 逃逸。Issue #16 的下一 slice 单独负责其 VS/MSVC discovery、version identity 与 cold/warm E2E。
+MSVC `import std` / `import std.compat` 是 toolchain-owned capability，而不是 source-parser 特判。MQB 先扫描用户 TU；只有 P1689 by-name requirement 出现 `std` 或 `std.compat` 时，才从当前 `VCToolsInstallDir/modules` 选择对应 `.ixx`。这些 provider source 同样经过 `/scanDependencies`，因此 `std.compat -> std` 依赖由 P1689 自然闭包，而不是硬编码边。随后它们作为 module-interface TU 进入唯一的 `ModuleDependencyGraphBuilder`，并在项目 `.mqb` 下生成/复用 IFC、OBJ、source-dependency metadata 和 compile cache；provider OBJ 明确进入最终 link。
+
+当前 MSVC 标准库 named modules 要求 `--std latest`。如果 selected toolchain 没有相应 `std.ixx` / `std.compat.ixx` capability，或语言模式不满足要求，MQB 会在 module target 层给出明确 unsupported diagnostic 并 fail closed。因为 generated provider compile cache 使用正常的 source + compiler recipe + `ToolchainIdentity`，切换 VC Tools/compiler identity 不会静默复用不兼容的标准库 IFC。
 
 ## 8. Build identity 与 artifact layout
 
@@ -260,7 +278,7 @@ incremental final link
 └─ bin/
 ```
 
-源码目录不承载编译中间产物。
+源码目录不承载编译中间产物。toolchain-owned `std.ixx` / `std.compat.ixx` 虽位于 VC Tools 安装目录，但其 MQB writable artifact 仍通过 external-source identity 映射回当前项目 `.mqb`，不会写入 Visual Studio 安装目录。
 
 ## 9. 开发、测试与发布门禁
 

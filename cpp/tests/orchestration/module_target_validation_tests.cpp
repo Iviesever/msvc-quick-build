@@ -1,5 +1,7 @@
+#include <chrono>
 #include <expected>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string_view>
 
@@ -36,6 +38,44 @@ public:
     int calls{};
 };
 
+class StdRequirementScanRunner final : public mqb::process::ProcessRunner {
+public:
+    std::expected<mqb::process::ProcessResult, mqb::process::ProcessError>
+    run(const mqb::process::ProcessSpec& spec) override {
+        ++calls;
+        fs::path output;
+        for (std::size_t index = 0; index + 1 < spec.arguments.size(); ++index) {
+            if (spec.arguments[index] == "/scanDependencies") {
+                output = fs::path{spec.arguments[index + 1]};
+                break;
+            }
+        }
+        if (!output.empty()) {
+            fs::create_directories(output.parent_path());
+            std::ofstream stream{output, std::ios::binary | std::ios::trunc};
+            stream << R"json({
+  "version": 1,
+  "revision": 0,
+  "rules": [ {
+    "primary-output": "main.obj",
+    "requires": [ { "logical-name": "std" } ]
+  } ]
+})json";
+        }
+        return mqb::process::ProcessResult{.exit_code = 0};
+    }
+
+    int calls{};
+};
+
+struct TempTree {
+    fs::path root;
+    ~TempTree() {
+        std::error_code ignored;
+        fs::remove_all(root, ignored);
+    }
+};
+
 [[nodiscard]] mqb::orchestration::IncrementalModuleTargetRequest make_request() {
     mqb::orchestration::IncrementalModuleTargetRequest request;
     request.sources = {
@@ -68,6 +108,32 @@ public:
     };
     request.max_parallel_scans = 2;
     request.max_parallel_compiles = 2;
+    return request;
+}
+
+[[nodiscard]] mqb::orchestration::IncrementalModuleTargetRequest make_std_request(
+    const fs::path& root) {
+    mqb::orchestration::IncrementalModuleTargetRequest request;
+    auto layout = mqb::ProjectArtifactLayout::create(root);
+    if (!layout) return request;
+    const fs::path source = root / "main.cpp";
+    auto source_artifacts = layout->for_source(source);
+    auto target_artifacts = layout->for_target("std-unavailable");
+    if (!source_artifacts || !target_artifacts) return request;
+
+    request.sources = {
+        mqb::orchestration::ModuleCompileSourceRequest{
+            .source = source,
+            .artifacts = *source_artifacts,
+            .kind = mqb::TranslationUnitKind::source,
+        },
+    };
+    request.target = *target_artifacts;
+    request.artifact_layout = *layout;
+    request.compiler_options.standard = mqb::CppStandard::latest;
+    request.max_parallel_scans = 1;
+    request.max_parallel_compiles = 1;
+    request.working_directory = root;
     return request;
 }
 
@@ -151,6 +217,55 @@ int main() {
         }
         expect(runner.calls == 0,
                "cross-role artifact collision must fail before process execution");
+    }
+
+    {
+        const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+        TempTree tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_std_unavailable_validation_" + std::to_string(unique)),
+        };
+        fs::create_directories(tree.root);
+        std::ofstream(tree.root / "main.cpp") << "import std;\nint main() { return 0; }\n";
+
+        StdRequirementScanRunner std_runner;
+        mqb::msvc::MsvcToolchain no_std_toolchain;
+        no_std_toolchain.identity.compiler = "fake-cl.exe";
+        no_std_toolchain.identity.version = "19.40.no-std";
+        no_std_toolchain.identity.binary_stamp = "fake-no-std";
+        no_std_toolchain.linker = "fake-link.exe";
+        no_std_toolchain.librarian = "fake-lib.exe";
+        // standard_library_modules intentionally remains empty.
+
+        mqb::msvc::MsvcModuleDependencyScanner std_scanner{no_std_toolchain, std_runner};
+        mqb::msvc::MsvcCompileExecutor std_executor{no_std_toolchain, std_runner};
+        mqb::orchestration::MsvcIncrementalCompileCoordinator std_incremental_compile{
+            no_std_toolchain,
+            std_executor};
+        mqb::orchestration::MsvcModuleCompileCoordinator std_module_compile{std_incremental_compile};
+        mqb::msvc::MsvcLinker std_linker{no_std_toolchain, std_runner};
+        mqb::orchestration::MsvcIncrementalLinkCoordinator std_incremental_link{
+            no_std_toolchain,
+            std_linker};
+        mqb::orchestration::MsvcModuleTargetCoordinator std_target{
+            std_scanner,
+            std_module_compile,
+            std_incremental_link};
+
+        auto request = make_std_request(tree.root);
+        const auto result = std_target.run(request);
+        expect(!result,
+               "import std must fail when the selected toolchain has no standard-module capability");
+        if (!result) {
+            expect(result.error().code
+                       == mqb::orchestration::IncrementalModuleTargetErrorCode::standard_library_module_unavailable,
+                   "missing std.ixx capability should report the dedicated unavailable error code");
+            expect(result.error().message.find("does not provide standard-library module source 'std'")
+                       != std::string::npos,
+                   "missing std.ixx capability should explain the selected toolchain limitation");
+        }
+        expect(std_runner.calls == 1,
+               "missing standard-library capability should stop immediately after the authoritative user-TU scan");
     }
 
     if (failures != 0) {

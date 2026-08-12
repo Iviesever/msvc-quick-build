@@ -505,16 +505,18 @@ module-interface candidates. Discovery selects candidates only; MSVC P1689 scann
 the authority for module topology and provider validation. Project-local header-unit imports
 stay outside TU discovery but route through the P1689 module pipeline, where their IFCs are
 built and cached automatically. Explicit external/prebuilt named-module IFCs are resolved by
-the same P1689 provider graph and remain read-only. Modules and header units require C++20 or
-newer. import std remains unsupported and fails closed until toolchain-owned std-module policy
-is implemented.
+the same P1689 provider graph and remain read-only. `std` and `std.compat` are owned by the
+selected MSVC toolchain: only a P1689 requirement triggers their VCToolsInstallDir/modules
+provider source, which is then scanned, built, cached under project .mqb, and linked like any
+other generated module provider. MSVC standard-library named modules require --std latest;
+missing toolchain capability fails closed with a dedicated diagnostic.
 
 Options:
   --debug                  Explicitly select Debug compile/link preset
   --release                Explicitly select Release compile/link preset
   --config <debug|release> Select compile/link preset
   --std <14|17|20|23|latest>
-                           Explicitly select C++ language standard
+                           Explicitly select C++ language standard; import std requires latest
   --type <exe|dll|static>  Select executable, DLL, or static-library output
   --runtime <MD|MDd|MT|MTd>
                            Explicitly select MSVC CRT runtime
@@ -560,7 +562,7 @@ Discovery is source selection only. Incremental header freshness uses MSVC
 /sourceDependencies metadata; /scanDependencies is module topology only.
 
 Generated state:
-  .mqb/obj/    collision-free object files
+  .mqb/obj/    collision-free object files (including generated std/std.compat providers)
   .mqb/deps/   compiler dependency metadata
   .mqb/scan/   module dependency scan metadata
   .mqb/ifc/    module/header-unit interface artifacts

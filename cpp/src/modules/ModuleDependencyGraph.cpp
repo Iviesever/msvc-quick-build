@@ -116,6 +116,15 @@ ModuleDependencyGraphBuilder::build(
     for (std::size_t index = 0; index < units.size(); ++index) {
         for (const auto& provided : units[index].rule.provided_modules) {
             if (provided.unique_on_source_path) continue;
+            if (toolchain_owned_standard_module(provided.logical_name)
+                && !units[index].toolchain_owned) {
+                return std::unexpected(graph_failure(
+                    ModuleGraphErrorCode::toolchain_owned_provider,
+                    "standard-library module '" + provided.logical_name
+                        + "' may only be provided by the selected MSVC toolchain",
+                    units[index].source,
+                    provided.logical_name));
+            }
             provider_candidates[provided.logical_name].push_back(ProviderCandidate{
                 .unit_index = index,
                 .is_interface = provided.is_interface,

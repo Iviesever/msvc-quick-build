@@ -23,6 +23,11 @@ enum class ToolchainPreference {
     portable,
 };
 
+struct StandardLibraryModuleSources {
+    std::optional<std::filesystem::path> std;
+    std::optional<std::filesystem::path> std_compat;
+};
+
 struct DiscoveryOptions {
     Architecture target_architecture{Architecture::x64};
     Architecture host_architecture{Architecture::x64};
@@ -37,6 +42,11 @@ struct MsvcToolchain {
     std::filesystem::path linker;
     std::filesystem::path librarian;
     std::filesystem::path vc_tools_root;
+    // The selected VC Tools version owns these sources. Missing files do not
+    // invalidate the compiler toolchain itself; module-target routing reports a
+    // capability-specific diagnostic only when std/std.compat is actually
+    // required by P1689 metadata.
+    StandardLibraryModuleSources standard_library_modules;
     ToolchainSource source{ToolchainSource::visual_studio};
     std::vector<process::EnvironmentVariable> environment;
 };
