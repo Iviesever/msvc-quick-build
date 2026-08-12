@@ -31,6 +31,7 @@ struct Options {
     std::vector<std::string> libraries;
     std::vector<std::string> compiler_arguments;
     std::vector<std::string> linker_arguments;
+    std::vector<ExternalModuleProvider> external_module_providers;
     msvc::ToolchainPreference toolchain_preference{msvc::ToolchainPreference::automatic};
     std::vector<std::filesystem::path> portable_roots;
     std::optional<bool> discovery_override;
