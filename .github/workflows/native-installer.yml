@@ -3,47 +3,72 @@ name: Native Installer
 on:
   pull_request:
     paths:
+      - 'cpp/**'
       - 'install.bat'
       - 'install.ps1'
       - 'uninstall.ps1'
       - 'tests/installer/**'
+      - 'tests/native/**'
       - 'docs/INSTALLATION.md'
       - 'README.md'
+      - 'release/**'
       - '.github/workflows/native-installer.yml'
   push:
     branches:
       - main
     paths:
+      - 'cpp/**'
       - 'install.bat'
       - 'install.ps1'
       - 'uninstall.ps1'
       - 'tests/installer/**'
+      - 'tests/native/**'
       - 'docs/INSTALLATION.md'
       - 'README.md'
+      - 'release/**'
       - '.github/workflows/native-installer.yml'
 
 jobs:
   install-reinstall-uninstall:
     runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Configure Release mqb
+      - name: Acquire pinned MQB seed
+        id: seed
         shell: pwsh
         run: |
-          cmake -S cpp -B cpp/build-installer `
-            -G "Visual Studio 18 2026" -A x64 `
-            -DMQB_ENABLE_INSTALLED_MSVC_TESTS=OFF
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD `
+            -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$seed" >> $env:GITHUB_OUTPUT
 
-      - name: Build Release mqb
-        run: cmake --build cpp/build-installer --config Release --target mqb --parallel
+      - name: Build Release MQB with MQB
+        id: build
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath 'release/VERSION' -Raw).Trim()
+          $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+            -RepoRoot $PWD `
+            -Version $version `
+            -Configuration Release `
+            -Clean `
+            -OutputPath (Join-Path $PWD 'native-out/installer/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$mqb" >> $env:GITHUB_OUTPUT
 
       - name: Validate native installer lifecycle
         shell: pwsh
         run: |
-          $mqb = Join-Path $PWD 'cpp/build-installer/apps/mqb/Release/mqb.exe'
           & (Join-Path $PWD 'tests/installer/native_installer_lifecycle.ps1') `
-            -MqbPath $mqb `
+            -MqbPath '${{ steps.build.outputs.path }}' `
             -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
