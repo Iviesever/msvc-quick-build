@@ -35,8 +35,27 @@ if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 $relativeSources = @('src/app/main.cpp') + @($config.discovery.extra_sources)
 $relativeSources = @($relativeSources | ForEach-Object { $_.Replace('\', '/') } | Sort-Object -Unique)
-if ($relativeSources.Count -ne 42) {
-    throw "MQB self-build manifest must contain exactly 42 production translation units; found $($relativeSources.Count)."
+
+# Keep the manifest exact without coupling architecture work to a magic TU
+# count. Every production .cpp under cpp/src must appear exactly once in the
+# normalized manifest, and the manifest must not name anything outside that
+# production source set.
+$productionSources = @(
+    Get-ChildItem -LiteralPath (Join-Path $cppRoot 'src') -Recurse -File -Filter '*.cpp' |
+        ForEach-Object {
+            [System.IO.Path]::GetRelativePath($cppRoot, $_.FullName).Replace('\', '/')
+        } |
+        Sort-Object -Unique
+)
+$manifestDiff = @(Compare-Object -ReferenceObject $productionSources -DifferenceObject $relativeSources)
+if ($manifestDiff.Count -ne 0) {
+    $details = @(
+        $manifestDiff | ForEach-Object {
+            $kind = if ($_.SideIndicator -eq '<=') { 'missing from manifest' } else { 'not a production source' }
+            "  ${kind}: $($_.InputObject)"
+        }
+    ) -join [Environment]::NewLine
+    throw "MQB self-build manifest does not exactly match cpp/src production translation units:`n$details"
 }
 
 foreach ($source in $relativeSources) {
@@ -121,5 +140,4 @@ if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
     $result = $OutputPath
 }
 
-Write-Host "MQB-native build passed: $($help[0])"
 Write-Output $result

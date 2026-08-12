@@ -23,8 +23,12 @@
       "tests"
     ],
     "extra_sources": [
+      "src/app/Application.cpp",
       "src/app/Cli.cpp",
+      "src/app/Diagnostics.cpp",
+      "src/app/Invocation.cpp",
       "src/app/ModuleCliTarget.cpp",
+      "src/app/ProjectSetup.cpp",
       "src/app/StaticCliTarget.cpp",
       "src/msvc/MsvcCompileExecutor.cpp",
       "src/msvc/MsvcCompiler.cpp",
