@@ -258,6 +258,34 @@ jobs:
 
           Write-Host 'Exact self-hosted packaged artifact validation passed.'
 
+      - name: Validate GitHub Release notes body
+        shell: pwsh
+        env:
+          MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          MQB_NOTES_FILE: ${{ steps.meta.outputs.notes_file }}
+        run: |
+          $tag = "v$env:MQB_RELEASE_VERSION"
+          $notesEnFile = "release/v$($env:MQB_RELEASE_VERSION)_EN.md"
+          if (-not (Test-Path -LiteralPath $env:MQB_NOTES_FILE -PathType Leaf)) {
+            throw "Missing release notes: $env:MQB_NOTES_FILE"
+          }
+          if (-not (Test-Path -LiteralPath $notesEnFile -PathType Leaf)) {
+            throw "Missing English release notes: $notesEnFile"
+          }
+
+          $sourceNotes = Get-Content -LiteralPath $env:MQB_NOTES_FILE -Raw
+          $sourceEnglishLink = "(v$($env:MQB_RELEASE_VERSION)_EN.md)"
+          if (-not $sourceNotes.Contains($sourceEnglishLink)) {
+            throw "Release notes do not contain expected English link target: $sourceEnglishLink"
+          }
+
+          $taggedEnglishTarget = "https://github.com/$env:GITHUB_REPOSITORY/blob/$tag/release/v$($env:MQB_RELEASE_VERSION)_EN.md"
+          $rendered = $sourceNotes.Replace($sourceEnglishLink, "($taggedEnglishTarget)")
+          if (-not $rendered.Contains("($taggedEnglishTarget)")) {
+            throw 'GitHub Release notes body did not receive the exact-tag English link.'
+          }
+          Write-Host "GitHub Release English notes target: $taggedEnglishTarget"
+
       - name: Upload validated package
         uses: actions/upload-artifact@v7
         with:
@@ -301,6 +329,10 @@ jobs:
           if (-not (Test-Path -LiteralPath $env:MQB_NOTES_FILE -PathType Leaf)) {
             throw "Missing release notes: $env:MQB_NOTES_FILE"
           }
+          $notesEnFile = "release/v$($env:MQB_RELEASE_VERSION)_EN.md"
+          if (-not (Test-Path -LiteralPath $notesEnFile -PathType Leaf)) {
+            throw "Missing English release notes: $notesEnFile"
+          }
 
           $zip = Join-Path $PWD "dist-publish/$($env:MQB_PACKAGE_NAME).zip"
           $sha = $zip + '.sha256'
@@ -332,12 +364,22 @@ jobs:
             "$tag — Stable Release"
           }
 
+          $sourceNotes = Get-Content -LiteralPath $env:MQB_NOTES_FILE -Raw
+          $sourceEnglishLink = "(v$($env:MQB_RELEASE_VERSION)_EN.md)"
+          if (-not $sourceNotes.Contains($sourceEnglishLink)) {
+            throw "Release notes do not contain expected English link target: $sourceEnglishLink"
+          }
+          $taggedEnglishTarget = "https://github.com/$env:GITHUB_REPOSITORY/blob/$tag/release/v$($env:MQB_RELEASE_VERSION)_EN.md"
+          $releaseBody = Join-Path $PWD 'release-body.md'
+          $sourceNotes.Replace($sourceEnglishLink, "($taggedEnglishTarget)") |
+            Set-Content -LiteralPath $releaseBody -Encoding utf8NoBOM -NoNewline
+
           $arguments = @(
             'release', 'create', $tag, $zip, $sha,
             '--repo', $env:GITHUB_REPOSITORY,
             '--verify-tag',
             '--title', $title,
-            '--notes-file', $env:MQB_NOTES_FILE
+            '--notes-file', $releaseBody
           )
           if ($env:MQB_PRERELEASE -eq 'true') {
             $arguments += '--prerelease'
