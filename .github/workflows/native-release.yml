@@ -144,6 +144,7 @@ jobs:
           Copy-Item 'docs/ARCHITECTURE.md' (Join-Path $stage 'ARCHITECTURE.md')
           Copy-Item 'docs/ARCHITECTURE_EN.md' (Join-Path $stage 'ARCHITECTURE_EN.md')
           Copy-Item 'docs/INSTALLATION.md' (Join-Path $stage 'INSTALLATION.md')
+          Copy-Item 'docs/INSTALLATION_EN.md' (Join-Path $stage 'INSTALLATION_EN.md')
           Copy-Item 'docs/SELF_HOSTING.md' (Join-Path $stage 'SELF_HOSTING.md')
           Copy-Item 'docs/SELF_HOSTING_EN.md' (Join-Path $stage 'SELF_HOSTING_EN.md')
 
@@ -187,7 +188,7 @@ jobs:
               '(docs/ARCHITECTURE_EN.md)' = '(ARCHITECTURE_EN.md)'
               '(docs/SELF_HOSTING_EN.md)' = '(SELF_HOSTING_EN.md)'
               '(docs/MQB_CONFIG_EN.md)' = '(MQB_CONFIG_EN.md)'
-              '(docs/INSTALLATION.md)' = '(INSTALLATION.md)'
+              '(docs/INSTALLATION_EN.md)' = '(INSTALLATION_EN.md)'
             }
             (Join-Path $stage 'ARCHITECTURE.md') = @{
               '(../cpp/README.md)' = "($repoBlobBase/cpp/README.md)"
@@ -246,6 +247,7 @@ jobs:
             'ARCHITECTURE.md',
             'ARCHITECTURE_EN.md',
             'INSTALLATION.md',
+            'INSTALLATION_EN.md',
             'install.bat',
             'install.ps1',
             'LICENSE',
