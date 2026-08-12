@@ -227,13 +227,17 @@ int Application::run(const std::span<const std::string_view> arguments) {
     compiler_options.defines = std::move(options.defines);
     compiler_options.include_directories = std::move(options.include_directories);
     compiler_options.additional_arguments = std::move(options.compiler_arguments);
+    compiler_options.external_module_providers = options.external_module_providers;
 
-    const bool module_target = discovery_requires_module_pipeline || std::any_of(
-        target_sources.begin(),
-        target_sources.end(),
-        [](const mqb::orchestration::TargetSourceRequest& source) {
-            return mqb::cli::is_module_interface_source(source.source);
-        });
+    const bool has_external_module_providers = !compiler_options.external_module_providers.empty();
+    const bool module_target = has_external_module_providers
+        || discovery_requires_module_pipeline
+        || std::any_of(
+            target_sources.begin(),
+            target_sources.end(),
+            [](const mqb::orchestration::TargetSourceRequest& source) {
+                return mqb::cli::is_module_interface_source(source.source);
+            });
 
     if (options.build.target_kind == mqb::TargetKind::static_library) {
         if (module_target) {
@@ -288,7 +292,8 @@ int Application::run(const std::span<const std::string_view> arguments) {
                 .target_name = target_name,
                 .max_parallel_jobs = compile_jobs,
                 .jobs_explicit = options.jobs.has_value(),
-                .force_named_modules = discovery_requires_module_pipeline,
+                .force_named_modules = discovery_requires_module_pipeline
+                    || has_external_module_providers,
                 .verbose = options.verbose,
                 .run_after_build = options.build.run_after_build,
                 .run_arguments = std::move(options.build.run_arguments),
