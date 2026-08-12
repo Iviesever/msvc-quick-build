@@ -34,6 +34,15 @@ prepare_project(
         ? project_config->project_root
         : invocation_directory;
 
+    for (auto& provider : options.external_module_providers) {
+        if (provider.interface_file.is_relative()) {
+            provider.interface_file = (
+                invocation_directory / provider.interface_file).lexically_normal();
+        } else {
+            provider.interface_file = provider.interface_file.lexically_normal();
+        }
+    }
+
     mqb::config::ProjectOverrides cli_overrides;
     cli_overrides.build.configuration = options.configuration_override;
     cli_overrides.build.architecture = options.architecture_override;
@@ -50,6 +59,7 @@ prepare_project(
     cli_overrides.build.compiler_arguments = options.compiler_arguments;
     cli_overrides.build.linker_arguments = options.linker_arguments;
     cli_overrides.discovery.enabled = options.discovery_override;
+    cli_overrides.modules.external_providers = options.external_module_providers;
 
     auto effective = mqb::config::resolve_project_options(
         project_config ? &*project_config : nullptr,
@@ -69,6 +79,7 @@ prepare_project(
     options.libraries = effective.libraries;
     options.compiler_arguments = effective.compiler_arguments;
     options.linker_arguments = effective.linker_arguments;
+    options.external_module_providers = effective.external_module_providers;
 
     if (options.build.run_after_build
         && options.build.target_kind != mqb::TargetKind::executable) {
