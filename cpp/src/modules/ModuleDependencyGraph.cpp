@@ -72,10 +72,16 @@ struct ProviderCandidate {
         && planned.lookup_method == required.lookup_method;
 }
 
+[[nodiscard]] bool toolchain_owned_standard_module(const std::string_view logical_name) noexcept {
+    return logical_name == "std" || logical_name == "std.compat";
+}
+
 } // namespace
 
 std::expected<ModuleDependencyPlan, ModuleGraphError>
-ModuleDependencyGraphBuilder::build(const std::vector<ScannedModuleUnit>& units) {
+ModuleDependencyGraphBuilder::build(
+    const std::vector<ScannedModuleUnit>& units,
+    const std::span<const ExternalModuleProvider> external_providers) {
     DependencyGraph graph;
     std::unordered_map<std::string, std::size_t> unit_by_key;
     std::unordered_map<std::string, fs::path> source_by_key;
@@ -123,6 +129,45 @@ ModuleDependencyGraphBuilder::build(const std::vector<ScannedModuleUnit>& units)
         auto provider = select_provider(logical_name, candidates, units);
         if (!provider) return std::unexpected(provider.error());
         provider_by_name.emplace(logical_name, *provider);
+    }
+
+    std::unordered_map<std::string, fs::path> external_provider_by_name;
+    external_provider_by_name.reserve(external_providers.size());
+    for (const auto& provider : external_providers) {
+        if (provider.logical_name.empty() || provider.interface_file.empty()) {
+            return std::unexpected(graph_failure(
+                ModuleGraphErrorCode::invalid_external_provider,
+                "external/prebuilt module provider requires a non-empty logical name and IFC path",
+                provider.interface_file,
+                provider.logical_name));
+        }
+        if (toolchain_owned_standard_module(provider.logical_name)) {
+            return std::unexpected(graph_failure(
+                ModuleGraphErrorCode::toolchain_owned_provider,
+                "standard-library module '" + provider.logical_name
+                    + "' is toolchain-owned and cannot be supplied through external module configuration",
+                provider.interface_file,
+                provider.logical_name));
+        }
+        if (provider_by_name.contains(provider.logical_name)) {
+            return std::unexpected(graph_failure(
+                ModuleGraphErrorCode::ambiguous_named_provider,
+                "external/prebuilt provider conflicts with a project-local provider for logical module '"
+                    + provider.logical_name + "'",
+                provider.interface_file,
+                provider.logical_name));
+        }
+        const auto [_, inserted] = external_provider_by_name.emplace(
+            provider.logical_name,
+            provider.interface_file.lexically_normal());
+        if (!inserted) {
+            return std::unexpected(graph_failure(
+                ModuleGraphErrorCode::duplicate_external_provider,
+                "multiple external/prebuilt providers are configured for logical module '"
+                    + provider.logical_name + "'",
+                provider.interface_file,
+                provider.logical_name));
+        }
     }
 
     ModuleDependencyPlan plan;
@@ -201,6 +246,15 @@ ModuleDependencyGraphBuilder::build(const std::vector<ScannedModuleUnit>& units)
 
             const auto provider = provider_by_name.find(required.logical_name);
             if (provider == provider_by_name.end()) {
+                const auto external = external_provider_by_name.find(required.logical_name);
+                if (external != external_provider_by_name.end()) {
+                    plan.resolved_external_dependencies.push_back(ResolvedExternalModuleDependency{
+                        .consumer_source = units[consumer_index].source,
+                        .logical_name = required.logical_name,
+                        .interface_file = external->second,
+                    });
+                    continue;
+                }
                 plan.unresolved_requirements.push_back(UnresolvedModuleRequirement{
                     .consumer_source = units[consumer_index].source,
                     .requirement = required,
