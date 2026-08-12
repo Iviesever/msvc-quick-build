@@ -54,16 +54,32 @@ struct FileRecord {
         value.begin(),
         value.end(),
         value.begin(),
-        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        [](const unsigned char ch) {
+            if (ch >= static_cast<unsigned char>('A')
+                && ch <= static_cast<unsigned char>('Z')) {
+                return static_cast<char>(ch + ('a' - 'A'));
+            }
+            return static_cast<char>(ch);
+        });
     return value;
 }
 
+[[nodiscard]] std::string utf8_path_text(const fs::path& path) {
+    const std::u8string value = path.generic_u8string();
+    std::string result;
+    result.reserve(value.size());
+    for (const char8_t ch : value) {
+        result.push_back(static_cast<char>(ch));
+    }
+    return result;
+}
+
 [[nodiscard]] std::string path_key(const fs::path& path) {
-    return ascii_lower(path.lexically_normal().generic_string());
+    return ascii_lower(utf8_path_text(path.lexically_normal()));
 }
 
 [[nodiscard]] std::string extension_lower(const fs::path& path) {
-    return ascii_lower(path.extension().string());
+    return ascii_lower(utf8_path_text(path.extension()));
 }
 
 [[nodiscard]] bool header_extension(const fs::path& path) {
@@ -81,7 +97,7 @@ struct FileRecord {
 }
 
 [[nodiscard]] bool default_excluded_directory(const fs::path& path) {
-    const std::string name = ascii_lower(path.filename().string());
+    const std::string name = ascii_lower(utf8_path_text(path.filename()));
     return name == ".mqb"
         || name == ".git"
         || name == ".vs"

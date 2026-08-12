@@ -22,10 +22,18 @@ namespace {
 namespace fs = std::filesystem;
 
 [[nodiscard]] std::string windows_path_key(const fs::path& path) {
-    std::string value = path.lexically_normal().generic_string();
-    std::transform(
-        value.begin(), value.end(), value.begin(),
-        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    const std::u8string utf8 = path.lexically_normal().generic_u8string();
+    std::string value;
+    value.reserve(utf8.size());
+    for (const char8_t ch : utf8) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        if (byte >= static_cast<unsigned char>('A')
+            && byte <= static_cast<unsigned char>('Z')) {
+            value.push_back(static_cast<char>(byte + ('a' - 'A')));
+        } else {
+            value.push_back(static_cast<char>(byte));
+        }
+    }
     return value;
 }
 
@@ -89,6 +97,58 @@ namespace fs = std::filesystem;
         return HeaderUnitLookupMethod::quote;
     case modules::LookupMethod::by_name:
         return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<ModuleCompileError> merge_module_reference(
+    std::vector<ModuleReference>& references,
+    const ModuleReference& incoming,
+    const fs::path& consumer_source) {
+    const auto existing = std::find_if(
+        references.begin(), references.end(),
+        [&](const ModuleReference& reference) {
+            return reference.logical_name == incoming.logical_name;
+        });
+    if (existing == references.end()) {
+        references.push_back(incoming);
+        return std::nullopt;
+    }
+    if (windows_path_key(existing->interface_file)
+        != windows_path_key(incoming.interface_file)) {
+        return failure(
+            ModuleCompileErrorCode::duplicate_reference,
+            "transitive module reference closure resolves logical name '"
+                + incoming.logical_name + "' to different IFC artifacts",
+            consumer_source,
+            incoming.interface_file,
+            incoming.logical_name);
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<ModuleCompileError> merge_header_reference(
+    std::vector<HeaderUnitReference>& references,
+    const HeaderUnitReference& incoming,
+    const fs::path& consumer_source) {
+    const auto existing = std::find_if(
+        references.begin(), references.end(),
+        [&](const HeaderUnitReference& reference) {
+            return reference.header_name == incoming.header_name
+                && reference.lookup_method == incoming.lookup_method;
+        });
+    if (existing == references.end()) {
+        references.push_back(incoming);
+        return std::nullopt;
+    }
+    if (windows_path_key(existing->interface_file)
+        != windows_path_key(incoming.interface_file)) {
+        return failure(
+            ModuleCompileErrorCode::duplicate_reference,
+            "transitive header-unit reference closure resolves one header identity to different IFC artifacts",
+            consumer_source,
+            incoming.interface_file,
+            incoming.header_name);
     }
     return std::nullopt;
 }
@@ -459,6 +519,38 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
             .interface_file = provider_request.artifacts.module_interface,
         });
         provider_indices[consumer->second].push_back(source_count + provider->second);
+    }
+
+    // MSVC validates imported IFCs while compiling a downstream module. An IFC
+    // can itself import named modules or header units, so a consumer needs the
+    // reference closure of its direct providers, not only the references named
+    // in the consumer's own P1689 rule. Propagate that closure provider-first
+    // using the already validated dependency levels. Keep direct provider
+    // indices unchanged: fresh rebuild propagation naturally cascades one level
+    // at a time through the same graph.
+    for (const auto& level : level_indices) {
+        for (const std::size_t consumer_index : level) {
+            if (consumer_index >= source_count) continue;
+            for (const std::size_t provider_index : provider_indices[consumer_index]) {
+                if (provider_index >= source_count) continue;
+                for (const auto& reference : module_references[provider_index]) {
+                    if (auto error = merge_module_reference(
+                            module_references[consumer_index],
+                            reference,
+                            request.sources[consumer_index].source)) {
+                        return std::unexpected(std::move(*error));
+                    }
+                }
+                for (const auto& reference : header_references[provider_index]) {
+                    if (auto error = merge_header_reference(
+                            header_references[consumer_index],
+                            reference,
+                            request.sources[consumer_index].source)) {
+                        return std::unexpected(std::move(*error));
+                    }
+                }
+            }
+        }
     }
 
     using CompileAttempt = std::expected<IncrementalCompileResult, IncrementalCompileError>;
