@@ -19,7 +19,7 @@ cpp/
 │     └─ platform/windows/ # Windows process / command-line boundary
 │
 ├─ src/                    # 唯一 implementation root
-│  ├─ app/                 # mqb.exe CLI 入口与 app-private headers
+│  ├─ app/                 # mqb.exe 薄入口、invocation/project setup、diagnostics 与 app orchestration
 │  ├─ core/
 │  ├─ config/
 │  ├─ discovery/
@@ -50,7 +50,7 @@ cpp/
 1. `cpp/include` 是唯一跨组件 include root；禁止新增 `cpp/<component>/include`。
 2. `cpp/src` 是唯一产品实现根；禁止新增 `cpp/<component>/src`。
 3. `cpp/tests` 是唯一 C++ 测试根；禁止把测试重新塞回产品组件目录。
-4. `src/app` 只放 CLI / executable composition；它不是可复用 library surface。
+4. `src/app` 只放 CLI / executable composition；`main.cpp` 必须保持薄入口，app-private headers 不得进入公共 `include/`。
 5. `core` 不得依赖 `msvc` 或 `platform/windows`。
 6. `msvc` 封装 MSVC primitive invocation；`orchestration` 负责组合 compile/link/archive/module pipeline，不直接承担 CLI 解析。
 7. `platform/windows` 只实现 Windows 边界；平台无关 process 数据模型放在 `process`。
@@ -64,6 +64,7 @@ cpp/
 
 - `cpp/include`: the single cross-component header root.
 - `cpp/src`: the single implementation root.
+- `cpp/src/app`: executable-private CLI/composition code; `main.cpp` stays a thin entry and app-private headers stay out of the public include tree.
 - `cpp/tests`: the single C++ test root, mirrored by responsibility.
 - `cpp/mqb.json`: the authoritative self-build production manifest.
 
