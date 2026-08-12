@@ -1,10 +1,14 @@
-# `mqb.json` 项目配置 v1
+# `mqb.json` 配置参考
 
-**语言：简体中文 | [English](MQB_CONFIG_EN.md)**
+**简体中文 | [English](MQB_CONFIG_EN.md)**
 
-`mqb.json` 是 MQB 的项目配置文件。MQB 会从执行目录向上查找最近的 `mqb.json`；包含该文件的目录将成为项目根目录以及 `.mqb/` 构建产物的根目录。
+`mqb.json` 是 MQB 的版本化项目配置文件。MQB 从 invocation directory 向上查找最近的 `mqb.json`；找到后，该文件所在目录同时成为：
 
-## 最小配置文件
+- project root；
+- 配置相对路径的基准；
+- `.mqb/` 构建状态的根目录。
+
+## 1. 最小配置
 
 ```json
 {
@@ -12,9 +16,18 @@
 }
 ```
 
-`version` 为必填项。Version 1 使用严格 JSON 规范：不允许注释、尾随逗号、重复键、未知 schema 字段、不正确的字段类型以及字符串数组中的空条目。
+`version` 必填。v1 使用严格 JSON：重复 key、未知字段、错误类型、空字符串条目、注释和尾随逗号都会报错，而不是被忽略。
 
-## 完整示例
+根对象只接受：
+
+```text
+version
+build
+discovery
+modules
+```
+
+## 2. 完整示例
 
 ```json
 {
@@ -31,7 +44,7 @@
     "defines": ["GAME_BUILD=1"],
     "include_dirs": ["include", "third_party/include"],
     "library_dirs": ["third_party/lib"],
-    "libraries": ["math", "codec.lib"],
+    "libraries": ["user32", "codec.lib"],
     "compiler_args": ["/W4"],
     "linker_args": ["/OPT:NOREF"]
   },
@@ -40,105 +53,168 @@
     "exclude_dirs": ["tests", "tools"],
     "extra_sources": ["src/manual_adapter.cpp"],
     "exclude_sources": ["src/legacy.cpp"]
+  },
+  "modules": {
+    "external": {
+      "vendor.math": "third_party/ifc/vendor.math.ifc"
+    }
   }
 }
 ```
 
-## Build 构建字段
-
-| 字段 | 类型 | 可选值 / 含义 |
-|---|---|---|
-| `configuration` | 字符串 | `debug` 或 `release` |
-| `architecture` | 字符串 | `x86` 或 `x64` |
-| `standard` | 字符串 | `14`、`17`、`20`、`23` 或 `latest`；也接受 `c++...` 拼写 |
-| `type` | 字符串 | `exe`、`dll` 或 `static`；也接受 `executable`、`dynamic` 和 `lib` 别名 |
-| `runtime` | 字符串 | `MD`、`MDd`、`MT` 或 `MTd` |
-| `ltcg` | 布尔值 | 联动 `/GL` 编译 + 下游 `/LTCG` 策略 |
-| `subsystem` | 字符串 | `console` 或 `windows`；对静态库无效 |
-| `output` | 字符串 | `.mqb/bin/` 下的目标文件名；MQB 会自动补全目标扩展名 |
-| `defines` | 字符串数组 | 不带 `/D` 前缀的预处理器宏定义 |
-| `include_dirs` | 字符串数组 | 头文件搜索目录 |
-| `library_dirs` | 字符串数组 | 库搜索目录；对静态库无效 |
-| `libraries` | 字符串数组 | 依赖库；对静态库无效 |
-| `compiler_args` | 字符串数组 | 有序的原样 `cl.exe` argv 选项 |
-| `linker_args` | 字符串数组 | 有序的原样 `link.exe` argv 选项；对静态库无效 |
-
-所有路径类配置项均相对于包含 `mqb.json` 的目录解析，而不是 Shell 的当前工作目录。
-
-`type`、`runtime`、`ltcg` 和 `subsystem` 是强类型策略。MSVC 后端拥有其命令行拼写的绝对控制权，且类型化策略优先于冲突的原始参数。
-
-Typed LTCG 为联动策略：`build.ltcg: true` 会为受影响的编译添加 `/GL`，并为下游目标添加 `/LTCG`。可执行文件/DLL 目标将 `/LTCG` 传给 `link.exe`；静态库目标将其传给 `lib.exe`。
-
-DLL 导入库（import library）确定性地放在 `.mqb/bin/` 下对应 DLL 的旁边。静态库目标使用专门的 `lib.exe` 归档流水线与独立的归档缓存元数据。
-
-原始编译器/链接器参数是字面 argv 元素。MQB 不会把包含空格的单个 JSON 字符串拆分为多个开关。
-
-## Discovery 源码发现字段
+## 3. `build`
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
-| `enabled` | 布尔值 | 开启或关闭单入口智能源码发现 |
-| `exclude_dirs` | 字符串数组 | 构建图生成前直接剪枝排除的项目精确目录 |
-| `extra_sources` | 字符串数组 | 即使与入口图断开也强制追加包含的受支持翻译单元精确路径 |
-| `exclude_sources` | 字符串数组 | 强制排除并作为遍历屏障的受支持翻译单元精确路径 |
+| `configuration` | string | `debug` / `release` |
+| `architecture` | string | `x86` / `x64` |
+| `standard` | string | `14`、`17`、`20`、`23`、`latest`；也接受 `c++...` 拼写 |
+| `type` | string | `exe`、`dll`、`static`；也接受 `executable`、`dynamic`、`lib` |
+| `runtime` | string | `MD`、`MDd`、`MT`、`MTd` |
+| `ltcg` | boolean | 联动编译 `/GL` 与下游 `/LTCG` |
+| `subsystem` | string | `console` / `windows`；static target 不接受 |
+| `output` | string | `.mqb/bin/` 下的目标名，扩展名由 target kind 决定 |
+| `defines` | string[] | 不带 `/D` 的宏定义 |
+| `include_dirs` | string[] | include search path |
+| `library_dirs` | string[] | library search path；static target 不接受 |
+| `libraries` | string[] | link libraries；static target 不接受 |
+| `compiler_args` | string[] | 按顺序传给 `cl.exe` 的原始 argv element |
+| `linker_args` | string[] | 按顺序传给 linker 的原始 argv element；static target 不接受 |
 
-受支持的翻译单元扩展名包括：
+### Typed policy
 
-```text
-C 普通源码：        .c
-C++ 普通源码：      .cpp .cc .cxx
-Module 接口文件：   .ixx .cppm .mpp
-```
+`type`、`runtime`、`ltcg`、`subsystem` 是 MQB 的强类型策略，不是字符串形式的 MSVC flag 别名。MQB 后端负责最终命令行拼写，冲突的 raw compiler/linker argument 不应被用来绕过 typed policy。
 
-C 源码参与普通 include/main 发现，但绝不会被解析为 C++ module 语法。
+`ltcg: true` 同时影响 compile 与 downstream target：
 
-Version 1 使用精确路径而非 glob 通配符。普通 `extra_sources` 条目中不得再定义另一个 `main()`。入口 TU 本身不能被排除。同一源码不能同时出现在 `extra_sources` 和 `exclude_sources` 中。
+- compile：`/GL`；
+- executable / DLL：linker `/LTCG`；
+- static library：librarian `/LTCG`。
 
-内置排除项（如 `.mqb`、`.git`、`.vs`、`build`、`out` 和 `cmake-build-*`）在配置排除项之外保持生效。
+DLL import library 与最终 DLL 一起位于 `.mqb/bin/`。Static target 使用独立的 `lib.exe` archive pipeline 和 archive cache。
 
-### 命名模块与 Header Units
+## 4. `discovery`
 
-项目本地命名模块（project-local named modules）与项目本地 header units 不需要单独的 v1 配置章节。智能发现会自动筛选可达的本地 module-provider 候选，但 MSVC `/scanDependencies` P1689 元数据仍对 provider 选择、依赖排序、歧义/循环诊断与未解决依赖保持权威地位。
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `enabled` | boolean | 是否启用单入口 smart discovery |
+| `exclude_dirs` | string[] | 在建图前剪枝的项目目录 |
+| `extra_sources` | string[] | 强制追加的精确 translation-unit 路径 |
+| `exclude_sources` | string[] | 强制排除并作为遍历屏障的精确路径 |
 
-项目本地 header-unit IFC 会被自动分配、构建、跟踪新鲜度并修复。Modules 与 header units 需要 C++20 或更新的标准。
-
-外部/预编译命名模块提供者（external/prebuilt named-module providers）以及 `import std` 仍明确不支持并 fail closed；该功能边界跟踪于 Issue #16。
-
-## 优先级规则
-
-标量选项优先级：
-
-```text
-显式 CLI 选项 > mqb.json > 内置默认值
-```
-
-包括 `configuration`、`architecture`、`standard`、`type`、`runtime`、`ltcg`、`subsystem` 和 `output`。
-
-列表选项按确定性顺序追加：
-
-```text
-mqb.json 条目，接着是 CLI 条目
-```
-
-适用于 defines、include 目录、library 目录、libraries、`compiler_args` 和 `linker_args`。
-
-## 路径基准 (Path Bases)
-
-项目中存在两个明确的相对路径基准：
+支持的 translation-unit 扩展名：
 
 ```text
-CLI 相对路径     -> 当前执行目录 (invocation directory)
-mqb.json 相对路径 -> mqb.json 所在目录
+C:                  .c
+C++:                .cpp .cc .cxx
+module interface:   .ixx .cppm .mpp
 ```
 
-例如在如下结构中：
+规则：
+
+- 多个 positional source 本身就是精确 source set，不依赖 smart discovery；
+- v1 使用精确路径，不支持 glob；
+- entry TU 不能被排除；
+- 同一文件不能同时出现在 `extra_sources` 与 `exclude_sources`；
+- 内置排除目录（如 `.mqb`、`.git`、`.vs`、`build`、`out`、`cmake-build-*`）始终生效。
+
+Discovery 只负责候选源码选择。Header freshness 的真值来自 `/sourceDependencies`；module topology 的真值来自 `/scanDependencies` / P1689。
+
+## 5. `modules`
+
+### Project-local modules / header units
+
+Project-local named modules 与 header units 不需要额外配置。MQB 会让候选源码进入 `/scanDependencies` / P1689 pipeline，再根据真实 provider graph 决定依赖与编译顺序。
+
+Modules/Header Units 需要 C++20 或更新语言模式。
+
+### External / prebuilt named modules
+
+`modules.external` 是 logical module name 到 **只读 IFC** 的显式映射：
+
+```json
+{
+  "version": 1,
+  "modules": {
+    "external": {
+      "vendor.math": "third_party/ifc/vendor.math.ifc",
+      "vendor.io": "C:/sdk/vendor.io.ifc"
+    }
+  }
+}
+```
+
+配置中的相对 IFC 路径以 `mqb.json` 所在目录为基准。
+
+CLI 等价形式：
+
+```powershell
+mqb main.cpp --module-ifc vendor.math=C:\sdk\vendor.math.ifc
+```
+
+行为规则：
+
+- external IFC 是 dependency，不是 MQB-owned writable artifact；
+- MQB 不会把 external IFC 加入 source discovery 或 compile levels；
+- provider 缺失会在进入真正 consumer compile 前 fail closed；
+- provider identity 会进入 consumer compile/cache identity，替换 IFC 会使相关 cache 失效；
+- 同名 CLI provider 会覆盖同名 config provider；
+- CLI 内重复声明同一 logical module name 会报错。
+
+### `std` / `std.compat`
+
+`std` 与 `std.compat` **不属于** `modules.external` registry。它们由当前选中的 MSVC toolchain 提供，用户不能通过配置或 `--module-ifc` 伪造或覆盖。
+
+当 P1689 requirement 实际出现 `std` / `std.compat` 时，MQB 才会查询当前 VC Tools 的标准库 module source，并把它作为 toolchain-owned provider 注入同一 module graph。当前 MSVC 标准库 named modules 要求满足 toolchain capability，并使用 `--std latest`。
+
+## 6. 优先级
+
+Scalar policy：
+
+```text
+显式 CLI > mqb.json > built-in default
+```
+
+包括：
+
+```text
+configuration
+architecture
+standard
+type
+runtime
+ltcg
+subsystem
+output
+```
+
+普通 list-like 输入按顺序追加：
+
+```text
+mqb.json entries -> CLI entries
+```
+
+适用于 defines、include dirs、library dirs、libraries、compiler args、linker args。
+
+External module provider registry 按 logical module name 合并；同名 CLI 项定点覆盖 config 项，而不是简单追加。
+
+## 7. 路径基准
+
+MQB 明确区分两种相对路径：
+
+```text
+CLI relative path      -> invocation directory
+mqb.json relative path -> directory containing mqb.json
+```
+
+例如：
 
 ```text
 project/
-  mqb.json
-  main.cpp
-  include/
-  nested/work/
+├─ mqb.json
+├─ main.cpp
+├─ include/
+└─ nested/work/
 ```
 
 从 `project/nested/work` 运行：
@@ -147,41 +223,33 @@ project/
 mqb ../../main.cpp
 ```
 
-仍然会加载 `project/mqb.json`，把构建产物放在 `project/.mqb/` 下，并将 `"include_dirs": ["include"]` 解析为 `project/include`。
+仍会加载 `project/mqb.json`，把 `"include_dirs": ["include"]` 解析为 `project/include`，并把 writable artifacts 放到 `project/.mqb/`。
 
-## 缓存行为
+## 8. Cache 语义
 
-配置文件的时间戳不是全局重新构建的触发器。生效的类型化选项会参与 compile/link/archive 的唯一标识计算：
+MQB 不以“配置文件时间戳变化”作为全量 rebuild 信号；它根据**生效后的构建语义**计算 identity。
 
-- 更改 `runtime` 会改变编译配方标识；
-- 更改 `ltcg` 会改变编译标识以及下游 link/archive 标识；
-- 更改 `type` 会改变下游目标归属，但当编译策略未变时不会强制重新编译无关文件；
-- 仅更改 `subsystem` 会改变链接标识并重新链接；
-- 更改编译器参数会改变编译标识；
-- 更改链接器参数或显式库/搜索路径会改变链接标识；
-- 命名模块/header-unit 的编译标识包含 typed provider/reference 与 IFC 输出标识。
+典型影响：
 
-缺失的记录输出会导致新鲜度失效，并由相应的 compile、link 或 archive 操作自动修复。
+- `runtime` / compiler args / typed module references 改变 compile identity；
+- `ltcg` 同时改变 compile 与 link/archive identity；
+- `subsystem` 只影响 link identity；
+- libraries / library dirs / linker args 改变 link identity；
+- `type` 改变 downstream target ownership；
+- external/prebuilt IFC identity 改变会使依赖它的 consumer compile cache 失效；
+- selected MSVC toolchain identity 改变时，不会静默复用不兼容的 toolchain-owned standard-library IFC。
 
-## 并行度
+缺失的已记录输出也会使相应 compile/link/archive cache 失效并触发修复。
 
-`-j/--jobs` 仅属于执行策略，故意不属于 v1 配置文件字段：
+`-j/--jobs` 是执行策略，不属于 build identity，也不是 v1 配置字段。
 
-```powershell
-mqb main.cpp -j 8
-```
+## 9. 当前明确边界
 
-更改并发任务数不会改变 compile、link 或 archive 签名。
+- `exe`、`dll`、`static` 均受支持；
+- `--run` 仅适用于 executable；
+- static target 不接受 subsystem、library paths/libraries、linker args；
+- **需要 Modules/Header Units pipeline 的 static-library target 当前仍 fail closed**；
+- discovery correction 使用精确路径，不支持 glob；
+- 间接 `/DEFAULTLIB` 传递依赖不承诺完全的新鲜度跟踪。
 
-## 当前边界
-
-- `build.type` 支持 `exe`、`dll` 和 `static`。
-- `build.ltcg` 为 compile/downstream 联动布尔策略。
-- 静态库目标支持普通 C/C++ 翻译单元；需要命名 Modules/Header Units 的静态库目标在归档拓扑显式验证前维持 fail closed。
-- `--run` 仅限可执行文件。
-- v1 配置没有外部/预编译 module-provider 或 `import std` 策略。
-- v1 配置不保存并行任务数。
-- discovery 修正字段使用精确路径而非通配符。
-- 显式用户库具有新鲜度跟踪；间接 `/DEFAULTLIB` 传递依赖不承诺完全跟踪。
-
-更广泛的 build/module/cache 架构见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。稳定版自举说明见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
+更底层的 provider graph、artifact identity 与职责边界见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
