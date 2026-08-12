@@ -28,8 +28,27 @@ foreach ($path in @($BuilderMqbPath, $TestMqbPath, $configPath)) {
 
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 $productionSources = @($config.discovery.extra_sources | ForEach-Object { $_.Replace('\', '/') } | Sort-Object -Unique)
-if ($productionSources.Count -ne 41) {
-    throw "Native test runner requires exactly 41 non-main production translation units; found $($productionSources.Count)."
+
+# Native tests provide their own entry-point main, so their shared product
+# graph is exactly cpp/src/**/*.cpp except src/app/main.cpp. Validate the
+# manifest by source-set identity instead of coupling refactors to a TU count.
+$expectedProductionSources = @(
+    Get-ChildItem -LiteralPath (Join-Path $cppRoot 'src') -Recurse -File -Filter '*.cpp' |
+        ForEach-Object {
+            [System.IO.Path]::GetRelativePath($cppRoot, $_.FullName).Replace('\', '/')
+        } |
+        Where-Object { $_ -ne 'src/app/main.cpp' } |
+        Sort-Object -Unique
+)
+$manifestDiff = @(Compare-Object -ReferenceObject $expectedProductionSources -DifferenceObject $productionSources)
+if ($manifestDiff.Count -ne 0) {
+    $details = @(
+        $manifestDiff | ForEach-Object {
+            $kind = if ($_.SideIndicator -eq '<=') { 'missing from manifest' } else { 'not a shared production source' }
+            "  ${kind}: $($_.InputObject)"
+        }
+    ) -join [Environment]::NewLine
+    throw "Native test production manifest does not exactly match cpp/src excluding app main:`n$details"
 }
 foreach ($source in $productionSources) {
     if (-not (Test-Path -LiteralPath (Join-Path $cppRoot $source) -PathType Leaf)) {
