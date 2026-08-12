@@ -35,12 +35,17 @@ struct DiscoveryOverrides {
     std::vector<std::filesystem::path> exclude_sources;
 };
 
+struct ModuleOverrides {
+    std::vector<ExternalModuleProvider> external_providers;
+};
+
 struct ProjectConfig {
     int version{1};
     std::filesystem::path file;
     std::filesystem::path project_root;
     BuildOverrides build;
     DiscoveryOverrides discovery;
+    ModuleOverrides modules;
 };
 
 enum class ErrorCode {
