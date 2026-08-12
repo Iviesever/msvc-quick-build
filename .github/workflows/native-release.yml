@@ -5,6 +5,8 @@ on:
     paths:
       - 'cpp/**'
       - 'README.md'
+      - 'README_EN.md'
+      - 'LICENSE'
       - 'docs/**'
       - 'install.bat'
       - 'install.ps1'
@@ -120,6 +122,7 @@ jobs:
       - name: Stage release package
         shell: pwsh
         env:
+          MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
           MQB_PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
           MQB_NOTES_FILE: ${{ steps.meta.outputs.notes_file }}
         run: |
@@ -134,12 +137,36 @@ jobs:
           Copy-Item 'install.ps1' (Join-Path $stage 'install.ps1')
           Copy-Item 'uninstall.ps1' (Join-Path $stage 'uninstall.ps1')
           Copy-Item 'README.md' (Join-Path $stage 'README.md')
+          Copy-Item 'README_EN.md' (Join-Path $stage 'README_EN.md')
           Copy-Item 'LICENSE' (Join-Path $stage 'LICENSE')
           Copy-Item 'docs/MQB_CONFIG.md' (Join-Path $stage 'MQB_CONFIG.md')
+          Copy-Item 'docs/MQB_CONFIG_EN.md' (Join-Path $stage 'MQB_CONFIG_EN.md')
           Copy-Item 'docs/ARCHITECTURE.md' (Join-Path $stage 'ARCHITECTURE.md')
+          Copy-Item 'docs/ARCHITECTURE_EN.md' (Join-Path $stage 'ARCHITECTURE_EN.md')
           Copy-Item 'docs/INSTALLATION.md' (Join-Path $stage 'INSTALLATION.md')
           Copy-Item 'docs/SELF_HOSTING.md' (Join-Path $stage 'SELF_HOSTING.md')
-          Copy-Item $env:MQB_NOTES_FILE (Join-Path $stage 'RELEASE_NOTES.md')
+          Copy-Item 'docs/SELF_HOSTING_EN.md' (Join-Path $stage 'SELF_HOSTING_EN.md')
+
+          $releaseNotes = Join-Path $stage 'RELEASE_NOTES.md'
+          $releaseNotesEn = Join-Path $stage 'RELEASE_NOTES_EN.md'
+          $notesEnFile = "release/v$($env:MQB_RELEASE_VERSION)_EN.md"
+          if (-not (Test-Path -LiteralPath $notesEnFile -PathType Leaf)) {
+            throw "English release notes not found: $notesEnFile"
+          }
+          Copy-Item $env:MQB_NOTES_FILE $releaseNotes
+          Copy-Item $notesEnFile $releaseNotesEn
+
+          $zhNotes = (Get-Content -LiteralPath $releaseNotes -Raw).Replace(
+            "(v$($env:MQB_RELEASE_VERSION)_EN.md)",
+            '(RELEASE_NOTES_EN.md)'
+          )
+          Set-Content -LiteralPath $releaseNotes -Value $zhNotes -Encoding utf8NoBOM -NoNewline
+
+          $enNotes = (Get-Content -LiteralPath $releaseNotesEn -Raw).Replace(
+            "(v$($env:MQB_RELEASE_VERSION).md)",
+            '(RELEASE_NOTES.md)'
+          )
+          Set-Content -LiteralPath $releaseNotesEn -Value $enNotes -Encoding utf8NoBOM -NoNewline
 
           $zip = Join-Path $dist ($env:MQB_PACKAGE_NAME + '.zip')
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
@@ -175,15 +202,20 @@ jobs:
           Expand-Archive -LiteralPath $zip -DestinationPath $verifyRoot
           $expectedFiles = @(
             'ARCHITECTURE.md',
+            'ARCHITECTURE_EN.md',
             'INSTALLATION.md',
             'install.bat',
             'install.ps1',
             'LICENSE',
             'MQB_CONFIG.md',
+            'MQB_CONFIG_EN.md',
             'mqb.exe',
             'README.md',
+            'README_EN.md',
             'RELEASE_NOTES.md',
+            'RELEASE_NOTES_EN.md',
             'SELF_HOSTING.md',
+            'SELF_HOSTING_EN.md',
             'uninstall.ps1'
           ) | Sort-Object
           $actualFiles = @(Get-ChildItem -LiteralPath $verifyRoot -File | Select-Object -ExpandProperty Name | Sort-Object)
@@ -206,6 +238,15 @@ jobs:
           $expectedHelp = "MQB $env:MQB_RELEASE_VERSION - MSVC Quick Build (C++ refactor)"
           if ($help[0] -ne $expectedHelp) {
             throw "Packaged embedded version mismatch. Expected '$expectedHelp', got '$($help[0])'"
+          }
+
+          $zhNotes = Get-Content -LiteralPath (Join-Path $verifyRoot 'RELEASE_NOTES.md') -Raw
+          $enNotes = Get-Content -LiteralPath (Join-Path $verifyRoot 'RELEASE_NOTES_EN.md') -Raw
+          if (-not $zhNotes.Contains('(RELEASE_NOTES_EN.md)')) {
+            throw 'Packaged Chinese release notes do not link to RELEASE_NOTES_EN.md.'
+          }
+          if (-not $enNotes.Contains('(RELEASE_NOTES.md)')) {
+            throw 'Packaged English release notes do not link to RELEASE_NOTES.md.'
           }
 
           & (Join-Path $PWD 'tests/installer/native_installer_lifecycle.ps1') `

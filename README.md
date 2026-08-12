@@ -115,12 +115,14 @@ native-dev\debug\mqb.exe
 
 ### 只构建 MQB
 
-[`cpp/mqb.json`](cpp/mqb.json) 是 MQB 自身的 production manifest。当前 manifest 精确描述 42 个 production translation units，并且只需要两个 include roots：
+[`cpp/mqb.json`](cpp/mqb.json) 是 MQB 自身的 production manifest。当前 manifest 与 `cpp/src/**/*.cpp` 的实际 production source set 保持精确一致，并且只需要两个 include roots：
 
 ```text
 include
 src/app
 ```
+
+production TU 数量不是稳定契约；native build/test driver 按真实 source-set identity 校验 manifest，而不是依赖 hard-coded magic count。
 
 手工构建：
 
@@ -144,7 +146,7 @@ cpp\.mqb\bin\mqb.exe
 
 `tests/native/run_native_tests.ps1` 是权威 native test driver：
 
-1. 从 `cpp/mqb.json` 读取 41 个 non-main production translation units；
+1. 从 `cpp/mqb.json` 读取全部 non-main production translation units，并与真实 `cpp/src/**/*.cpp` non-main source set 做一致性校验；
 2. 只从统一的 `cpp/tests/` 树枚举并要求恰好 67 个 `*_tests.cpp`；
 3. 使用当前 MQB 构建每个测试可执行文件；
 4. 对 CLI E2E tests 传入当前 MQB 本身；
@@ -166,7 +168,7 @@ cpp\.mqb\bin\mqb.exe
 
 ```text
 pinned historical MQB seed
-        ↓  MQB 构建当前 42-TU 源码
+        ↓  MQB 构建当前 production source set
 Stage 0
         ↓  MQB 构建并运行 67/67 Release tests
 Stage 0 → Stage 1

@@ -115,12 +115,14 @@ native-dev\debug\mqb.exe
 
 ### Building MQB Only
 
-[`cpp/mqb.json`](cpp/mqb.json) is MQB's self-hosting production manifest. The current manifest precisely describes 42 production translation units and requires only two include roots:
+[`cpp/mqb.json`](cpp/mqb.json) is MQB's self-hosting production manifest. The current manifest exactly matches the actual `cpp/src/**/*.cpp` production source set and requires only two include roots:
 
 ```text
 include
 src/app
 ```
+
+The production TU count is intentionally not a stable contract; native build/test drivers validate manifest identity against the real source set instead of relying on a hard-coded magic count.
 
 Manual build:
 
@@ -144,7 +146,7 @@ cpp\.mqb\bin\mqb.exe
 
 `tests/native/run_native_tests.ps1` is the authoritative native test driver:
 
-1. Reads 41 non-main production translation units from `cpp/mqb.json`;
+1. Reads all non-main production translation units from `cpp/mqb.json` and verifies that set against the actual non-main `cpp/src/**/*.cpp` source set;
 2. Enumerates and requires exactly 67 `*_tests.cpp` files from the unified `cpp/tests/` tree;
 3. Builds each test executable using the current MQB;
 4. Passes the current MQB itself to CLI E2E tests;
@@ -166,7 +168,7 @@ The first stable v5 uses historical `v5.0.0-rc.2` `mqb.exe` as pinned seed, vali
 
 ```text
 pinned historical MQB seed
-        ↓  MQB builds current 42-TU source
+        ↓  MQB builds current production source set
 Stage 0
         ↓  MQB builds and runs 67/67 Release tests
 Stage 0 → Stage 1

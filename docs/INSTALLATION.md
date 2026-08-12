@@ -78,11 +78,11 @@ The `Native Installer` workflow validates on Windows that:
 For version `X.Y.Z`, the `Native Release` workflow produces:
 
 ```text
-vscode-msvc-quick-build-vX.Y.Z-windows-x64.zip
-vscode-msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
+msvc-quick-build-vX.Y.Z-windows-x64.zip
+msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
-The stable ZIP contains:
+The stable ZIP contains the native binary/installers plus the complete Simplified Chinese and English documentation surface:
 
 ```text
 mqb.exe
@@ -95,11 +95,16 @@ LICENSE
 MQB_CONFIG.md
 MQB_CONFIG_EN.md
 ARCHITECTURE.md
+ARCHITECTURE_EN.md
 INSTALLATION.md
 SELF_HOSTING.md
+SELF_HOSTING_EN.md
 RELEASE_NOTES.md
+RELEASE_NOTES_EN.md
 ```
 
-Before upload, CI verifies the full Release test graph, the self-host closure, Stage 1 byte identity, exact package manifest, checksum sidecar, embedded version, and install/reinstall/uninstall lifecycle against the extracted package itself.
+The packaged release-note language links are rewritten to the packaged filenames (`RELEASE_NOTES.md` / `RELEASE_NOTES_EN.md`) so they remain valid outside the repository source tree.
+
+Before upload, CI verifies the full Release test graph, the self-host closure, Stage 1 byte identity, exact bilingual package manifest, checksum sidecar, embedded version, release-note language links, and install/reinstall/uninstall lifecycle against the extracted package itself.
 
 Tag publication is immutable and exact-artifact based. A pushed `vX.Y.Z` tag must exactly match `release/VERSION`; the publication job downloads the already-validated artifact from that same workflow run and publishes the ZIP and checksum without rebuilding it.

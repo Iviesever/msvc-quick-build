@@ -11,6 +11,8 @@ on:
       - 'tests/native/**'
       - 'docs/INSTALLATION.md'
       - 'README.md'
+      - 'README_EN.md'
+      - 'LICENSE'
       - 'release/**'
       - '.github/workflows/native-installer.yml'
   push:
@@ -25,6 +27,8 @@ on:
       - 'tests/native/**'
       - 'docs/INSTALLATION.md'
       - 'README.md'
+      - 'README_EN.md'
+      - 'LICENSE'
       - 'release/**'
       - '.github/workflows/native-installer.yml'
 

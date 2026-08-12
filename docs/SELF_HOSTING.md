@@ -67,10 +67,12 @@ cpp/
 
 `tests/native/build_mqb.ps1` 会读取此文件，并要求：
 
-- `src/app/main.cpp` 加上 `discovery.extra_sources` 恰好组成 42 个 production translation units；
+- `src/app/main.cpp` 加上 `discovery.extra_sources` 与 `cpp/src/**/*.cpp` 的实际 production source set 完全一致；
 - 每个源文件真实存在；
 - 构建产物能运行；
 - 内嵌版本与请求版本完全一致。
+
+production TU 数量不是稳定契约，也不使用 hard-coded magic count；文件职责拆分只需保持 manifest 与真实 production source set 一致。
 
 release version 唯一来源仍是 `release/VERSION`。构建 driver 通过结构化 `MQB_VERSION="<version>"` definition 注入版本，因此 `cpp/mqb.json` 不重复保存版本号。
 
@@ -80,7 +82,7 @@ release version 唯一来源仍是 `release/VERSION`。构建 driver 通过结�
 
 它会：
 
-1. 从 `cpp/mqb.json` 取得 41 个 non-main production translation units；
+1. 从 `cpp/mqb.json` 取得全部 non-main production translation units，并与 `cpp/src/**/*.cpp` 的实际 non-main source set 做一致性校验；
 2. 递归枚举 `cpp/tests/` 并强制要求恰好存在 67 个 `*_tests.cpp`；
 3. 用当前 MQB 为每个 test entry 构建独立测试可执行文件；
 4. 复用 `.mqb` incremental object/cache；
