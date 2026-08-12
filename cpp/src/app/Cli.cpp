@@ -1,8 +1,10 @@
 #include "Cli.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cstddef>
 #include <expected>
+#include <filesystem>
 #include <span>
 #include <string>
 #include <string_view>
@@ -130,6 +132,39 @@ parse_toolchain_preference(const std::string_view value) {
     return std::unexpected(error(
         "unsupported toolchain preference '" + std::string{value}
         + "' (expected auto, vs, or portable)"));
+}
+
+[[nodiscard]] std::expected<ExternalModuleProvider, Error>
+parse_external_module_provider(const std::string_view value) {
+    const std::size_t separator = value.find('=');
+    if (separator == std::string_view::npos || separator == 0 || separator + 1 == value.size()) {
+        return std::unexpected(error(
+            "invalid external module provider '" + std::string{value}
+            + "' (expected <logical-name>=<ifc-path>)"));
+    }
+    return ExternalModuleProvider{
+        .logical_name = std::string{value.substr(0, separator)},
+        .interface_file = std::filesystem::u8path(value.substr(separator + 1)),
+    };
+}
+
+[[nodiscard]] std::expected<void, Error>
+add_external_module_provider(Options& options, const std::string_view value) {
+    auto provider = parse_external_module_provider(value);
+    if (!provider) return std::unexpected(provider.error());
+    const auto duplicate = std::find_if(
+        options.external_module_providers.begin(),
+        options.external_module_providers.end(),
+        [&provider](const ExternalModuleProvider& current) {
+            return current.logical_name == provider->logical_name;
+        });
+    if (duplicate != options.external_module_providers.end()) {
+        return std::unexpected(error(
+            "duplicate --module-ifc provider for logical module '"
+            + provider->logical_name + "'"));
+    }
+    options.external_module_providers.push_back(std::move(*provider));
+    return {};
 }
 
 [[nodiscard]] std::expected<std::string_view, Error>
@@ -324,6 +359,20 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.subsystem_override = *subsystem;
             continue;
         }
+        if (argument == "--module-ifc") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            auto added = add_external_module_provider(options, *value);
+            if (!added) return std::unexpected(added.error());
+            continue;
+        }
+        if (argument.starts_with("--module-ifc=")) {
+            auto value = long_equals_value(argument, "--module-ifc=");
+            if (!value) return std::unexpected(value.error());
+            auto added = add_external_module_provider(options, *value);
+            if (!added) return std::unexpected(added.error());
+            continue;
+        }
         if (argument == "--compiler-arg") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
@@ -442,6 +491,7 @@ Project configuration:
   MQB searches upward from the invocation directory for the nearest mqb.json.
   Scalar precedence is: explicit CLI > mqb.json > built-in defaults.
   Config paths are relative to mqb.json; CLI paths are relative to the invocation directory.
+  External named-module IFCs may be declared under modules.external as logical-name -> IFC path.
 
 Source selection:
   One positional source       Smart-discover connected C/C++ TUs and reachable project-local named-module providers (default)
@@ -454,8 +504,10 @@ Single-entry discovery follows reachable project-local named imports to project-
 module-interface candidates. Discovery selects candidates only; MSVC P1689 scanning remains
 the authority for module topology and provider validation. Project-local header-unit imports
 stay outside TU discovery but route through the P1689 module pipeline, where their IFCs are
-built and cached automatically. Modules and header units require C++20 or newer. External or
-prebuilt named-module providers and import std remain unsupported and fail closed.
+built and cached automatically. Explicit external/prebuilt named-module IFCs are resolved by
+the same P1689 provider graph and remain read-only. Modules and header units require C++20 or
+newer. import std remains unsupported and fails closed until toolchain-owned std-module policy
+is implemented.
 
 Options:
   --debug                  Explicitly select Debug compile/link preset
@@ -473,6 +525,8 @@ Options:
   -j, --jobs <N>          Maximum concurrent TU scans/compiles (default: hardware concurrency)
   -o, --output <name>     Set target name under .mqb/bin/
   --run                   Run an executable after a successful build
+  --module-ifc <name=path>
+                           Bind one external/prebuilt named module to a read-only IFC
   -I <dir>, -I<dir>       Add an include directory
   -D <value>, -D<value>   Add a preprocessor definition
   -L <dir>, -L<dir>       Add a library search directory
