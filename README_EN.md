@@ -74,7 +74,7 @@ cpp/
 └─ mqb.json                 # self-build production manifest
 ```
 
-See [`cpp/README_EN.md`](cpp/README_EN.md) for the strict filesystem contract and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for dependency boundaries. The core constraint is: `cpp/include`, `cpp/src`, and `cpp/tests` each have exactly one physical root. New code must select a responsibility before choosing a file location.
+See [`cpp/README_EN.md`](cpp/README_EN.md) for the strict filesystem contract and [`docs/ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) for dependency boundaries. The core constraint is: `cpp/include`, `cpp/src`, and `cpp/tests` each have exactly one physical root. New code must select a responsibility before choosing a file location.
 
 ## Development: Building MQB with MQB
 
@@ -176,7 +176,7 @@ Stage 0 → Stage 1
 Stage 1 → Stage 2
 ```
 
-Only **Stage 1** is published. Stage 1/Stage 2 closure, exact package, SHA-256, byte identity, and installer lifecycle are all release-blocking gates. See [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) for full contract details.
+Only **Stage 1** is published. Stage 1/Stage 2 closure, exact package, SHA-256, byte identity, and installer lifecycle are all release-blocking gates. See [`docs/SELF_HOSTING_EN.md`](docs/SELF_HOSTING_EN.md) for full contract details.
 
 ## Quickstart
 
@@ -262,7 +262,7 @@ Example:
 }
 ```
 
-See [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) for full schema, path rules, precedence, and cache behavior. Legacy `msvc_list.json` will not be read or migrated.
+See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for full schema, path rules, precedence, and cache behavior. Legacy `msvc_list.json` will not be read or migrated.
 
 ## Common CLI Options
 
@@ -308,7 +308,7 @@ Extract and run:
 .\install.bat
 ```
 
-Default install destination is `%USERPROFILE%\bin`. The installer does not create legacy `build` compatibility commands or modify PowerShell profiles. See [`docs/INSTALLATION.md`](docs/INSTALLATION.md) for details.
+Default install destination is `%USERPROFILE%\bin`. The installer does not create legacy `build` compatibility commands or modify PowerShell profiles. See [`docs/INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) for details.
 
 ## Release Gates
 

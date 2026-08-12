@@ -144,6 +144,7 @@ jobs:
           Copy-Item 'docs/ARCHITECTURE.md' (Join-Path $stage 'ARCHITECTURE.md')
           Copy-Item 'docs/ARCHITECTURE_EN.md' (Join-Path $stage 'ARCHITECTURE_EN.md')
           Copy-Item 'docs/INSTALLATION.md' (Join-Path $stage 'INSTALLATION.md')
+          Copy-Item 'docs/INSTALLATION_EN.md' (Join-Path $stage 'INSTALLATION_EN.md')
           Copy-Item 'docs/SELF_HOSTING.md' (Join-Path $stage 'SELF_HOSTING.md')
           Copy-Item 'docs/SELF_HOSTING_EN.md' (Join-Path $stage 'SELF_HOSTING_EN.md')
 
@@ -167,6 +168,48 @@ jobs:
             '(RELEASE_NOTES.md)'
           )
           Set-Content -LiteralPath $releaseNotesEn -Value $enNotes -Encoding utf8NoBOM -NoNewline
+
+          # Repository Markdown is copied into a flat release-doc root. Keep links to
+          # packaged docs local, while source-only references point at the exact tag.
+          $tag = "v$env:MQB_RELEASE_VERSION"
+          $repoBlobBase = "https://github.com/$env:GITHUB_REPOSITORY/blob/$tag"
+          $packageLinkRewrites = @{
+            (Join-Path $stage 'README.md') = @{
+              '(cpp/README.md)' = "($repoBlobBase/cpp/README.md)"
+              '(cpp/mqb.json)' = "($repoBlobBase/cpp/mqb.json)"
+              '(docs/ARCHITECTURE.md)' = '(ARCHITECTURE.md)'
+              '(docs/SELF_HOSTING.md)' = '(SELF_HOSTING.md)'
+              '(docs/MQB_CONFIG.md)' = '(MQB_CONFIG.md)'
+              '(docs/INSTALLATION.md)' = '(INSTALLATION.md)'
+            }
+            (Join-Path $stage 'README_EN.md') = @{
+              '(cpp/README_EN.md)' = "($repoBlobBase/cpp/README_EN.md)"
+              '(cpp/mqb.json)' = "($repoBlobBase/cpp/mqb.json)"
+              '(docs/ARCHITECTURE_EN.md)' = '(ARCHITECTURE_EN.md)'
+              '(docs/SELF_HOSTING_EN.md)' = '(SELF_HOSTING_EN.md)'
+              '(docs/MQB_CONFIG_EN.md)' = '(MQB_CONFIG_EN.md)'
+              '(docs/INSTALLATION_EN.md)' = '(INSTALLATION_EN.md)'
+            }
+            (Join-Path $stage 'ARCHITECTURE.md') = @{
+              '(../cpp/README.md)' = "($repoBlobBase/cpp/README.md)"
+            }
+            (Join-Path $stage 'ARCHITECTURE_EN.md') = @{
+              '(../cpp/README_EN.md)' = "($repoBlobBase/cpp/README_EN.md)"
+            }
+            (Join-Path $stage 'SELF_HOSTING.md') = @{
+              '(../cpp/README.md)' = "($repoBlobBase/cpp/README.md)"
+            }
+            (Join-Path $stage 'SELF_HOSTING_EN.md') = @{
+              '(../cpp/README_EN.md)' = "($repoBlobBase/cpp/README_EN.md)"
+            }
+          }
+          foreach ($fileEntry in $packageLinkRewrites.GetEnumerator()) {
+            $text = Get-Content -LiteralPath $fileEntry.Key -Raw
+            foreach ($rewrite in $fileEntry.Value.GetEnumerator()) {
+              $text = $text.Replace($rewrite.Key, $rewrite.Value)
+            }
+            Set-Content -LiteralPath $fileEntry.Key -Value $text -Encoding utf8NoBOM -NoNewline
+          }
 
           $zip = Join-Path $dist ($env:MQB_PACKAGE_NAME + '.zip')
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
@@ -204,6 +247,7 @@ jobs:
             'ARCHITECTURE.md',
             'ARCHITECTURE_EN.md',
             'INSTALLATION.md',
+            'INSTALLATION_EN.md',
             'install.bat',
             'install.ps1',
             'LICENSE',
@@ -249,6 +293,32 @@ jobs:
             throw 'Packaged English release notes do not link to RELEASE_NOTES.md.'
           }
 
+          # Every relative Markdown target shipped in the flat documentation root must
+          # resolve to a real file inside that package. Absolute URLs and anchors are allowed.
+          $packageRoot = [IO.Path]::GetFullPath($verifyRoot).TrimEnd('\')
+          $rootPrefix = $packageRoot + [IO.Path]::DirectorySeparatorChar
+          $linkPattern = '\[[^\]]+\]\(([^)]+)\)'
+          foreach ($markdown in @(Get-ChildItem -LiteralPath $verifyRoot -Filter '*.md' -File)) {
+            $markdownText = Get-Content -LiteralPath $markdown.FullName -Raw
+            foreach ($match in [regex]::Matches($markdownText, $linkPattern)) {
+              $target = $match.Groups[1].Value.Trim()
+              if ([string]::IsNullOrWhiteSpace($target) -or $target.StartsWith('#')) { continue }
+              if ($target -match '^[A-Za-z][A-Za-z0-9+.-]*:') { continue }
+
+              $pathPart = ($target -split '#', 2)[0]
+              if ([string]::IsNullOrWhiteSpace($pathPart)) { continue }
+              $resolved = [IO.Path]::GetFullPath((Join-Path $verifyRoot $pathPart))
+              if (-not [string]::Equals($resolved, $packageRoot, [StringComparison]::OrdinalIgnoreCase) -and
+                  -not $resolved.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Packaged Markdown link escapes package root: $($markdown.Name) -> $target"
+              }
+              if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+                throw "Broken packaged Markdown link: $($markdown.Name) -> $target"
+              }
+            }
+          }
+          Write-Host 'Packaged Markdown relative-link validation passed.'
+
           & (Join-Path $PWD 'tests/installer/native_installer_lifecycle.ps1') `
             -MqbPath $packagedMqb `
             -RepoRoot $verifyRoot
@@ -257,6 +327,34 @@ jobs:
           }
 
           Write-Host 'Exact self-hosted packaged artifact validation passed.'
+
+      - name: Validate GitHub Release notes body
+        shell: pwsh
+        env:
+          MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          MQB_NOTES_FILE: ${{ steps.meta.outputs.notes_file }}
+        run: |
+          $tag = "v$env:MQB_RELEASE_VERSION"
+          $notesEnFile = "release/v$($env:MQB_RELEASE_VERSION)_EN.md"
+          if (-not (Test-Path -LiteralPath $env:MQB_NOTES_FILE -PathType Leaf)) {
+            throw "Missing release notes: $env:MQB_NOTES_FILE"
+          }
+          if (-not (Test-Path -LiteralPath $notesEnFile -PathType Leaf)) {
+            throw "Missing English release notes: $notesEnFile"
+          }
+
+          $sourceNotes = Get-Content -LiteralPath $env:MQB_NOTES_FILE -Raw
+          $sourceEnglishLink = "(v$($env:MQB_RELEASE_VERSION)_EN.md)"
+          if (-not $sourceNotes.Contains($sourceEnglishLink)) {
+            throw "Release notes do not contain expected English link target: $sourceEnglishLink"
+          }
+
+          $taggedEnglishTarget = "https://github.com/$env:GITHUB_REPOSITORY/blob/$tag/release/v$($env:MQB_RELEASE_VERSION)_EN.md"
+          $rendered = $sourceNotes.Replace($sourceEnglishLink, "($taggedEnglishTarget)")
+          if (-not $rendered.Contains("($taggedEnglishTarget)")) {
+            throw 'GitHub Release notes body did not receive the exact-tag English link.'
+          }
+          Write-Host "GitHub Release English notes target: $taggedEnglishTarget"
 
       - name: Upload validated package
         uses: actions/upload-artifact@v7
@@ -301,6 +399,10 @@ jobs:
           if (-not (Test-Path -LiteralPath $env:MQB_NOTES_FILE -PathType Leaf)) {
             throw "Missing release notes: $env:MQB_NOTES_FILE"
           }
+          $notesEnFile = "release/v$($env:MQB_RELEASE_VERSION)_EN.md"
+          if (-not (Test-Path -LiteralPath $notesEnFile -PathType Leaf)) {
+            throw "Missing English release notes: $notesEnFile"
+          }
 
           $zip = Join-Path $PWD "dist-publish/$($env:MQB_PACKAGE_NAME).zip"
           $sha = $zip + '.sha256'
@@ -332,12 +434,22 @@ jobs:
             "$tag — Stable Release"
           }
 
+          $sourceNotes = Get-Content -LiteralPath $env:MQB_NOTES_FILE -Raw
+          $sourceEnglishLink = "(v$($env:MQB_RELEASE_VERSION)_EN.md)"
+          if (-not $sourceNotes.Contains($sourceEnglishLink)) {
+            throw "Release notes do not contain expected English link target: $sourceEnglishLink"
+          }
+          $taggedEnglishTarget = "https://github.com/$env:GITHUB_REPOSITORY/blob/$tag/release/v$($env:MQB_RELEASE_VERSION)_EN.md"
+          $releaseBody = Join-Path $PWD 'release-body.md'
+          $sourceNotes.Replace($sourceEnglishLink, "($taggedEnglishTarget)") |
+            Set-Content -LiteralPath $releaseBody -Encoding utf8NoBOM -NoNewline
+
           $arguments = @(
             'release', 'create', $tag, $zip, $sha,
             '--repo', $env:GITHUB_REPOSITORY,
             '--verify-tag',
             '--title', $title,
-            '--notes-file', $env:MQB_NOTES_FILE
+            '--notes-file', $releaseBody
           )
           if ($env:MQB_PRERELEASE -eq 'true') {
             $arguments += '--prerelease'
