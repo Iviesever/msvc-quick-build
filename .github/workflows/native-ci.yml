@@ -13,6 +13,7 @@ on:
       - 'install.ps1'
       - 'uninstall.ps1'
       - 'tests/installer/**'
+      - 'tests/native/**'
       - 'tests/selfhost/**'
       - 'release/**'
       - '.github/workflows/native-ci.yml'
@@ -22,16 +23,45 @@ on:
 jobs:
   build-and-test:
     runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Configure
-        run: cmake -S cpp -B cpp/build -G "Visual Studio 18 2026" -A x64 -DMQB_ENABLE_INSTALLED_MSVC_TESTS=ON
+      - name: Acquire pinned MQB seed
+        id: seed
+        shell: pwsh
+        run: |
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD `
+            -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$seed" >> $env:GITHUB_OUTPUT
 
-      - name: Build
-        run: cmake --build cpp/build --config Debug --parallel
+      - name: Build current Debug MQB with MQB
+        id: build
+        shell: pwsh
+        run: |
+          $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+            -RepoRoot $PWD `
+            -Version '5.0.0-dev' `
+            -Configuration Debug `
+            -Clean `
+            -OutputPath (Join-Path $PWD 'native-out/debug/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$mqb" >> $env:GITHUB_OUTPUT
 
-      - name: Test
-        run: ctest --test-dir cpp/build -C Debug --output-on-failure
+      - name: Run 67 MQB-native Debug tests
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/run_native_tests.ps1') `
+            -BuilderMqbPath '${{ steps.build.outputs.path }}' `
+            -TestMqbPath '${{ steps.build.outputs.path }}' `
+            -RepoRoot $PWD `
+            -Configuration Debug
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

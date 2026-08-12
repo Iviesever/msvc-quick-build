@@ -1,14 +1,18 @@
-# 忽略测试目录
+# MQB / native development state
+.mqb/
+native-dev/
+native-out/
+native-seed/
+native-test-work/
+selfhost-out/
+dist/
+
+# Local worktrees / caches
 .worktrees/
 .cache/
-.mqb/
 test_compile_out/
 test_out/
 test_out2/
-
-# C++ V2 out-of-source builds
-/cpp/build/
-/cpp/out/
 
 # 编译中间产物和可执行文件
 *.exe
@@ -25,4 +29,3 @@ msvc_std_module_cache/
 
 portable_msvc.zip
 portable_msvc/
-
