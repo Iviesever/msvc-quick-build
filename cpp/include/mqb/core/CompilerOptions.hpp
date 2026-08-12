@@ -16,6 +16,15 @@ enum class RuntimeLibrary {
     mtd,
 };
 
+// Project/toolchain-independent identity for a read-only named-module IFC
+// supplied outside the current source graph. Provider selection remains owned
+// by the P1689 module graph; this registry only carries explicit policy into
+// that owner.
+struct ExternalModuleProvider {
+    std::string logical_name;
+    std::filesystem::path interface_file;
+};
+
 struct CompilerOptions {
     BuildConfiguration configuration{BuildConfiguration::debug};
     Architecture architecture{Architecture::x64};
@@ -31,6 +40,11 @@ struct CompilerOptions {
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;
     std::vector<std::string> additional_arguments;
+    // Explicit read-only provider registry. These entries are intentionally not
+    // hashed wholesale into every compile signature: after P1689 resolution,
+    // only the ModuleReference entries actually consumed by a TU participate in
+    // its identity and cache dependencies.
+    std::vector<ExternalModuleProvider> external_module_providers;
 };
 
 } // namespace mqb
