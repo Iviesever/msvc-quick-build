@@ -74,7 +74,7 @@ cpp/
 └─ mqb.json                 # self-build production manifest
 ```
 
-See [`cpp/README_EN.md`](cpp/README_EN.md) for the strict filesystem contract and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for dependency boundaries. The core constraint is: `cpp/include`, `cpp/src`, and `cpp/tests` each have exactly one physical root. New code must select a responsibility before choosing a file location.
+See [`cpp/README_EN.md`](cpp/README_EN.md) for the strict filesystem contract and [`docs/ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) for dependency boundaries. The core constraint is: `cpp/include`, `cpp/src`, and `cpp/tests` each have exactly one physical root. New code must select a responsibility before choosing a file location.
 
 ## Development: Building MQB with MQB
 
@@ -176,7 +176,7 @@ Stage 0 → Stage 1
 Stage 1 → Stage 2
 ```
 
-Only **Stage 1** is published. Stage 1/Stage 2 closure, exact package, SHA-256, byte identity, and installer lifecycle are all release-blocking gates. See [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) for full contract details.
+Only **Stage 1** is published. Stage 1/Stage 2 closure, exact package, SHA-256, byte identity, and installer lifecycle are all release-blocking gates. See [`docs/SELF_HOSTING_EN.md`](docs/SELF_HOSTING_EN.md) for full contract details.
 
 ## Quickstart
 
@@ -262,7 +262,7 @@ Example:
 }
 ```
 
-See [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) for full schema, path rules, precedence, and cache behavior. Legacy `msvc_list.json` will not be read or migrated.
+See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for full schema, path rules, precedence, and cache behavior. Legacy `msvc_list.json` will not be read or migrated.
 
 ## Common CLI Options
 
@@ -283,14 +283,14 @@ See [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) for full schema, path rules, prec
 | `-I <dir>` | Include directory |
 | `-D <value>` | Preprocessor definition |
 | `-L <dir>` / `--lib-path <dir>` | Library search directory |
-| `-l <name>` / `--lib <name>` | Library |
+| `-l <name>` / `--lib <name>` | library |
 | `--compiler-arg <arg>` | Raw `cl.exe` argv element |
 | `--linker-arg <arg>` | Raw linker argv element |
-| `--env <auto|vs|portable>` | Toolchain selection |
-| `--portable-root <dir>` | Portable toolchain root candidate |
-| `-v, --verbose` | Verbose output |
-| `-h, --help` | Help + embedded version |
-| `--` | Pass remaining argv to target program |
+| `--env <auto|vs|portable>` | toolchain selection |
+| `--portable-root <dir>` | portable toolchain root candidate |
+| `-v, --verbose` | verbose output |
+| `-h, --help` | help + embedded version |
+| `--` | pass remaining argv to target program |
 
 PowerShell-era single-dash aliases fail closed as unknown options.
 
