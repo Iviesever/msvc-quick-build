@@ -1,230 +1,117 @@
 # MQB — MSVC Quick Build
 
-**Language: [简体中文](README.md) | English**
+**[简体中文](README.md) | English**
 
-MQB is a native C/C++ build tool for Windows + MSVC. It performs source discovery, incremental compilation, module topology, linking, archiving, and execution directly from source files.
+MQB is a native C/C++ build tool for **Windows + MSVC**. Give it source files and it handles source discovery, incremental compilation, Modules/Header Units dependency ordering, linking or archiving, while keeping all writable build state under the project `.mqb/` directory.
 
-> **Stable v5: native-only and MQB-built end to end.**
->
-> - `mqb.exe` is the only supported implementation.
-> - `mqb` is the only installed command entry point.
-> - `mqb.json` is the only project configuration format.
-> - Development, tests, self-hosting, and release generations are all built by MQB.
-> - Retired PowerShell build entries, compatibility shims, profile injections, and legacy config formats are not silently taken over.
+It does not require generating a Visual Studio solution or using CMake/CTest to build ordinary projects.
 
-### Key Features
+## Why MQB
 
-- Structured invocation of `cl.exe` / `link.exe` / `lib.exe` without using shell command strings as the general execution API.
-- Native support for `.c` / `.cpp` / `.cc` / `.cxx`.
-- Visual Studio and portable MSVC toolchain discovery.
-- Single-entry smart discovery and multi-file exact source set.
-- Project-local named modules and project-local header units using MSVC P1689 `/scanDependencies`.
-- Real header freshness and incremental compilation based on `/sourceDependencies`.
-- Typed `exe` / `dll` / `static` target kinds.
-- Typed runtime, LTCG, and subsystem policy.
-- Strict `mqb.json` configuration.
-- Structured program argv via `--run -- ...`.
-- All writable build state converged under project `.mqb/`.
+- **Build directly from source files**: supports `.c`, `.cpp`, `.cc`, `.cxx`, and C++ module interface sources.
+- **Real incremental builds**: tracks header freshness with MSVC `/sourceDependencies` and keeps separate compile, link, and archive caches.
+- **Modern C++ Modules**: supports project-local named modules, header units, explicit external/prebuilt IFC providers, and MSVC `import std` / `std.compat`.
+- **Three target kinds**: `exe`, `dll`, and `static`.
+- **MSVC toolchain discovery**: works with Visual Studio installations and portable MSVC toolchains.
+- **Strict project configuration**: `mqb.json` uses a versioned, fail-closed schema; explicit CLI options override configuration values.
+- **Structured process invocation**: executable, argv, and paths stay structured instead of being flattened into shell command strings; Windows path identity is Unicode-safe.
+- **Clean project layout**: OBJ, IFC, dependency metadata, caches, and final outputs live under `.mqb/`.
 
-Currently explicit fail-closed: external/prebuilt named-module providers, `import std;`, and static-library targets requiring Modules/Header Unit pipeline. Follow-up work is tracked independently in Issue #16.
+> Current boundary: `static` targets support ordinary C/C++, but static-library targets that require the Modules/Header Units pipeline are still rejected explicitly rather than silently degraded.
 
-## Source Layout: Physical Structure is Architecture
+## Installation
 
-MQB maintains a single C++ product tree. Components must **not** grow private copies of `include/`, `src/`, or `tests/`.
-
-```text
-cpp/
-├─ include/                 # single cross-component header root
-│  └─ mqb/
-│     ├─ core/
-│     ├─ config/
-│     ├─ discovery/
-│     ├─ json/
-│     ├─ modules/
-│     ├─ orchestration/
-│     ├─ msvc/
-│     ├─ process/
-│     └─ platform/windows/
-│
-├─ src/                     # single product implementation root
-│  ├─ app/                  # CLI / main / app-private headers
-│  ├─ core/
-│  ├─ config/
-│  ├─ discovery/
-│  ├─ json/
-│  ├─ modules/
-│  ├─ orchestration/
-│  ├─ msvc/
-│  └─ platform/windows/
-│
-├─ tests/                   # single C++ test root, mirrored by responsibility
-│  ├─ app/
-│  ├─ core/
-│  ├─ config/
-│  ├─ discovery/
-│  ├─ json/
-│  ├─ modules/
-│  ├─ orchestration/
-│  ├─ msvc/
-│  ├─ process/
-│  ├─ platform/windows/
-│  └─ e2e/
-│
-├─ README.md                # enforced layout contract
-└─ mqb.json                 # self-build production manifest
-```
-
-See [`cpp/README_EN.md`](cpp/README_EN.md) for the strict filesystem contract and [`docs/ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) for dependency boundaries. The core constraint is: `cpp/include`, `cpp/src`, and `cpp/tests` each have exactly one physical root. New code must select a responsibility before choosing a file location.
-
-## Development: Building MQB with MQB
-
-Requirements: Windows, Visual Studio/MSVC C++23, and a working MQB as seed.
-
-Recommended entry point:
+Download the Windows x64 package from GitHub Releases, extract it, and run:
 
 ```powershell
-.\tests\native\develop.ps1
+.\install.bat
 ```
 
-Or provide seed / configuration / version explicitly:
+The default installation directory is `%USERPROFILE%\bin`. See [`docs/INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) for PATH ownership, reinstall, and uninstall behavior.
+
+## Quick start
+
+### Single file
 
 ```powershell
-.\tests\native\develop.ps1 `
-  -SeedMqbPath C:\path\to\mqb.exe `
-  -Configuration Debug `
-  -Version 5.0.0-dev
+mqb main.cpp
 ```
 
-Development chain:
-
-```text
-installed/specified seed MQB
-        ↓
-MQB builds current Debug MQB
-        ↓
-Current MQB builds 67 test executables
-        ↓
-67/67 tests executed directly
-```
-
-Development artifacts output to:
-
-```text
-native-dev\debug\mqb.exe
-```
-
-### Building MQB Only
-
-[`cpp/mqb.json`](cpp/mqb.json) is MQB's self-hosting production manifest. The current manifest exactly matches the actual `cpp/src/**/*.cpp` production source set and requires only two include roots:
-
-```text
-include
-src/app
-```
-
-The production TU count is intentionally not a stable contract; native build/test drivers validate manifest identity against the real source set instead of relying on a hard-coded magic count.
-
-Manual build:
+Build and run:
 
 ```powershell
-$version = '5.0.0-dev'
-$quote = [char]34
-$define = 'MQB_VERSION=' + $quote + $version + $quote
-
-Push-Location .\cpp
-mqb src\app\main.cpp --env vs --debug --runtime MTd -D $define
-Pop-Location
+mqb main.cpp --run
 ```
 
-Output:
-
-```text
-cpp\.mqb\bin\mqb.exe
-```
-
-### Full Test Suite
-
-`tests/native/run_native_tests.ps1` is the authoritative native test driver:
-
-1. Reads all non-main production translation units from `cpp/mqb.json` and verifies that set against the actual non-main `cpp/src/**/*.cpp` source set;
-2. Enumerates and requires exactly 67 `*_tests.cpp` files from the unified `cpp/tests/` tree;
-3. Builds each test executable using the current MQB;
-4. Passes the current MQB itself to CLI E2E tests;
-5. Executes all tests directly and requires 67/67 to pass.
+Select the language standard and Release configuration:
 
 ```powershell
-.\tests\native\run_native_tests.ps1 `
-  -BuilderMqbPath .\native-dev\debug\mqb.exe `
-  -TestMqbPath .\native-dev\debug\mqb.exe `
-  -RepoRoot . `
-  -Configuration Debug
+mqb main.cpp --std 23 --release
 ```
 
-Development and test chains do not invoke CMake/CTest. MQB is its own development build system.
+### Multiple files
 
-## Stable Self-Hosting Chain
-
-The first stable v5 uses historical `v5.0.0-rc.2` `mqb.exe` as pinned seed, validating its Release ZIP SHA-256 and executable identity. The seed is responsible only for building Stage 0 of the current source code and never enters the stable package.
-
-```text
-pinned historical MQB seed
-        ↓  MQB builds current production source set
-Stage 0
-        ↓  MQB builds and runs 67/67 Release tests
-Stage 0 → Stage 1
-        ↓  clear MQB build state
-Stage 1 → Stage 2
-```
-
-Only **Stage 1** is published. Stage 1/Stage 2 closure, exact package, SHA-256, byte identity, and installer lifecycle are all release-blocking gates. See [`docs/SELF_HOSTING_EN.md`](docs/SELF_HOSTING_EN.md) for full contract details.
-
-## Quickstart
-
-Single file / smart discovery:
+Multiple positional sources form an exact source set:
 
 ```powershell
-mqb main.cpp --env vs --std latest --run
-mqb main.c --env vs --run
+mqb main.cpp src/math.cpp src/io.cpp -j 8 -o app
 ```
 
-Disable discovery:
+Single-entry builds use smart discovery by default. Disable it when needed:
 
 ```powershell
 mqb main.cpp --no-discover
 ```
 
-Multi-file exact source set:
+### DLLs and static libraries
 
 ```powershell
-mqb main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
-```
-
-Target kind:
-
-```powershell
-mqb main.cpp -o app
 mqb api.cpp --type dll -o codec
 mqb math.cpp vector.cpp --type static -o math
 ```
 
-Runtime / LTCG / subsystem:
-
-```powershell
-mqb main.cpp --runtime MT
-mqb main.cpp --ltcg
-mqb math.cpp vector.cpp --type static --ltcg -o math
-mqb winmain.cpp --subsystem windows
-```
-
-Program argv:
+### Program arguments
 
 ```powershell
 mqb main.cpp --run -- input.txt "hello world" 42
 ```
 
+Arguments after `--` are passed to the target program as argv.
+
+## C++ Modules
+
+Project-local named modules and header units enter the MSVC `/scanDependencies` / P1689 pipeline, where MQB resolves provider relationships, compile ordering, and IFC dependencies.
+
+Bind an external or prebuilt named module to a read-only IFC explicitly:
+
+```powershell
+mqb main.cpp --module-ifc math.core=C:\sdk\math.core.ifc
+```
+
+Or configure it in `mqb.json`:
+
+```json
+{
+  "version": 1,
+  "modules": {
+    "external": {
+      "math.core": "third_party/ifc/math.core.ifc"
+    }
+  }
+}
+```
+
+MSVC standard-library named modules belong to the selected toolchain; a project cannot spoof or override the `std` / `std.compat` providers. When the selected MSVC toolchain and language mode support them, use for example:
+
+```powershell
+mqb main.cpp --std latest
+```
+
+where `main.cpp` may contain `import std;`. See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) and [`docs/ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) for the complete rules.
+
 ## `mqb.json`
 
-MQB searches upward from the invocation directory for the nearest `mqb.json`. That directory becomes the project root and `.mqb/` root.
+MQB searches upward from the invocation directory for the nearest `mqb.json`. Its directory becomes the project root and the root of `.mqb/`.
 
 Minimal configuration:
 
@@ -234,7 +121,7 @@ Minimal configuration:
 }
 ```
 
-Example:
+Typical configuration:
 
 ```json
 {
@@ -242,85 +129,86 @@ Example:
   "build": {
     "configuration": "release",
     "architecture": "x64",
-    "standard": "latest",
+    "standard": "23",
     "type": "exe",
     "runtime": "MT",
-    "ltcg": true,
-    "subsystem": "console",
     "output": "game",
     "defines": ["GAME_BUILD=1"],
     "include_dirs": ["include"],
-    "library_dirs": ["third_party/lib"],
-    "libraries": ["codec"]
+    "libraries": ["user32"]
   },
   "discovery": {
     "enabled": true,
-    "exclude_dirs": ["tests"],
-    "extra_sources": ["src/manual_adapter.cpp"],
-    "exclude_sources": ["src/legacy.cpp"]
+    "exclude_dirs": ["tests"]
   }
 }
 ```
 
-See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for full schema, path rules, precedence, and cache behavior. Legacy `msvc_list.json` will not be read or migrated.
+See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for the full schema, path bases, precedence, external module providers, and cache behavior.
 
-## Common CLI Options
+## Common CLI options
 
-| Option | Description |
+| Option | Purpose |
 |---|---|
 | `--debug` / `--release` | Build configuration |
-| `--config <debug|release>` | Explicit build configuration |
-| `--std <14|17|20|23|latest>` | C++ standard |
+| `--std <14|17|20|23|latest>` | C++ language standard |
 | `--type <exe|dll|static>` | Target kind |
 | `--x86` / `--x64` | Target architecture |
 | `--runtime <MD|MDd|MT|MTd>` | MSVC runtime |
 | `--ltcg` / `--no-ltcg` | LTCG policy |
-| `--subsystem <console|windows>` | Subsystem |
-| `-j, --jobs <N>` | Max concurrent scan/compile jobs |
-| `-o, --output <name>` | Target output name under `.mqb/bin/` |
-| `--run` | Run executable after building |
+| `--subsystem <console|windows>` | PE subsystem |
+| `-j, --jobs <N>` | Maximum concurrent scans/compiles |
+| `-o, --output <name>` | Output target name |
 | `--discover` / `--no-discover` | Source discovery |
-| `-I <dir>` | Include directory |
-| `-D <value>` | Preprocessor definition |
-| `-L <dir>` / `--lib-path <dir>` | Library search directory |
-| `-l <name>` / `--lib <name>` | Library |
-| `--compiler-arg <arg>` | Raw `cl.exe` argv element |
-| `--linker-arg <arg>` | Raw linker argv element |
+| `--module-ifc <name=path>` | Bind an external/prebuilt named-module IFC |
+| `-I <dir>` / `-D <value>` | Include directory / preprocessor definition |
+| `-L <dir>` / `-l <name>` | Library path / library |
+| `--compiler-arg <arg>` | Pass one raw `cl.exe` argv element |
+| `--linker-arg <arg>` | Pass one raw linker argv element |
 | `--env <auto|vs|portable>` | Toolchain selection |
-| `--portable-root <dir>` | Portable toolchain root candidate |
+| `--run` | Run an executable after a successful build |
 | `-v, --verbose` | Verbose output |
-| `-h, --help` | Help + embedded version |
-| `--` | Pass remaining argv to target program |
+| `-h, --help` | Complete CLI help |
 
-PowerShell-era single-dash aliases fail closed as unknown options.
+`mqb --help` is the authoritative CLI reference.
 
-## Installation
+## Build outputs
 
-Stable package name:
+All writable build state lives under the project root:
 
 ```text
-msvc-quick-build-v5.0.0-windows-x64.zip
+.mqb/
+├─ obj/
+├─ deps/
+├─ scan/
+├─ ifc/
+├─ cache/
+└─ bin/
 ```
 
-Extract and run:
+Source directories do not need to contain MQB intermediate artifacts.
+
+## Documentation
+
+| Document | Read it for |
+|---|---|
+| [`docs/INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) | Installation, PATH, reinstall, uninstall, release package |
+| [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) | Full `mqb.json` schema and precedence |
+| [`docs/ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) | Build model, Modules, caches, responsibility boundaries |
+| [`docs/DEVELOPMENT_EN.md`](docs/DEVELOPMENT_EN.md) | Repository development and test entry points |
+| [`docs/SELF_HOSTING_EN.md`](docs/SELF_HOSTING_EN.md) | Stable-release bootstrap and reproducibility gates |
+| [`cpp/README_EN.md`](cpp/README_EN.md) | C++ source layout and dependency rules |
+
+## Developing MQB
+
+Repository development entry point:
 
 ```powershell
-.\install.bat
+.\tests\native\develop.ps1
 ```
 
-Default install destination is `%USERPROFILE%\bin`. The installer does not create legacy `build` compatibility commands or modify PowerShell profiles. See [`docs/INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) for details.
-
-## Release Gates
-
-Official `v5.0.0` must pass on the same candidate commit:
-
-1. `Native C++`: pinned seed → current Debug MQB → 67/67 Debug tests;
-2. `Native Installer`: pinned seed → current Release MQB → install/reinstall/uninstall;
-3. `Native Release`: pinned seed → Stage 0 → 67/67 Release tests → Stage 1 → clean Stage 2 → exact package / checksum / Stage 1 byte identity / packaged installer;
-4. Publication is allowed only for `vX.Y.Z` tags matching `release/VERSION`, consuming the already-validated artifact from the same workflow run without rebuilding.
-
-Historical `v5.0.0-rc.1` / `v5.0.0-rc.2` remain unchanged.
+MQB builds and validates its current source using MQB itself. See [`docs/DEVELOPMENT_EN.md`](docs/DEVELOPMENT_EN.md) for contributor details.
 
 ## License
 
-Apache License 2.0 (SPDX: `Apache-2.0`) — Copyright 2026 Iviesever. See [`LICENSE`](LICENSE) for the full terms.
+Apache License 2.0 (SPDX: `Apache-2.0`). See [`LICENSE`](LICENSE) for the full terms.
