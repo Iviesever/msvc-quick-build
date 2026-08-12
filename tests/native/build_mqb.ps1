@@ -33,7 +33,7 @@ if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
 # repository root, where no mqb.json is auto-loaded, so an old seed never has
 # to understand a newer project-config schema.
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-$relativeSources = @('apps/mqb/main.cpp') + @($config.discovery.extra_sources)
+$relativeSources = @('src/app/main.cpp') + @($config.discovery.extra_sources)
 $relativeSources = @($relativeSources | ForEach-Object { $_.Replace('\', '/') } | Sort-Object -Unique)
 if ($relativeSources.Count -ne 42) {
     throw "MQB self-build manifest must contain exactly 42 production translation units; found $($relativeSources.Count)."
