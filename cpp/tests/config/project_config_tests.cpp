@@ -63,6 +63,12 @@ int main() {
     "exclude_dirs": ["tests"],
     "extra_sources": ["src/manual.cpp"],
     "exclude_sources": ["src/legacy.cpp"]
+  },
+  "modules": {
+    "external": {
+      "vendor.math": "prebuilt/vendor.math.ifc",
+      "vendor.text": "prebuilt/vendor text.ifc"
+    }
   }
 })json");
 
@@ -130,6 +136,18 @@ int main() {
                    && loaded->discovery.exclude_sources[0]
                        == (tree.root / "src/legacy.cpp").lexically_normal(),
                "excluded source should resolve from config directory");
+        expect(loaded->modules.external_providers.size() == 2,
+               "modules.external should decode every logical-name to IFC mapping");
+        if (loaded->modules.external_providers.size() == 2) {
+            expect(loaded->modules.external_providers[0].logical_name == "vendor.math"
+                       && loaded->modules.external_providers[0].interface_file
+                           == (tree.root / "prebuilt/vendor.math.ifc").lexically_normal(),
+                   "external module IFC path should resolve relative to mqb.json");
+            expect(loaded->modules.external_providers[1].logical_name == "vendor.text"
+                       && loaded->modules.external_providers[1].interface_file
+                           == (tree.root / "prebuilt/vendor text.ifc").lexically_normal(),
+                   "external provider mapping should preserve names and spaces in config-relative paths");
+        }
     }
 
     write_text(config_file, R"json({"version":1,"build":{"type":"lib"}})json");
@@ -151,7 +169,19 @@ int main() {
                "missing build list fields must remain empty overrides");
         expect(!minimal->discovery.enabled,
                "missing discovery enabled field must remain unset");
+        expect(minimal->modules.external_providers.empty(),
+               "missing modules policy must remain an empty override");
     }
+
+    write_text(config_file, R"json({"version":1,"modules":{"external":{"vendor.math":7}}})json");
+    auto bad_provider_type = mqb::config::ProjectConfigLoader::load(config_file);
+    expect(!bad_provider_type && bad_provider_type.error().code == mqb::config::ErrorCode::schema_error,
+           "external module provider IFC must be a non-empty JSON string");
+
+    write_text(config_file, R"json({"version":1,"modules":{"surprise":{}}})json");
+    auto bad_module_field = mqb::config::ProjectConfigLoader::load(config_file);
+    expect(!bad_module_field && bad_module_field.error().code == mqb::config::ErrorCode::schema_error,
+           "unknown modules fields should be rejected by strict schema");
 
     write_text(config_file, R"json({"version":2})json");
     auto unsupported = mqb::config::ProjectConfigLoader::load(config_file);
