@@ -56,7 +56,7 @@ Stable candidate 必须在同一候选提交上证明：
 6. Stage 1 / Stage 2 报告正确的 release version；
 7. ZIP 中 `mqb.exe` 与已验证 Stage 1 binary byte-identical；
 8. ZIP 只包含 runtime / installer payload 与 Apache-2.0 `LICENSE`，且 manifest 与 SHA-256 sidecar 精确匹配；
-9. packaged installer 的 install / reinstall / uninstall lifecycle 通过。
+9. packaged installer 的 install / reinstall / uninstall lifecycle、BAT wrapper 与 PATH ownership 通过。
 
 任何一项失败都阻止 publication。
 
@@ -69,18 +69,21 @@ msvc-quick-build-vX.Y.Z-windows-x64.zip
 msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
-ZIP 是**扁平、runtime-only** 发布包，精确包含：
+当前 `main` 的下一次 stable ZIP 契约是**扁平、runtime-only** 发布包，精确包含：
 
 ```text
 mqb.exe
 VERSION
 install.bat
 install.ps1
+uninstall.bat
 uninstall.ps1
 LICENSE
 ```
 
 README、架构、配置、安装说明、自举说明和 release notes 等用户文档**不进入 ZIP**；它们保留在仓库与 GitHub Release 页面。`LICENSE` 作为 Apache-2.0 二进制再分发所需的许可证副本继续随包发布。
+
+已经发布的 Release/tag 与资产保持不可变，因此历史 v5.1.0 包仍是当时验证过的六文件快照；`uninstall.bat` 从包含本次主线改动的下一次 stable release 起进入正式包。
 
 历史 seed、Stage 0、Stage 2、测试文件和源码同样不会进入正式 ZIP。
 
