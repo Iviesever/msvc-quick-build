@@ -28,6 +28,15 @@ function Assert-DirectDirectories {
     }
 }
 
+function Assert-NoDirectFiles {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $files = @(Get-ChildItem -LiteralPath $Root -File | Select-Object -ExpandProperty Name)
+    if ($files.Count -ne 0) {
+        throw "Responsibility root '$Root' must contain only subdirectories: $($files -join ', ')"
+    }
+}
+
 function Assert-ExactFiles {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -49,6 +58,23 @@ function Assert-ExactFiles {
             }
         ) -join [Environment]::NewLine
         throw "Responsibility layout drift under '$Root':`n$details"
+    }
+}
+
+function Assert-LeafLayout {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$LeafFiles
+    )
+
+    Assert-DirectDirectories -Root $Root -Allowed @($LeafFiles.Keys)
+    Assert-NoDirectFiles -Root $Root
+    foreach ($leaf in $LeafFiles.Keys) {
+        $leafRoot = Join-Path $Root $leaf
+        if (-not (Test-Path -LiteralPath $leafRoot -PathType Container)) {
+            throw "Required responsibility directory not found: $leafRoot"
+        }
+        Assert-ExactFiles -Root $leafRoot -Expected $LeafFiles[$leaf]
     }
 }
 
@@ -128,12 +154,50 @@ foreach ($leaf in $appLeafFiles.Keys) {
 }
 
 $appTestsRoot = Join-Path $testsRoot 'app'
-$misplacedAppTests = @(
-    Get-ChildItem -LiteralPath $appTestsRoot -File -Filter '*_tests.cpp' |
-        Select-Object -ExpandProperty Name
-)
-if ($misplacedAppTests.Count -ne 0) {
-    throw "App tests must mirror an app responsibility subdirectory instead of living at tests/app root: $($misplacedAppTests -join ', ')"
+$appTestLeafFiles = [ordered]@{
+    'cli' = @('build_policy_cli_tests.cpp', 'cli_argument_tests.cpp')
 }
+Assert-LeafLayout -Root $appTestsRoot -LeafFiles $appTestLeafFiles
+
+# orchestration is intentionally a coordination layer, but scheduling,
+# incremental ordinary-target execution, named-module coordination, and routing
+# are separate implementation responsibilities. Public facade headers stay at
+# include/mqb/orchestration for API stability; implementation and tests are
+# physically grouped by the work they own.
+$orchestrationRoot = Join-Path $srcRoot 'orchestration'
+$orchestrationLeafFiles = [ordered]@{
+    'incremental' = @(
+        'MsvcIncrementalArchiveCoordinator.cpp',
+        'MsvcIncrementalCompileCoordinator.cpp',
+        'MsvcIncrementalLinkCoordinator.cpp',
+        'MsvcIncrementalStaticTargetCoordinator.cpp',
+        'MsvcIncrementalTargetCoordinator.cpp'
+    )
+    'modules' = @('MsvcModuleCompileCoordinator.cpp', 'MsvcModuleTargetCoordinator.cpp')
+    'routing' = @('MsvcTargetRouter.cpp')
+    'scheduling' = @('BoundedWorkScheduler.cpp')
+}
+Assert-LeafLayout -Root $orchestrationRoot -LeafFiles $orchestrationLeafFiles
+
+$orchestrationTestsRoot = Join-Path $testsRoot 'orchestration'
+$orchestrationTestLeafFiles = [ordered]@{
+    'incremental' = @(
+        'incremental_compile_coordinator_tests.cpp',
+        'incremental_link_coordinator_tests.cpp',
+        'incremental_target_coordinator_tests.cpp'
+    )
+    'modules' = @(
+        'header_unit_incremental_integration_tests.cpp',
+        'header_unit_target_integration_tests.cpp',
+        'header_unit_wave_integration_tests.cpp',
+        'module_compile_coordinator_tests.cpp',
+        'module_target_coordinator_tests.cpp',
+        'module_target_integration_tests.cpp',
+        'module_target_validation_tests.cpp'
+    )
+    'routing' = @('target_router_tests.cpp')
+    'scheduling' = @('bounded_work_scheduler_tests.cpp')
+}
+Assert-LeafLayout -Root $orchestrationTestsRoot -LeafFiles $orchestrationTestLeafFiles
 
 Write-Host 'C++ responsibility layout contract passed.'

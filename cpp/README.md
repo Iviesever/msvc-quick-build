@@ -38,7 +38,7 @@ cpp/<component>/tests
 | `discovery` | source 与 module candidate discovery |
 | `json` | 内部 JSON parser |
 | `modules` | P1689 typed model、provider graph、module dependency graph |
-| `orchestration` | compile/link/archive/module pipeline coordination |
+| `orchestration` | compile/link/archive/module pipeline coordination；实现继续按 scheduling/incremental/modules/routing 分层 |
 | `msvc` | MSVC compiler/linker/librarian/toolchain primitives |
 | `process` | 平台无关 process model |
 | `platform/windows` | Windows quoting、process launch 等平台边界 |
@@ -54,7 +54,7 @@ cpp/
 │  ├─ discovery/
 │  ├─ json/
 │  ├─ modules/
-│  ├─ orchestration/
+│  ├─ orchestration/        # 稳定 public facade headers
 │  ├─ msvc/
 │  ├─ process/
 │  └─ platform/windows/
@@ -72,6 +72,10 @@ cpp/
 │  ├─ json/
 │  ├─ modules/
 │  ├─ orchestration/
+│  │  ├─ scheduling/         # bounded execution scheduling
+│  │  ├─ incremental/        # ordinary compile/link/archive target coordination
+│  │  ├─ modules/            # named-module/header-unit coordination
+│  │  └─ routing/            # ordinary vs module target routing
 │  ├─ msvc/
 │  └─ platform/windows/
 └─ tests/
@@ -81,7 +85,7 @@ cpp/
    ├─ discovery/
    ├─ json/
    ├─ modules/
-   ├─ orchestration/
+   ├─ orchestration/          # 镜像 incremental/modules/routing/scheduling
    ├─ msvc/
    ├─ process/
    ├─ platform/windows/
@@ -94,7 +98,7 @@ cpp/
 
 放**跨 translation unit / 跨职责需要共享**的产品接口。
 
-它是唯一公共 include root。不要新增 `cpp/<component>/include`。
+它是唯一公共 include root。不要新增 `cpp/<component>/include`。`include/mqb/orchestration` 保持稳定 facade，不因为 implementation 的物理分层强迫公共 include path 发生 churn。
 
 ### `src/app/...`
 
@@ -114,6 +118,7 @@ App-private header 与 executable composition implementation 放在对应的 app
 - `config` / `discovery` 不拥有 MSVC process invocation；
 - `modules` 拥有 provider graph，不允许其他目录各自猜 provider；
 - `orchestration` 组合流程，`msvc` 构造并执行 MSVC primitive；
+- `orchestration/scheduling` 只提供 bounded scheduling，`incremental` / `modules` 消费它；`routing` 只选择 pipeline，不重做 pipeline；
 - `process` 保持平台无关，Windows-specific 实现进入 `platform/windows`；
 - `app` 可以组合下层能力，但下层不应反向依赖 `app`；
 - `app/targets` 只做 pipeline adaptation，不复制 `app/diagnostics` 的格式化与错误展开逻辑。
@@ -136,7 +141,10 @@ App-private header 与 executable composition implementation 放在对应的 app
 新的 cache identity model      -> include/mqb/core + src/core
 新的 mqb.json parser 规则      -> config
 新的 P1689 provider 逻辑       -> modules
-新的编译批次调度               -> orchestration
+新的 bounded 调度实现          -> src/orchestration/scheduling
+新的增量 link coordinator      -> src/orchestration/incremental
+新的 module target coordinator -> src/orchestration/modules
+新的 target router             -> src/orchestration/routing
 新的 cl.exe argument builder   -> msvc
 新的 Windows process quoting   -> platform/windows
 新的 CLI flag                  -> src/app/cli (+ tests/app/cli/e2e)
@@ -159,7 +167,7 @@ App-private header 与 executable composition implementation 放在对应的 app
 
 ## 7. Tests
 
-所有 C++ tests 都进入 `cpp/tests/`，按被测职责镜像；跨组件/完整 CLI 场景放入 `e2e`。例如 CLI parser 测试必须进入 `tests/app/cli/`，而不是堆在 `tests/app/` 根。
+所有 C++ tests 都进入 `cpp/tests/`，按被测职责镜像；跨组件/完整 CLI 场景放入 `e2e`。例如 CLI parser 测试进入 `tests/app/cli/`；orchestration 测试继续按 `incremental/modules/routing/scheduling` 镜像，而不是堆在 `tests/orchestration/` 根。
 
 不要把测试重新放进产品目录，也不要在文档中硬编码测试数量。权威测试集合由 `tests/native/run_native_tests.ps1` 与 CI 发现和验证。
 

@@ -36,7 +36,7 @@ Choose the responsibility first, then place the file under the unified `include/
 | `discovery` | source and module-candidate discovery |
 | `json` | internal JSON parser |
 | `modules` | typed P1689 model, provider graph, module dependency graph |
-| `orchestration` | compile/link/archive/module pipeline coordination |
+| `orchestration` | compile/link/archive/module pipeline coordination; implementation subdivided into scheduling/incremental/modules/routing |
 | `msvc` | MSVC compiler/linker/librarian/toolchain primitives |
 | `process` | platform-independent process model |
 | `platform/windows` | Windows quoting, process launch, and other platform boundaries |
@@ -52,7 +52,7 @@ cpp/
 │  ├─ discovery/
 │  ├─ json/
 │  ├─ modules/
-│  ├─ orchestration/
+│  ├─ orchestration/        # stable public facade headers
 │  ├─ msvc/
 │  ├─ process/
 │  └─ platform/windows/
@@ -70,6 +70,10 @@ cpp/
 │  ├─ json/
 │  ├─ modules/
 │  ├─ orchestration/
+│  │  ├─ scheduling/         # bounded execution scheduling
+│  │  ├─ incremental/        # ordinary compile/link/archive target coordination
+│  │  ├─ modules/            # named-module/header-unit coordination
+│  │  └─ routing/            # ordinary vs module target routing
 │  ├─ msvc/
 │  └─ platform/windows/
 └─ tests/
@@ -79,7 +83,7 @@ cpp/
    ├─ discovery/
    ├─ json/
    ├─ modules/
-   ├─ orchestration/
+   ├─ orchestration/          # mirrors incremental/modules/routing/scheduling
    ├─ msvc/
    ├─ process/
    ├─ platform/windows/
@@ -92,7 +96,7 @@ cpp/
 
 Use it for product interfaces that genuinely need to be shared **across translation units or responsibilities**.
 
-It is the only public include root. Do not add `cpp/<component>/include`.
+It is the only public include root. Do not add `cpp/<component>/include`. `include/mqb/orchestration` remains a stable facade so implementation sublayering does not force public include-path churn.
 
 ### `src/app/...`
 
@@ -112,6 +116,7 @@ Maintain these boundaries:
 - `config` / `discovery` do not own MSVC process invocation;
 - `modules` owns the provider graph; other directories must not independently guess providers;
 - `orchestration` composes flows while `msvc` constructs and executes MSVC primitives;
+- `orchestration/scheduling` owns bounded scheduling, `incremental` / `modules` consume it, and `routing` selects a pipeline instead of reimplementing one;
 - `process` remains platform-independent and Windows-specific implementation goes under `platform/windows`;
 - `app` may compose lower-level capabilities, but lower layers should not depend back on `app`;
 - `app/targets` adapts pipelines and must not duplicate formatting/error-expansion logic owned by `app/diagnostics`.
@@ -134,7 +139,10 @@ Examples:
 new cache identity model      -> include/mqb/core + src/core
 new mqb.json parser rule      -> config
 new P1689 provider logic      -> modules
-new compile-batch scheduling  -> orchestration
+new bounded scheduler         -> src/orchestration/scheduling
+new incremental linker        -> src/orchestration/incremental
+new module target coordinator -> src/orchestration/modules
+new target router             -> src/orchestration/routing
 new cl.exe argument builder   -> msvc
 new Windows process quoting   -> platform/windows
 new CLI flag                  -> src/app/cli (+ tests/app/cli/e2e)
@@ -157,7 +165,7 @@ Development drivers validate the manifest against the actual production source s
 
 ## 7. Tests
 
-All C++ tests live under `cpp/tests/`, mirrored by the responsibility under test. Cross-component and full CLI scenarios belong in `e2e`. For example, CLI parser tests live under `tests/app/cli/`, not directly under `tests/app/`.
+All C++ tests live under `cpp/tests/`, mirrored by the responsibility under test. Cross-component and full CLI scenarios belong in `e2e`. CLI parser tests live under `tests/app/cli/`; orchestration tests mirror `incremental/modules/routing/scheduling` rather than accumulating directly under `tests/orchestration/`.
 
 Do not move tests back into product directories and do not hard-code the test count in documentation. The authoritative test set is discovered and validated by `tests/native/run_native_tests.ps1` and CI.
 
