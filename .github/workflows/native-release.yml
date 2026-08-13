@@ -6,10 +6,6 @@ on:
       - 'VERSION'
       - 'cpp/**'
       - 'LICENSE'
-      - 'install.bat'
-      - 'install.ps1'
-      - 'uninstall.ps1'
-      - 'tests/installer/**'
       - 'tests/native/**'
       - 'tests/selfhost/**'
       - '.github/workflows/native-release.yml'
@@ -20,11 +16,19 @@ on:
       - 'VERSION'
       - '.github/workflows/native-release.yml'
 
+# Supersede obsolete PR validations, but never cancel an in-flight main publication.
+concurrency:
+  group: native-release-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
-  build-test-package:
+  prepare-release:
+    name: Build Stage 0 Release MQB
     runs-on: windows-latest
     permissions:
       contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
     outputs:
       version: ${{ steps.meta.outputs.version }}
       package_name: ${{ steps.meta.outputs.package_name }}
@@ -68,7 +72,6 @@ jobs:
           "path=$seed" >> $env:GITHUB_OUTPUT
 
       - name: Build Stage 0 Release MQB with MQB
-        id: stage0
         shell: pwsh
         env:
           MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
@@ -81,25 +84,86 @@ jobs:
             -Clean `
             -OutputPath (Join-Path $PWD 'native-out/release/stage0/mqb.exe')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "path=$mqb" >> $env:GITHUB_OUTPUT
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+            throw "Stage 0 Release MQB missing: $mqb"
+          }
 
-      - name: Run MQB-native Release tests
+      - name: Upload exact Stage 0 MQB
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-release-stage0
+          path: native-out/release/stage0/mqb.exe
+          if-no-files-found: error
+          retention-days: 1
+
+  release-test-shard:
+    name: Native Release tests ${{ matrix.shard }}/4
+    needs: prepare-release
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download exact Stage 0 MQB
+        uses: actions/download-artifact@v8
+        with:
+          name: native-release-stage0
+          path: native-out/release/stage0
+
+      - name: Run MQB-native Release test shard
         shell: pwsh
         run: |
+          $mqb = Join-Path $PWD 'native-out/release/stage0/mqb.exe'
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+            throw "Downloaded Stage 0 MQB missing: $mqb"
+          }
           & (Join-Path $PWD 'tests/native/run_native_tests.ps1') `
-            -BuilderMqbPath '${{ steps.stage0.outputs.path }}' `
-            -TestMqbPath '${{ steps.stage0.outputs.path }}' `
+            -BuilderMqbPath $mqb `
+            -TestMqbPath $mqb `
             -RepoRoot $PWD `
-            -Configuration Release
+            -Configuration Release `
+            -ShardIndex ${{ matrix.shard }} `
+            -ShardCount 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  build-test-package:
+    name: Self-host and package release
+    needs:
+      - prepare-release
+      - release-test-shard
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ needs.prepare-release.outputs.version }}
+      package_name: ${{ needs.prepare-release.outputs.package_name }}
+      prerelease: ${{ needs.prepare-release.outputs.prerelease }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download validated Stage 0 MQB
+        uses: actions/download-artifact@v8
+        with:
+          name: native-release-stage0
+          path: native-out/release/stage0
 
       - name: Self-host stable release with MQB
         shell: pwsh
         env:
-          MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          MQB_RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
+          $stage0 = Join-Path $PWD 'native-out/release/stage0/mqb.exe'
           & (Join-Path $PWD 'tests/selfhost/selfhost.ps1') `
-            -BootstrapMqbPath '${{ steps.stage0.outputs.path }}' `
+            -BootstrapMqbPath $stage0 `
             -RepoRoot $PWD `
             -ReleaseVersion $env:MQB_RELEASE_VERSION `
             -OutputRoot (Join-Path $PWD 'selfhost-out')
@@ -108,7 +172,7 @@ jobs:
       - name: Stage runtime-only release package
         shell: pwsh
         env:
-          MQB_PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+          MQB_PACKAGE_NAME: ${{ needs.prepare-release.outputs.package_name }}
         run: |
           $dist = Join-Path $PWD 'dist'
           $stage = Join-Path $dist $env:MQB_PACKAGE_NAME
@@ -124,6 +188,7 @@ jobs:
           Copy-Item 'VERSION' (Join-Path $stage 'VERSION')
           Copy-Item 'install.bat' (Join-Path $stage 'install.bat')
           Copy-Item 'install.ps1' (Join-Path $stage 'install.ps1')
+          Copy-Item 'uninstall.bat' (Join-Path $stage 'uninstall.bat')
           Copy-Item 'uninstall.ps1' (Join-Path $stage 'uninstall.ps1')
           Copy-Item 'LICENSE' (Join-Path $stage 'LICENSE')
 
@@ -140,8 +205,9 @@ jobs:
       - name: Validate exact runtime-only packaged artifact
         shell: pwsh
         env:
-          MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
-          MQB_PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+          MQB_RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          MQB_PACKAGE_NAME: ${{ needs.prepare-release.outputs.package_name }}
+          MQB_NO_PAUSE: '1'
         run: |
           $dist = Join-Path $PWD 'dist'
           $zip = Join-Path $dist ($env:MQB_PACKAGE_NAME + '.zip')
@@ -175,6 +241,7 @@ jobs:
             'install.ps1',
             'LICENSE',
             'mqb.exe',
+            'uninstall.bat',
             'uninstall.ps1',
             'VERSION'
           ) | Sort-Object
@@ -228,10 +295,10 @@ jobs:
       - name: Upload validated package
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.meta.outputs.package_name }}
+          name: ${{ needs.prepare-release.outputs.package_name }}
           path: |
-            dist/${{ steps.meta.outputs.package_name }}.zip
-            dist/${{ steps.meta.outputs.package_name }}.zip.sha256
+            dist/${{ needs.prepare-release.outputs.package_name }}.zip
+            dist/${{ needs.prepare-release.outputs.package_name }}.zip.sha256
           if-no-files-found: error
           retention-days: 30
 

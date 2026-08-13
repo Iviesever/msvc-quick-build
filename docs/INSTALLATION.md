@@ -12,6 +12,14 @@ MQB 的 stable Windows 包安装一个命令：`mqb`，对应原生可执行文�
 .\install.bat
 ```
 
+`install.bat` 面向直接双击/人工运行，成功或失败后默认都会 `pause`，避免命令窗口立即关闭。自动化环境可以设置：
+
+```powershell
+$env:MQB_NO_PAUSE = '1'
+```
+
+仅跳过 BAT 包装器的暂停；安装逻辑与错误码不变。
+
 默认当前用户安装目录：
 
 ```text
@@ -26,18 +34,21 @@ mqb --help
 
 ## 发布 ZIP 内容
 
-Stable ZIP 是扁平的 runtime-only 包，精确包含：
+当前 `main` 的下一次 stable ZIP 契约是扁平的 runtime-only 包，精确包含：
 
 ```text
 mqb.exe
 VERSION
 install.bat
 install.ps1
+uninstall.bat
 uninstall.ps1
 LICENSE
 ```
 
 README、配置、架构、安装说明、自举说明和 release notes 等文档不放进 ZIP；请直接在仓库和 GitHub Release 页面阅读。`LICENSE` 作为 Apache-2.0 二进制再分发所需的许可证副本保留在包中。
+
+已经发布的版本是不可变历史快照；例如 v5.1.0 不会因为后续主线安装器改进而被重写。`uninstall.bat` 从包含本次改动的下一次 stable release 起进入正式 ZIP。
 
 ## 安装器拥有的文件
 
@@ -60,7 +71,8 @@ mqb-install-state.json
 
 - 重复安装不会重复添加 PATH；
 - 如果 PATH 原本就由用户维护，MQB 不取得其所有权；
-- 卸载时只删除安装状态明确记录为 MQB-owned 的 PATH 条目。
+- 卸载时只删除安装状态明确记录为 MQB-owned 的 PATH 条目；
+- PATH 持久化变更后会广播 Windows environment-change 通知，同时当前 installer 进程的 PATH 也会同步更新。
 
 ## 重装 / 升级
 
@@ -74,14 +86,20 @@ mqb-install-state.json
 
 ## 卸载
 
-默认安装位置下运行：
+从包含新卸载包装器的 release 包中可以直接运行：
+
+```powershell
+.\uninstall.bat
+```
+
+它和安装包装器一样，人工运行时默认 `pause`；自动化可使用 `MQB_NO_PAUSE=1`。如果原始 release 包已经删除，也可以从默认安装位置运行维护脚本：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File "$HOME\bin\uninstall-mqb.ps1"
 ```
 
-卸载会删除 MQB-owned 安装文件，以及仅在安装状态证明由 MQB 添加时才删除对应 PATH 条目。
+卸载会删除 MQB-owned 安装文件，并且仅在安装状态证明 PATH 条目由 MQB 添加时才删除对应 PATH；用户原先自行配置的同一 PATH 条目会保留。
 
 ## 旧版兼容行为
 
@@ -103,6 +121,6 @@ msvc-quick-build-vX.Y.Z-windows-x64.zip
 msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
-Release workflow 在发布前验证 Stage 1 binary identity、runtime-only package manifest、checksum、installer lifecycle 与 self-host closure。自举和发布门禁的技术细节见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
+Release workflow 在发布前验证 Stage 1 binary identity、runtime-only package manifest、checksum、BAT/PowerShell installer lifecycle、PATH ownership 与 self-host closure。自举和发布门禁的技术细节见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
 
 用户使用方式见仓库根目录 [`README.md`](../README.md)。

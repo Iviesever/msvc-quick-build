@@ -12,6 +12,14 @@ Extract the Windows x64 GitHub Release package and run:
 .\install.bat
 ```
 
+`install.bat` is designed for direct double-click/manual use and pauses after either success or failure so the command window does not disappear immediately. Automation can set:
+
+```powershell
+$env:MQB_NO_PAUSE = '1'
+```
+
+This only disables the BAT wrapper pause; installation semantics and exit codes are unchanged.
+
 The default per-user installation directory is:
 
 ```text
@@ -26,18 +34,21 @@ mqb --help
 
 ## Release ZIP contents
 
-The stable ZIP is a flat, runtime-only package containing exactly:
+The next stable ZIP contract on current `main` is a flat, runtime-only package containing exactly:
 
 ```text
 mqb.exe
 VERSION
 install.bat
 install.ps1
+uninstall.bat
 uninstall.ps1
 LICENSE
 ```
 
 Documentation such as READMEs, configuration, architecture, installation, self-hosting, and release notes is not shipped inside the ZIP; read it directly in the repository and on GitHub Releases. `LICENSE` remains as the Apache-2.0 license copy required for binary redistribution.
+
+Already-published versions are immutable historical snapshots. For example, v5.1.0 is not rewritten by later installer improvements. `uninstall.bat` enters the official ZIP starting with the next stable release that includes this change.
 
 ## Installer-owned files
 
@@ -60,7 +71,8 @@ Rules:
 
 - reinstalling does not duplicate the PATH entry;
 - if the PATH entry was already user-managed, MQB does not take ownership of it;
-- uninstall removes the PATH entry only when the installation state proves it is MQB-owned.
+- uninstall removes the PATH entry only when the installation state proves it is MQB-owned;
+- persistent PATH changes broadcast the Windows environment-change notification, and the current installer process PATH is updated as well.
 
 ## Reinstall / upgrade
 
@@ -74,14 +86,20 @@ This updates the current-user installation. File and PATH operations are idempot
 
 ## Uninstall
 
-From the default installation location:
+A release package that includes the new uninstall wrapper can be removed directly with:
+
+```powershell
+.\uninstall.bat
+```
+
+Like the install wrapper, it pauses by default for manual use; automation can use `MQB_NO_PAUSE=1`. If the original release package has already been deleted, use the maintenance script from the default installation location:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File "$HOME\bin\uninstall-mqb.ps1"
 ```
 
-Uninstall removes MQB-owned installation files and removes the PATH entry only when installation state records that MQB added it.
+Uninstall removes MQB-owned installation files and removes the PATH entry only when installation state records that MQB added it. A matching PATH entry that existed before installation remains user-owned and is preserved.
 
 ## Legacy behavior
 
@@ -103,6 +121,6 @@ msvc-quick-build-vX.Y.Z-windows-x64.zip
 msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
-Before publication, the release workflow validates Stage 1 binary identity, the runtime-only package manifest, checksum, installer lifecycle, and self-host closure. See [`SELF_HOSTING_EN.md`](SELF_HOSTING_EN.md) for the technical release gates.
+Before publication, the release workflow validates Stage 1 binary identity, the runtime-only package manifest, checksum, BAT/PowerShell installer lifecycle, PATH ownership, and self-host closure. See [`SELF_HOSTING_EN.md`](SELF_HOSTING_EN.md) for the technical release gates.
 
 For normal usage, return to the root [`README_EN.md`](../README_EN.md).

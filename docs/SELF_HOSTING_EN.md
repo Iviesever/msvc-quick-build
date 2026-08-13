@@ -56,7 +56,7 @@ A stable candidate must prove, on the same candidate commit, that:
 6. Stage 1 and Stage 2 report the correct release version;
 7. `mqb.exe` inside the ZIP is byte-identical to the validated Stage 1 binary;
 8. the ZIP contains only the runtime/installer payload plus the Apache-2.0 `LICENSE`, with an exact manifest and SHA-256 sidecar;
-9. the packaged installer passes install / reinstall / uninstall lifecycle validation.
+9. the packaged installer passes install / reinstall / uninstall lifecycle, BAT-wrapper, and PATH-ownership validation.
 
 Any failure blocks publication.
 
@@ -69,18 +69,21 @@ msvc-quick-build-vX.Y.Z-windows-x64.zip
 msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
-The ZIP is a **flat, runtime-only** package containing exactly:
+The next stable ZIP contract on current `main` is a **flat, runtime-only** package containing exactly:
 
 ```text
 mqb.exe
 VERSION
 install.bat
 install.ps1
+uninstall.bat
 uninstall.ps1
 LICENSE
 ```
 
 User documentation such as READMEs, architecture, configuration, installation, self-hosting, and release notes is **not shipped inside the ZIP**. It remains in the repository and on GitHub Releases. `LICENSE` remains in the binary redistribution as the required Apache-2.0 license copy.
+
+Already-published Releases/tags and assets remain immutable, so historical v5.1.0 remains the previously validated six-file snapshot. `uninstall.bat` enters the official package starting with the next stable release that contains this mainline change.
 
 The historical seed, Stage 0, Stage 2, tests, and source code are not included either.
 
