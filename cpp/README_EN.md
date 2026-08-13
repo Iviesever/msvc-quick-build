@@ -24,9 +24,9 @@ Do not create component-local `include/src/tests` project trees. Choose the resp
 | Directory | Responsibility |
 |---|---|
 | `core` | toolchain-independent build model, planner, artifact identity, caches |
-| `config` | `mqb.json` model, parsing, policy resolution |
+| `config` | `mqb.json` model, document loading, schema decoding, policy resolution |
 | `discovery` | source and module-candidate discovery |
-| `json` | internal JSON parser |
+| `json` | the single internal JSON grammar parser |
 | `modules` | typed P1689 model, provider graph, module dependency graph |
 | `orchestration` | compile/link/archive/module pipeline coordination |
 | `msvc` | MSVC compiler/linker/librarian/module-scan/toolchain primitives |
@@ -45,6 +45,10 @@ cpp/src/
 │  ├─ diagnostics/          # CLI diagnostics / process-output formatting
 │  ├─ project/              # project config + CLI/config policy composition
 │  └─ targets/              # ordinary/module/static target adapters
+├─ config/
+│  ├─ loading/              # locate/read mqb.json + json::parse error mapping
+│  ├─ schema/               # strict config schema / enum / path decoding
+│  └─ resolution/           # project-config + CLI override resolution
 ├─ core/
 │  ├─ cache/                # compile/link/archive cache model + persistence
 │  ├─ model/                # typed build/signature/TU classification model
@@ -60,20 +64,19 @@ cpp/src/
 │  ├─ incremental/          # ordinary incremental compile/link/archive flows
 │  ├─ modules/              # named-module/header-unit coordination
 │  └─ routing/              # ordinary vs module pipeline routing
-├─ config/
 ├─ discovery/
 ├─ json/
 ├─ modules/
 └─ platform/windows/
 ```
 
-`cpp/tests/` mirrors the same secondary responsibilities for `app`, `core`, `msvc`, and `orchestration`. Cross-component/full-CLI scenarios belong in `tests/e2e/`.
+`cpp/tests/` mirrors the same secondary responsibilities for `app`, `core`, `msvc`, and `orchestration`. `tests/config/` exercises composed loading/schema/resolution behavior through the public config facade. Cross-component/full-CLI scenarios belong in `tests/e2e/`.
 
 ## 3. Stable facades and private implementation
 
-`include/mqb/...` is the only public include root. Interfaces genuinely shared across TUs/responsibilities remain in stable facades such as `include/mqb/core`, `include/mqb/msvc`, and `include/mqb/orchestration`.
+`include/mqb/...` is the only public include root. Interfaces genuinely shared across TUs/responsibilities remain in stable facades such as `include/mqb/config`, `include/mqb/core`, `include/mqb/msvc`, and `include/mqb/orchestration`.
 
-**Implementation layering does not imply public include-path churn.** The `.cpp` files under `core/msvc/orchestration` can be physically grouped without moving public headers. Split a public facade only when the API itself develops a real subdomain boundary.
+**Implementation layering does not imply public include-path churn.** The `.cpp` files under `config/core/msvc/orchestration` can be physically grouped without moving public headers. Split a public facade only when the API itself develops a real subdomain boundary.
 
 Headers under `src/app/...` are executable-private interfaces and do not enter public `include/mqb`. The `src/app/` root contains only `Application.cpp`, `Application.hpp`, and `main.cpp`; it must not drift back into a catch-all.
 
@@ -83,6 +86,8 @@ Maintain these boundaries:
 
 - `core` does not depend on `msvc`, `orchestration`, or `platform/windows`;
 - `core/cache` owns cache identity/validation/persistence, `core/planning` owns decisions/graphs, and `core/model` remains typed domain state;
+- `config/loading` only locates/reads files and delegates grammar parsing to `json::parse`; it does not own JSON grammar;
+- `config/schema` only decodes `mqb.json` versions, fields, types, enums, and paths; `config/resolution` only merges config/CLI policy and performs no file IO or JSON parsing;
 - `config` / `discovery` do not own MSVC process invocation;
 - `modules` owns the provider graph; other directories must not independently guess providers;
 - `msvc` constructs and executes MSVC primitives; `msvc/toolchain` only discovers/composes toolchains and does not own upper-layer build policy;
@@ -98,6 +103,10 @@ See [`../docs/ARCHITECTURE_EN.md`](../docs/ARCHITECTURE_EN.md) for the full logi
 Decide in this order: responsibility owner → product/test → whether a public interface is required → toolchain/platform boundary → whether placement creates an upward dependency.
 
 ```text
+new config file lookup/IO     -> src/config/loading
+new mqb.json schema field     -> src/config/schema
+new CLI/config merge policy   -> src/config/resolution
+new JSON grammar rule         -> src/json
 new cache serializer          -> src/core/cache (+ include/mqb/core if shared)
 new build-graph policy        -> src/core/planning
 new typed build model         -> src/core/model
@@ -119,7 +128,7 @@ new CLI diagnostics           -> src/app/diagnostics
 - `include` is the only public include root; app-private include roots serve executable composition only;
 - product code defaults to **C++23** with `/W4` and `/permissive-`.
 
-Before self-build, `tests/native/build_mqb.ps1` runs `tests/native/assert_cpp_layout.ps1`. The gate rejects unregistered top-level responsibilities, drift back into flat `app/core/msvc/orchestration` roots, files assigned to the wrong owner, and tests that no longer mirror the implementation responsibility.
+Before self-build, `tests/native/build_mqb.ps1` runs `tests/native/assert_cpp_layout.ps1`. The gate rejects unregistered top-level responsibilities, drift back into flat `app/config/core/msvc/orchestration` roots, files assigned to the wrong owner, and drift in registered test-responsibility mirrors.
 
 ## 7. C++ language floor
 
