@@ -202,7 +202,7 @@ foreach ($testFile in $testFiles) {
 }
 
 Write-Host ""
-Write-Host "MQB-native shard $ShardIndex/$ShardCount: $passed/$($testFiles.Count) selected tests passed."
+Write-Host "MQB-native shard $ShardIndex/${ShardCount}: $passed/$($testFiles.Count) selected tests passed."
 if ($failures.Count -ne 0) {
     $failures | Format-Table -AutoSize | Out-String | Write-Host
     exit 1
