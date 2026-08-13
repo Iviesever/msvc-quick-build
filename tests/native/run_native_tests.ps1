@@ -88,6 +88,82 @@ if ($allTestFiles.Count -ne 67) {
     throw "Native test manifest drift: expected 67 *_tests.cpp files, found $($allTestFiles.Count)."
 }
 
+function Get-TestRelativePath {
+    param([Parameter(Mandatory = $true)][System.IO.FileInfo]$File)
+    return [System.IO.Path]::GetRelativePath($cppRoot, $File.FullName).Replace('\', '/')
+}
+
+# Keep the shard plan deterministic while accounting for the few tests whose
+# nested MQB builds dominate wall time. These are deliberately coarse relative
+# cost classes rather than runner-specific seconds, so normal hosted-runner
+# variance does not churn the plan. Every unlisted test has weight 1.
+#
+# The overrides come from repeated Debug/Release CI observations. In
+# particular, the old modulo split placed build-policy, module-CLI, and static-
+# library E2E tests on the same shard, making it roughly a minute slower than
+# its peers even though all four runners carried similar test counts.
+$testWeightOverrides = [ordered]@{
+    'tests/e2e/mqb_module_cli_e2e_tests.cpp' = 10
+    'tests/e2e/mqb_build_policy_e2e_tests.cpp' = 9
+    'tests/e2e/mqb_static_library_e2e_tests.cpp' = 7
+    'tests/e2e/mqb_cli_e2e_tests.cpp' = 4
+    'tests/e2e/mqb_runtime_subsystem_config_e2e_tests.cpp' = 4
+    'tests/e2e/mqb_dll_target_e2e_tests.cpp' = 3
+    'tests/e2e/mqb_parallel_cli_e2e_tests.cpp' = 3
+    'tests/e2e/mqb_project_config_e2e_tests.cpp' = 3
+    'tests/e2e/mqb_c_source_e2e_tests.cpp' = 2
+    # This test also requires building the process_echo_helper executable once
+    # on whichever shard owns it, so account for that extra compile/link work.
+    'tests/platform/windows/windows_process_runner_tests.cpp' = 4
+}
+
+$relativeTestPaths = @($allTestFiles | ForEach-Object { Get-TestRelativePath -File $_ })
+foreach ($weightedPath in $testWeightOverrides.Keys) {
+    if ($weightedPath -notin $relativeTestPaths) {
+        throw "Native test weight override is stale or missing from the 67-test manifest: $weightedPath"
+    }
+}
+
+$weightedTests = @(
+    $allTestFiles | ForEach-Object {
+        $relative = Get-TestRelativePath -File $_
+        $weight = if ($testWeightOverrides.Contains($relative)) {
+            [int]$testWeightOverrides[$relative]
+        }
+        else {
+            1
+        }
+        [PSCustomObject]@{
+            File = $_
+            Relative = $relative
+            Weight = $weight
+        }
+    } | Sort-Object `
+        @{ Expression = 'Weight'; Descending = $true }, `
+        @{ Expression = 'Relative'; Descending = $false }
+)
+
+$shardPlan = @(
+    for ($index = 0; $index -lt $ShardCount; ++$index) {
+        [PSCustomObject]@{
+            Index = $index
+            Weight = 0
+            Tests = [System.Collections.ArrayList]::new()
+        }
+    }
+)
+foreach ($test in $weightedTests) {
+    $targetShard = @($shardPlan | Sort-Object Weight, Index)[0]
+    [void]$targetShard.Tests.Add($test.File)
+    $targetShard.Weight += $test.Weight
+}
+
+$testFiles = @($shardPlan[$ShardIndex].Tests | Sort-Object FullName)
+if ($testFiles.Count -eq 0) {
+    throw "Native test shard $ShardIndex/$ShardCount selected no tests."
+}
+$selectedShardWeight = $shardPlan[$ShardIndex].Weight
+
 $quote = [char]34
 $versionDefine = 'MQB_VERSION=' + $quote + 'native-tests' + $quote
 $configArg = if ($Configuration -eq 'Debug') { '--debug' } else { '--release' }
@@ -196,17 +272,6 @@ if (-not [string]::IsNullOrWhiteSpace($PrepareSharedProductLibraryPath)) {
     exit 0
 }
 
-$testFiles = @(
-    for ($i = 0; $i -lt $allTestFiles.Count; ++$i) {
-        if (($i % $ShardCount) -eq $ShardIndex) {
-            $allTestFiles[$i]
-        }
-    }
-)
-if ($testFiles.Count -eq 0) {
-    throw "Native test shard $ShardIndex/$ShardCount selected no tests."
-}
-
 function Get-TestOutputName {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
     $stem = [System.IO.Path]::ChangeExtension($RelativePath, $null)
@@ -242,7 +307,11 @@ function Invoke-MqbTestBuild {
 }
 
 Write-Host "MQB-native test graph: $($allTestFiles.Count) total tests / $($testFiles.Count) selected / configuration $Configuration"
-Write-Host "Shard: $ShardIndex of $ShardCount (zero-based index)"
+Write-Host "Shard: $ShardIndex of $ShardCount (zero-based index) / estimated relative weight $selectedShardWeight"
+Write-Host 'Deterministic weighted shard plan:'
+foreach ($shard in $shardPlan) {
+    Write-Host "  shard $($shard.Index): $($shard.Tests.Count) tests / weight $($shard.Weight)"
+}
 Write-Host "Verified shared production manifest: $($productionSources.Count) non-main translation units"
 Write-Host "Builder MQB: $BuilderMqbPath"
 Write-Host "Tested MQB:  $TestMqbPath"
@@ -268,7 +337,7 @@ New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
 $passed = 0
 $failures = @()
 foreach ($testFile in $testFiles) {
-    $relative = [System.IO.Path]::GetRelativePath($cppRoot, $testFile.FullName).Replace('\', '/')
+    $relative = Get-TestRelativePath -File $testFile
     $outputName = Get-TestOutputName -RelativePath $relative
     Write-Host ""
     Write-Host "=== [$($passed + $failures.Count + 1)/$($testFiles.Count)] $relative ==="
