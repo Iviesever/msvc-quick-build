@@ -135,6 +135,10 @@ function Invoke-MqbBuild {
         [void]$arguments.Add('static')
     }
     elseif ($UseSharedProductLibrary) {
+        # With one requested test source MQB would otherwise run source
+        # discovery and re-add the same production graph already archived in
+        # the shared library, producing duplicate definitions at link time.
+        [void]$arguments.Add('--no-discover')
         [void]$arguments.Add('--lib')
         [void]$arguments.Add($SharedProductLibraryPath)
         [void]$arguments.Add('--linker-arg')
