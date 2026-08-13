@@ -69,6 +69,8 @@
       "src/orchestration/incremental/MsvcIncrementalTargetCoordinator.cpp",
       "src/orchestration/modules/ModuleCompilePlan.cpp",
       "src/orchestration/modules/ModuleCompileRequestFactory.cpp",
+      "src/orchestration/modules/ModuleTargetLinkRequestFactory.cpp",
+      "src/orchestration/modules/ModuleTargetPreparation.cpp",
       "src/orchestration/modules/MsvcModuleCompileCoordinator.cpp",
       "src/orchestration/modules/MsvcModuleTargetCoordinator.cpp",
       "src/orchestration/routing/MsvcTargetRouter.cpp",
