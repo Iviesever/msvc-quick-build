@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)][string]$BuilderMqbPath,
     [Parameter(Mandatory = $true)][string]$TestMqbPath,
     [Parameter(Mandatory = $true)][string]$RepoRoot,
-    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug'
+    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug',
+    [ValidateRange(0, 63)][int]$ShardIndex = 0,
+    [ValidateRange(1, 64)][int]$ShardCount = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,6 +14,10 @@ Set-StrictMode -Version 2.0
 function Get-FullPath {
     param([Parameter(Mandatory = $true)][string]$Path)
     return [System.IO.Path]::GetFullPath($Path)
+}
+
+if ($ShardIndex -ge $ShardCount) {
+    throw "ShardIndex must be smaller than ShardCount: $ShardIndex >= $ShardCount"
 }
 
 $RepoRoot = Get-FullPath $RepoRoot
@@ -59,11 +65,22 @@ foreach ($source in $productionSources) {
 $includeDirs = @($config.build.include_dirs)
 if ($includeDirs.Count -eq 0) { throw 'Native test config has no include_dirs.' }
 
-$testFiles = @(Get-ChildItem -LiteralPath $cppRoot -Recurse -File -Filter '*_tests.cpp' |
+$allTestFiles = @(Get-ChildItem -LiteralPath $cppRoot -Recurse -File -Filter '*_tests.cpp' |
     Where-Object { $_.FullName -notmatch '[\\/]\.mqb[\\/]' } |
     Sort-Object FullName)
-if ($testFiles.Count -ne 67) {
-    throw "Native test manifest drift: expected 67 *_tests.cpp files, found $($testFiles.Count)."
+if ($allTestFiles.Count -ne 67) {
+    throw "Native test manifest drift: expected 67 *_tests.cpp files, found $($allTestFiles.Count)."
+}
+
+$testFiles = @(
+    for ($i = 0; $i -lt $allTestFiles.Count; ++$i) {
+        if (($i % $ShardCount) -eq $ShardIndex) {
+            $allTestFiles[$i]
+        }
+    }
+)
+if ($testFiles.Count -eq 0) {
+    throw "Native test shard $ShardIndex/$ShardCount selected no tests."
 }
 
 $quote = [char]34
@@ -122,15 +139,19 @@ function Invoke-MqbTestBuild {
     return $exe
 }
 
-Write-Host "MQB-native test graph: $($testFiles.Count) tests / configuration $Configuration"
+Write-Host "MQB-native test graph: $($allTestFiles.Count) total tests / $($testFiles.Count) selected / configuration $Configuration"
+Write-Host "Shard: $ShardIndex of $ShardCount (zero-based index)"
 Write-Host "Verified shared production manifest: $($productionSources.Count) non-main translation units"
 Write-Host "Builder MQB: $BuilderMqbPath"
 Write-Host "Tested MQB:  $TestMqbPath"
 
-$helperSource = 'tests/process/process_echo_helper.cpp'
-$helperExe = Invoke-MqbTestBuild -EntrySource $helperSource -OutputName 'native_test_process_echo_helper'
+$helperExe = $null
+if (@($testFiles | Where-Object { $_.Name -eq 'windows_process_runner_tests.cpp' }).Count -ne 0) {
+    $helperSource = 'tests/process/process_echo_helper.cpp'
+    $helperExe = Invoke-MqbTestBuild -EntrySource $helperSource -OutputName 'native_test_process_echo_helper'
+}
 
-$workRoot = Join-Path $RepoRoot "native-test-work/$($Configuration.ToLowerInvariant())"
+$workRoot = Join-Path $RepoRoot "native-test-work/$($Configuration.ToLowerInvariant())/shard-$ShardIndex-of-$ShardCount"
 if (Test-Path -LiteralPath $workRoot) {
     Remove-Item -LiteralPath $workRoot -Recurse -Force
 }
@@ -150,6 +171,7 @@ foreach ($testFile in $testFiles) {
         $testArgs += $TestMqbPath
     }
     elseif ($testFile.Name -eq 'windows_process_runner_tests.cpp') {
+        if ($null -eq $helperExe) { throw 'Process helper was not prepared for windows_process_runner_tests.cpp.' }
         $testArgs += $helperExe
     }
 
@@ -180,11 +202,11 @@ foreach ($testFile in $testFiles) {
 }
 
 Write-Host ""
-Write-Host "MQB-native tests: $passed/$($testFiles.Count) passed."
+Write-Host "MQB-native shard $ShardIndex/$ShardCount: $passed/$($testFiles.Count) selected tests passed."
 if ($failures.Count -ne 0) {
     $failures | Format-Table -AutoSize | Out-String | Write-Host
     exit 1
 }
 
-Write-Host 'All MQB-native tests passed without CMake or CTest.'
+Write-Host 'Selected MQB-native tests passed without CMake or CTest.'
 exit 0
