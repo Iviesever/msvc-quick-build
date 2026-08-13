@@ -201,7 +201,11 @@ $orchestrationLeafFiles = [ordered]@{
         'MsvcIncrementalStaticTargetCoordinator.cpp',
         'MsvcIncrementalTargetCoordinator.cpp'
     )
-    'modules' = @('MsvcModuleCompileCoordinator.cpp', 'MsvcModuleTargetCoordinator.cpp')
+    'modules' = @(
+        'ModuleCompilePlan.cpp', 'ModuleCompilePlan.hpp',
+        'ModuleCompileRequestFactory.cpp', 'ModuleCompileRequestFactory.hpp',
+        'MsvcModuleCompileCoordinator.cpp', 'MsvcModuleTargetCoordinator.cpp'
+    )
     'routing' = @('MsvcTargetRouter.cpp')
     'scheduling' = @('BoundedWorkScheduler.cpp')
 }
