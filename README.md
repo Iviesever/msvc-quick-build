@@ -2,15 +2,15 @@
 
 **简体中文 | [English](README_EN.md)**
 
-MQB 是面向 **Windows + MSVC** 的原生 C/C++ 构建工具。给它一个或多个源文件，它负责发现源码、增量编译、Modules/Header Units 依赖排序、链接/归档，以及可选的构建后运行。
+MQB 是面向 **Windows + MSVC** 的原生 C/C++ 构建工具。给它一个或多个源文件，它负责源码发现、增量编译、Modules/Header Units 依赖排序、链接/归档，以及可选的构建后运行。
 
-当前稳定版本：**v5.0.0** · [发布说明](release/v5.0.0.md)
+最新稳定版与下载：[GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases/latest)
 
 ## 安装
 
 要求：Windows x64，以及 Visual Studio / Visual Studio Build Tools 中的 MSVC C++ toolchain。
 
-从 GitHub Release 下载稳定版 ZIP，解压后运行：
+从 GitHub Releases 下载 Windows x64 ZIP，解压后运行：
 
 ```powershell
 .\install.bat
@@ -32,17 +32,17 @@ mqb --help
 mqb main.cpp --run
 ```
 
-MQB 默认会从入口文件执行 smart discovery，并把构建状态放在项目 `.mqb/` 下。
+单入口默认启用 smart discovery；可写构建状态统一放在项目 `.mqb/` 下。
 
-### 精确指定多个源文件
+### 精确多源文件
 
 ```powershell
 mqb main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
 ```
 
-多个 positional sources 表示精确 source set，不会再自动扩展源码集合。
+多个 positional sources 表示精确 source set，不再自动扩展源码集合。
 
-### 构建不同 target
+### Target kinds
 
 ```powershell
 mqb main.cpp -o app
@@ -64,23 +64,23 @@ mqb main.cpp --run -- input.txt "hello world" 42
 
 - `.c` / `.cpp` / `.cc` / `.cxx` 原生 MSVC 构建。
 - Visual Studio 与 portable MSVC toolchain discovery。
-- 基于 `/sourceDependencies` 的真实 header freshness 与增量编译。
+- 基于 `/sourceDependencies` 的 header freshness 与增量编译。
 - compile / link / archive 独立缓存。
 - `-j / --jobs` 有界并行 scan/compile。
 - `exe` / `dll` / `static` typed targets。
 - typed runtime、LTCG、subsystem policy。
 - project-local named modules 与 header units。
-- external/prebuilt named-module IFC provider。
+- external/prebuilt named-module IFC providers。
 - MSVC toolchain-owned `import std` / `import std.compat`。
 - P1689 `/scanDependencies` 驱动的 module topology 与 transitive IFC closure。
 - Windows Unicode-safe artifact/path identity。
-- 所有 writable build state 统一收敛到项目 `.mqb/`。
+- 所有 writable build state 收敛到项目 `.mqb/`。
 
-> 当前边界：需要 Modules/Header Units pipeline 的 `static` target 仍会显式拒绝。普通静态库构建不受影响。
+> 当前边界：需要 Modules/Header Units pipeline 的 `static` target 仍会显式拒绝；普通静态库构建不受影响。
 
 ## `mqb.json`
 
-MQB 会从执行目录向上查找最近的 `mqb.json`。该文件所在目录成为 project root，也成为 `.mqb/` 的根目录。
+MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成为 project root，也成为 `.mqb/` 根目录。
 
 最小配置：
 
@@ -90,7 +90,7 @@ MQB 会从执行目录向上查找最近的 `mqb.json`。该文件所在目录�
 }
 ```
 
-一个常见配置：
+常见配置：
 
 ```json
 {
@@ -105,7 +105,7 @@ MQB 会从执行目录向上查找最近的 `mqb.json`。该文件所在目录�
 }
 ```
 
-配置支持 build policy、source discovery correction，以及 external/prebuilt module IFC：
+External/prebuilt module IFC 也可在配置中声明：
 
 ```json
 {
@@ -125,8 +125,6 @@ MQB 会从执行目录向上查找最近的 `mqb.json`。该文件所在目录�
 ```text
 mqb <source...> [options]
 ```
-
-常用选项：
 
 | 选项 | 作用 |
 |---|---|
@@ -153,7 +151,7 @@ mqb <source...> [options]
 | `-h, --help` | 完整 CLI 帮助 |
 | `--` | 后续参数传给目标程序 |
 
-完整且始终随 binary 更新的参数列表以 `mqb --help` 为准。
+完整参数列表以当前 binary 的 `mqb --help` 为准。
 
 ## 文档
 
@@ -165,11 +163,9 @@ mqb <source...> [options]
 | 开发 MQB | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
 | 自举与发布门禁 | [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) |
 | C++ 源码目录契约 | [`cpp/README.md`](cpp/README.md) |
-| v5.0.0 发布说明 | [`release/v5.0.0.md`](release/v5.0.0.md) |
+| 历史版本与发布说明 | [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases) |
 
 ## 开发
-
-MQB 使用 MQB 自身构建和验证当前源码。开发入口：
 
 ```powershell
 .\tests\native\develop.ps1
