@@ -24,6 +24,21 @@ After installation, a new terminal should be able to run:
 mqb --help
 ```
 
+## Release ZIP contents
+
+The stable ZIP is a flat, runtime-only package containing exactly:
+
+```text
+mqb.exe
+VERSION
+install.bat
+install.ps1
+uninstall.ps1
+LICENSE
+```
+
+Documentation such as READMEs, configuration, architecture, installation, self-hosting, and release notes is not shipped inside the ZIP; read it directly in the repository and on GitHub Releases. `LICENSE` remains as the Apache-2.0 license copy required for binary redistribution.
+
 ## Installer-owned files
 
 In the default installation directory, the MQB installer manages only:
@@ -88,6 +103,6 @@ msvc-quick-build-vX.Y.Z-windows-x64.zip
 msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
-Before publication, the release workflow validates the binary, package manifest, checksum, installer lifecycle, and self-host closure. See [`SELF_HOSTING_EN.md`](SELF_HOSTING_EN.md) for the technical release gates.
+Before publication, the release workflow validates Stage 1 binary identity, the runtime-only package manifest, checksum, installer lifecycle, and self-host closure. See [`SELF_HOSTING_EN.md`](SELF_HOSTING_EN.md) for the technical release gates.
 
 For normal usage, return to the root [`README_EN.md`](../README_EN.md).
