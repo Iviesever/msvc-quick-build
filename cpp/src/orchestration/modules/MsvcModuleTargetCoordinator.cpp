@@ -1,49 +1,23 @@
 #include "mqb/orchestration/MsvcModuleTargetCoordinator.hpp"
 
 #include <expected>
-#include <filesystem>
-#include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
+#include "ModuleTargetLinkRequestFactory.hpp"
 #include "ModuleTargetPreparation.hpp"
 
 namespace mqb::orchestration {
 namespace {
 
-namespace fs = std::filesystem;
-
 [[nodiscard]] IncrementalModuleTargetError failure(
     const IncrementalModuleTargetErrorCode code,
     std::string message,
-    fs::path source = {}) {
+    std::filesystem::path source = {}) {
     return IncrementalModuleTargetError{
         .code = code,
         .message = std::move(message),
         .source = std::move(source),
-    };
-}
-
-[[nodiscard]] IncrementalLinkRequest make_link_request(
-    const IncrementalModuleTargetRequest& request,
-    const ModuleCompileWaveRequest& compile_request,
-    const bool force_relink) {
-    std::vector<fs::path> objects;
-    objects.reserve(compile_request.sources.size());
-    for (const auto& source : compile_request.sources) {
-        objects.push_back(source.artifacts.object);
-    }
-
-    return IncrementalLinkRequest{
-        .objects = std::move(objects),
-        .output = request.target.executable,
-        .options = request.link_options,
-        .cache_file = request.target.link_cache,
-        .working_directory = request.working_directory.empty()
-            ? std::nullopt
-            : std::optional<fs::path>{request.working_directory},
-        .force_relink = force_relink,
     };
 }
 
@@ -71,7 +45,7 @@ MsvcModuleTargetCoordinator::run(const IncrementalModuleTargetRequest& request) 
     }
     result.compiles = std::move(*compiled);
 
-    auto linked = link_coordinator_.run(make_link_request(
+    auto linked = link_coordinator_.run(detail::make_module_target_link_request(
         request,
         prepared->compile_request,
         result.compiles.any_compiled));
