@@ -1,205 +1,48 @@
 # MQB — MSVC Quick Build
 
-**语言：简体中文 | [English](README_EN.md)**
+**简体中文 | [English](README_EN.md)**
 
-MQB 是面向 Windows + MSVC 的原生 C/C++ 构建工具。它直接从源文件完成 source discovery、增量编译、Modules/Header Units 拓扑、链接、静态库归档与可执行程序运行。
+MQB 是面向 **Windows + MSVC** 的原生 C/C++ 构建工具。给它一个或多个源文件，它负责源码发现、增量编译、Modules/Header Units 依赖排序、链接/归档，以及可选的构建后运行。
 
-> **Stable v5：native-only / MQB 自构建**
->
-> - `mqb.exe` 是唯一受支持的构建实现。
-> - `mqb` 是唯一安装命令入口。
-> - `mqb.json` 是唯一项目配置格式。
-> - MQB 的开发构建、Debug/Release 测试、自举和发布构建全部由 MQB 完成。
-> - 已淘汰的 PowerShell 构建入口、compatibility shim、profile 注入与旧配置格式不会被静默接管。
+最新稳定版与下载：[GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases/latest)
 
-### 主要能力
+## 安装
 
-- 结构化调用 `cl.exe` / `link.exe` / `lib.exe`，内部不以 shell command string 作为通用执行 API。
-- 原生支持 `.c` / `.cpp` / `.cc` / `.cxx`。
-- Visual Studio 与 portable MSVC toolchain discovery。
-- 单入口 smart discovery 与多文件精确 source set。
-- Project-local named modules 与 project-local header units，使用 MSVC P1689 `/scanDependencies`。
-- 基于 `/sourceDependencies` 的真实 header freshness 与增量编译。
-- Typed `exe` / `dll` / `static` target kinds。
-- Typed runtime、LTCG、subsystem policy。
-- Strict `mqb.json` configuration。
-- `--run -- ...` 结构化 program argv。
-- 所有 writable build state 收敛在项目 `.mqb/`。
+要求：Windows x64，以及 Visual Studio / Visual Studio Build Tools 中的 MSVC C++ toolchain。
 
-当前明确 fail closed：external/prebuilt named-module providers、`import std;`，以及需要 Modules/Header Unit pipeline 的 static-library target。相关后续工作独立跟踪于 Issue #16。
-
-## 源码结构：物理目录就是架构
-
-MQB 只维护一套 C++ 产品树。**禁止每个组件再复制自己的 `include/`、`src/`、`tests/`。**
-
-```text
-cpp/
-├─ include/                 # 唯一跨组件头文件根
-│  └─ mqb/
-│     ├─ core/
-│     ├─ config/
-│     ├─ discovery/
-│     ├─ json/
-│     ├─ modules/
-│     ├─ orchestration/
-│     ├─ msvc/
-│     ├─ process/
-│     └─ platform/windows/
-│
-├─ src/                     # 唯一产品实现根
-│  ├─ app/                  # CLI / main / app-private headers
-│  ├─ core/
-│  ├─ config/
-│  ├─ discovery/
-│  ├─ json/
-│  ├─ modules/
-│  ├─ orchestration/
-│  ├─ msvc/
-│  └─ platform/windows/
-│
-├─ tests/                   # 唯一 C++ 测试根，按职责镜像
-│  ├─ app/
-│  ├─ core/
-│  ├─ config/
-│  ├─ discovery/
-│  ├─ json/
-│  ├─ modules/
-│  ├─ orchestration/
-│  ├─ msvc/
-│  ├─ process/
-│  ├─ platform/windows/
-│  └─ e2e/
-│
-├─ README.md                # 强制目录与依赖契约
-└─ mqb.json                 # MQB 自构建 production manifest
-```
-
-职责规则见 [`cpp/README.md`](cpp/README.md)，完整逻辑架构见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。核心约束是：`cpp/include`、`cpp/src`、`cpp/tests` 各自只有一个物理根；新代码必须先选择职责，再选择文件位置。
-
-## 开发：用 MQB 构建 MQB
-
-要求：Windows、Visual Studio/MSVC C++23，以及一个已经可运行的 MQB 作为 seed。
-
-推荐入口：
+从 GitHub Releases 下载 Windows x64 ZIP，解压后运行：
 
 ```powershell
-.\tests\native\develop.ps1
+.\install.bat
 ```
 
-显式指定 seed / configuration / development version：
+默认安装到 `%USERPROFILE%\bin`。重新打开终端后验证：
 
 ```powershell
-.\tests\native\develop.ps1 `
-  -SeedMqbPath C:\path\to\mqb.exe `
-  -Configuration Debug `
-  -Version 5.0.0-dev
+mqb --help
 ```
 
-开发链：
-
-```text
-已安装/指定 seed MQB
-        ↓
-MQB 构建当前 Debug MQB
-        ↓
-当前 MQB 构建 67 个测试可执行文件
-        ↓
-直接执行 67/67 tests
-```
-
-开发产物复制到：
-
-```text
-native-dev\debug\mqb.exe
-```
-
-### 只构建 MQB
-
-[`cpp/mqb.json`](cpp/mqb.json) 是 MQB 自身的 production manifest。当前 manifest 与 `cpp/src/**/*.cpp` 的实际 production source set 保持精确一致，并且只需要两个 include roots：
-
-```text
-include
-src/app
-```
-
-production TU 数量不是稳定契约；native build/test driver 按真实 source-set identity 校验 manifest，而不是依赖 hard-coded magic count。
-
-手工构建：
-
-```powershell
-$version = '5.0.0-dev'
-$quote = [char]34
-$define = 'MQB_VERSION=' + $quote + $version + $quote
-
-Push-Location .\cpp
-mqb src\app\main.cpp --env vs --debug --runtime MTd -D $define
-Pop-Location
-```
-
-输出：
-
-```text
-cpp\.mqb\bin\mqb.exe
-```
-
-### 完整测试
-
-`tests/native/run_native_tests.ps1` 是权威 native test driver：
-
-1. 从 `cpp/mqb.json` 读取全部 non-main production translation units，并与真实 `cpp/src/**/*.cpp` non-main source set 做一致性校验；
-2. 只从统一的 `cpp/tests/` 树枚举并要求恰好 67 个 `*_tests.cpp`；
-3. 使用当前 MQB 构建每个测试可执行文件；
-4. 对 CLI E2E tests 传入当前 MQB 本身；
-5. 直接执行全部测试并要求 67/67 通过。
-
-```powershell
-.\tests\native\run_native_tests.ps1 `
-  -BuilderMqbPath .\native-dev\debug\mqb.exe `
-  -TestMqbPath .\native-dev\debug\mqb.exe `
-  -RepoRoot . `
-  -Configuration Debug
-```
-
-开发与测试链不调用 CMake/CTest。MQB 自身就是 MQB 的开发构建系统。
-
-## 稳定版自举链
-
-首个 stable v5 使用历史 `v5.0.0-rc.2` `mqb.exe` 作为 pinned seed，并校验其 Release ZIP SHA-256 与 executable identity。seed 只负责构建当前源码 Stage 0，永不进入 stable package。
-
-```text
-pinned historical MQB seed
-        ↓  MQB 构建当前 production source set
-Stage 0
-        ↓  MQB 构建并运行 67/67 Release tests
-Stage 0 → Stage 1
-        ↓  清空 MQB build state
-Stage 1 → Stage 2
-```
-
-最终只发布 **Stage 1**。Stage 1/Stage 2 closure、exact package、SHA-256、byte identity 与 installer lifecycle 都是 release-blocking gate。完整契约见 [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md)。
+安装、PATH 与卸载行为见 [`docs/INSTALLATION.md`](docs/INSTALLATION.md)。
 
 ## 快速开始
 
-单文件 / smart discovery：
+### 单文件
 
 ```powershell
-mqb main.cpp --env vs --std latest --run
-mqb main.c --env vs --run
+mqb main.cpp --run
 ```
 
-关闭 discovery：
+单入口默认启用 smart discovery；可写构建状态统一放在项目 `.mqb/` 下。
 
-```powershell
-mqb main.cpp --no-discover
-```
-
-多文件精确 source set：
+### 精确多源文件
 
 ```powershell
 mqb main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
 ```
 
-Target kind：
+多个 positional sources 表示精确 source set，不再自动扩展源码集合。
+
+### Target kinds
 
 ```powershell
 mqb main.cpp -o app
@@ -207,24 +50,37 @@ mqb api.cpp --type dll -o codec
 mqb math.cpp vector.cpp --type static -o math
 ```
 
-Runtime / LTCG / subsystem：
+支持 `exe`、`dll`、`static`。
 
-```powershell
-mqb main.cpp --runtime MT
-mqb main.cpp --ltcg
-mqb math.cpp vector.cpp --type static --ltcg -o math
-mqb winmain.cpp --subsystem windows
-```
-
-Program argv：
+### 把参数传给程序
 
 ```powershell
 mqb main.cpp --run -- input.txt "hello world" 42
 ```
 
+`--` 后的内容只属于目标程序，不参与构建参数解析。
+
+## 核心能力
+
+- `.c` / `.cpp` / `.cc` / `.cxx` 原生 MSVC 构建。
+- Visual Studio 与 portable MSVC toolchain discovery。
+- 基于 `/sourceDependencies` 的 header freshness 与增量编译。
+- compile / link / archive 独立缓存。
+- `-j / --jobs` 有界并行 scan/compile。
+- `exe` / `dll` / `static` typed targets。
+- typed runtime、LTCG、subsystem policy。
+- project-local named modules 与 header units。
+- external/prebuilt named-module IFC providers。
+- MSVC toolchain-owned `import std` / `import std.compat`。
+- P1689 `/scanDependencies` 驱动的 module topology 与 transitive IFC closure。
+- Windows Unicode-safe artifact/path identity。
+- 所有 writable build state 收敛到项目 `.mqb/`。
+
+> 当前边界：需要 Modules/Header Units pipeline 的 `static` target 仍会显式拒绝；普通静态库构建不受影响。
+
 ## `mqb.json`
 
-MQB 从 invocation directory 向上查找最近的 `mqb.json`。该文件所在目录成为 project root 和 `.mqb/` root。
+MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成为 project root，也成为 `.mqb/` 根目录。
 
 最小配置：
 
@@ -234,93 +90,89 @@ MQB 从 invocation directory 向上查找最近的 `mqb.json`。该文件所在�
 }
 ```
 
-示例：
+常见配置：
 
 ```json
 {
   "version": 1,
   "build": {
     "configuration": "release",
-    "architecture": "x64",
     "standard": "latest",
     "type": "exe",
-    "runtime": "MT",
-    "ltcg": true,
-    "subsystem": "console",
-    "output": "game",
-    "defines": ["GAME_BUILD=1"],
-    "include_dirs": ["include"],
-    "library_dirs": ["third_party/lib"],
-    "libraries": ["codec"]
-  },
-  "discovery": {
-    "enabled": true,
-    "exclude_dirs": ["tests"],
-    "extra_sources": ["src/manual_adapter.cpp"],
-    "exclude_sources": ["src/legacy.cpp"]
+    "output": "app",
+    "include_dirs": ["include"]
   }
 }
 ```
 
-完整 schema、路径规则、precedence 与 cache 行为见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。旧 `msvc_list.json` 不会被读取或迁移。
+External/prebuilt module IFC 也可在配置中声明：
+
+```json
+{
+  "version": 1,
+  "modules": {
+    "external": {
+      "vendor.math": "third_party/ifc/vendor.math.ifc"
+    }
+  }
+}
+```
+
+完整字段、路径基准、CLI/config precedence 和 module provider 规则见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
 
 ## 常用 CLI
+
+```text
+mqb <source...> [options]
+```
 
 | 选项 | 作用 |
 |---|---|
 | `--debug` / `--release` | 构建配置 |
-| `--config <debug|release>` | 显式构建配置 |
 | `--std <14|17|20|23|latest>` | C++ 标准 |
 | `--type <exe|dll|static>` | target kind |
 | `--x86` / `--x64` | 目标架构 |
 | `--runtime <MD|MDd|MT|MTd>` | MSVC runtime |
-| `--ltcg` / `--no-ltcg` | LTCG policy |
-| `--subsystem <console|windows>` | subsystem |
+| `--ltcg` / `--no-ltcg` | LTCG |
+| `--subsystem <console|windows>` | PE subsystem |
 | `-j, --jobs <N>` | 最大并发 scan/compile 数 |
-| `-o, --output <name>` | `.mqb/bin/` 下的目标名 |
-| `--run` | 构建后运行 executable |
+| `-o, --output <name>` | 目标名 |
 | `--discover` / `--no-discover` | source discovery |
+| `--module-ifc <name=path>` | external/prebuilt named-module IFC |
 | `-I <dir>` | include directory |
 | `-D <value>` | preprocessor definition |
 | `-L <dir>` / `--lib-path <dir>` | library search directory |
 | `-l <name>` / `--lib <name>` | library |
-| `--compiler-arg <arg>` | 原样 `cl.exe` argv element |
+| `--compiler-arg <arg>` | 原样 compiler argv element |
 | `--linker-arg <arg>` | 原样 linker argv element |
 | `--env <auto|vs|portable>` | toolchain selection |
-| `--portable-root <dir>` | portable toolchain root candidate |
-| `-v, --verbose` | verbose output |
-| `-h, --help` | help + embedded version |
-| `--` | 后续 argv 传给目标程序 |
+| `--run` | 构建后运行 executable |
+| `-v, --verbose` | 详细输出 |
+| `-h, --help` | 完整 CLI 帮助 |
+| `--` | 后续参数传给目标程序 |
 
-PowerShell-era 单横线别名会 fail closed 为 unknown option。
+完整参数列表以当前 binary 的 `mqb --help` 为准。
 
-## 安装
+## 文档
 
-稳定版包名：
+| 主题 | 文档 |
+|---|---|
+| `mqb.json` 配置与 precedence | [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) |
+| 安装、PATH、卸载 | [`docs/INSTALLATION.md`](docs/INSTALLATION.md) |
+| 架构与 Modules/cache 模型 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| 开发 MQB | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
+| 自举与发布门禁 | [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) |
+| C++ 源码目录契约 | [`cpp/README.md`](cpp/README.md) |
+| 历史版本与发布说明 | [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases) |
 
-```text
-msvc-quick-build-v5.0.0-windows-x64.zip
-```
-
-解压后：
+## 开发
 
 ```powershell
-.\install.bat
+.\tests\native\develop.ps1
 ```
 
-默认安装到 `%USERPROFILE%\bin`。安装器不会创建旧 `build` compatibility command，也不修改 PowerShell profile。详见 [`docs/INSTALLATION.md`](docs/INSTALLATION.md)。
+贡献者流程见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
 
-## 稳定版发布门禁
+## License
 
-正式 `v5.0.0` 必须在同一候选提交上通过：
-
-1. `Native C++`：pinned seed → current Debug MQB → 67/67 Debug tests；
-2. `Native Installer`：pinned seed → current Release MQB → install/reinstall/uninstall；
-3. `Native Release`：pinned seed → Stage 0 → 67/67 Release tests → Stage 1 → clean Stage 2 → exact package / checksum / Stage 1 byte identity / packaged installer；
-4. 只有匹配 `release/VERSION` 的 `vX.Y.Z` tag 才允许 publication，而且 publication 只消费同一 workflow run 已验证 artifact，不 rebuild。
-
-历史 `v5.0.0-rc.1` / `v5.0.0-rc.2` 保持不重写。
-
-## 许可证
-
-Apache License 2.0（SPDX: `Apache-2.0`）— Copyright 2026 Iviesever。完整条款见 [`LICENSE`](LICENSE)。
+Apache License 2.0（SPDX: `Apache-2.0`）。完整条款见 [`LICENSE`](LICENSE)。

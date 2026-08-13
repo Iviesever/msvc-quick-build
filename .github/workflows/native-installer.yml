@@ -3,6 +3,7 @@ name: Native Installer
 on:
   pull_request:
     paths:
+      - 'VERSION'
       - 'cpp/**'
       - 'install.bat'
       - 'install.ps1'
@@ -10,15 +11,16 @@ on:
       - 'tests/installer/**'
       - 'tests/native/**'
       - 'docs/INSTALLATION.md'
+      - 'docs/INSTALLATION_EN.md'
       - 'README.md'
       - 'README_EN.md'
       - 'LICENSE'
-      - 'release/**'
       - '.github/workflows/native-installer.yml'
   push:
     branches:
       - main
     paths:
+      - 'VERSION'
       - 'cpp/**'
       - 'install.bat'
       - 'install.ps1'
@@ -26,10 +28,10 @@ on:
       - 'tests/installer/**'
       - 'tests/native/**'
       - 'docs/INSTALLATION.md'
+      - 'docs/INSTALLATION_EN.md'
       - 'README.md'
       - 'README_EN.md'
       - 'LICENSE'
-      - 'release/**'
       - '.github/workflows/native-installer.yml'
 
 jobs:
@@ -58,7 +60,7 @@ jobs:
         id: build
         shell: pwsh
         run: |
-          $version = (Get-Content -LiteralPath 'release/VERSION' -Raw).Trim()
+          $version = (Get-Content -LiteralPath 'VERSION' -Raw).Trim()
           $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
             -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
             -RepoRoot $PWD `

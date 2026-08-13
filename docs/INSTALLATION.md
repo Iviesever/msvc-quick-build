@@ -1,28 +1,32 @@
-# MQB 安装 / Installation
+# 安装 MQB
 
-**语言：简体中文 | [English](INSTALLATION_EN.md)**
+**简体中文 | [English](INSTALLATION_EN.md)**
 
-Stable v5 只安装一个命令和一个实现：
-
-- 可执行文件：`mqb.exe`
-- 命令：`mqb`
-- 项目配置：`mqb.json`
+MQB 的 stable Windows 包安装一个命令：`mqb`，对应原生可执行文件 `mqb.exe`。
 
 ## 安装
 
-Windows 发布包包含 `mqb.exe`、`install.ps1`、`uninstall.ps1` 与 `install.bat`。运行：
+解压 GitHub Release 的 Windows x64 包后运行：
 
 ```powershell
 .\install.bat
 ```
 
-默认的当前用户安装目录为：
+默认当前用户安装目录：
 
 ```text
 %USERPROFILE%\bin
 ```
 
-安装器只拥有该目录中的以下文件：
+安装完成后，新开的终端中应可以运行：
+
+```powershell
+mqb --help
+```
+
+## 安装器拥有的文件
+
+默认安装目录中，MQB installer 只管理：
 
 ```text
 mqb.exe
@@ -31,83 +35,59 @@ uninstall-mqb.ps1
 mqb-install-state.json
 ```
 
-安装器不会修改 PowerShell profile，也不会创建兼容命令。
+安装器不会修改 PowerShell profile，也不会创建旧版 `build` compatibility command。
 
-## PATH 所有权
+## PATH 规则
 
-只有当用户 PATH 中不存在安装目录时，安装器才会添加该目录。安装状态会记录这条 PATH 是否由 MQB 添加。
+如果用户 PATH 中还没有安装目录，installer 会添加它，并在安装状态中记录该 PATH 条目由 MQB 创建。
 
-重复安装是幂等的：不会重复添加同一个 PATH 条目。
+规则：
 
-卸载时，只有当前安装状态表明该 PATH 条目由 MQB 拥有，安装器才会移除它。
+- 重复安装不会重复添加 PATH；
+- 如果 PATH 原本就由用户维护，MQB 不取得其所有权；
+- 卸载时只删除安装状态明确记录为 MQB-owned 的 PATH 条目。
+
+## 重装 / 升级
+
+再次运行新发布包中的：
+
+```powershell
+.\install.bat
+```
+
+即可更新当前用户安装。Installer 的文件与 PATH 操作是幂等的，不需要先手工删除旧 stable 安装。
 
 ## 卸载
 
-使用：
+默认安装位置下运行：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File "$HOME\bin\uninstall-mqb.ps1"
 ```
 
-卸载会删除安装器拥有的文件，以及由安装器拥有的 PATH 条目。
+卸载会删除 MQB-owned 安装文件，以及仅在安装状态证明由 MQB 添加时才删除对应 PATH 条目。
 
-## 已存在的旧版安装
+## 旧版兼容行为
 
-Stable v5 不会自动迁移或恢复旧的 PowerShell 实现安装。如果旧安装在机器上留下自定义 `build` 命令、`build.ps1` 或 PowerShell profile 修改，这些内容不属于 v5 安装器契约，可由用户手动移除。
+Stable v5 不恢复旧 PowerShell 实现，也不自动迁移旧配置：
 
-原生安装器只维护一个权威的 MQB 安装路径。
+- 不创建 `build` compatibility command；
+- 不修改 PowerShell profile；
+- 不读取或转换旧 `msvc_list.json`；
+- 已淘汰的 PowerShell-era 单横线 CLI 别名会作为 unknown option 被拒绝。
 
-## CLI 与配置兼容性
+当前 CLI 以 `mqb --help` 为权威，项目配置只使用 `mqb.json`。
 
-Stable v5 只接受 `mqb --help` 中记录的原生 CLI，并且只读取 `mqb.json`。已知的旧单横线别名会作为 unknown option 被拒绝；旧 `msvc_list.json` 不会被搜索、解析或转换。
+## 发布包完整性
 
-`mqb --help` 记录的原生短选项仍受支持，包括 `-h`、`-v`、`-j`、`-o`、`-I`、`-D`、`-L` 与 `-l`。
-
-## Installer CI 验收
-
-`Native Installer` workflow 会在 Windows 上验证：
-
-1. 经过验证的 `mqb.exe` 能通过公开的 batch 入口安装；
-2. 只安装原生 MQB 文件；
-3. 不创建兼容命令或 profile artifact；
-4. 重装不会重复 PATH 状态；
-5. 卸载会清除安装器拥有的文件和 PATH 状态；
-6. 已淘汰的 installer 参数会被拒绝，而不是静默激活迁移行为。
-
-## Stable package 契约
-
-对于版本 `X.Y.Z`，`Native Release` workflow 生成：
+版本 `X.Y.Z` 的稳定发布使用：
 
 ```text
 msvc-quick-build-vX.Y.Z-windows-x64.zip
 msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
-Stable ZIP 包含原生 binary / installer，以及完整的简体中文与 English 文档面：
+Release workflow 在发布前验证 binary、package manifest、checksum、installer lifecycle 与 self-host closure。自举和发布门禁的技术细节见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
 
-```text
-mqb.exe
-install.bat
-install.ps1
-uninstall.ps1
-README.md
-README_EN.md
-LICENSE
-MQB_CONFIG.md
-MQB_CONFIG_EN.md
-ARCHITECTURE.md
-ARCHITECTURE_EN.md
-INSTALLATION.md
-INSTALLATION_EN.md
-SELF_HOSTING.md
-SELF_HOSTING_EN.md
-RELEASE_NOTES.md
-RELEASE_NOTES_EN.md
-```
-
-必要时，仓库专属的文档链接会在打包时改写为 exact-tag GitHub URL；发布包内部文档之间的链接则保持 package-local。上传前，CI 会逐个验证解压包内所有 Markdown 相对链接，拒绝缺失目标或逃出 package root 的链接。
-
-上传前，CI 还会针对解压后的实际包验证完整 Release test graph、self-host closure、Stage 1 byte identity、exact bilingual package manifest、checksum sidecar、embedded version，以及 install/reinstall/uninstall lifecycle。
-
-Tag publication 是 immutable 且基于 exact artifact 的。推送的 `vX.Y.Z` tag 必须与 `release/VERSION` 完全匹配；publication job 只下载同一 workflow run 已验证的 ZIP 与 checksum 并发布，不会重新构建。
+用户使用方式见仓库根目录 [`README.md`](../README.md)。
