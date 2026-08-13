@@ -209,7 +209,11 @@ if ($Action -eq 'Install') {
     exit 0
 }
 
-if (-not $SkipUserPath) {
+$pathOwned = $false
+if ($null -ne $previousState -and $null -ne $previousState.path_added) {
+    $pathOwned = [bool]$previousState.path_added
+}
+if (-not $SkipUserPath -and $pathOwned) {
     Remove-UserPathEntry $InstallRoot
 }
 
