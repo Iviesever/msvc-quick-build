@@ -5,25 +5,25 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace mqb {
 namespace {
 
 [[nodiscard]] std::string extension_lower(const std::filesystem::path& path) {
     std::string extension = path.extension().string();
-    std::transform(
-        extension.begin(),
-        extension.end(),
+    std::ranges::transform(
+        extension,
         extension.begin(),
         [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return extension;
 }
 
-[[nodiscard]] bool cpp_ordinary_extension(const std::string& extension) {
+[[nodiscard]] constexpr bool cpp_ordinary_extension(const std::string_view extension) noexcept {
     return extension == ".cpp" || extension == ".cc" || extension == ".cxx";
 }
 
-[[nodiscard]] bool module_extension(const std::string& extension) {
+[[nodiscard]] constexpr bool module_extension(const std::string_view extension) noexcept {
     return extension == ".ixx" || extension == ".cppm" || extension == ".mpp";
 }
 
