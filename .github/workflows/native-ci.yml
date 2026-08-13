@@ -24,6 +24,7 @@ jobs:
   build-current:
     name: Build current Debug MQB + shared test library
     runs-on: windows-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
