@@ -4,26 +4,25 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'VERSION'
+      - 'cpp/**'
+      - 'tests/native/**'
+      - '.github/workflows/native-ci.yml'
   pull_request:
     paths:
       - 'VERSION'
       - 'cpp/**'
-      - 'README.md'
-      - 'README_EN.md'
-      - 'LICENSE'
-      - 'docs/**'
-      - 'install.bat'
-      - 'install.ps1'
-      - 'uninstall.ps1'
-      - 'tests/installer/**'
       - 'tests/native/**'
-      - 'tests/selfhost/**'
       - '.github/workflows/native-ci.yml'
-      - '.github/workflows/native-installer.yml'
-      - '.github/workflows/native-release.yml'
+
+concurrency:
+  group: native-cpp-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  build-current:
+    name: Build current Debug MQB
     runs-on: windows-latest
     permissions:
       contents: read
@@ -45,7 +44,6 @@ jobs:
           "path=$seed" >> $env:GITHUB_OUTPUT
 
       - name: Build current Debug MQB with MQB
-        id: build
         shell: pwsh
         run: |
           $version = (Get-Content -LiteralPath 'VERSION' -Raw).Trim()
@@ -57,14 +55,72 @@ jobs:
             -Clean `
             -OutputPath (Join-Path $PWD 'native-out/debug/mqb.exe')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "path=$mqb" >> $env:GITHUB_OUTPUT
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+            throw "Debug MQB build output missing: $mqb"
+          }
 
-      - name: Run MQB-native Debug tests
+      - name: Upload exact Debug MQB
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-debug-mqb
+          path: native-out/debug/mqb.exe
+          if-no-files-found: error
+          retention-days: 1
+
+  test-shard:
+    name: Native Debug tests ${{ matrix.shard }}/4
+    needs: build-current
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download exact Debug MQB
+        uses: actions/download-artifact@v8
+        with:
+          name: native-debug-mqb
+          path: native-out/debug
+
+      - name: Run MQB-native Debug test shard
         shell: pwsh
         run: |
+          $mqb = Join-Path $PWD 'native-out/debug/mqb.exe'
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+            throw "Downloaded Debug MQB missing: $mqb"
+          }
           & (Join-Path $PWD 'tests/native/run_native_tests.ps1') `
-            -BuilderMqbPath '${{ steps.build.outputs.path }}' `
-            -TestMqbPath '${{ steps.build.outputs.path }}' `
+            -BuilderMqbPath $mqb `
+            -TestMqbPath $mqb `
             -RepoRoot $PWD `
-            -Configuration Debug
+            -Configuration Debug `
+            -ShardIndex ${{ matrix.shard }} `
+            -ShardCount 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  build-and-test:
+    name: Native C++ gate
+    if: always()
+    needs:
+      - build-current
+      - test-shard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require build and every shard
+        shell: bash
+        env:
+          BUILD_RESULT: ${{ needs.build-current.result }}
+          TEST_RESULT: ${{ needs.test-shard.result }}
+        run: |
+          set -euo pipefail
+          echo "build-current: $BUILD_RESULT"
+          echo "test-shard:    $TEST_RESULT"
+          if [[ "$BUILD_RESULT" != "success" || "$TEST_RESULT" != "success" ]]; then
+            exit 1
+          fi
