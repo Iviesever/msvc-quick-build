@@ -124,7 +124,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        include:
+          - shard: 0
+            subshard_a: 0
+            subshard_b: 1
+          - shard: 1
+            subshard_a: 2
+            subshard_b: 3
+          - shard: 2
+            subshard_a: 4
+            subshard_b: 5
+          - shard: 3
+            subshard_a: 6
+            subshard_b: 7
 
     steps:
       - name: Checkout
@@ -136,25 +148,22 @@ jobs:
           name: native-release-stage0
           path: native-out/release/stage0
 
-      - name: Run MQB-native Release test shard
+      - name: Run paired MQB-native Release subshards
         shell: pwsh
         run: |
           $mqb = Join-Path $PWD 'native-out/release/stage0/mqb.exe'
           $library = Join-Path $PWD 'native-out/release/stage0/native-test-product.lib'
-          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
-            throw "Downloaded Stage 0 MQB missing: $mqb"
-          }
-          if (-not (Test-Path -LiteralPath $library -PathType Leaf)) {
-            throw "Downloaded shared Release native-test product library missing: $library"
-          }
-          & (Join-Path $PWD 'tests/native/run_native_tests.ps1') `
+          & (Join-Path $PWD 'tests/native/run_paired_native_subshards.ps1') `
             -BuilderMqbPath $mqb `
             -TestMqbPath $mqb `
             -RepoRoot $PWD `
             -Configuration Release `
-            -ShardIndex ${{ matrix.shard }} `
-            -ShardCount 4 `
-            -SharedProductLibraryPath $library
+            -SharedProductLibraryPath $library `
+            -OuterShardIndex ${{ matrix.shard }} `
+            -OuterShardCount 4 `
+            -SubshardA ${{ matrix.subshard_a }} `
+            -SubshardB ${{ matrix.subshard_b }} `
+            -ShardCount 8
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   build-test-package:
