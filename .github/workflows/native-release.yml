@@ -3,6 +3,7 @@ name: Native Release
 on:
   pull_request:
     paths:
+      - 'VERSION'
       - 'cpp/**'
       - 'README.md'
       - 'README_EN.md'
@@ -14,11 +15,12 @@ on:
       - 'tests/installer/**'
       - 'tests/native/**'
       - 'tests/selfhost/**'
-      - 'release/**'
       - '.github/workflows/native-release.yml'
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+    paths:
+      - 'VERSION'
 
 jobs:
   build-test-package:
@@ -30,7 +32,6 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       package_name: ${{ steps.meta.outputs.package_name }}
-      notes_file: ${{ steps.meta.outputs.notes_file }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
 
     steps:
@@ -41,31 +42,21 @@ jobs:
         id: meta
         shell: pwsh
         run: |
-          $version = (Get-Content -LiteralPath 'release/VERSION' -Raw).Trim()
+          $version = (Get-Content -LiteralPath 'VERSION' -Raw).Trim()
           if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$') {
-            throw "Invalid release/VERSION value: '$version'"
+            throw "Invalid VERSION value: '$version'"
           }
 
           $tag = "v$version"
           $packageName = "msvc-quick-build-$tag-windows-x64"
-          $notesFile = "release/$tag.md"
-          if (-not (Test-Path -LiteralPath $notesFile -PathType Leaf)) {
-            throw "Release notes not found: $notesFile"
-          }
-
-          if ($env:GITHUB_EVENT_NAME -eq 'push') {
-            if (-not $env:GITHUB_REF.StartsWith('refs/tags/')) {
-              throw "Release publication must be triggered by a tag, got '$env:GITHUB_REF'"
-            }
-            if ($env:GITHUB_REF_NAME -ne $tag) {
-              throw "Tag/version mismatch: pushed '$env:GITHUB_REF_NAME', release/VERSION requires '$tag'"
-            }
-          }
-
           $prerelease = $version.Contains('-').ToString().ToLowerInvariant()
+
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF -ne 'refs/heads/main') {
+            throw "Release publication must come from main, got '$env:GITHUB_REF'"
+          }
+
           "version=$version" >> $env:GITHUB_OUTPUT
           "package_name=$packageName" >> $env:GITHUB_OUTPUT
-          "notes_file=$notesFile" >> $env:GITHUB_OUTPUT
           "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
           Write-Host "Release version: $version"
           Write-Host "Package: $packageName"
@@ -80,7 +71,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "path=$seed" >> $env:GITHUB_OUTPUT
 
-      # Stage 0 is built by MQB, not CMake. It is a test/bootstrap generation only.
       - name: Build Stage 0 Release MQB with MQB
         id: stage0
         shell: pwsh
@@ -97,7 +87,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "path=$mqb" >> $env:GITHUB_OUTPUT
 
-      - name: Run 67 MQB-native Release tests
+      - name: Run MQB-native Release tests
         shell: pwsh
         run: |
           & (Join-Path $PWD 'tests/native/run_native_tests.ps1') `
@@ -124,15 +114,14 @@ jobs:
         env:
           MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
           MQB_PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
-          MQB_NOTES_FILE: ${{ steps.meta.outputs.notes_file }}
         run: |
           $dist = Join-Path $PWD 'dist'
           $stage = Join-Path $dist $env:MQB_PACKAGE_NAME
           if (Test-Path -LiteralPath $dist) { Remove-Item -LiteralPath $dist -Recurse -Force }
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-          # Stable releases package Stage 1: the binary produced by MQB itself.
           Copy-Item 'selfhost-out/stage1/mqb.exe' (Join-Path $stage 'mqb.exe')
+          Copy-Item 'VERSION' (Join-Path $stage 'VERSION')
           Copy-Item 'install.bat' (Join-Path $stage 'install.bat')
           Copy-Item 'install.ps1' (Join-Path $stage 'install.ps1')
           Copy-Item 'uninstall.ps1' (Join-Path $stage 'uninstall.ps1')
@@ -148,29 +137,6 @@ jobs:
           Copy-Item 'docs/SELF_HOSTING.md' (Join-Path $stage 'SELF_HOSTING.md')
           Copy-Item 'docs/SELF_HOSTING_EN.md' (Join-Path $stage 'SELF_HOSTING_EN.md')
 
-          $releaseNotes = Join-Path $stage 'RELEASE_NOTES.md'
-          $releaseNotesEn = Join-Path $stage 'RELEASE_NOTES_EN.md'
-          $notesEnFile = "release/v$($env:MQB_RELEASE_VERSION)_EN.md"
-          if (-not (Test-Path -LiteralPath $notesEnFile -PathType Leaf)) {
-            throw "English release notes not found: $notesEnFile"
-          }
-          Copy-Item $env:MQB_NOTES_FILE $releaseNotes
-          Copy-Item $notesEnFile $releaseNotesEn
-
-          $zhNotes = (Get-Content -LiteralPath $releaseNotes -Raw).Replace(
-            "(v$($env:MQB_RELEASE_VERSION)_EN.md)",
-            '(RELEASE_NOTES_EN.md)'
-          )
-          Set-Content -LiteralPath $releaseNotes -Value $zhNotes -Encoding utf8NoBOM -NoNewline
-
-          $enNotes = (Get-Content -LiteralPath $releaseNotesEn -Raw).Replace(
-            "(v$($env:MQB_RELEASE_VERSION).md)",
-            '(RELEASE_NOTES.md)'
-          )
-          Set-Content -LiteralPath $releaseNotesEn -Value $enNotes -Encoding utf8NoBOM -NoNewline
-
-          # Repository Markdown is copied into a flat release-doc root. Keep links to
-          # packaged docs local, while source-only references point at the exact tag.
           $tag = "v$env:MQB_RELEASE_VERSION"
           $repoBlobBase = "https://github.com/$env:GITHUB_REPOSITORY/blob/$tag"
           $packageLinkRewrites = @{
@@ -256,11 +222,10 @@ jobs:
             'mqb.exe',
             'README.md',
             'README_EN.md',
-            'RELEASE_NOTES.md',
-            'RELEASE_NOTES_EN.md',
             'SELF_HOSTING.md',
             'SELF_HOSTING_EN.md',
-            'uninstall.ps1'
+            'uninstall.ps1',
+            'VERSION'
           ) | Sort-Object
           $actualFiles = @(Get-ChildItem -LiteralPath $verifyRoot -File | Select-Object -ExpandProperty Name | Sort-Object)
           $manifestDiff = @(Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $actualFiles)
@@ -272,9 +237,14 @@ jobs:
           $selfHostedMqb = Join-Path $PWD 'selfhost-out/stage1/mqb.exe'
           $packagedMqb = Join-Path $verifyRoot 'mqb.exe'
           $selfHostedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $selfHostedMqb).Hash
-          $packagedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $packagedMqb).Hash
-          if ($selfHostedHash -ne $packagedHash) {
+          $packagedMqbHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $packagedMqb).Hash
+          if ($selfHostedHash -ne $packagedMqbHash) {
             throw 'Packaged mqb.exe is not byte-identical to the validated Stage 1 self-hosted binary.'
+          }
+
+          $packagedVersion = (Get-Content -LiteralPath (Join-Path $verifyRoot 'VERSION') -Raw).Trim()
+          if ($packagedVersion -ne $env:MQB_RELEASE_VERSION) {
+            throw "Packaged VERSION mismatch: '$packagedVersion' vs '$env:MQB_RELEASE_VERSION'"
           }
 
           $help = @(& $packagedMqb --help 2>&1 | ForEach-Object { $_.ToString() })
@@ -284,17 +254,6 @@ jobs:
             throw "Packaged embedded version mismatch. Expected '$expectedHelp', got '$($help[0])'"
           }
 
-          $zhNotes = Get-Content -LiteralPath (Join-Path $verifyRoot 'RELEASE_NOTES.md') -Raw
-          $enNotes = Get-Content -LiteralPath (Join-Path $verifyRoot 'RELEASE_NOTES_EN.md') -Raw
-          if (-not $zhNotes.Contains('(RELEASE_NOTES_EN.md)')) {
-            throw 'Packaged Chinese release notes do not link to RELEASE_NOTES_EN.md.'
-          }
-          if (-not $enNotes.Contains('(RELEASE_NOTES.md)')) {
-            throw 'Packaged English release notes do not link to RELEASE_NOTES.md.'
-          }
-
-          # Every relative Markdown target shipped in the flat documentation root must
-          # resolve to a real file inside that package. Absolute URLs and anchors are allowed.
           $packageRoot = [IO.Path]::GetFullPath($verifyRoot).TrimEnd('\')
           $rootPrefix = $packageRoot + [IO.Path]::DirectorySeparatorChar
           $linkPattern = '\[[^\]]+\]\(([^)]+)\)'
@@ -328,34 +287,6 @@ jobs:
 
           Write-Host 'Exact self-hosted packaged artifact validation passed.'
 
-      - name: Validate GitHub Release notes body
-        shell: pwsh
-        env:
-          MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
-          MQB_NOTES_FILE: ${{ steps.meta.outputs.notes_file }}
-        run: |
-          $tag = "v$env:MQB_RELEASE_VERSION"
-          $notesEnFile = "release/v$($env:MQB_RELEASE_VERSION)_EN.md"
-          if (-not (Test-Path -LiteralPath $env:MQB_NOTES_FILE -PathType Leaf)) {
-            throw "Missing release notes: $env:MQB_NOTES_FILE"
-          }
-          if (-not (Test-Path -LiteralPath $notesEnFile -PathType Leaf)) {
-            throw "Missing English release notes: $notesEnFile"
-          }
-
-          $sourceNotes = Get-Content -LiteralPath $env:MQB_NOTES_FILE -Raw
-          $sourceEnglishLink = "(v$($env:MQB_RELEASE_VERSION)_EN.md)"
-          if (-not $sourceNotes.Contains($sourceEnglishLink)) {
-            throw "Release notes do not contain expected English link target: $sourceEnglishLink"
-          }
-
-          $taggedEnglishTarget = "https://github.com/$env:GITHUB_REPOSITORY/blob/$tag/release/v$($env:MQB_RELEASE_VERSION)_EN.md"
-          $rendered = $sourceNotes.Replace($sourceEnglishLink, "($taggedEnglishTarget)")
-          if (-not $rendered.Contains("($taggedEnglishTarget)")) {
-            throw 'GitHub Release notes body did not receive the exact-tag English link.'
-          }
-          Write-Host "GitHub Release English notes target: $taggedEnglishTarget"
-
       - name: Upload validated package
         uses: actions/upload-artifact@v7
         with:
@@ -367,7 +298,7 @@ jobs:
           retention-days: 30
 
   publish-release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build-test-package
     runs-on: windows-latest
     permissions:
@@ -376,11 +307,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       MQB_RELEASE_VERSION: ${{ needs.build-test-package.outputs.version }}
       MQB_PACKAGE_NAME: ${{ needs.build-test-package.outputs.package_name }}
-      MQB_NOTES_FILE: ${{ needs.build-test-package.outputs.notes_file }}
       MQB_PRERELEASE: ${{ needs.build-test-package.outputs.prerelease }}
 
     steps:
-      - name: Checkout tagged source
+      - name: Checkout release commit
         uses: actions/checkout@v7
 
       - name: Download exact validated package
@@ -389,23 +319,13 @@ jobs:
           name: ${{ env.MQB_PACKAGE_NAME }}
           path: dist-publish
 
-      - name: Verify publication inputs
+      - name: Verify publication inputs and immutable identity
         shell: pwsh
         run: |
           $tag = "v$env:MQB_RELEASE_VERSION"
-          if ($env:GITHUB_REF_NAME -ne $tag) {
-            throw "Tag/version mismatch before publication: '$env:GITHUB_REF_NAME' vs '$tag'"
-          }
-          if (-not (Test-Path -LiteralPath $env:MQB_NOTES_FILE -PathType Leaf)) {
-            throw "Missing release notes: $env:MQB_NOTES_FILE"
-          }
-          $notesEnFile = "release/v$($env:MQB_RELEASE_VERSION)_EN.md"
-          if (-not (Test-Path -LiteralPath $notesEnFile -PathType Leaf)) {
-            throw "Missing English release notes: $notesEnFile"
-          }
-
           $zip = Join-Path $PWD "dist-publish/$($env:MQB_PACKAGE_NAME).zip"
           $sha = $zip + '.sha256'
+
           if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "Missing validated package: $zip" }
           if (-not (Test-Path -LiteralPath $sha -PathType Leaf)) { throw "Missing validated checksum: $sha" }
 
@@ -416,9 +336,14 @@ jobs:
             throw "Downloaded artifact checksum mismatch. Expected '$expected', got '$actual'"
           }
 
-          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            throw "Release $tag already exists. Stable release publication is immutable; refusing to overwrite it."
+            throw "Release $tag already exists. Refusing to overwrite an existing release."
+          }
+
+          & gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            throw "Tag $tag already exists without a release. Refusing ambiguous publication."
           }
           exit 0
 
@@ -434,22 +359,12 @@ jobs:
             "$tag — Stable Release"
           }
 
-          $sourceNotes = Get-Content -LiteralPath $env:MQB_NOTES_FILE -Raw
-          $sourceEnglishLink = "(v$($env:MQB_RELEASE_VERSION)_EN.md)"
-          if (-not $sourceNotes.Contains($sourceEnglishLink)) {
-            throw "Release notes do not contain expected English link target: $sourceEnglishLink"
-          }
-          $taggedEnglishTarget = "https://github.com/$env:GITHUB_REPOSITORY/blob/$tag/release/v$($env:MQB_RELEASE_VERSION)_EN.md"
-          $releaseBody = Join-Path $PWD 'release-body.md'
-          $sourceNotes.Replace($sourceEnglishLink, "($taggedEnglishTarget)") |
-            Set-Content -LiteralPath $releaseBody -Encoding utf8NoBOM -NoNewline
-
           $arguments = @(
             'release', 'create', $tag, $zip, $sha,
             '--repo', $env:GITHUB_REPOSITORY,
-            '--verify-tag',
+            '--target', $env:GITHUB_SHA,
             '--title', $title,
-            '--notes-file', $releaseBody
+            '--generate-notes'
           )
           if ($env:MQB_PRERELEASE -eq 'true') {
             $arguments += '--prerelease'
@@ -457,3 +372,9 @@ jobs:
 
           & gh @arguments
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $release = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,isDraft,isPrerelease,url | ConvertFrom-Json
+          if ($release.tagName -ne $tag -or $release.isDraft) {
+            throw "Published release identity validation failed for $tag"
+          }
+          Write-Host "Published release: $($release.url)"
