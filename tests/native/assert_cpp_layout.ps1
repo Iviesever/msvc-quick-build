@@ -204,6 +204,8 @@ $orchestrationLeafFiles = [ordered]@{
     'modules' = @(
         'ModuleCompilePlan.cpp', 'ModuleCompilePlan.hpp',
         'ModuleCompileRequestFactory.cpp', 'ModuleCompileRequestFactory.hpp',
+        'ModuleTargetLinkRequestFactory.cpp', 'ModuleTargetLinkRequestFactory.hpp',
+        'ModuleTargetPreparation.cpp', 'ModuleTargetPreparation.hpp',
         'MsvcModuleCompileCoordinator.cpp', 'MsvcModuleTargetCoordinator.cpp'
     )
     'routing' = @('MsvcTargetRouter.cpp')
