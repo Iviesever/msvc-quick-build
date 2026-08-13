@@ -6,11 +6,6 @@ on:
       - 'VERSION'
       - 'cpp/**'
       - 'LICENSE'
-      - 'install.bat'
-      - 'install.ps1'
-      - 'uninstall.bat'
-      - 'uninstall.ps1'
-      - 'tests/installer/**'
       - 'tests/native/**'
       - 'tests/selfhost/**'
       - '.github/workflows/native-release.yml'
@@ -20,6 +15,11 @@ on:
     paths:
       - 'VERSION'
       - '.github/workflows/native-release.yml'
+
+# Supersede obsolete PR validations, but never cancel an in-flight main publication.
+concurrency:
+  group: native-release-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build-test-package:
@@ -144,6 +144,7 @@ jobs:
         env:
           MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
           MQB_PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
+          MQB_NO_PAUSE: '1'
         run: |
           $dist = Join-Path $PWD 'dist'
           $zip = Join-Path $dist ($env:MQB_PACKAGE_NAME + '.zip')
