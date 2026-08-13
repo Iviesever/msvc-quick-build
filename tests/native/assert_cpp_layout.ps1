@@ -135,6 +135,10 @@ Assert-LeafLayout -Root (Join-Path $srcRoot 'config') -LeafFiles ([ordered]@{
     'resolution' = @('ProjectOptions.cpp')
     'schema' = @('ProjectConfigSchema.cpp', 'ProjectConfigSchema.hpp')
 })
+Assert-LeafLayout -Root (Join-Path $testsRoot 'config') -LeafFiles ([ordered]@{
+    'integration' = @('build_policy_config_tests.cpp', 'project_config_tests.cpp')
+    'resolution' = @('project_options_tests.cpp')
+})
 
 # Toolchain-independent core. Public headers stay in include/mqb/core as a
 # stable facade while implementation/test ownership is explicit.
