@@ -2,116 +2,85 @@
 
 **简体中文 | [English](README_EN.md)**
 
-MQB 是面向 **Windows + MSVC** 的原生 C/C++ 构建工具。给它源文件，它直接完成源码发现、增量编译、Modules/Header Units 依赖排序、链接或归档，并把所有构建状态收敛到项目 `.mqb/`。
+MQB 是面向 **Windows + MSVC** 的原生 C/C++ 构建工具。给它一个或多个源文件，它负责发现源码、增量编译、Modules/Header Units 依赖排序、链接/归档，以及可选的构建后运行。
 
-它不要求生成 Visual Studio solution，也不依赖 CMake/CTest 才能构建普通项目。
-
-## 为什么用 MQB
-
-- **一条命令直接构建**：支持 `.c`、`.cpp`、`.cc`、`.cxx`，以及 C++ module interface 文件。
-- **真实增量构建**：基于 MSVC `/sourceDependencies` 跟踪头文件新鲜度，并为 compile/link/archive 分别维护缓存。
-- **现代 C++ Modules**：支持 project-local named modules、header units、显式 external/prebuilt IFC provider，以及 MSVC `import std` / `std.compat`。
-- **三种目标类型**：`exe`、`dll`、`static`。
-- **MSVC toolchain discovery**：可使用 Visual Studio 安装或 portable MSVC toolchain。
-- **严格项目配置**：`mqb.json` 使用版本化、fail-closed schema；CLI 显式选项优先于配置文件。
-- **结构化进程调用**：内部传递 executable/argv/path，而不是把命令拼成 shell string；Windows 路径按 Unicode-safe identity 处理。
-- **项目目录保持干净**：OBJ、IFC、dependency metadata、cache 与最终产物统一写入 `.mqb/`。
-
-> 当前边界：`static` 目标支持普通 C/C++，但需要 Modules/Header Units pipeline 的静态库目标仍会显式拒绝；不会静默降级。
+当前稳定版本：**v5.0.0** · [发布说明](release/v5.0.0.md)
 
 ## 安装
 
-从 GitHub Releases 下载 Windows x64 发布包，解压后运行：
+要求：Windows x64，以及 Visual Studio / Visual Studio Build Tools 中的 MSVC C++ toolchain。
+
+从 GitHub Release 下载稳定版 ZIP，解压后运行：
 
 ```powershell
 .\install.bat
 ```
 
-默认安装到 `%USERPROFILE%\bin`。安装、PATH 所有权、重装与卸载规则见 [`docs/INSTALLATION.md`](docs/INSTALLATION.md)。
+默认安装到 `%USERPROFILE%\bin`。重新打开终端后验证：
+
+```powershell
+mqb --help
+```
+
+安装、PATH 与卸载行为见 [`docs/INSTALLATION.md`](docs/INSTALLATION.md)。
 
 ## 快速开始
 
 ### 单文件
 
 ```powershell
-mqb main.cpp
-```
-
-构建并运行：
-
-```powershell
 mqb main.cpp --run
 ```
 
-指定标准与 Release：
+MQB 默认会从入口文件执行 smart discovery，并把构建状态放在项目 `.mqb/` 下。
+
+### 精确指定多个源文件
 
 ```powershell
-mqb main.cpp --std 23 --release
+mqb main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
 ```
 
-### 多文件
+多个 positional sources 表示精确 source set，不会再自动扩展源码集合。
 
-多个 positional source 表示精确 source set：
-
-```powershell
-mqb main.cpp src/math.cpp src/io.cpp -j 8 -o app
-```
-
-单入口默认启用 smart discovery；需要关闭时：
+### 构建不同 target
 
 ```powershell
-mqb main.cpp --no-discover
-```
-
-### DLL 与静态库
-
-```powershell
+mqb main.cpp -o app
 mqb api.cpp --type dll -o codec
 mqb math.cpp vector.cpp --type static -o math
 ```
 
-### 给目标程序传参数
+支持 `exe`、`dll`、`static`。
+
+### 把参数传给程序
 
 ```powershell
 mqb main.cpp --run -- input.txt "hello world" 42
 ```
 
-`--` 之后的参数原样作为目标程序 argv。
+`--` 后的内容只属于目标程序，不参与构建参数解析。
 
-## C++ Modules
+## 核心能力
 
-Project-local named modules 与 header units 会进入 MSVC `/scanDependencies` / P1689 pipeline，由 MQB 解析 provider graph、编译顺序与 IFC 依赖。
+- `.c` / `.cpp` / `.cc` / `.cxx` 原生 MSVC 构建。
+- Visual Studio 与 portable MSVC toolchain discovery。
+- 基于 `/sourceDependencies` 的真实 header freshness 与增量编译。
+- compile / link / archive 独立缓存。
+- `-j / --jobs` 有界并行 scan/compile。
+- `exe` / `dll` / `static` typed targets。
+- typed runtime、LTCG、subsystem policy。
+- project-local named modules 与 header units。
+- external/prebuilt named-module IFC provider。
+- MSVC toolchain-owned `import std` / `import std.compat`。
+- P1689 `/scanDependencies` 驱动的 module topology 与 transitive IFC closure。
+- Windows Unicode-safe artifact/path identity。
+- 所有 writable build state 统一收敛到项目 `.mqb/`。
 
-外部或预编译 named module 可以显式绑定只读 IFC：
-
-```powershell
-mqb main.cpp --module-ifc math.core=C:\sdk\math.core.ifc
-```
-
-也可以写入 `mqb.json`：
-
-```json
-{
-  "version": 1,
-  "modules": {
-    "external": {
-      "math.core": "third_party/ifc/math.core.ifc"
-    }
-  }
-}
-```
-
-MSVC 标准库 named modules 由当前选中的 toolchain 提供；项目不能伪造或覆盖 `std` / `std.compat` provider。使用时需要满足当前 MSVC toolchain 的能力与语言模式要求，例如：
-
-```powershell
-mqb main.cpp --std latest
-```
-
-其中 `main.cpp` 可直接包含 `import std;`。完整规则见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) 与 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+> 当前边界：需要 Modules/Header Units pipeline 的 `static` target 仍会显式拒绝。普通静态库构建不受影响。
 
 ## `mqb.json`
 
-MQB 从当前执行目录向上查找最近的 `mqb.json`。该文件所在目录成为 project root，同时也是 `.mqb/` 的根。
+MQB 会从执行目录向上查找最近的 `mqb.json`。该文件所在目录成为 project root，也成为 `.mqb/` 的根目录。
 
 最小配置：
 
@@ -121,93 +90,92 @@ MQB 从当前执行目录向上查找最近的 `mqb.json`。该文件所在目�
 }
 ```
 
-常见配置：
+一个常见配置：
 
 ```json
 {
   "version": 1,
   "build": {
     "configuration": "release",
-    "architecture": "x64",
-    "standard": "23",
+    "standard": "latest",
     "type": "exe",
-    "runtime": "MT",
-    "output": "game",
-    "defines": ["GAME_BUILD=1"],
-    "include_dirs": ["include"],
-    "libraries": ["user32"]
-  },
-  "discovery": {
-    "enabled": true,
-    "exclude_dirs": ["tests"]
+    "output": "app",
+    "include_dirs": ["include"]
   }
 }
 ```
 
-完整 schema、路径基准、优先级、external module provider 与 cache 行为见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
+配置支持 build policy、source discovery correction，以及 external/prebuilt module IFC：
+
+```json
+{
+  "version": 1,
+  "modules": {
+    "external": {
+      "vendor.math": "third_party/ifc/vendor.math.ifc"
+    }
+  }
+}
+```
+
+完整字段、路径基准、CLI/config precedence 和 module provider 规则见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
 
 ## 常用 CLI
+
+```text
+mqb <source...> [options]
+```
+
+常用选项：
 
 | 选项 | 作用 |
 |---|---|
 | `--debug` / `--release` | 构建配置 |
 | `--std <14|17|20|23|latest>` | C++ 标准 |
-| `--type <exe|dll|static>` | 目标类型 |
+| `--type <exe|dll|static>` | target kind |
 | `--x86` / `--x64` | 目标架构 |
 | `--runtime <MD|MDd|MT|MTd>` | MSVC runtime |
-| `--ltcg` / `--no-ltcg` | LTCG policy |
+| `--ltcg` / `--no-ltcg` | LTCG |
 | `--subsystem <console|windows>` | PE subsystem |
 | `-j, --jobs <N>` | 最大并发 scan/compile 数 |
-| `-o, --output <name>` | 输出目标名 |
+| `-o, --output <name>` | 目标名 |
 | `--discover` / `--no-discover` | source discovery |
-| `--module-ifc <name=path>` | 绑定 external/prebuilt named-module IFC |
-| `-I <dir>` / `-D <value>` | include / define |
-| `-L <dir>` / `-l <name>` | library path / library |
-| `--compiler-arg <arg>` | 原样传递一个 `cl.exe` argv element |
-| `--linker-arg <arg>` | 原样传递一个 linker argv element |
+| `--module-ifc <name=path>` | external/prebuilt named-module IFC |
+| `-I <dir>` | include directory |
+| `-D <value>` | preprocessor definition |
+| `-L <dir>` / `--lib-path <dir>` | library search directory |
+| `-l <name>` / `--lib <name>` | library |
+| `--compiler-arg <arg>` | 原样 compiler argv element |
+| `--linker-arg <arg>` | 原样 linker argv element |
 | `--env <auto|vs|portable>` | toolchain selection |
-| `--run` | 成功构建后运行 executable |
+| `--run` | 构建后运行 executable |
 | `-v, --verbose` | 详细输出 |
 | `-h, --help` | 完整 CLI 帮助 |
+| `--` | 后续参数传给目标程序 |
 
-`mqb --help` 是 CLI 的权威清单。
-
-## 构建产物
-
-所有 writable build state 位于 project root 下：
-
-```text
-.mqb/
-├─ obj/
-├─ deps/
-├─ scan/
-├─ ifc/
-├─ cache/
-└─ bin/
-```
-
-源码目录不需要承载 MQB 的中间产物。
+完整且始终随 binary 更新的参数列表以 `mqb --help` 为准。
 
 ## 文档
 
-| 文档 | 什么时候看 |
+| 主题 | 文档 |
 |---|---|
-| [`docs/INSTALLATION.md`](docs/INSTALLATION.md) | 安装、PATH、重装、卸载、发布包 |
-| [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) | `mqb.json` 完整 schema 与 precedence |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 构建模型、Modules、cache、职责边界 |
-| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | 本仓库开发与测试入口 |
-| [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) | stable release 的自举与复现性门禁 |
-| [`cpp/README.md`](cpp/README.md) | C++ 源码目录与依赖规则 |
+| `mqb.json` 配置与 precedence | [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) |
+| 安装、PATH、卸载 | [`docs/INSTALLATION.md`](docs/INSTALLATION.md) |
+| 架构与 Modules/cache 模型 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| 开发 MQB | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
+| 自举与发布门禁 | [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) |
+| C++ 源码目录契约 | [`cpp/README.md`](cpp/README.md) |
+| v5.0.0 发布说明 | [`release/v5.0.0.md`](release/v5.0.0.md) |
 
-## 开发 MQB
+## 开发
 
-仓库开发入口：
+MQB 使用 MQB 自身构建和验证当前源码。开发入口：
 
 ```powershell
 .\tests\native\develop.ps1
 ```
 
-MQB 使用 MQB 自身构建和验证当前源码。开发者细节见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
+贡献者流程见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
 
 ## License
 
