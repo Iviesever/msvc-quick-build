@@ -5,10 +5,7 @@ on:
     paths:
       - 'VERSION'
       - 'cpp/**'
-      - 'README.md'
-      - 'README_EN.md'
       - 'LICENSE'
-      - 'docs/**'
       - 'install.bat'
       - 'install.ps1'
       - 'uninstall.ps1'
@@ -21,14 +18,13 @@ on:
       - main
     paths:
       - 'VERSION'
+      - '.github/workflows/native-release.yml'
 
 jobs:
   build-test-package:
     runs-on: windows-latest
     permissions:
       contents: read
-    env:
-      GH_TOKEN: ${{ github.token }}
     outputs:
       version: ${{ steps.meta.outputs.version }}
       package_name: ${{ steps.meta.outputs.package_name }}
@@ -109,73 +105,27 @@ jobs:
             -OutputRoot (Join-Path $PWD 'selfhost-out')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Stage release package
+      - name: Stage runtime-only release package
         shell: pwsh
         env:
-          MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
           MQB_PACKAGE_NAME: ${{ steps.meta.outputs.package_name }}
         run: |
           $dist = Join-Path $PWD 'dist'
           $stage = Join-Path $dist $env:MQB_PACKAGE_NAME
-          if (Test-Path -LiteralPath $dist) { Remove-Item -LiteralPath $dist -Recurse -Force }
+          if (Test-Path -LiteralPath $dist) {
+            Remove-Item -LiteralPath $dist -Recurse -Force
+          }
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
+          # The stable ZIP is intentionally runtime/install-only. User documentation
+          # stays in the repository and on GitHub Releases; Apache-2.0 LICENSE remains
+          # in the binary redistribution as required by the license.
           Copy-Item 'selfhost-out/stage1/mqb.exe' (Join-Path $stage 'mqb.exe')
           Copy-Item 'VERSION' (Join-Path $stage 'VERSION')
           Copy-Item 'install.bat' (Join-Path $stage 'install.bat')
           Copy-Item 'install.ps1' (Join-Path $stage 'install.ps1')
           Copy-Item 'uninstall.ps1' (Join-Path $stage 'uninstall.ps1')
-          Copy-Item 'README.md' (Join-Path $stage 'README.md')
-          Copy-Item 'README_EN.md' (Join-Path $stage 'README_EN.md')
           Copy-Item 'LICENSE' (Join-Path $stage 'LICENSE')
-          Copy-Item 'docs/MQB_CONFIG.md' (Join-Path $stage 'MQB_CONFIG.md')
-          Copy-Item 'docs/MQB_CONFIG_EN.md' (Join-Path $stage 'MQB_CONFIG_EN.md')
-          Copy-Item 'docs/ARCHITECTURE.md' (Join-Path $stage 'ARCHITECTURE.md')
-          Copy-Item 'docs/ARCHITECTURE_EN.md' (Join-Path $stage 'ARCHITECTURE_EN.md')
-          Copy-Item 'docs/INSTALLATION.md' (Join-Path $stage 'INSTALLATION.md')
-          Copy-Item 'docs/INSTALLATION_EN.md' (Join-Path $stage 'INSTALLATION_EN.md')
-          Copy-Item 'docs/SELF_HOSTING.md' (Join-Path $stage 'SELF_HOSTING.md')
-          Copy-Item 'docs/SELF_HOSTING_EN.md' (Join-Path $stage 'SELF_HOSTING_EN.md')
-
-          $tag = "v$env:MQB_RELEASE_VERSION"
-          $repoBlobBase = "https://github.com/$env:GITHUB_REPOSITORY/blob/$tag"
-          $packageLinkRewrites = @{
-            (Join-Path $stage 'README.md') = @{
-              '(cpp/README.md)' = "($repoBlobBase/cpp/README.md)"
-              '(cpp/mqb.json)' = "($repoBlobBase/cpp/mqb.json)"
-              '(docs/ARCHITECTURE.md)' = '(ARCHITECTURE.md)'
-              '(docs/SELF_HOSTING.md)' = '(SELF_HOSTING.md)'
-              '(docs/MQB_CONFIG.md)' = '(MQB_CONFIG.md)'
-              '(docs/INSTALLATION.md)' = '(INSTALLATION.md)'
-            }
-            (Join-Path $stage 'README_EN.md') = @{
-              '(cpp/README_EN.md)' = "($repoBlobBase/cpp/README_EN.md)"
-              '(cpp/mqb.json)' = "($repoBlobBase/cpp/mqb.json)"
-              '(docs/ARCHITECTURE_EN.md)' = '(ARCHITECTURE_EN.md)'
-              '(docs/SELF_HOSTING_EN.md)' = '(SELF_HOSTING_EN.md)'
-              '(docs/MQB_CONFIG_EN.md)' = '(MQB_CONFIG_EN.md)'
-              '(docs/INSTALLATION_EN.md)' = '(INSTALLATION_EN.md)'
-            }
-            (Join-Path $stage 'ARCHITECTURE.md') = @{
-              '(../cpp/README.md)' = "($repoBlobBase/cpp/README.md)"
-            }
-            (Join-Path $stage 'ARCHITECTURE_EN.md') = @{
-              '(../cpp/README_EN.md)' = "($repoBlobBase/cpp/README_EN.md)"
-            }
-            (Join-Path $stage 'SELF_HOSTING.md') = @{
-              '(../cpp/README.md)' = "($repoBlobBase/cpp/README.md)"
-            }
-            (Join-Path $stage 'SELF_HOSTING_EN.md') = @{
-              '(../cpp/README_EN.md)' = "($repoBlobBase/cpp/README_EN.md)"
-            }
-          }
-          foreach ($fileEntry in $packageLinkRewrites.GetEnumerator()) {
-            $text = Get-Content -LiteralPath $fileEntry.Key -Raw
-            foreach ($rewrite in $fileEntry.Value.GetEnumerator()) {
-              $text = $text.Replace($rewrite.Key, $rewrite.Value)
-            }
-            Set-Content -LiteralPath $fileEntry.Key -Value $text -Encoding utf8NoBOM -NoNewline
-          }
 
           $zip = Join-Path $dist ($env:MQB_PACKAGE_NAME + '.zip')
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
@@ -187,7 +137,7 @@ jobs:
           Write-Host "Package: $zip"
           Write-Host "SHA256:  $hash"
 
-      - name: Validate exact packaged artifact
+      - name: Validate exact runtime-only packaged artifact
         shell: pwsh
         env:
           MQB_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
@@ -198,8 +148,12 @@ jobs:
           $shaPath = $zip + '.sha256'
           $verifyRoot = Join-Path $dist 'verify-extracted'
 
-          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "Missing package: $zip" }
-          if (-not (Test-Path -LiteralPath $shaPath -PathType Leaf)) { throw "Missing checksum: $shaPath" }
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+            throw "Missing package: $zip"
+          }
+          if (-not (Test-Path -LiteralPath $shaPath -PathType Leaf)) {
+            throw "Missing checksum: $shaPath"
+          }
 
           $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
           $expectedShaLine = "$actualHash  $($env:MQB_PACKAGE_NAME).zip"
@@ -209,29 +163,35 @@ jobs:
           }
 
           Expand-Archive -LiteralPath $zip -DestinationPath $verifyRoot
+
+          $directories = @(Get-ChildItem -LiteralPath $verifyRoot -Directory -Force)
+          if ($directories.Count -ne 0) {
+            $directories | Select-Object -ExpandProperty Name | Write-Host
+            throw 'Release ZIP must be flat and must not contain documentation/resource directories.'
+          }
+
           $expectedFiles = @(
-            'ARCHITECTURE.md',
-            'ARCHITECTURE_EN.md',
-            'INSTALLATION.md',
-            'INSTALLATION_EN.md',
             'install.bat',
             'install.ps1',
             'LICENSE',
-            'MQB_CONFIG.md',
-            'MQB_CONFIG_EN.md',
             'mqb.exe',
-            'README.md',
-            'README_EN.md',
-            'SELF_HOSTING.md',
-            'SELF_HOSTING_EN.md',
             'uninstall.ps1',
             'VERSION'
           ) | Sort-Object
-          $actualFiles = @(Get-ChildItem -LiteralPath $verifyRoot -File | Select-Object -ExpandProperty Name | Sort-Object)
+          $actualFiles = @(Get-ChildItem -LiteralPath $verifyRoot -File -Force | Select-Object -ExpandProperty Name | Sort-Object)
           $manifestDiff = @(Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $actualFiles)
           if ($manifestDiff.Count -ne 0) {
             $manifestDiff | Format-Table | Out-String | Write-Host
-            throw 'Release package manifest differs from the stable native self-hosting contract.'
+            throw 'Release package manifest differs from the runtime-only stable contract.'
+          }
+
+          $forbiddenDocs = @(Get-ChildItem -LiteralPath $verifyRoot -File -Force | Where-Object {
+            $_.Name -match '^(README|RELEASE_NOTES)' -or
+            $_.Extension -in @('.md', '.markdown', '.rst', '.txt')
+          })
+          if ($forbiddenDocs.Count -ne 0) {
+            $forbiddenDocs | Select-Object -ExpandProperty Name | Write-Host
+            throw 'User documentation must not be shipped inside the stable ZIP.'
           }
 
           $selfHostedMqb = Join-Path $PWD 'selfhost-out/stage1/mqb.exe'
@@ -248,35 +208,13 @@ jobs:
           }
 
           $help = @(& $packagedMqb --help 2>&1 | ForEach-Object { $_.ToString() })
-          if ($LASTEXITCODE -ne 0 -or $help.Count -eq 0) { throw 'Packaged mqb.exe --help failed.' }
+          if ($LASTEXITCODE -ne 0 -or $help.Count -eq 0) {
+            throw 'Packaged mqb.exe --help failed.'
+          }
           $expectedHelp = "MQB $env:MQB_RELEASE_VERSION - MSVC Quick Build (C++ refactor)"
           if ($help[0] -ne $expectedHelp) {
             throw "Packaged embedded version mismatch. Expected '$expectedHelp', got '$($help[0])'"
           }
-
-          $packageRoot = [IO.Path]::GetFullPath($verifyRoot).TrimEnd('\')
-          $rootPrefix = $packageRoot + [IO.Path]::DirectorySeparatorChar
-          $linkPattern = '\[[^\]]+\]\(([^)]+)\)'
-          foreach ($markdown in @(Get-ChildItem -LiteralPath $verifyRoot -Filter '*.md' -File)) {
-            $markdownText = Get-Content -LiteralPath $markdown.FullName -Raw
-            foreach ($match in [regex]::Matches($markdownText, $linkPattern)) {
-              $target = $match.Groups[1].Value.Trim()
-              if ([string]::IsNullOrWhiteSpace($target) -or $target.StartsWith('#')) { continue }
-              if ($target -match '^[A-Za-z][A-Za-z0-9+.-]*:') { continue }
-
-              $pathPart = ($target -split '#', 2)[0]
-              if ([string]::IsNullOrWhiteSpace($pathPart)) { continue }
-              $resolved = [IO.Path]::GetFullPath((Join-Path $verifyRoot $pathPart))
-              if (-not [string]::Equals($resolved, $packageRoot, [StringComparison]::OrdinalIgnoreCase) -and
-                  -not $resolved.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-                throw "Packaged Markdown link escapes package root: $($markdown.Name) -> $target"
-              }
-              if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
-                throw "Broken packaged Markdown link: $($markdown.Name) -> $target"
-              }
-            }
-          }
-          Write-Host 'Packaged Markdown relative-link validation passed.'
 
           & (Join-Path $PWD 'tests/installer/native_installer_lifecycle.ps1') `
             -MqbPath $packagedMqb `
@@ -285,7 +223,7 @@ jobs:
             throw "Packaged installer lifecycle failed with exit code $LASTEXITCODE"
           }
 
-          Write-Host 'Exact self-hosted packaged artifact validation passed.'
+          Write-Host 'Exact runtime-only self-hosted package validation passed.'
 
       - name: Upload validated package
         uses: actions/upload-artifact@v7
@@ -320,14 +258,19 @@ jobs:
           path: dist-publish
 
       - name: Verify publication inputs and immutable identity
+        id: preflight
         shell: pwsh
         run: |
           $tag = "v$env:MQB_RELEASE_VERSION"
           $zip = Join-Path $PWD "dist-publish/$($env:MQB_PACKAGE_NAME).zip"
           $sha = $zip + '.sha256'
 
-          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "Missing validated package: $zip" }
-          if (-not (Test-Path -LiteralPath $sha -PathType Leaf)) { throw "Missing validated checksum: $sha" }
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+            throw "Missing validated package: $zip"
+          }
+          if (-not (Test-Path -LiteralPath $sha -PathType Leaf)) {
+            throw "Missing validated checksum: $sha"
+          }
 
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
           $expected = "$hash  $($env:MQB_PACKAGE_NAME).zip"
@@ -338,16 +281,21 @@ jobs:
 
           & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            throw "Release $tag already exists. Refusing to overwrite an existing release."
+            Write-Host "Release $tag already exists; immutable publication is already complete."
+            'publish=false' >> $env:GITHUB_OUTPUT
+            exit 0
           }
 
           & gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" *> $null
           if ($LASTEXITCODE -eq 0) {
             throw "Tag $tag already exists without a release. Refusing ambiguous publication."
           }
+
+          'publish=true' >> $env:GITHUB_OUTPUT
           exit 0
 
       - name: Publish validated GitHub release
+        if: steps.preflight.outputs.publish == 'true'
         shell: pwsh
         run: |
           $tag = "v$env:MQB_RELEASE_VERSION"
