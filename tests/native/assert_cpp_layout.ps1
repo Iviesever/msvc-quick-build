@@ -171,7 +171,13 @@ $msvcLeafFiles = [ordered]@{
     'librarian' = @('MsvcLibrarian.cpp')
     'linker' = @('MsvcLibraryResolver.cpp', 'MsvcLinker.cpp')
     'modules' = @('MsvcModuleDependencyScanner.cpp')
-    'toolchain' = @('MsvcToolchainLocator.cpp')
+    'toolchain' = @(
+        'MsvcToolchainLocator.cpp',
+        'PortableToolchainDiscovery.cpp', 'PortableToolchainDiscovery.hpp',
+        'ToolchainDiscoveryPrimitives.cpp', 'ToolchainDiscoveryPrimitives.hpp',
+        'VisualStudioEnvironment.cpp', 'VisualStudioEnvironment.hpp',
+        'VisualStudioToolchainDiscovery.cpp', 'VisualStudioToolchainDiscovery.hpp'
+    )
 }
 Assert-LeafLayout -Root (Join-Path $srcRoot 'msvc') -LeafFiles $msvcLeafFiles
 Assert-LeafLayout -Root (Join-Path $testsRoot 'msvc') -LeafFiles ([ordered]@{
