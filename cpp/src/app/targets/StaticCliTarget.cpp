@@ -55,7 +55,6 @@ int run_static_target(
     }
 
     for (const auto& compile : result->compiles) {
-        diagnostics::print_compile_warnings(compile.result);
         if (compile.result.compiled) {
             std::cout << "[compile] " << diagnostics::path_text(compile.source.filename());
             diagnostics::print_reasons(compile.result.validation.reasons);
