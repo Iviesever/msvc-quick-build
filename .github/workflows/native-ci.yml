@@ -118,105 +118,23 @@ jobs:
           name: native-debug-mqb
           path: native-out/debug
 
-      - name: Run two MQB-native Debug subshards
+      - name: Run paired MQB-native Debug subshards
         shell: pwsh
         run: |
-          $repoRoot = $PWD.Path
-          $mqb = Join-Path $repoRoot 'native-out/debug/mqb.exe'
-          $library = Join-Path $repoRoot 'native-out/debug/native-test-product.lib'
-          $testScript = Join-Path $repoRoot 'tests/native/run_native_tests.ps1'
-          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
-            throw "Downloaded Debug MQB missing: $mqb"
-          }
-          if (-not (Test-Path -LiteralPath $library -PathType Leaf)) {
-            throw "Downloaded shared Debug native-test product library missing: $library"
-          }
-
-          # Keep the four hosted runners from #63/#65, but run two independent
-          # weighted subshards concurrently inside each runner. Pair ownership
-          # is encoded directly in the matrix so coverage identity does not
-          # depend on PowerShell arithmetic or pipeline state.
-          $outerShard = [int]'${{ matrix.shard }}'
-          $subshardA = [int]'${{ matrix.subshard_a }}'
-          $subshardB = [int]'${{ matrix.subshard_b }}'
-          if ($subshardB -ne ($subshardA + 1) -or $subshardA -ne ($outerShard * 2)) {
-            throw "Invalid outer/subshard mapping: outer=$outerShard pair=$subshardA,$subshardB"
-          }
-
-          $logRoot = Join-Path $repoRoot "native-test-work/debug/outer-$outerShard-of-4/subshard-logs"
-          New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
-          $pwshExe = (Get-Command pwsh -ErrorAction Stop).Source
-
-          function Start-NativeSubshard {
-            param([Parameter(Mandatory = $true)][int]$Index)
-
-            $stdout = Join-Path $logRoot "subshard-$Index.stdout.log"
-            $stderr = Join-Path $logRoot "subshard-$Index.stderr.log"
-            Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
-            $arguments = @(
-              '-NoLogo',
-              '-NoProfile',
-              '-NonInteractive',
-              '-File', $testScript,
-              '-BuilderMqbPath', $mqb,
-              '-TestMqbPath', $mqb,
-              '-RepoRoot', $repoRoot,
-              '-Configuration', 'Debug',
-              '-ShardIndex', [string]$Index,
-              '-ShardCount', '8',
-              '-SharedProductLibraryPath', $library
-            )
-            $process = Start-Process `
-              -FilePath $pwshExe `
-              -ArgumentList $arguments `
-              -PassThru `
-              -NoNewWindow `
-              -RedirectStandardOutput $stdout `
-              -RedirectStandardError $stderr
-
-            Write-Host "Started Debug subshard $Index/8 as PID $($process.Id)"
-            return [PSCustomObject]@{
-              Index = $Index
-              Process = $process
-              Stdout = $stdout
-              Stderr = $stderr
-            }
-          }
-
-          Write-Host "Outer Debug shard $outerShard/4 owns subshards $subshardA/8 and $subshardB/8"
-          $childA = Start-NativeSubshard -Index $subshardA
-          $childB = Start-NativeSubshard -Index $subshardB
-          $children = @($childA, $childB)
-          $uniqueIndices = @($children | Select-Object -ExpandProperty Index -Unique)
-          if ($uniqueIndices.Count -ne 2) {
-            throw "Subshard identity collision before execution: $($uniqueIndices -join ',')"
-          }
-
-          foreach ($child in $children) {
-            $child.Process.WaitForExit()
-          }
-
-          $failed = $false
-          foreach ($child in @($children | Sort-Object Index)) {
-            Write-Host ""
-            Write-Host "===== Debug subshard $($child.Index)/8 ====="
-            if (Test-Path -LiteralPath $child.Stdout) {
-              Get-Content -LiteralPath $child.Stdout | ForEach-Object { Write-Host $_ }
-            }
-            if (Test-Path -LiteralPath $child.Stderr) {
-              $stderrLines = @(Get-Content -LiteralPath $child.Stderr)
-              if ($stderrLines.Count -ne 0) {
-                Write-Host "----- stderr -----"
-                $stderrLines | ForEach-Object { Write-Host $_ }
-              }
-            }
-            $exitCode = $child.Process.ExitCode
-            Write-Host "Debug subshard $($child.Index)/8 exit code: $exitCode"
-            if ($exitCode -ne 0) {
-              $failed = $true
-            }
-          }
-          if ($failed) { exit 1 }
+          $mqb = Join-Path $PWD 'native-out/debug/mqb.exe'
+          $library = Join-Path $PWD 'native-out/debug/native-test-product.lib'
+          & (Join-Path $PWD 'tests/native/run_paired_native_subshards.ps1') `
+            -BuilderMqbPath $mqb `
+            -TestMqbPath $mqb `
+            -RepoRoot $PWD `
+            -Configuration Debug `
+            -SharedProductLibraryPath $library `
+            -OuterShardIndex ${{ matrix.shard }} `
+            -OuterShardCount 4 `
+            -SubshardA ${{ matrix.subshard_a }} `
+            -SubshardB ${{ matrix.subshard_b }} `
+            -ShardCount 8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   build-and-test:
     name: Native C++ gate
