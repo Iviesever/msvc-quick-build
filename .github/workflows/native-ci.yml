@@ -6,6 +6,7 @@ on:
       - main
   pull_request:
     paths:
+      - 'VERSION'
       - 'cpp/**'
       - 'README.md'
       - 'README_EN.md'
@@ -17,7 +18,6 @@ on:
       - 'tests/installer/**'
       - 'tests/native/**'
       - 'tests/selfhost/**'
-      - 'release/**'
       - '.github/workflows/native-ci.yml'
       - '.github/workflows/native-installer.yml'
       - '.github/workflows/native-release.yml'
@@ -48,17 +48,18 @@ jobs:
         id: build
         shell: pwsh
         run: |
+          $version = (Get-Content -LiteralPath 'VERSION' -Raw).Trim()
           $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
             -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
             -RepoRoot $PWD `
-            -Version '5.0.0-dev' `
+            -Version "$version-dev" `
             -Configuration Debug `
             -Clean `
             -OutputPath (Join-Path $PWD 'native-out/debug/mqb.exe')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "path=$mqb" >> $env:GITHUB_OUTPUT
 
-      - name: Run 67 MQB-native Debug tests
+      - name: Run MQB-native Debug tests
         shell: pwsh
         run: |
           & (Join-Path $PWD 'tests/native/run_native_tests.ps1') `
