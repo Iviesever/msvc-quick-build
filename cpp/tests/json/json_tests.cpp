@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include <string_view>
 
 #include "mqb/json/Json.hpp"
@@ -38,6 +39,17 @@ int main() {
                    "BMP Unicode escapes should decode as UTF-8");
             expect(parsed->object.at("items").array[3].scalar == "🚀",
                    "surrogate pair should decode as UTF-8");
+        }
+    }
+
+    {
+        const std::string with_bom = "\xef\xbb\xbf{\"value\":true}";
+        auto parsed = mqb::json::parse(with_bom);
+        expect(parsed.has_value(), "UTF-8 BOM should be accepted by the shared JSON parser");
+        if (parsed) {
+            expect(parsed->kind == Kind::object
+                       && parsed->object.at("value").boolean,
+                   "BOM-prefixed JSON should preserve the parsed document");
         }
     }
 
