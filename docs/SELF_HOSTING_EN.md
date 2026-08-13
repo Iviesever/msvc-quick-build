@@ -55,7 +55,7 @@ A stable candidate must prove, on the same candidate commit, that:
 5. after clearing build state, Stage 1 can build Stage 2;
 6. Stage 1 and Stage 2 report the correct release version;
 7. `mqb.exe` inside the ZIP is byte-identical to the validated Stage 1 binary;
-8. the package manifest and SHA-256 sidecar are correct;
+8. the ZIP contains only the runtime/installer payload plus the Apache-2.0 `LICENSE`, with an exact manifest and SHA-256 sidecar;
 9. the packaged installer passes install / reinstall / uninstall lifecycle validation.
 
 Any failure blocks publication.
@@ -69,13 +69,26 @@ msvc-quick-build-vX.Y.Z-windows-x64.zip
 msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
-The ZIP contains the validated Stage 1 `mqb.exe`, `VERSION`, installer scripts, license, and user-facing documentation. It does not contain the historical seed, Stage 0, or repository copies of release notes.
+The ZIP is a **flat, runtime-only** package containing exactly:
+
+```text
+mqb.exe
+VERSION
+install.bat
+install.ps1
+uninstall.ps1
+LICENSE
+```
+
+User documentation such as READMEs, architecture, configuration, installation, self-hosting, and release notes is **not shipped inside the ZIP**. It remains in the repository and on GitHub Releases. `LICENSE` remains in the binary redistribution as the required Apache-2.0 license copy.
+
+The historical seed, Stage 0, Stage 2, tests, and source code are not included either.
 
 See [`INSTALLATION_EN.md`](INSTALLATION_EN.md) for installation behavior.
 
 ## 6. Publication
 
-Publication is driven by a change to the root `VERSION` file:
+Normal stable publication is driven by a change to the root `VERSION` file:
 
 1. the candidate commit containing the new `VERSION` is merged into `main`;
 2. `Native Release` reruns the complete build/test/self-host/package gate on that exact `main` commit;
@@ -83,7 +96,9 @@ Publication is driven by a change to the root `VERSION` file:
 4. GitHub generates release notes from PR/commit history since the previous tag, so release notes no longer live in the source tree;
 5. publication does not rebuild the binary.
 
-Existing tags or Releases are never overwritten. Historical tags and binary assets remain immutable; GitHub Release description text can be maintained independently without changing source or rewriting a tag.
+A release-workflow repair may also rerun the same version gate to recover from a failed, not-yet-published release. If that version's GitHub Release already exists, publication is skipped safely. If only the tag exists without a Release, the workflow fails closed instead of guessing or overwriting historical state.
+
+Existing Releases/tags and binary assets remain immutable and are never overwritten by the workflow.
 
 ## 7. Development vs. release
 
@@ -93,6 +108,6 @@ Day-to-day development normally uses:
 .\tests\native\develop.ps1
 ```
 
-Stable release adds pinned-seed bootstrap, Stage 1/Stage 2 closure, exact package/checksum validation, and installer lifecycle gates.
+Stable release adds pinned-seed bootstrap, Stage 1/Stage 2 closure, exact runtime-only package/checksum validation, and installer lifecycle gates.
 
 See [`DEVELOPMENT_EN.md`](DEVELOPMENT_EN.md) for development workflow and [`ARCHITECTURE_EN.md`](ARCHITECTURE_EN.md) for the internal build model.

@@ -24,6 +24,21 @@ MQB 的 stable Windows 包安装一个命令：`mqb`，对应原生可执行文�
 mqb --help
 ```
 
+## 发布 ZIP 内容
+
+Stable ZIP 是扁平的 runtime-only 包，精确包含：
+
+```text
+mqb.exe
+VERSION
+install.bat
+install.ps1
+uninstall.ps1
+LICENSE
+```
+
+README、配置、架构、安装说明、自举说明和 release notes 等文档不放进 ZIP；请直接在仓库和 GitHub Release 页面阅读。`LICENSE` 作为 Apache-2.0 二进制再分发所需的许可证副本保留在包中。
+
 ## 安装器拥有的文件
 
 默认安装目录中，MQB installer 只管理：
@@ -88,6 +103,6 @@ msvc-quick-build-vX.Y.Z-windows-x64.zip
 msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
-Release workflow 在发布前验证 binary、package manifest、checksum、installer lifecycle 与 self-host closure。自举和发布门禁的技术细节见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
+Release workflow 在发布前验证 Stage 1 binary identity、runtime-only package manifest、checksum、installer lifecycle 与 self-host closure。自举和发布门禁的技术细节见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
 
 用户使用方式见仓库根目录 [`README.md`](../README.md)。
