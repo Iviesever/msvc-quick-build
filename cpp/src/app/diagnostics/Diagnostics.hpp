@@ -7,9 +7,12 @@
 
 #include "mqb/config/ProjectConfig.hpp"
 #include "mqb/core/BuildTypes.hpp"
+#include "mqb/orchestration/MsvcIncrementalArchiveCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
+#include "mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
+#include "mqb/orchestration/MsvcModuleTargetCoordinator.hpp"
 #include "mqb/process/Process.hpp"
 
 namespace mqb::app::diagnostics {
@@ -22,7 +25,10 @@ void print_process_output(const mqb::process::ProcessResult& process);
 void print_reasons(const std::vector<mqb::BuildReason>& reasons);
 void print_config_error(const mqb::config::Error& error);
 void print_target_failure(const mqb::orchestration::IncrementalTargetError& error);
+void print_module_target_failure(const mqb::orchestration::IncrementalModuleTargetError& error);
+void print_static_target_failure(const mqb::orchestration::IncrementalStaticTargetError& error);
 void print_compile_warnings(const mqb::orchestration::IncrementalCompileResult& result);
 void print_link_warnings(const mqb::orchestration::IncrementalLinkResult& result);
+void print_archive_warnings(const mqb::orchestration::IncrementalArchiveResult& result);
 
 } // namespace mqb::app::diagnostics

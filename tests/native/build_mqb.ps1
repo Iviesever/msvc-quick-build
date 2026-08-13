@@ -20,6 +20,7 @@ $RepoRoot = Get-FullPath $RepoRoot
 $BuilderMqbPath = Get-FullPath $BuilderMqbPath
 $cppRoot = Join-Path $RepoRoot 'cpp'
 $configPath = Join-Path $cppRoot 'mqb.json'
+$layoutContract = Join-Path $RepoRoot 'tests/native/assert_cpp_layout.ps1'
 
 if (-not (Test-Path -LiteralPath $BuilderMqbPath -PathType Leaf)) {
     throw "Builder MQB not found: $BuilderMqbPath"
@@ -27,6 +28,10 @@ if (-not (Test-Path -LiteralPath $BuilderMqbPath -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
     throw "MQB self-build config not found: $configPath"
 }
+if (-not (Test-Path -LiteralPath $layoutContract -PathType Leaf)) {
+    throw "C++ responsibility layout contract not found: $layoutContract"
+}
+& $layoutContract -CppRoot $cppRoot
 
 # cpp/mqb.json remains the source of truth for the production manifest and
 # native build policy. The historical seed is intentionally invoked from the

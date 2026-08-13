@@ -40,7 +40,7 @@ Choose the responsibility first, then place the file under the unified `include/
 | `msvc` | MSVC compiler/linker/librarian/toolchain primitives |
 | `process` | platform-independent process model |
 | `platform/windows` | Windows quoting, process launch, and other platform boundaries |
-| `app` | CLI, project composition, diagnostics, `main()`; lives in `src/app` and matching tests |
+| `app` | executable composition, physically subdivided into CLI, diagnostics, project policy, and target adapters |
 
 The physical layout is approximately:
 
@@ -58,6 +58,12 @@ cpp/
 │  └─ platform/windows/
 ├─ src/
 │  ├─ app/
+│  │  ├─ Application.cpp/.hpp
+│  │  ├─ main.cpp
+│  │  ├─ cli/                # argument parsing + invocation normalization
+│  │  ├─ diagnostics/        # CLI-facing diagnostics / process output formatting
+│  │  ├─ project/            # config discovery + CLI/config policy composition
+│  │  └─ targets/            # ordinary/module/static target adapters
 │  ├─ core/
 │  ├─ config/
 │  ├─ discovery/
@@ -67,7 +73,7 @@ cpp/
 │  ├─ msvc/
 │  └─ platform/windows/
 └─ tests/
-   ├─ app/
+   ├─ app/                    # mirrors app sub-responsibilities, e.g. app/cli
    ├─ core/
    ├─ config/
    ├─ discovery/
@@ -90,7 +96,9 @@ It is the only public include root. Do not add `cpp/<component>/include`.
 
 ### `src/app/...`
 
-Keep app-private headers beside executable-composition implementation. CLI/main-only interfaces do not need to enter public `include/mqb`.
+Keep app-private headers beside the corresponding executable-composition responsibility. CLI/main-only interfaces do not need to enter public `include/mqb`.
+
+The `src/app/` root contains only the executable shell: `Application.cpp`, `Application.hpp`, and `main.cpp`. CLI parsing, diagnostics, project setup, and target adapters must not drift back into that root as another catch-all.
 
 ### Other private implementation details
 
@@ -105,7 +113,8 @@ Maintain these boundaries:
 - `modules` owns the provider graph; other directories must not independently guess providers;
 - `orchestration` composes flows while `msvc` constructs and executes MSVC primitives;
 - `process` remains platform-independent and Windows-specific implementation goes under `platform/windows`;
-- `app` may compose lower-level capabilities, but lower layers should not depend back on `app`.
+- `app` may compose lower-level capabilities, but lower layers should not depend back on `app`;
+- `app/targets` adapts pipelines and must not duplicate formatting/error-expansion logic owned by `app/diagnostics`.
 
 See [`../docs/ARCHITECTURE_EN.md`](../docs/ARCHITECTURE_EN.md) for the full logical graph and invariants.
 
@@ -128,7 +137,9 @@ new P1689 provider logic      -> modules
 new compile-batch scheduling  -> orchestration
 new cl.exe argument builder   -> msvc
 new Windows process quoting   -> platform/windows
-new CLI flag                  -> src/app (+ matching tests/app/e2e)
+new CLI flag                  -> src/app/cli (+ tests/app/cli/e2e)
+new CLI diagnostics           -> src/app/diagnostics
+new target CLI adapter        -> src/app/targets
 ```
 
 ## 6. `cpp/mqb.json`
@@ -140,25 +151,32 @@ Requirements:
 - its production source set must match the real `cpp/src/**/*.cpp` set;
 - the production TU count is not a stable contract;
 - moving or splitting files requires updating the manifest;
-- include roots should remain few and stable rather than multiplying directory trees to solve responsibility problems.
+- `include` is the only public include root; app-private include roots are executable-composition details and do not create public API surfaces.
 
-Development drivers validate the manifest against the actual production source set.
+Development drivers validate the manifest against the actual production source set and run `tests/native/assert_cpp_layout.ps1` before self-building to enforce the responsibility-directory contract.
 
 ## 7. Tests
 
-All C++ tests live under `cpp/tests/`, mirrored by the responsibility under test. Cross-component and full CLI scenarios belong in `e2e`.
+All C++ tests live under `cpp/tests/`, mirrored by the responsibility under test. Cross-component and full CLI scenarios belong in `e2e`. For example, CLI parser tests live under `tests/app/cli/`, not directly under `tests/app/`.
 
 Do not move tests back into product directories and do not hard-code the test count in documentation. The authoritative test set is discovered and validated by `tests/native/run_native_tests.ps1` and CI.
 
 See [`../docs/DEVELOPMENT_EN.md`](../docs/DEVELOPMENT_EN.md) for the normal validation workflow.
 
-## 8. Refactoring floor
+## 8. C++ language floor
+
+MQB product code targets **C++23** by default. New code should prefer typed data, RAII, standard-library ownership and error models such as `std::expected`, `std::span`, `std::string_view`, `std::filesystem`, scoped resource wrappers, and structured `executable + argv` process descriptions instead of raw ownership, C-style strings, or shell-command strings.
+
+Modern syntax is not a goal by itself. Adopt a newer facility when it reduces ownership ambiguity, duplicate implementation, or untyped state; do not trade readability or compiler stability merely to advertise C++23.
+
+## 9. Refactoring floor
 
 Directory refactors must preserve:
 
 - one `include` / `src` / `tests` root;
 - the existing logical dependency direction;
 - alignment between `cpp/mqb.json` and the production source set;
+- a passing `tests/native/assert_cpp_layout.ps1` contract;
 - native test and self-host gates.
 
 Do not recreate the appearance of independent library targets merely to make the tree look tidy. Revisit the top-level structure only if the product shape itself actually changes.

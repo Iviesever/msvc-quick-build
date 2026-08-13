@@ -133,6 +133,64 @@ void print_target_failure(const mqb::orchestration::IncrementalTargetError& erro
     }
 }
 
+void print_module_target_failure(
+    const mqb::orchestration::IncrementalModuleTargetError& error) {
+    std::cerr << "error: " << error.message;
+    if (!error.source.empty()) {
+        std::cerr << ": " << path_text(error.source);
+    }
+    if (!error.artifact.empty()) {
+        std::cerr << " (" << path_text(error.artifact) << ')';
+    }
+    std::cerr << '\n';
+    if (error.scan_error) {
+        std::cerr << "  " << error.scan_error->message << '\n';
+        if (error.scan_error->process_result) {
+            print_process_output(*error.scan_error->process_result);
+        }
+        if (error.scan_error->process_error) {
+            std::cerr << "  " << error.scan_error->process_error->message << '\n';
+        }
+        if (error.scan_error->dependency_error) {
+            std::cerr << "  " << error.scan_error->dependency_error->message << '\n';
+        }
+    }
+    if (error.graph_error) {
+        std::cerr << "  " << error.graph_error->message << '\n';
+    }
+    if (error.compile_error) {
+        std::cerr << "  " << error.compile_error->message << '\n';
+        if (error.compile_error->compile_error) {
+            print_compile_failure(*error.compile_error->compile_error);
+        }
+    }
+    if (error.link_error) {
+        print_link_failure(*error.link_error);
+    }
+}
+
+void print_static_target_failure(
+    const mqb::orchestration::IncrementalStaticTargetError& error) {
+    std::cerr << "error: " << error.message;
+    if (!error.source.empty()) {
+        std::cerr << ": " << path_text(error.source);
+    }
+    std::cerr << '\n';
+    if (error.compile_error) {
+        std::cerr << "  " << error.compile_error->message << '\n';
+    }
+    if (error.archive_error) {
+        std::cerr << "  " << error.archive_error->message << '\n';
+        if (error.archive_error->librarian_error) {
+            const auto& library_error = *error.archive_error->librarian_error;
+            std::cerr << "  " << library_error.message << '\n';
+            if (library_error.process_result) {
+                print_process_output(*library_error.process_result);
+            }
+        }
+    }
+}
+
 void print_compile_warnings(
     const mqb::orchestration::IncrementalCompileResult& result) {
     for (const auto& warning : result.warnings) {
@@ -146,6 +204,17 @@ void print_compile_warnings(
 
 void print_link_warnings(
     const mqb::orchestration::IncrementalLinkResult& result) {
+    for (const auto& warning : result.warnings) {
+        std::cerr << "warning: " << warning.message;
+        if (!warning.path.empty()) {
+            std::cerr << ": " << path_text(warning.path);
+        }
+        std::cerr << '\n';
+    }
+}
+
+void print_archive_warnings(
+    const mqb::orchestration::IncrementalArchiveResult& result) {
     for (const auto& warning : result.warnings) {
         std::cerr << "warning: " << warning.message;
         if (!warning.path.empty()) {

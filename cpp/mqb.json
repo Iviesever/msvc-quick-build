@@ -10,7 +10,10 @@
     "output": "mqb",
     "include_dirs": [
       "include",
-      "src/app"
+      "src/app/cli",
+      "src/app/diagnostics",
+      "src/app/project",
+      "src/app/targets"
     ],
     "compiler_args": [
       "/W4",
@@ -24,12 +27,12 @@
     ],
     "extra_sources": [
       "src/app/Application.cpp",
-      "src/app/Cli.cpp",
-      "src/app/Diagnostics.cpp",
-      "src/app/Invocation.cpp",
-      "src/app/ModuleCliTarget.cpp",
-      "src/app/ProjectSetup.cpp",
-      "src/app/StaticCliTarget.cpp",
+      "src/app/cli/Cli.cpp",
+      "src/app/diagnostics/Diagnostics.cpp",
+      "src/app/cli/Invocation.cpp",
+      "src/app/targets/ModuleCliTarget.cpp",
+      "src/app/project/ProjectSetup.cpp",
+      "src/app/targets/StaticCliTarget.cpp",
       "src/msvc/MsvcCompileExecutor.cpp",
       "src/msvc/MsvcCompiler.cpp",
       "src/msvc/MsvcLibrarian.cpp",
