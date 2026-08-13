@@ -111,6 +111,27 @@ private:
     LPPROC_THREAD_ATTRIBUTE_LIST list_{nullptr};
 };
 
+class EnvironmentStrings {
+public:
+    explicit EnvironmentStrings(LPWCH block) noexcept : block_(block) {}
+
+    ~EnvironmentStrings() {
+        if (block_ != nullptr) {
+            ::FreeEnvironmentStringsW(block_);
+        }
+    }
+
+    EnvironmentStrings(const EnvironmentStrings&) = delete;
+    EnvironmentStrings& operator=(const EnvironmentStrings&) = delete;
+
+    [[nodiscard]] LPWCH get() const noexcept {
+        return block_;
+    }
+
+private:
+    LPWCH block_{nullptr};
+};
+
 struct PipePair {
     UniqueHandle read;
     UniqueHandle write;
@@ -337,15 +358,15 @@ ProcThreadAttributeList::for_handle_list(const std::span<HANDLE> handles) {
 [[nodiscard]] std::expected<std::vector<EnvironmentEntry>, ProcessError>
 read_inherited_environment() {
     std::vector<EnvironmentEntry> entries;
-    LPWCH block = ::GetEnvironmentStringsW();
-    if (block == nullptr) {
+    EnvironmentStrings block{::GetEnvironmentStringsW()};
+    if (block.get() == nullptr) {
         return std::unexpected(error(
             ProcessErrorCode::launch_failed,
             ::GetLastError(),
             "GetEnvironmentStringsW failed"));
     }
 
-    for (const wchar_t* cursor = block; *cursor != L'\0';) {
+    for (const wchar_t* cursor = block.get(); *cursor != L'\0';) {
         const std::wstring entry{cursor};
         cursor += entry.size() + 1;
 
@@ -361,7 +382,6 @@ read_inherited_environment() {
         });
     }
 
-    ::FreeEnvironmentStringsW(block);
     return entries;
 }
 
