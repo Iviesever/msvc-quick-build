@@ -109,9 +109,10 @@ jobs:
       - name: Run two MQB-native Debug subshards
         shell: pwsh
         run: |
-          $mqb = Join-Path $PWD 'native-out/debug/mqb.exe'
-          $library = Join-Path $PWD 'native-out/debug/native-test-product.lib'
-          $testScript = Join-Path $PWD 'tests/native/run_native_tests.ps1'
+          $repoRoot = $PWD.Path
+          $mqb = Join-Path $repoRoot 'native-out/debug/mqb.exe'
+          $library = Join-Path $repoRoot 'native-out/debug/native-test-product.lib'
+          $testScript = Join-Path $repoRoot 'tests/native/run_native_tests.ps1'
           if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
             throw "Downloaded Debug MQB missing: $mqb"
           }
@@ -123,47 +124,73 @@ jobs:
           # weighted subshards concurrently inside each runner. The global
           # ShardCount=8 plan remains deterministic; outer runner N owns
           # subshards 2N and 2N+1, so every one of the 67 tests runs exactly once.
+          #
+          # Each subshard gets its own pwsh.exe process instead of an in-process
+          # parallel runspace because run_native_tests.ps1 intentionally uses
+          # `exit` to communicate success/failure. Process isolation preserves
+          # that contract and makes the child exit code unambiguous.
           $outerShard = [int]'${{ matrix.shard }}'
           $firstSubshard = $outerShard * 2
           $subshards = @($firstSubshard, $firstSubshard + 1)
+          $logRoot = Join-Path $repoRoot "native-test-work/debug/outer-$outerShard-of-4/subshard-logs"
+          New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
+          $pwshExe = (Get-Command pwsh -ErrorAction Stop).Source
 
-          $results = @(
-            $subshards | ForEach-Object -Parallel {
-              $subshard = [int]$_
-              $rawOutput = @()
-              $exitCode = 1
-              try {
-                $rawOutput = @(& $using:testScript `
-                  -BuilderMqbPath $using:mqb `
-                  -TestMqbPath $using:mqb `
-                  -RepoRoot $using:PWD `
-                  -Configuration Debug `
-                  -ShardIndex $subshard `
-                  -ShardCount 8 `
-                  -SharedProductLibraryPath $using:library *>&1)
-                $exitCode = $LASTEXITCODE
-                if ($null -eq $exitCode) { $exitCode = 0 }
-              }
-              catch {
-                $rawOutput += $_
-                $exitCode = 1
-              }
+          $children = @(
+            foreach ($subshard in $subshards) {
+              $stdout = Join-Path $logRoot "subshard-$subshard.stdout.log"
+              $stderr = Join-Path $logRoot "subshard-$subshard.stderr.log"
+              $arguments = @(
+                '-NoLogo',
+                '-NoProfile',
+                '-NonInteractive',
+                '-File', $testScript,
+                '-BuilderMqbPath', $mqb,
+                '-TestMqbPath', $mqb,
+                '-RepoRoot', $repoRoot,
+                '-Configuration', 'Debug',
+                '-ShardIndex', [string]$subshard,
+                '-ShardCount', '8',
+                '-SharedProductLibraryPath', $library
+              )
+              $process = Start-Process `
+                -FilePath $pwshExe `
+                -ArgumentList $arguments `
+                -PassThru `
+                -NoNewWindow `
+                -RedirectStandardOutput $stdout `
+                -RedirectStandardError $stderr
 
               [PSCustomObject]@{
                 Index = $subshard
-                ExitCode = [int]$exitCode
-                Output = [string[]]@($rawOutput | ForEach-Object { $_.ToString() })
+                Process = $process
+                Stdout = $stdout
+                Stderr = $stderr
               }
-            } -ThrottleLimit 2
+            }
           )
 
+          foreach ($child in $children) {
+            $child.Process.WaitForExit()
+          }
+
           $failed = $false
-          foreach ($result in @($results | Sort-Object Index)) {
+          foreach ($child in @($children | Sort-Object Index)) {
             Write-Host ""
-            Write-Host "===== Debug subshard $($result.Index)/8 ====="
-            foreach ($line in @($result.Output)) { Write-Host $line }
-            if ($result.ExitCode -ne 0) {
-              Write-Host "FAIL: Debug subshard $($result.Index)/8 exited $($result.ExitCode)"
+            Write-Host "===== Debug subshard $($child.Index)/8 ====="
+            if (Test-Path -LiteralPath $child.Stdout) {
+              Get-Content -LiteralPath $child.Stdout | ForEach-Object { Write-Host $_ }
+            }
+            if (Test-Path -LiteralPath $child.Stderr) {
+              $stderrLines = @(Get-Content -LiteralPath $child.Stderr)
+              if ($stderrLines.Count -ne 0) {
+                Write-Host "----- stderr -----"
+                $stderrLines | ForEach-Object { Write-Host $_ }
+              }
+            }
+            $exitCode = $child.Process.ExitCode
+            if ($exitCode -ne 0) {
+              Write-Host "FAIL: Debug subshard $($child.Index)/8 exited $exitCode"
               $failed = $true
             }
           }
