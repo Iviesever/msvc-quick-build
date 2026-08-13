@@ -353,7 +353,11 @@ private:
 
 } // namespace
 
-std::expected<Value, Error> parse(const std::string_view text) {
+std::expected<Value, Error> parse(std::string_view text) {
+    constexpr std::string_view utf8_bom{"\xef\xbb\xbf"};
+    if (text.starts_with(utf8_bom)) {
+        text.remove_prefix(utf8_bom.size());
+    }
     return Parser{text}.parse_document();
 }
 
