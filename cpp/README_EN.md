@@ -10,24 +10,16 @@ MQB maintains one C++ product tree:
 
 ```text
 cpp/
-├─ include/                 # headers shared across translation units
+├─ include/                 # stable product interfaces shared across TUs
 │  └─ mqb/
-├─ src/                     # product implementation
-├─ tests/                   # C++ tests
+├─ src/                     # product implementation, physically layered by responsibility
+├─ tests/                   # C++ tests mirroring implementation ownership
 └─ mqb.json                 # self-build production manifest
 ```
 
-Do **not** recreate component-local project trees such as:
+Do not create component-local `include/src/tests` project trees. Choose the responsibility first, then use the unified `include/`, `src/`, and `tests/` roots.
 
-```text
-cpp/core/include + cpp/core/src
-cpp/config/include + cpp/config/src
-cpp/<component>/tests
-```
-
-Choose the responsibility first, then place the file under the unified `include/`, `src/`, or `tests/` root.
-
-## 2. Responsibility directories
+## 2. Top-level responsibilities
 
 | Directory | Responsibility |
 |---|---|
@@ -36,155 +28,122 @@ Choose the responsibility first, then place the file under the unified `include/
 | `discovery` | source and module-candidate discovery |
 | `json` | internal JSON parser |
 | `modules` | typed P1689 model, provider graph, module dependency graph |
-| `orchestration` | compile/link/archive/module pipeline coordination; implementation subdivided into scheduling/incremental/modules/routing |
-| `msvc` | MSVC compiler/linker/librarian/toolchain primitives |
+| `orchestration` | compile/link/archive/module pipeline coordination |
+| `msvc` | MSVC compiler/linker/librarian/module-scan/toolchain primitives |
 | `process` | platform-independent process model |
-| `platform/windows` | Windows quoting, process launch, and other platform boundaries |
-| `app` | executable composition, physically subdivided into CLI, diagnostics, project policy, and target adapters |
+| `platform/windows` | Windows quoting, process launch, other platform boundaries |
+| `app` | executable composition |
 
-The physical layout is approximately:
+Broad responsibilities must continue into physical sublayers:
 
 ```text
-cpp/
-├─ include/mqb/
-│  ├─ core/
-│  ├─ config/
-│  ├─ discovery/
-│  ├─ json/
-│  ├─ modules/
-│  ├─ orchestration/        # stable public facade headers
-│  ├─ msvc/
-│  ├─ process/
-│  └─ platform/windows/
-├─ src/
-│  ├─ app/
-│  │  ├─ Application.cpp/.hpp
-│  │  ├─ main.cpp
-│  │  ├─ cli/                # argument parsing + invocation normalization
-│  │  ├─ diagnostics/        # CLI-facing diagnostics / process output formatting
-│  │  ├─ project/            # config discovery + CLI/config policy composition
-│  │  └─ targets/            # ordinary/module/static target adapters
-│  ├─ core/
-│  ├─ config/
-│  ├─ discovery/
-│  ├─ json/
-│  ├─ modules/
-│  ├─ orchestration/
-│  │  ├─ scheduling/         # bounded execution scheduling
-│  │  ├─ incremental/        # ordinary compile/link/archive target coordination
-│  │  ├─ modules/            # named-module/header-unit coordination
-│  │  └─ routing/            # ordinary vs module target routing
-│  ├─ msvc/
-│  └─ platform/windows/
-└─ tests/
-   ├─ app/                    # mirrors app sub-responsibilities, e.g. app/cli
-   ├─ core/
-   ├─ config/
-   ├─ discovery/
-   ├─ json/
-   ├─ modules/
-   ├─ orchestration/          # mirrors incremental/modules/routing/scheduling
-   ├─ msvc/
-   ├─ process/
-   ├─ platform/windows/
-   └─ e2e/
+cpp/src/
+├─ app/
+│  ├─ Application.cpp/.hpp
+│  ├─ main.cpp
+│  ├─ cli/                  # argument parsing + invocation normalization
+│  ├─ diagnostics/          # CLI diagnostics / process-output formatting
+│  ├─ project/              # project config + CLI/config policy composition
+│  └─ targets/              # ordinary/module/static target adapters
+├─ core/
+│  ├─ cache/                # compile/link/archive cache model + persistence
+│  ├─ model/                # typed build/signature/TU classification model
+│  └─ planning/             # planner, dependency graph, artifact layout
+├─ msvc/
+│  ├─ compiler/             # cl.exe compile primitive + source dependencies
+│  ├─ linker/               # link.exe + library resolution
+│  ├─ librarian/            # lib.exe primitive
+│  ├─ modules/              # MSVC module dependency scanning
+│  └─ toolchain/            # VS / portable toolchain discovery
+├─ orchestration/
+│  ├─ scheduling/           # bounded work scheduling
+│  ├─ incremental/          # ordinary incremental compile/link/archive flows
+│  ├─ modules/              # named-module/header-unit coordination
+│  └─ routing/              # ordinary vs module pipeline routing
+├─ config/
+├─ discovery/
+├─ json/
+├─ modules/
+└─ platform/windows/
 ```
 
-## 3. Where headers go
+`cpp/tests/` mirrors the same secondary responsibilities for `app`, `core`, `msvc`, and `orchestration`. Cross-component/full-CLI scenarios belong in `tests/e2e/`.
 
-### `include/mqb/...`
+## 3. Stable facades and private implementation
 
-Use it for product interfaces that genuinely need to be shared **across translation units or responsibilities**.
+`include/mqb/...` is the only public include root. Interfaces genuinely shared across TUs/responsibilities remain in stable facades such as `include/mqb/core`, `include/mqb/msvc`, and `include/mqb/orchestration`.
 
-It is the only public include root. Do not add `cpp/<component>/include`. `include/mqb/orchestration` remains a stable facade so implementation sublayering does not force public include-path churn.
+**Implementation layering does not imply public include-path churn.** The `.cpp` files under `core/msvc/orchestration` can be physically grouped without moving public headers. Split a public facade only when the API itself develops a real subdomain boundary.
 
-### `src/app/...`
-
-Keep app-private headers beside the corresponding executable-composition responsibility. CLI/main-only interfaces do not need to enter public `include/mqb`.
-
-The `src/app/` root contains only the executable shell: `Application.cpp`, `Application.hpp`, and `main.cpp`. CLI parsing, diagnostics, project setup, and target adapters must not drift back into that root as another catch-all.
-
-### Other private implementation details
-
-If something serves one `.cpp` only, prefer keeping it inside the implementation rather than creating a public header simply to look modular.
+Headers under `src/app/...` are executable-private interfaces and do not enter public `include/mqb`. The `src/app/` root contains only `Application.cpp`, `Application.hpp`, and `main.cpp`; it must not drift back into a catch-all.
 
 ## 4. Dependency direction
 
 Maintain these boundaries:
 
-- `core` does not depend on `msvc` or `platform/windows`;
+- `core` does not depend on `msvc`, `orchestration`, or `platform/windows`;
+- `core/cache` owns cache identity/validation/persistence, `core/planning` owns decisions/graphs, and `core/model` remains typed domain state;
 - `config` / `discovery` do not own MSVC process invocation;
 - `modules` owns the provider graph; other directories must not independently guess providers;
-- `orchestration` composes flows while `msvc` constructs and executes MSVC primitives;
-- `orchestration/scheduling` owns bounded scheduling, `incremental` / `modules` consume it, and `routing` selects a pipeline instead of reimplementing one;
-- `process` remains platform-independent and Windows-specific implementation goes under `platform/windows`;
-- `app` may compose lower-level capabilities, but lower layers should not depend back on `app`;
-- `app/targets` adapts pipelines and must not duplicate formatting/error-expansion logic owned by `app/diagnostics`.
+- `msvc` constructs and executes MSVC primitives; `msvc/toolchain` only discovers/composes toolchains and does not own upper-layer build policy;
+- `orchestration` composes flows; `scheduling` only schedules and `routing` only selects pipelines instead of reimplementing them;
+- `process` remains platform-independent and Windows-specific behavior lives in `platform/windows`;
+- `app` may compose lower layers, but lower layers do not depend back on `app`;
+- `app/targets` must not duplicate formatting/error-expansion logic owned by `app/diagnostics`.
 
 See [`../docs/ARCHITECTURE_EN.md`](../docs/ARCHITECTURE_EN.md) for the full logical graph and invariants.
 
 ## 5. Placing a new file
 
-Use this order:
-
-1. Which responsibility owns it?
-2. Is it product code or a test?
-3. Does the product interface really need to be shared across TUs?
-4. Does it contain toolchain- or platform-specific behavior?
-5. Would the proposed location create an upward dependency from a lower layer?
-
-Examples:
+Decide in this order: responsibility owner → product/test → whether a public interface is required → toolchain/platform boundary → whether placement creates an upward dependency.
 
 ```text
-new cache identity model      -> include/mqb/core + src/core
-new mqb.json parser rule      -> config
-new P1689 provider logic      -> modules
+new cache serializer          -> src/core/cache (+ include/mqb/core if shared)
+new build-graph policy        -> src/core/planning
+new typed build model         -> src/core/model
+new cl.exe compile primitive  -> src/msvc/compiler
+new link library resolver     -> src/msvc/linker
+new VS discovery rule         -> src/msvc/toolchain
 new bounded scheduler         -> src/orchestration/scheduling
-new incremental linker        -> src/orchestration/incremental
-new module target coordinator -> src/orchestration/modules
-new target router             -> src/orchestration/routing
-new cl.exe argument builder   -> msvc
-new Windows process quoting   -> platform/windows
+new module coordinator        -> src/orchestration/modules
 new CLI flag                  -> src/app/cli (+ tests/app/cli/e2e)
 new CLI diagnostics           -> src/app/diagnostics
-new target CLI adapter        -> src/app/targets
 ```
 
-## 6. `cpp/mqb.json`
+## 6. `cpp/mqb.json` and automated gate
 
-`cpp/mqb.json` is MQB's production manifest for building itself.
+`cpp/mqb.json` is the production manifest MQB uses to build itself:
 
-Requirements:
+- its source set must exactly match real `cpp/src/**/*.cpp` translation units;
+- moves/splits must update the manifest;
+- `include` is the only public include root; app-private include roots serve executable composition only;
+- product code defaults to **C++23** with `/W4` and `/permissive-`.
 
-- its production source set must match the real `cpp/src/**/*.cpp` set;
-- the production TU count is not a stable contract;
-- moving or splitting files requires updating the manifest;
-- `include` is the only public include root; app-private include roots are executable-composition details and do not create public API surfaces.
+Before self-build, `tests/native/build_mqb.ps1` runs `tests/native/assert_cpp_layout.ps1`. The gate rejects unregistered top-level responsibilities, drift back into flat `app/core/msvc/orchestration` roots, files assigned to the wrong owner, and tests that no longer mirror the implementation responsibility.
 
-Development drivers validate the manifest against the actual production source set and run `tests/native/assert_cpp_layout.ps1` before self-building to enforce the responsibility-directory contract.
+## 7. C++ language floor
 
-## 7. Tests
+MQB product code targets **C++23** by default. New code should prefer typed domain state, RAII, and standard-library ownership/error models, including:
 
-All C++ tests live under `cpp/tests/`, mirrored by the responsibility under test. Cross-component and full CLI scenarios belong in `e2e`. CLI parser tests live under `tests/app/cli/`; orchestration tests mirror `incremental/modules/routing/scheduling` rather than accumulating directly under `tests/orchestration/`.
+- `std::expected` / `std::unexpected` for recoverable errors;
+- `std::span` / `std::string_view` for non-owning views;
+- `std::filesystem::path` for paths;
+- scoped RAII wrappers for Win32 handles/resources;
+- structured `executable + argv` process descriptions instead of shell-command strings;
+- `std::optional`, scoped enums, and designated initializers instead of magic values.
 
-Do not move tests back into product directories and do not hard-code the test count in documentation. The authoritative test set is discovered and validated by `tests/native/run_native_tests.ps1` and CI.
+Do not introduce raw `new/delete` ownership, C-style string ownership, unwrapped Win32 resource lifetimes, or shell-command pipelines merely for legacy familiarity.
 
-See [`../docs/DEVELOPMENT_EN.md`](../docs/DEVELOPMENT_EN.md) for the normal validation workflow.
+Modern syntax is not a goal by itself. Adopt a facility when it reduces ownership ambiguity, duplicate implementation, untyped state, or error-propagation noise; do not sacrifice clarity merely to advertise C++23.
 
-## 8. C++ language floor
+## 8. Refactoring floor
 
-MQB product code targets **C++23** by default. New code should prefer typed data, RAII, standard-library ownership and error models such as `std::expected`, `std::span`, `std::string_view`, `std::filesystem`, scoped resource wrappers, and structured `executable + argv` process descriptions instead of raw ownership, C-style strings, or shell-command strings.
-
-Modern syntax is not a goal by itself. Adopt a newer facility when it reduces ownership ambiguity, duplicate implementation, or untyped state; do not trade readability or compiler stability merely to advertise C++23.
-
-## 9. Refactoring floor
-
-Directory refactors must preserve:
+Any directory/code refactor must preserve:
 
 - one `include` / `src` / `tests` root;
-- the existing logical dependency direction;
-- alignment between `cpp/mqb.json` and the production source set;
-- a passing `tests/native/assert_cpp_layout.ps1` contract;
-- native test and self-host gates.
+- established dependency direction and stable public facades;
+- exact alignment between `cpp/mqb.json` and production sources;
+- a passing `tests/native/assert_cpp_layout.ps1` gate;
+- native Debug/Release, self-host, installer/package gates.
 
-Do not recreate the appearance of independent library targets merely to make the tree look tidy. Revisit the top-level structure only if the product shape itself actually changes.
+Revisit the top-level product structure only when the product shape actually changes; do not create artificial library targets merely to make the tree look tidy.
