@@ -11,8 +11,9 @@ $mqb = [IO.Path]::GetFullPath($MqbPath)
 $repo = [IO.Path]::GetFullPath($RepoRoot)
 $installPs1 = Join-Path $repo 'install.ps1'
 $installBat = Join-Path $repo 'install.bat'
+$uninstallBat = Join-Path $repo 'uninstall.bat'
 
-foreach ($path in @($mqb, $installPs1, $installBat)) {
+foreach ($path in @($mqb, $installPs1, $installBat, $uninstallBat)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "installer prerequisite missing: $path"
     }
@@ -41,6 +42,37 @@ function Invoke-PS5 {
     return $lines
 }
 
+function Invoke-BatNoPause {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [string[]]$Arguments = @(),
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $hadNoPause = Test-Path Env:MQB_NO_PAUSE
+    $oldNoPause = $env:MQB_NO_PAUSE
+    $code = 0
+    try {
+        $env:MQB_NO_PAUSE = '1'
+        $lines = @(& $Path @Arguments 2>&1 | ForEach-Object { $_.ToString() })
+        $code = $LASTEXITCODE
+    }
+    finally {
+        if ($hadNoPause) {
+            $env:MQB_NO_PAUSE = $oldNoPause
+        } else {
+            Remove-Item Env:MQB_NO_PAUSE -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($code -ne 0) {
+        Write-Host "--- $Label output ---"
+        $lines | ForEach-Object { Write-Host $_ }
+        throw "$Label failed with exit code $code"
+    }
+    return $lines
+}
+
 function Normalize-PathEntry {
     param([AllowEmptyString()][string]$Entry)
     if ([string]::IsNullOrWhiteSpace($Entry)) { return '' }
@@ -61,6 +93,15 @@ function Count-UserPathEntry {
         }
     }
     return $count
+}
+
+function Add-TestUserPathEntry {
+    param([Parameter(Mandatory = $true)][string]$Entry)
+    if ((Count-UserPathEntry $Entry) -ne 0) { return }
+    $current = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($null -eq $current) { $current = '' }
+    $parts = @($current -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    [Environment]::SetEnvironmentVariable('Path', (($parts + $Entry) -join ';'), 'User')
 }
 
 function Help-Line {
@@ -93,13 +134,7 @@ $originalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 try {
     $installRoot = Join-Path $runRoot 'bin'
 
-    $output = @(& $installBat `
-        -MqbPath $mqb `
-        -InstallRoot $installRoot 2>&1 | ForEach-Object { $_.ToString() })
-    if ($LASTEXITCODE -ne 0) {
-        $output | ForEach-Object { Write-Host $_ }
-        throw "install.bat failed with exit code $LASTEXITCODE"
-    }
+    Invoke-BatNoPause $installBat @('-MqbPath', $mqb, '-InstallRoot', $installRoot) 'install.bat' | Out-Null
 
     $installedMqb = Join-Path $installRoot 'mqb.exe'
     foreach ($required in @(
@@ -122,12 +157,26 @@ try {
     Assert-True ((Count-UserPathEntry $installRoot) -eq 1) 'reinstall duplicated PATH'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $installRoot 'build.cmd'))) 'reinstall introduced build compatibility shim'
 
-    Uninstall-Mqb $installRoot
+    Invoke-BatNoPause $uninstallBat @('-InstallRoot', $installRoot) 'uninstall.bat' | Out-Null
     Assert-True (-not (Test-Path -LiteralPath $installedMqb -PathType Leaf)) 'uninstall left mqb.exe behind'
     Assert-True ((Count-UserPathEntry $installRoot) -eq 0) 'uninstall left installer-owned PATH entry'
     foreach ($owned in @('mqb-install.ps1', 'uninstall-mqb.ps1', 'mqb-install-state.json')) {
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $installRoot $owned) -PathType Leaf)) "uninstall left installer-owned file: $owned"
     }
+
+    # A PATH entry that existed before installation remains user-owned and must survive uninstall.
+    $preexistingRoot = Join-Path $runRoot 'user-owned-path'
+    New-Item -ItemType Directory -Force -Path $preexistingRoot | Out-Null
+    Add-TestUserPathEntry $preexistingRoot
+    Assert-True ((Count-UserPathEntry $preexistingRoot) -eq 1) 'failed to establish pre-existing PATH fixture'
+
+    Install-Mqb $preexistingRoot
+    $preexistingStatePath = Join-Path $preexistingRoot 'mqb-install-state.json'
+    $preexistingState = Get-Content -LiteralPath $preexistingStatePath -Raw | ConvertFrom-Json
+    Assert-True (-not [bool]$preexistingState.path_added) 'installer incorrectly claimed ownership of a pre-existing PATH entry'
+
+    Uninstall-Mqb $preexistingRoot
+    Assert-True ((Count-UserPathEntry $preexistingRoot) -eq 1) 'uninstall removed a user-owned pre-existing PATH entry'
 
     # Obsolete installer parameters must fail closed instead of activating a migration path.
     $legacyCommand = '& ' + (Q $installPs1) +
@@ -139,7 +188,7 @@ try {
     Assert-True ($LASTEXITCODE -ne 0) 'obsolete installer parameter unexpectedly remained supported'
     Assert-True (($legacyOutput -join "`n") -match 'LegacyBuildPath') 'obsolete parameter rejection was not explicit'
 
-    Write-Host 'native installer install / reinstall / uninstall validation passed'
+    Write-Host 'native installer install / reinstall / uninstall / PATH ownership validation passed'
 }
 finally {
     [Environment]::SetEnvironmentVariable('Path', $originalUserPath, 'User')
