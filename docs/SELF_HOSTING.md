@@ -2,18 +2,13 @@
 
 **简体中文 | [English](SELF_HOSTING_EN.md)**
 
-本文描述 stable release 的**自举、验证与发布边界**。日常开发入口见 [`DEVELOPMENT.md`](DEVELOPMENT.md)；这里不重复 CLI、源码目录或配置说明。
+本文描述 stable release 的**自举、验证与发布边界**。日常开发入口见 [`DEVELOPMENT.md`](DEVELOPMENT.md)。
 
-## 1. 为什么需要 seed
+## 1. Bootstrap seed
 
-MQB 使用 MQB 构建自己，因此第一代当前源码必须由一个已经存在的可信 `mqb.exe` 启动。
+MQB 使用 MQB 构建自己，因此当前源码的第一代 binary 必须由一个已经存在的可信 `mqb.exe` 启动。
 
-Stable v5 的 bootstrap seed 固定为历史 `v5.0.0-rc.2` release binary。CI 对 seed 做两项验证：
-
-- 固定 Release ZIP 的 SHA-256；
-- 可执行文件报告预期的 MQB 版本身份。
-
-Seed 只用于构建当前源码的 **Stage 0**，不会进入 stable package。
+Stable v5 使用历史 `v5.0.0-rc.2` release binary 作为固定 seed。CI 校验该 seed 的 Release ZIP SHA-256 与 executable identity。Seed 只负责构建当前源码的 **Stage 0**，不会进入正式包。
 
 ## 2. 自举链
 
@@ -31,31 +26,23 @@ pinned historical MQB seed
       Stage 2
 ```
 
-Stage 0、Stage 1、Stage 2 都由**同一候选提交的当前源码**生成；每一代构建都由 MQB 完成。
+- **Stage 0**：证明历史 seed 可以构建当前实现。
+- **Stage 1**：由当前实现再次构建当前源码，作为正式发布候选。
+- **Stage 2**：清空 MQB build state 后由 Stage 1 再构建一次，证明 clean self-host closure。
 
-含义：
+三代 binary 都来自同一候选提交。
 
-- **Stage 0**：证明历史 seed 可以构建当前实现；
-- **Stage 1**：由当前实现再次构建当前源码，作为正式发布候选；
-- **Stage 2**：清空 MQB build state 后，由 Stage 1 再构建一次，用于证明干净自举闭包仍成立。
+## 3. 版本来源
 
-## 3. 项目描述与版本来源
+MQB 构建自身使用 [`cpp/mqb.json`](../cpp/mqb.json) 描述 production source set。
 
-MQB 构建自身时使用：
-
-```text
-cpp/mqb.json
-```
-
-该 manifest 必须与真实 production source set 一致，但 production TU 数量不是 stable contract。
-
-Release version 的唯一仓库来源是：
+Release version 的唯一仓库来源是根目录：
 
 ```text
-release/VERSION
+VERSION
 ```
 
-构建 driver 将该版本作为结构化 `MQB_VERSION` definition 注入 binary；`cpp/mqb.json` 不重复保存 release version。
+构建 driver 将该值作为结构化 `MQB_VERSION` definition 注入 binary。版本不会复制到 `mqb.json` 或单独的 release-notes 文件中。
 
 ## 4. Release-blocking 验证
 
@@ -65,50 +52,47 @@ Stable candidate 必须在同一候选提交上证明：
 2. seed 能构建当前 Stage 0；
 3. Stage 0 能通过完整 Release native test suite；
 4. Stage 0 能构建 Stage 1；
-5. 清空 MQB build state 后，Stage 1 能构建 Stage 2；
+5. 清空 build state 后，Stage 1 能构建 Stage 2；
 6. Stage 1 / Stage 2 报告正确的 release version；
-7. stable ZIP 中的 `mqb.exe` 与已经验证的 Stage 1 binary 完全一致；
-8. exact package manifest 与 SHA-256 sidecar 正确；
+7. ZIP 中 `mqb.exe` 与已验证 Stage 1 binary byte-identical；
+8. package manifest 与 SHA-256 sidecar 正确；
 9. packaged installer 的 install / reinstall / uninstall lifecycle 通过。
 
-任何一项失败都阻止 stable publication。
+任何一项失败都阻止 publication。
 
-## 5. Stable package 规则
+## 5. Stable package
 
-Stable ZIP：
-
-- 只包含已经验证的 Stage 1 `mqb.exe`；
-- 不包含历史 seed；
-- 不包含 Stage 0；
-- 不在 publication 阶段重新构建 binary。
-
-版本 `X.Y.Z` 的 package/checksum：
+版本 `X.Y.Z` 的正式资产：
 
 ```text
 msvc-quick-build-vX.Y.Z-windows-x64.zip
 msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
+ZIP 包含已经验证的 Stage 1 `mqb.exe`、`VERSION`、安装脚本、许可证和面向用户的文档；不包含历史 seed、Stage 0 或仓库内 release notes 副本。
+
 安装行为见 [`INSTALLATION.md`](INSTALLATION.md)。
 
-## 6. Tag publication
+## 6. Publication
 
-Stable publication 使用 immutable artifact 模型：
+发布由根 `VERSION` 的变更驱动：
 
-- 推送的 `vX.Y.Z` tag 必须与 `release/VERSION` 完全匹配；
-- publication job 只消费**同一 workflow run 已经验证过的** ZIP 与 checksum；
-- publication 阶段不 rebuild，以避免“验证的是 A、发布的是 B”。
+1. `VERSION` 变更随候选提交合入 `main`；
+2. `Native Release` 在该 exact `main` commit 上重新执行完整 build/test/self-host/package gate；
+3. gate 全绿后，workflow 使用已经验证的 ZIP 与 checksum 创建 `vX.Y.Z` tag 和 GitHub Release；
+4. Release notes 由 GitHub 根据自上一个 tag 以来的 PR/commit 历史生成，不再保存在源码树中；
+5. publication 阶段不 rebuild binary。
 
-历史 release/tag 不因后续文档或实现变化而重写。
+已存在的 tag 或 Release 不会被覆盖。历史 tag 与二进制资产保持不可变；GitHub Release 的说明文字可以独立维护，不需要改源码或重写 tag。
 
-## 7. 日常开发与 stable release 的区别
+## 7. 日常开发与发布
 
-日常开发只需要验证当前 MQB 和 native test suite，推荐：
+日常开发推荐：
 
 ```powershell
 .\tests\native\develop.ps1
 ```
 
-Stable release 额外要求 pinned-seed bootstrap、Stage 1/Stage 2 closure、exact package/checksum 与 installer lifecycle。
+Stable release 在此基础上额外要求 pinned-seed bootstrap、Stage 1/Stage 2 closure、exact package/checksum 和 installer lifecycle。
 
 开发流程见 [`DEVELOPMENT.md`](DEVELOPMENT.md)，内部构建模型见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
