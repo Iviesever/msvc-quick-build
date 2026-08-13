@@ -38,29 +38,69 @@ function Test-PathContains {
     return $false
 }
 
+function Broadcast-EnvironmentChange {
+    try {
+        $code = @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Notifier {
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam,
+        uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+    public static void Notify() {
+        UIntPtr result;
+        SendMessageTimeout((IntPtr)0xffff, 0x001A, UIntPtr.Zero, "Environment", 2, 5000, out result);
+    }
+}
+"@
+        Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
+        [Win32Notifier]::Notify()
+    } catch {}
+}
+
 function Add-UserPathEntry {
     param([Parameter(Mandatory = $true)][string]$Entry)
     $current = [Environment]::GetEnvironmentVariable('Path', 'User')
     if ($null -eq $current) { $current = '' }
-    if (Test-PathContains $current $Entry) { return $false }
-    $parts = @($current -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    [Environment]::SetEnvironmentVariable('Path', (($parts + $Entry) -join ';'), 'User')
-    return $true
+    $added = $false
+    if (-not (Test-PathContains $current $Entry)) {
+        $parts = @($current -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        [Environment]::SetEnvironmentVariable('Path', (($parts + $Entry) -join ';'), 'User')
+        $added = $true
+        Broadcast-EnvironmentChange
+    }
+    if (-not (Test-PathContains $env:Path $Entry)) {
+        $env:Path = "$env:Path;$Entry"
+    }
+    return $added
 }
 
 function Remove-UserPathEntry {
     param([Parameter(Mandatory = $true)][string]$Entry)
-    $current = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if ($null -eq $current) { return }
     $needle = Normalize-PathEntry $Entry
-    $parts = @()
-    foreach ($part in @($current -split ';')) {
-        if ([string]::IsNullOrWhiteSpace($part)) { continue }
-        if (-not [string]::Equals((Normalize-PathEntry $part), $needle, [System.StringComparison]::OrdinalIgnoreCase)) {
-            $parts += $part
+    $current = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($null -ne $current -and -not [string]::IsNullOrWhiteSpace($current)) {
+        $parts = @()
+        foreach ($part in @($current -split ';')) {
+            if ([string]::IsNullOrWhiteSpace($part)) { continue }
+            if (-not [string]::Equals((Normalize-PathEntry $part), $needle, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $parts += $part
+            }
         }
+        [Environment]::SetEnvironmentVariable('Path', ($parts -join ';'), 'User')
+        Broadcast-EnvironmentChange
     }
-    [Environment]::SetEnvironmentVariable('Path', ($parts -join ';'), 'User')
+    if ($null -ne $env:Path -and -not [string]::IsNullOrWhiteSpace($env:Path)) {
+        $parts = @()
+        foreach ($part in @($env:Path -split ';')) {
+            if ([string]::IsNullOrWhiteSpace($part)) { continue }
+            if (-not [string]::Equals((Normalize-PathEntry $part), $needle, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $parts += $part
+            }
+        }
+        $env:Path = $parts -join ';'
+    }
 }
 
 function Read-InstallState {
@@ -88,6 +128,16 @@ function Write-InstallState {
 function Resolve-MqbSource {
     if (-not [string]::IsNullOrWhiteSpace($MqbPath)) {
         return (Get-FullPath $MqbPath)
+    }
+    $candidates = @(
+        (Join-Path $PSScriptRoot 'mqb.exe'),
+        (Join-Path $PSScriptRoot 'cpp\.mqb\bin\mqb.exe'),
+        (Join-Path $PSScriptRoot '.mqb\bin\mqb.exe')
+    )
+    foreach ($cand in $candidates) {
+        if (Test-Path -LiteralPath $cand -PathType Leaf) {
+            return (Get-FullPath $cand)
+        }
     }
     return (Get-FullPath (Join-Path $PSScriptRoot 'mqb.exe'))
 }
@@ -159,11 +209,7 @@ if ($Action -eq 'Install') {
     exit 0
 }
 
-$pathOwned = $false
-if ($null -ne $previousState -and $null -ne $previousState.path_added) {
-    $pathOwned = [bool]$previousState.path_added
-}
-if (-not $SkipUserPath -and $pathOwned) {
+if (-not $SkipUserPath) {
     Remove-UserPathEntry $InstallRoot
 }
 
