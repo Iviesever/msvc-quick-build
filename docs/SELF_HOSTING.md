@@ -55,7 +55,7 @@ Stable candidate 必须在同一候选提交上证明：
 5. 清空 build state 后，Stage 1 能构建 Stage 2；
 6. Stage 1 / Stage 2 报告正确的 release version；
 7. ZIP 中 `mqb.exe` 与已验证 Stage 1 binary byte-identical；
-8. package manifest 与 SHA-256 sidecar 正确；
+8. ZIP 只包含 runtime / installer payload 与 Apache-2.0 `LICENSE`，且 manifest 与 SHA-256 sidecar 精确匹配；
 9. packaged installer 的 install / reinstall / uninstall lifecycle 通过。
 
 任何一项失败都阻止 publication。
@@ -69,13 +69,26 @@ msvc-quick-build-vX.Y.Z-windows-x64.zip
 msvc-quick-build-vX.Y.Z-windows-x64.zip.sha256
 ```
 
-ZIP 包含已经验证的 Stage 1 `mqb.exe`、`VERSION`、安装脚本、许可证和面向用户的文档；不包含历史 seed、Stage 0 或仓库内 release notes 副本。
+ZIP 是**扁平、runtime-only** 发布包，精确包含：
+
+```text
+mqb.exe
+VERSION
+install.bat
+install.ps1
+uninstall.ps1
+LICENSE
+```
+
+README、架构、配置、安装说明、自举说明和 release notes 等用户文档**不进入 ZIP**；它们保留在仓库与 GitHub Release 页面。`LICENSE` 作为 Apache-2.0 二进制再分发所需的许可证副本继续随包发布。
+
+历史 seed、Stage 0、Stage 2、测试文件和源码同样不会进入正式 ZIP。
 
 安装行为见 [`INSTALLATION.md`](INSTALLATION.md)。
 
 ## 6. Publication
 
-发布由根 `VERSION` 的变更驱动：
+正常 stable publication 由根 `VERSION` 的变更驱动：
 
 1. `VERSION` 变更随候选提交合入 `main`；
 2. `Native Release` 在该 exact `main` commit 上重新执行完整 build/test/self-host/package gate；
@@ -83,7 +96,9 @@ ZIP 包含已经验证的 Stage 1 `mqb.exe`、`VERSION`、安装脚本、许可�
 4. Release notes 由 GitHub 根据自上一个 tag 以来的 PR/commit 历史生成，不再保存在源码树中；
 5. publication 阶段不 rebuild binary。
 
-已存在的 tag 或 Release 不会被覆盖。历史 tag 与二进制资产保持不可变；GitHub Release 的说明文字可以独立维护，不需要改源码或重写 tag。
+Release workflow 自身的修复也可以重新触发同一版本的 gate，用于恢复一次失败但尚未发布的 release。若同版本 GitHub Release 已经存在，publication 会安全跳过；若只存在 tag 而没有 Release，则失败关闭，不猜测或覆盖历史状态。
+
+已有 Release/tag 与二进制资产保持不可变，不会被 workflow 覆盖。
 
 ## 7. 日常开发与发布
 
@@ -93,6 +108,6 @@ ZIP 包含已经验证的 Stage 1 `mqb.exe`、`VERSION`、安装脚本、许可�
 .\tests\native\develop.ps1
 ```
 
-Stable release 在此基础上额外要求 pinned-seed bootstrap、Stage 1/Stage 2 closure、exact package/checksum 和 installer lifecycle。
+Stable release 在此基础上额外要求 pinned-seed bootstrap、Stage 1/Stage 2 closure、exact runtime-only package/checksum 和 installer lifecycle。
 
 开发流程见 [`DEVELOPMENT.md`](DEVELOPMENT.md)，内部构建模型见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
