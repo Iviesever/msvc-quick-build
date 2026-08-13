@@ -106,26 +106,68 @@ jobs:
           name: native-debug-mqb
           path: native-out/debug
 
-      - name: Run MQB-native Debug test shard
+      - name: Run two MQB-native Debug subshards
         shell: pwsh
         run: |
           $mqb = Join-Path $PWD 'native-out/debug/mqb.exe'
           $library = Join-Path $PWD 'native-out/debug/native-test-product.lib'
+          $testScript = Join-Path $PWD 'tests/native/run_native_tests.ps1'
           if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
             throw "Downloaded Debug MQB missing: $mqb"
           }
           if (-not (Test-Path -LiteralPath $library -PathType Leaf)) {
             throw "Downloaded shared Debug native-test product library missing: $library"
           }
-          & (Join-Path $PWD 'tests/native/run_native_tests.ps1') `
-            -BuilderMqbPath $mqb `
-            -TestMqbPath $mqb `
-            -RepoRoot $PWD `
-            -Configuration Debug `
-            -ShardIndex ${{ matrix.shard }} `
-            -ShardCount 4 `
-            -SharedProductLibraryPath $library
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Keep the four hosted runners from #63/#65, but run two independent
+          # weighted subshards concurrently inside each runner. The global
+          # ShardCount=8 plan remains deterministic; outer runner N owns
+          # subshards 2N and 2N+1, so every one of the 67 tests runs exactly once.
+          $outerShard = [int]'${{ matrix.shard }}'
+          $firstSubshard = $outerShard * 2
+          $subshards = @($firstSubshard, $firstSubshard + 1)
+
+          $results = @(
+            $subshards | ForEach-Object -Parallel {
+              $subshard = [int]$_
+              $rawOutput = @()
+              $exitCode = 1
+              try {
+                $rawOutput = @(& $using:testScript `
+                  -BuilderMqbPath $using:mqb `
+                  -TestMqbPath $using:mqb `
+                  -RepoRoot $using:PWD `
+                  -Configuration Debug `
+                  -ShardIndex $subshard `
+                  -ShardCount 8 `
+                  -SharedProductLibraryPath $using:library *>&1)
+                $exitCode = $LASTEXITCODE
+                if ($null -eq $exitCode) { $exitCode = 0 }
+              }
+              catch {
+                $rawOutput += $_
+                $exitCode = 1
+              }
+
+              [PSCustomObject]@{
+                Index = $subshard
+                ExitCode = [int]$exitCode
+                Output = [string[]]@($rawOutput | ForEach-Object { $_.ToString() })
+              }
+            } -ThrottleLimit 2
+          )
+
+          $failed = $false
+          foreach ($result in @($results | Sort-Object Index)) {
+            Write-Host ""
+            Write-Host "===== Debug subshard $($result.Index)/8 ====="
+            foreach ($line in @($result.Output)) { Write-Host $line }
+            if ($result.ExitCode -ne 0) {
+              Write-Host "FAIL: Debug subshard $($result.Index)/8 exited $($result.ExitCode)"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
 
   build-and-test:
     name: Native C++ gate
