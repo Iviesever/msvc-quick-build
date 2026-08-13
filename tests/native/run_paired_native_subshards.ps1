@@ -24,7 +24,7 @@ if ($OuterShardIndex -ge $OuterShardCount) {
     throw "OuterShardIndex must be smaller than OuterShardCount: $OuterShardIndex >= $OuterShardCount"
 }
 if ($SubshardA -ge $ShardCount -or $SubshardB -ge $ShardCount) {
-    throw "Subshard index must be smaller than ShardCount $ShardCount: $SubshardA,$SubshardB"
+    throw "Subshard index must be smaller than ShardCount ${ShardCount}: $SubshardA,$SubshardB"
 }
 if ($SubshardB -ne ($SubshardA + 1) -or $SubshardA -ne ($OuterShardIndex * 2)) {
     throw "Invalid outer/subshard mapping: outer=$OuterShardIndex pair=$SubshardA,$SubshardB"
