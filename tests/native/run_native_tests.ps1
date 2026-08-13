@@ -5,7 +5,9 @@ param(
     [Parameter(Mandatory = $true)][string]$RepoRoot,
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug',
     [ValidateRange(0, 63)][int]$ShardIndex = 0,
-    [ValidateRange(1, 64)][int]$ShardCount = 1
+    [ValidateRange(1, 64)][int]$ShardCount = 1,
+    [string]$SharedProductLibraryPath,
+    [string]$PrepareSharedProductLibraryPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +21,10 @@ function Get-FullPath {
 if ($ShardIndex -ge $ShardCount) {
     throw "ShardIndex must be smaller than ShardCount: $ShardIndex >= $ShardCount"
 }
+if (-not [string]::IsNullOrWhiteSpace($SharedProductLibraryPath) -and
+    -not [string]::IsNullOrWhiteSpace($PrepareSharedProductLibraryPath)) {
+    throw 'SharedProductLibraryPath and PrepareSharedProductLibraryPath are mutually exclusive.'
+}
 
 $RepoRoot = Get-FullPath $RepoRoot
 $BuilderMqbPath = Get-FullPath $BuilderMqbPath
@@ -30,6 +36,16 @@ foreach ($path in @($BuilderMqbPath, $TestMqbPath, $configPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required native-test input not found: $path"
     }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($SharedProductLibraryPath)) {
+    $SharedProductLibraryPath = Get-FullPath $SharedProductLibraryPath
+    if (-not (Test-Path -LiteralPath $SharedProductLibraryPath -PathType Leaf)) {
+        throw "Shared native-test product library not found: $SharedProductLibraryPath"
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($PrepareSharedProductLibraryPath)) {
+    $PrepareSharedProductLibraryPath = Get-FullPath $PrepareSharedProductLibraryPath
 }
 
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
@@ -72,6 +88,114 @@ if ($allTestFiles.Count -ne 67) {
     throw "Native test manifest drift: expected 67 *_tests.cpp files, found $($allTestFiles.Count)."
 }
 
+$quote = [char]34
+$versionDefine = 'MQB_VERSION=' + $quote + 'native-tests' + $quote
+$configArg = if ($Configuration -eq 'Debug') { '--debug' } else { '--release' }
+$runtime = if ($Configuration -eq 'Debug') { 'MTd' } else { 'MT' }
+$standard = [string]$config.build.standard
+
+function Add-NativeCompilePolicyArguments {
+    param([Parameter(Mandatory = $true)][System.Collections.ArrayList]$Arguments)
+
+    [void]$Arguments.Add('--env')
+    [void]$Arguments.Add('vs')
+    [void]$Arguments.Add($configArg)
+    [void]$Arguments.Add('--std')
+    [void]$Arguments.Add($standard)
+    [void]$Arguments.Add('--runtime')
+    [void]$Arguments.Add($runtime)
+    foreach ($include in $includeDirs) {
+        [void]$Arguments.Add('-I')
+        [void]$Arguments.Add('cpp/' + ([string]$include).Replace('\', '/'))
+    }
+    foreach ($compilerArg in @($config.build.compiler_args)) {
+        [void]$Arguments.Add('--compiler-arg')
+        [void]$Arguments.Add([string]$compilerArg)
+    }
+    [void]$Arguments.Add('-D')
+    [void]$Arguments.Add($versionDefine)
+}
+
+function Invoke-MqbBuild {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Sources,
+        [Parameter(Mandatory = $true)][string]$OutputName,
+        [ValidateSet('Executable', 'Static')][string]$TargetKind = 'Executable',
+        [switch]$UseSharedProductLibrary
+    )
+
+    $arguments = [System.Collections.ArrayList]::new()
+    foreach ($source in $Sources) {
+        [void]$arguments.Add($source)
+    }
+    Add-NativeCompilePolicyArguments -Arguments $arguments
+
+    if ($TargetKind -eq 'Static') {
+        [void]$arguments.Add('--type')
+        [void]$arguments.Add('static')
+    }
+    elseif ($UseSharedProductLibrary) {
+        # With one requested test source MQB would otherwise run source
+        # discovery and re-add the same production graph already archived in
+        # the shared library, producing duplicate definitions at link time.
+        [void]$arguments.Add('--no-discover')
+        [void]$arguments.Add('--lib')
+        [void]$arguments.Add($SharedProductLibraryPath)
+        [void]$arguments.Add('--linker-arg')
+        [void]$arguments.Add("/WHOLEARCHIVE:$SharedProductLibraryPath")
+    }
+
+    if ($TargetKind -eq 'Executable') {
+        [void]$arguments.Add('--linker-arg')
+        [void]$arguments.Add('shell32.lib')
+    }
+    [void]$arguments.Add('-o')
+    [void]$arguments.Add($OutputName)
+
+    Push-Location $RepoRoot
+    try {
+        $buildOutput = @(& $BuilderMqbPath @arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+        foreach ($line in $buildOutput) { Write-Host $line }
+        if ($exitCode -ne 0) {
+            throw "MQB failed to build '$OutputName' with exit code $exitCode"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PrepareSharedProductLibraryPath)) {
+    # Build the exact shared product graph once with the candidate MQB and the
+    # same compile policy used by every native test. A static library is used
+    # instead of moving .mqb caches across runners because cache freshness also
+    # depends on filesystem timestamps. Test shards later link this library with
+    # /WHOLEARCHIVE so every production object remains present just as before.
+    $stateRoot = Join-Path $RepoRoot '.mqb'
+    if (Test-Path -LiteralPath $stateRoot) {
+        Remove-Item -LiteralPath $stateRoot -Recurse -Force
+    }
+
+    $libraryOutputName = 'native_test_product'
+    $sources = @($productionSources | ForEach-Object { 'cpp/' + $_ })
+    Write-Host "Preparing shared native-test product library for $Configuration"
+    Write-Host "Verified shared production manifest: $($productionSources.Count) non-main translation units"
+    Write-Host "Builder MQB: $BuilderMqbPath"
+    Invoke-MqbBuild -Sources $sources -OutputName $libraryOutputName -TargetKind Static
+
+    $builtLibrary = Join-Path $RepoRoot ".mqb/bin/$libraryOutputName.lib"
+    if (-not (Test-Path -LiteralPath $builtLibrary -PathType Leaf)) {
+        throw "Shared native-test library build did not produce: $builtLibrary"
+    }
+    $parent = Split-Path -Parent $PrepareSharedProductLibraryPath
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    Copy-Item -LiteralPath $builtLibrary -Destination $PrepareSharedProductLibraryPath -Force
+    Write-Host "Prepared shared native-test product library: $PrepareSharedProductLibraryPath"
+    Write-Output $PrepareSharedProductLibraryPath
+    exit 0
+}
+
 $testFiles = @(
     for ($i = 0; $i -lt $allTestFiles.Count; ++$i) {
         if (($i % $ShardCount) -eq $ShardIndex) {
@@ -82,12 +206,6 @@ $testFiles = @(
 if ($testFiles.Count -eq 0) {
     throw "Native test shard $ShardIndex/$ShardCount selected no tests."
 }
-
-$quote = [char]34
-$versionDefine = 'MQB_VERSION=' + $quote + 'native-tests' + $quote
-$configArg = if ($Configuration -eq 'Debug') { '--debug' } else { '--release' }
-$runtime = if ($Configuration -eq 'Debug') { 'MTd' } else { 'MT' }
-$standard = [string]$config.build.standard
 
 function Get-TestOutputName {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
@@ -104,33 +222,17 @@ function Invoke-MqbTestBuild {
     # Invoke from repository root, where no mqb.json is auto-loaded. The
     # current cpp/mqb.json is still the source of truth for the shared
     # production manifest and policy, but old/new builders see only native CLI.
-    $arguments = @('cpp/' + $EntrySource)
-    $arguments += @($productionSources | ForEach-Object { 'cpp/' + $_ })
-    $arguments += @('--env', 'vs', $configArg, '--std', $standard, '--runtime', $runtime)
-    foreach ($include in $includeDirs) {
-        $arguments += @('-I', ('cpp/' + ([string]$include).Replace('\', '/')))
+    $sources = @('cpp/' + $EntrySource)
+    $useSharedLibrary = -not [string]::IsNullOrWhiteSpace($SharedProductLibraryPath)
+    if (-not $useSharedLibrary) {
+        $sources += @($productionSources | ForEach-Object { 'cpp/' + $_ })
     }
-    foreach ($compilerArg in @($config.build.compiler_args)) {
-        $arguments += @('--compiler-arg', [string]$compilerArg)
-    }
-    $arguments += @(
-        '-D', $versionDefine,
-        '--linker-arg', 'shell32.lib',
-        '-o', $OutputName
-    )
 
-    Push-Location $RepoRoot
-    try {
-        $buildOutput = @(& $BuilderMqbPath @arguments 2>&1)
-        $exitCode = $LASTEXITCODE
-        foreach ($line in $buildOutput) { Write-Host $line }
-        if ($exitCode -ne 0) {
-            throw "MQB failed to build native test '$EntrySource' with exit code $exitCode"
-        }
-    }
-    finally {
-        Pop-Location
-    }
+    Invoke-MqbBuild `
+        -Sources $sources `
+        -OutputName $OutputName `
+        -TargetKind Executable `
+        -UseSharedProductLibrary:$useSharedLibrary
 
     $exe = Join-Path $RepoRoot ".mqb/bin/$OutputName.exe"
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
@@ -144,6 +246,12 @@ Write-Host "Shard: $ShardIndex of $ShardCount (zero-based index)"
 Write-Host "Verified shared production manifest: $($productionSources.Count) non-main translation units"
 Write-Host "Builder MQB: $BuilderMqbPath"
 Write-Host "Tested MQB:  $TestMqbPath"
+if (-not [string]::IsNullOrWhiteSpace($SharedProductLibraryPath)) {
+    Write-Host "Shared product library: $SharedProductLibraryPath"
+}
+else {
+    Write-Host 'Shared product library: disabled; each shard compiles the production graph locally.'
+}
 
 $helperExe = $null
 if (@($testFiles | Where-Object { $_.Name -eq 'windows_process_runner_tests.cpp' }).Count -ne 0) {

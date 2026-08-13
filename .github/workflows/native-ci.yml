@@ -22,8 +22,9 @@ concurrency:
 
 jobs:
   build-current:
-    name: Build current Debug MQB
+    name: Build current Debug MQB + shared test library
     runs-on: windows-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -59,11 +60,28 @@ jobs:
             throw "Debug MQB build output missing: $mqb"
           }
 
-      - name: Upload exact Debug MQB
+      - name: Build shared Debug native-test product library
+        shell: pwsh
+        run: |
+          $mqb = Join-Path $PWD 'native-out/debug/mqb.exe'
+          $library = & (Join-Path $PWD 'tests/native/run_native_tests.ps1') `
+            -BuilderMqbPath $mqb `
+            -TestMqbPath $mqb `
+            -RepoRoot $PWD `
+            -Configuration Debug `
+            -PrepareSharedProductLibraryPath (Join-Path $PWD 'native-out/debug/native-test-product.lib')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath $library -PathType Leaf)) {
+            throw "Shared Debug native-test product library missing: $library"
+          }
+
+      - name: Upload exact Debug MQB and shared product library
         uses: actions/upload-artifact@v7
         with:
           name: native-debug-mqb
-          path: native-out/debug/mqb.exe
+          path: |
+            native-out/debug/mqb.exe
+            native-out/debug/native-test-product.lib
           if-no-files-found: error
           retention-days: 1
 
@@ -82,7 +100,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Download exact Debug MQB
+      - name: Download exact Debug MQB and shared product library
         uses: actions/download-artifact@v8
         with:
           name: native-debug-mqb
@@ -92,8 +110,12 @@ jobs:
         shell: pwsh
         run: |
           $mqb = Join-Path $PWD 'native-out/debug/mqb.exe'
+          $library = Join-Path $PWD 'native-out/debug/native-test-product.lib'
           if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
             throw "Downloaded Debug MQB missing: $mqb"
+          }
+          if (-not (Test-Path -LiteralPath $library -PathType Leaf)) {
+            throw "Downloaded shared Debug native-test product library missing: $library"
           }
           & (Join-Path $PWD 'tests/native/run_native_tests.ps1') `
             -BuilderMqbPath $mqb `
@@ -101,7 +123,8 @@ jobs:
             -RepoRoot $PWD `
             -Configuration Debug `
             -ShardIndex ${{ matrix.shard }} `
-            -ShardCount 4
+            -ShardCount 4 `
+            -SharedProductLibraryPath $library
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   build-and-test:
