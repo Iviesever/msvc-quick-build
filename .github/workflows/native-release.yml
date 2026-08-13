@@ -8,6 +8,7 @@ on:
       - 'LICENSE'
       - 'install.bat'
       - 'install.ps1'
+      - 'uninstall.bat'
       - 'uninstall.ps1'
       - 'tests/installer/**'
       - 'tests/native/**'
@@ -124,6 +125,7 @@ jobs:
           Copy-Item 'VERSION' (Join-Path $stage 'VERSION')
           Copy-Item 'install.bat' (Join-Path $stage 'install.bat')
           Copy-Item 'install.ps1' (Join-Path $stage 'install.ps1')
+          Copy-Item 'uninstall.bat' (Join-Path $stage 'uninstall.bat')
           Copy-Item 'uninstall.ps1' (Join-Path $stage 'uninstall.ps1')
           Copy-Item 'LICENSE' (Join-Path $stage 'LICENSE')
 
@@ -175,6 +177,7 @@ jobs:
             'install.ps1',
             'LICENSE',
             'mqb.exe',
+            'uninstall.bat',
             'uninstall.ps1',
             'VERSION'
           ) | Sort-Object
