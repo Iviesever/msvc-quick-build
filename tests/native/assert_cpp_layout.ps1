@@ -128,6 +128,14 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'app') -LeafFiles ([ordered]@{
     'cli' = @('build_policy_cli_tests.cpp', 'cli_argument_tests.cpp')
 })
 
+# Project configuration. JSON grammar belongs to the json layer; config owns
+# only document loading, schema decoding, and effective-option resolution.
+Assert-LeafLayout -Root (Join-Path $srcRoot 'config') -LeafFiles ([ordered]@{
+    'loading' = @('ProjectConfig.cpp')
+    'resolution' = @('ProjectOptions.cpp')
+    'schema' = @('ProjectConfigSchema.cpp', 'ProjectConfigSchema.hpp')
+})
+
 # Toolchain-independent core. Public headers stay in include/mqb/core as a
 # stable facade while implementation/test ownership is explicit.
 $coreLeafFiles = [ordered]@{
