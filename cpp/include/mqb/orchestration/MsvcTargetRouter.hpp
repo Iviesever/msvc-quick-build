@@ -14,6 +14,7 @@
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/orchestration/MsvcModuleTargetCoordinator.hpp"
+#include "mqb/orchestration/ParallelismPolicy.hpp"
 
 namespace mqb::orchestration {
 
@@ -37,7 +38,7 @@ struct RoutedTargetRequest {
     CompilerOptions compiler_options;
     LinkOptions link_options;
     std::filesystem::path working_directory;
-    std::size_t max_parallel_jobs{1};
+    ParallelismPolicy parallelism{};
     // Execution-routing state only. This is used when discovery observed module
     // syntax but found no local named-module interface provider, including a
     // header-unit-only entry. It must not affect compile/link cache identity.
