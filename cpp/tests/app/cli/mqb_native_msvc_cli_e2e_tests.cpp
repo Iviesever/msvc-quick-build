@@ -530,6 +530,21 @@ void verify_command_candidate_e2e(const fs::path& mqb_executable) {
                "ambiguous default-entry failure should explain how to disambiguate");
     }
 
+    const fs::path absent = tree.root / "absent";
+    fs::create_directories(absent);
+    auto no_entry = run_process(
+        runner,
+        mqb_executable,
+        absent,
+        {"build", "--env", "vs", "--no-discover"});
+    expect(no_entry.has_value(), "missing default-entry build should launch");
+    if (no_entry) {
+        expect(no_entry->exit_code == 2,
+               "zero conventional default entries should fail before toolchain execution");
+        expect(no_entry->stderr_text.find("no default entry found") != std::string::npos,
+               "zero-candidate failure should explain how to provide an entry");
+    }
+
     const fs::path missing_configured = tree.root / "missing-configured";
     write_text(missing_configured / "main.cpp", "int main() { return 0; }\n");
     write_text(
