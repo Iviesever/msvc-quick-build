@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "mqb/core/BuildSignature.hpp"
