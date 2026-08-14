@@ -453,6 +453,72 @@ using JsonValue = json::Value;
     return {};
 }
 
+[[nodiscard]] std::expected<void, Error> decode_profile(
+    const fs::path& file,
+    const fs::path& root,
+    const std::string_view profile_name,
+    const JsonValue& value,
+    ProjectProfile& out) {
+    const std::string scope = "profiles." + std::string{profile_name};
+    auto object = require_object(file, value, scope);
+    if (!object) return std::unexpected(object.error());
+
+    auto known = reject_unknown(
+        file,
+        **object,
+        {"build", "discovery", "modules"},
+        scope);
+    if (!known) return std::unexpected(known.error());
+
+    if (auto it = (**object).find("build"); it != (**object).end()) {
+        auto build_object = require_object(file, it->second, scope + ".build");
+        if (!build_object) return std::unexpected(build_object.error());
+        if (auto entry = (**build_object).find("entry"); entry != (**build_object).end()) {
+            return std::unexpected(schema_error(
+                file,
+                entry->second,
+                scope + ".build.entry is not allowed; build.entry is project identity and must be declared at the root build layer"));
+        }
+        auto decoded = decode_build(file, root, it->second, out.build);
+        if (!decoded) return std::unexpected(decoded.error());
+    }
+
+    if (auto it = (**object).find("discovery"); it != (**object).end()) {
+        auto decoded = decode_discovery(file, root, it->second, out.discovery);
+        if (!decoded) return std::unexpected(decoded.error());
+    }
+
+    if (auto it = (**object).find("modules"); it != (**object).end()) {
+        auto decoded = decode_modules(file, root, it->second, out.modules);
+        if (!decoded) return std::unexpected(decoded.error());
+    }
+
+    return {};
+}
+
+[[nodiscard]] std::expected<void, Error> decode_profiles(
+    const fs::path& file,
+    const fs::path& root,
+    const JsonValue& value,
+    std::map<std::string, ProjectProfile, std::less<>>& out) {
+    auto object = require_object(file, value, "profiles");
+    if (!object) return std::unexpected(object.error());
+
+    for (const auto& [name, profile_value] : **object) {
+        if (name.empty()) {
+            return std::unexpected(schema_error(
+                file,
+                profile_value,
+                "profile name must not be empty"));
+        }
+        ProjectProfile profile;
+        auto decoded = decode_profile(file, root, name, profile_value, profile);
+        if (!decoded) return std::unexpected(decoded.error());
+        out.emplace(name, std::move(profile));
+    }
+    return {};
+}
+
 } // namespace
 
 std::expected<ProjectConfig, Error> decode_project_config(
@@ -464,7 +530,7 @@ std::expected<ProjectConfig, Error> decode_project_config(
     auto known = reject_unknown(
         file,
         **object,
-        {"version", "build", "discovery", "modules"},
+        {"version", "build", "discovery", "modules", "profiles"},
         "root");
     if (!known) return std::unexpected(known.error());
 
@@ -535,6 +601,15 @@ std::expected<ProjectConfig, Error> decode_project_config(
             config.project_root,
             it->second,
             config.modules);
+        if (!decoded) return std::unexpected(decoded.error());
+    }
+
+    if (auto it = (**object).find("profiles"); it != (**object).end()) {
+        auto decoded = decode_profiles(
+            file,
+            config.project_root,
+            it->second,
+            config.profiles);
         if (!decoded) return std::unexpected(decoded.error());
     }
 
