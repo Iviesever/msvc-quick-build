@@ -160,6 +160,13 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         side_output_snapshots,
         request.force_relink);
 
+    // A reusable link validation is already the final no-op decision. Avoid
+    // materializing a generic LinkPlanItem/BuildPlan on the hot path; misses
+    // still pass through BuildPlanner and keep its structural checks.
+    if (result.validation.reusable()) {
+        return result;
+    }
+
     const LinkPlanItem plan_item{
         .objects = request.objects,
         .output = request.output,
