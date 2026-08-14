@@ -58,12 +58,21 @@ MsvcTargetRouter::run(const RoutedTargetRequest& request) const {
             });
         }
 
-        return RoutedTargetResult{
+        RoutedTargetResult routed{
             .pipeline = MsvcTargetPipeline::ordinary,
             .compiles = std::move(result->compiles),
             .link = std::move(result->link),
+            .timings = result->timings,
             .any_compiled = result->any_compiled,
         };
+        for (const auto& compile : routed.compiles) {
+            if (compile.result.compiled) {
+                ++routed.compile_misses;
+            } else {
+                ++routed.compile_hits;
+            }
+        }
+        return routed;
     }
 
     std::vector<ModuleCompileSourceRequest> sources;
@@ -99,11 +108,19 @@ MsvcTargetRouter::run(const RoutedTargetRequest& request) const {
     routed.pipeline = MsvcTargetPipeline::named_modules;
     routed.any_compiled = result->compiles.any_compiled;
     routed.link = std::move(result->link);
+    routed.timings = result->timings;
+    for (const auto& compile : result->compiles.compiles) {
+        if (compile.result.compiled) {
+            ++routed.compile_misses;
+        } else {
+            ++routed.compile_hits;
+        }
+    }
 
     // Module-target execution may append toolchain-owned std/std.compat sources
     // after the caller's source prefix. Keep public compile ordering scoped to
     // the original target while still letting provider rebuilds affect
-    // any_compiled and downstream link freshness.
+    // any_compiled, cache counters, and downstream link freshness.
     const std::size_t public_source_count = std::min(
         request.sources.size(),
         result->compiles.compiles.size());
