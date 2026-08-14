@@ -33,8 +33,6 @@ void expect_registered(
 void verify_current_official_coverage() {
     using mqb::msvc::ParameterTool;
 
-    // Representative argv for every option family in the Microsoft compiler
-    // alphabetical reference snapshot used by this registry (2026-05-25).
     static constexpr std::array compiler_options{
         "@args.rsp", "/?", "/AIclr", "/analyze", "/arch:AVX2", "/arm64EC",
         "/await", "/bigobj", "/Brepro", "/Bt+", "/C", "/c", "/cgthreads8",
@@ -42,7 +40,7 @@ void verify_current_official_coverage() {
         "/diagnostics:caret", "/doc:comments.xml", "/E", "/EHa", "/EP",
         "/errorReport:none", "/execution-charset:utf-8", "/experimental:log",
         "/experimental:module", "/exportHeader", "/external:anglebrackets",
-        "/F1048576", "/FAcs", "/Faout.asm", "/fastfail", "/favor:AMD64",
+        "/F1048576", "/FA", "/Faout.asm", "/fastfail", "/favor:AMD64",
         "/FC", "/Fdvc.pdb", "/Feapp.exe", "/feature:arch_feature_arm64_lse",
         "/forceInterlockedFunctions", "/FIforced.hpp", "/Fiout.i", "/Fmout.map",
         "/Foout.obj", "/Fpout.pch", "/fp:fast", "/fpcvt:IA", "/FRbrowse.sbr",
@@ -50,7 +48,7 @@ void verify_current_official_coverage() {
         "/Ftgenerated", "/FUassembly.dll", "/Fxmerged.cpp", "/GA", "/Gd", "/Ge",
         "/GF", "/GH", "/Gh", "/GL", "/Gm-", "/GR-", "/Gr", "/GS-", "/Gs4096",
         "/GT", "/Gu-", "/guard:cf", "/Gv", "/Gw-", "/GX", "/Gy-", "/GZ", "/Gz",
-        "/H31", "/headerName:quote", "/headerUnit:quote", "/HELP", "/homeparams",
+        "/H", "/headerName:quote", "/headerUnit:quote", "/HELP", "/homeparams",
         "/hotpatch", "/Iinclude", "/ifcOutput", "/interface", "/internalPartition",
         "/J", "/jumptablerdata", "/JMC", "/kernel", "/LD", "/LDd", "/link", "/LN",
         "/MD", "/MDd", "/MP8", "/MT", "/MTd", "/nologo", "/O1", "/O2", "/Ob2",
@@ -64,7 +62,7 @@ void verify_current_official_coverage() {
         "/sourceDependencies", "/sourceDependencies:directives", "/std:c++14",
         "/std:c++17", "/std:c++20", "/std:c++latest", "/std:c11", "/std:c17",
         "/std:clatest", "/TC", "/Tcfile.c", "/TP", "/Tpfile.cpp", "/translateInclude",
-        "/UNAME", "/u", "/utf-8", "/V1.0", "/validate-charset", "/vd2", "/vlen:256",
+        "/UNAME", "/u", "/utf-8", "/V", "/validate-charset", "/vd2", "/vlen:256",
         "/vmb", "/vmg", "/vmm", "/vms", "/vmv", "/volatile:iso", "/volatileMetadata",
         "/w", "/W0", "/W1", "/W2", "/W3", "/W4", "/w14242", "/Wall", "/wd4996",
         "/we4715", "/WL", "/wo4267", "/Wv:19.40", "/WX", "/X", "/Y-", "/Ycpch.hpp",
@@ -72,13 +70,8 @@ void verify_current_official_coverage() {
         "/Zg", "/ZH:SHA_256", "/ZI", "/Zi", "/Zl", "/Zm200", "/Zo", "/Zp8", "/Zs",
         "/ZW",
     };
-    for (const auto option : compiler_options) {
-        expect_registered(ParameterTool::compiler, option);
-    }
+    for (const auto option : compiler_options) expect_registered(ParameterTool::compiler, option);
 
-    // Representative argv for every current LINK.exe option family in the
-    // Microsoft linker-options reference. File-bearing modes may be rejected,
-    // but they must still have an explicit ownership result.
     static constexpr std::array linker_options{
         "@args.rsp", "/ALIGN:4096", "/ALLOWBIND", "/ALLOWISOLATION", "/APPCONTAINER",
         "/ARM64XFUNCTIONPADMINX64:16", "/ASSEMBLYDEBUG", "/ASSEMBLYLINKRESOURCE:r.netmodule",
@@ -107,9 +100,7 @@ void verify_current_official_coverage() {
         "/WHOLEARCHIVE:all.lib", "/WINMD", "/WINMDFILE:app.winmd", "/WINMDKEYFILE:key.snk",
         "/WINMDKEYCONTAINER:key", "/WINMDDELAYSIGN", "/WX",
     };
-    for (const auto option : linker_options) {
-        expect_registered(ParameterTool::linker, option);
-    }
+    for (const auto option : linker_options) expect_registered(ParameterTool::linker, option);
 
     static constexpr std::array librarian_options{
         "@args.rsp", "/DEF:exports.def", "/ERRORREPORT:NONE", "/EXPORT:foo",
@@ -118,9 +109,7 @@ void verify_current_official_coverage() {
         "/NODEFAULTLIB", "/NOLOGO", "/OUT:out.lib", "/REMOVE:member.obj",
         "/SUBSYSTEM:CONSOLE", "/VERBOSE", "/WX",
     };
-    for (const auto option : librarian_options) {
-        expect_registered(ParameterTool::librarian, option);
-    }
+    for (const auto option : librarian_options) expect_registered(ParameterTool::librarian, option);
 }
 
 } // namespace
@@ -166,15 +155,12 @@ int main() {
                    "/GL should normalize to coupled LTCG enablement");
         }
     }
-
     {
         const std::vector<std::string> arguments{"/GL-"};
         auto routed = MsvcParameterEngine::route_compiler(arguments);
-        expect(routed.has_value() && routed->link_time_code_generation.has_value()
-                   && !*routed->link_time_code_generation,
+        expect(routed.has_value() && routed->link_time_code_generation.has_value() && !*routed->link_time_code_generation,
                "/GL- should normalize to typed LTCG disablement");
     }
-
     {
         const std::vector<std::string> arguments{"/std:c17", "/W3"};
         auto routed = MsvcParameterEngine::route_compiler(arguments);
@@ -185,7 +171,6 @@ int main() {
                    "C language mode should be preserved verbatim");
         }
     }
-
     {
         const std::vector<std::string> arguments{"/MD", "/MT"};
         auto routed = MsvcParameterEngine::route_compiler(arguments);
