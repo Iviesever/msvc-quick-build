@@ -1,22 +1,14 @@
 #include "ModuleTargetArtifactRegistry.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <string>
 #include <utility>
+
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::orchestration::detail {
 namespace {
 
 namespace fs = std::filesystem;
-
-[[nodiscard]] std::string windows_path_key(const fs::path& path) {
-    std::string value = path.lexically_normal().generic_string();
-    std::transform(
-        value.begin(), value.end(), value.begin(),
-        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return value;
-}
 
 [[nodiscard]] IncrementalModuleTargetError failure(
     const IncrementalModuleTargetErrorCode code,
@@ -62,7 +54,8 @@ ModuleTargetArtifactRegistry::claim(
             source,
             artifact));
     }
-    if (!claimed_artifacts_.emplace(windows_path_key(artifact)).second) {
+    if (!claimed_artifacts_.emplace(
+            mqb::platform::windows::path_identity_key(artifact)).second) {
         return std::unexpected(artifact_failure(
             IncrementalModuleTargetErrorCode::artifact_collision,
             "module target " + std::string{role}
@@ -82,7 +75,8 @@ ModuleTargetArtifactRegistry::add_requested_source(
             "module target source path is empty",
             source.source));
     }
-    if (!seen_sources_.emplace(windows_path_key(source.source)).second) {
+    if (!seen_sources_.emplace(
+            mqb::platform::windows::path_identity_key(source.source)).second) {
         return std::unexpected(failure(
             IncrementalModuleTargetErrorCode::duplicate_source,
             "module target contains the same source more than once",
@@ -132,7 +126,8 @@ ModuleTargetArtifactRegistry::add_target(const TargetArtifacts& target) {
 std::expected<void, IncrementalModuleTargetError>
 ModuleTargetArtifactRegistry::add_standard_library_source_identity(
     const fs::path& source) {
-    if (!seen_sources_.emplace(windows_path_key(source)).second) {
+    if (!seen_sources_.emplace(
+            mqb::platform::windows::path_identity_key(source)).second) {
         return std::unexpected(failure(
             IncrementalModuleTargetErrorCode::duplicate_source,
             "toolchain standard-library module source collides with another target source",

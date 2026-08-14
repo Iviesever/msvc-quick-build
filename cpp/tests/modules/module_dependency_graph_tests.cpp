@@ -261,6 +261,16 @@ int main() {
 
     {
         const std::vector units{
+            unit(fs::path{u8"C:/项目/Modules/A.ixx"}, {provide("A")}),
+            unit(fs::path{u8"c:/项目/modules/a.IXX"}, {provide("B")}),
+        };
+        auto duplicate = ModuleDependencyGraphBuilder::build(units);
+        expect(!duplicate && duplicate.error().code == ModuleGraphErrorCode::duplicate_source,
+               "Windows source identity should reject ASCII case variants without narrowing Unicode paths");
+    }
+
+    {
+        const std::vector units{
             unit("A.ixx", {provide("A")}, {require_named("B")}),
             unit("B.ixx", {provide("B")}, {require_named("A")}),
         };

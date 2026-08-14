@@ -10,25 +10,15 @@
 #include <unordered_set>
 #include <utility>
 
+#include "mqb/platform/windows/PathIdentity.hpp"
+
 namespace mqb::orchestration::detail {
 namespace {
 
 namespace fs = std::filesystem;
 
 [[nodiscard]] std::string windows_path_key(const fs::path& path) {
-    const std::u8string utf8 = path.lexically_normal().generic_u8string();
-    std::string value;
-    value.reserve(utf8.size());
-    for (const char8_t ch : utf8) {
-        const unsigned char byte = static_cast<unsigned char>(ch);
-        if (byte >= static_cast<unsigned char>('A')
-            && byte <= static_cast<unsigned char>('Z')) {
-            value.push_back(static_cast<char>(byte + ('a' - 'A')));
-        } else {
-            value.push_back(static_cast<char>(byte));
-        }
-    }
-    return value;
+    return mqb::platform::windows::path_identity_key(path);
 }
 
 [[nodiscard]] ModuleCompileError failure(

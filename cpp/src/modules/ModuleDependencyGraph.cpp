@@ -8,16 +8,25 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/platform/windows/PathIdentity.hpp"
+
 namespace mqb::modules {
 namespace {
 
 namespace fs = std::filesystem;
 
-[[nodiscard]] std::string path_key(const fs::path& path) {
-    const auto bytes = path.lexically_normal().generic_u8string();
-    return std::string{
-        reinterpret_cast<const char*>(bytes.data()),
-        bytes.size()};
+[[nodiscard]] std::string graph_node_key(const fs::path& path) {
+    const std::u8string utf8 = path.lexically_normal().generic_u8string();
+    std::string key;
+    key.reserve(utf8.size());
+    for (const char8_t ch : utf8) {
+        key.push_back(static_cast<char>(ch));
+    }
+    return key;
+}
+
+[[nodiscard]] std::string path_identity_key(const fs::path& path) {
+    return mqb::platform::windows::path_identity_key(path);
 }
 
 [[nodiscard]] ModuleGraphError graph_failure(
@@ -83,10 +92,10 @@ ModuleDependencyGraphBuilder::build(
     const std::vector<ScannedModuleUnit>& units,
     const std::span<const ExternalModuleProvider> external_providers) {
     DependencyGraph graph;
-    std::unordered_map<std::string, std::size_t> unit_by_key;
-    std::unordered_map<std::string, fs::path> source_by_key;
-    unit_by_key.reserve(units.size());
-    source_by_key.reserve(units.size());
+    std::unordered_map<std::string, std::size_t> unit_by_identity;
+    std::unordered_map<std::string, fs::path> source_by_graph_key;
+    unit_by_identity.reserve(units.size());
+    source_by_graph_key.reserve(units.size());
 
     for (std::size_t index = 0; index < units.size(); ++index) {
         if (units[index].source.empty()) {
@@ -94,16 +103,18 @@ ModuleDependencyGraphBuilder::build(
                 ModuleGraphErrorCode::empty_source,
                 "module graph unit source path is empty"));
         }
-        const std::string key = path_key(units[index].source);
-        if (unit_by_key.contains(key)) {
+        const std::string identity = path_identity_key(units[index].source);
+        if (unit_by_identity.contains(identity)) {
             return std::unexpected(graph_failure(
                 ModuleGraphErrorCode::duplicate_source,
                 "module graph contains the same source more than once",
                 units[index].source));
         }
-        unit_by_key.emplace(key, index);
-        source_by_key.emplace(key, units[index].source);
-        auto added = graph.add_node(key);
+        unit_by_identity.emplace(identity, index);
+
+        const std::string graph_key = graph_node_key(units[index].source);
+        source_by_graph_key.emplace(graph_key, units[index].source);
+        auto added = graph.add_node(graph_key);
         if (!added) {
             return std::unexpected(graph_failure(
                 ModuleGraphErrorCode::duplicate_source,
@@ -180,10 +191,10 @@ ModuleDependencyGraphBuilder::build(
     }
 
     ModuleDependencyPlan plan;
-    std::unordered_map<std::string, std::size_t> header_unit_by_key;
+    std::unordered_map<std::string, std::size_t> header_unit_by_identity;
 
     for (std::size_t consumer_index = 0; consumer_index < units.size(); ++consumer_index) {
-        const std::string consumer_key = path_key(units[consumer_index].source);
+        const std::string consumer_graph_key = graph_node_key(units[consumer_index].source);
         for (const auto& required : units[consumer_index].rule.required_modules) {
             const bool header_unit = required.unique_on_source_path
                 || required.lookup_method != LookupMethod::by_name;
@@ -198,8 +209,8 @@ ModuleDependencyGraphBuilder::build(
                 }
 
                 const fs::path header_source = required.source_path->lexically_normal();
-                const std::string header_key = path_key(header_source);
-                if (unit_by_key.contains(header_key)) {
+                const std::string header_identity = path_identity_key(header_source);
+                if (unit_by_identity.contains(header_identity)) {
                     return std::unexpected(graph_failure(
                         ModuleGraphErrorCode::header_unit_source_conflict,
                         "header-unit source path collides with a scanned translation unit",
@@ -207,9 +218,11 @@ ModuleDependencyGraphBuilder::build(
                         required.logical_name));
                 }
 
-                auto header = header_unit_by_key.find(header_key);
-                if (header == header_unit_by_key.end()) {
-                    auto added = graph.add_node(header_key);
+                auto header = header_unit_by_identity.find(header_identity);
+                std::string header_graph_key;
+                if (header == header_unit_by_identity.end()) {
+                    header_graph_key = graph_node_key(header_source);
+                    auto added = graph.add_node(header_graph_key);
                     if (!added) {
                         return std::unexpected(graph_failure(
                             ModuleGraphErrorCode::header_unit_source_conflict,
@@ -217,20 +230,23 @@ ModuleDependencyGraphBuilder::build(
                             header_source,
                             required.logical_name));
                     }
-                    source_by_key.emplace(header_key, header_source);
+                    source_by_graph_key.emplace(header_graph_key, header_source);
                     const std::size_t header_index = plan.header_units.size();
                     plan.header_units.push_back(PlannedHeaderUnit{
                         .source = header_source,
                         .header_name = required.logical_name,
                         .lookup_method = required.lookup_method,
                     });
-                    header = header_unit_by_key.emplace(header_key, header_index).first;
+                    header = header_unit_by_identity.emplace(header_identity, header_index).first;
                 } else if (!same_header_identity(plan.header_units[header->second], required)) {
                     return std::unexpected(graph_failure(
                         ModuleGraphErrorCode::conflicting_header_unit_identity,
                         "the same header-unit source path is required with conflicting import identity",
                         header_source,
                         required.logical_name));
+                }
+                if (header_graph_key.empty()) {
+                    header_graph_key = graph_node_key(plan.header_units[header->second].source);
                 }
 
                 plan.resolved_header_unit_dependencies.push_back(ResolvedHeaderUnitDependency{
@@ -240,7 +256,7 @@ ModuleDependencyGraphBuilder::build(
                     .lookup_method = required.lookup_method,
                 });
 
-                auto dependency = graph.add_dependency(consumer_key, header_key);
+                auto dependency = graph.add_dependency(consumer_graph_key, header_graph_key);
                 if (!dependency) {
                     ModuleGraphError error = graph_failure(
                         ModuleGraphErrorCode::dependency_cycle,
@@ -281,8 +297,8 @@ ModuleDependencyGraphBuilder::build(
             });
 
             auto dependency = graph.add_dependency(
-                consumer_key,
-                path_key(units[provider->second].source));
+                consumer_graph_key,
+                graph_node_key(units[provider->second].source));
             if (!dependency) {
                 ModuleGraphError error = graph_failure(
                     ModuleGraphErrorCode::dependency_cycle,
@@ -309,8 +325,8 @@ ModuleDependencyGraphBuilder::build(
         auto& output_level = plan.compile_levels.emplace_back();
         output_level.reserve(level.size());
         for (const auto& key : level) {
-            const auto source = source_by_key.find(key);
-            if (source != source_by_key.end()) output_level.push_back(source->second);
+            const auto source = source_by_graph_key.find(key);
+            if (source != source_by_graph_key.end()) output_level.push_back(source->second);
         }
     }
 

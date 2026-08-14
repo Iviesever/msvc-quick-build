@@ -187,6 +187,27 @@ int main() {
 
     {
         auto request = make_request();
+        const fs::path first = fs::path{u8"C:/项目/.MQB/OBJ/模块.OBJ"};
+        const fs::path second = fs::path{u8"c:/项目/.mqb/obj/模块.obj"};
+        request.sources[0].artifacts.object = first;
+        request.sources[1].artifacts.object = second;
+
+        const auto result = target.run(request);
+        expect(!result,
+               "Unicode artifact paths that differ only by ASCII case should collide on Windows");
+        if (!result) {
+            expect(result.error().code
+                       == mqb::orchestration::IncrementalModuleTargetErrorCode::artifact_collision,
+                   "case-variant Unicode artifact paths should report artifact_collision");
+            expect(result.error().artifact == second,
+                   "case-variant collision should identify the second conflicting path");
+        }
+        expect(runner.calls == 0,
+               "Unicode artifact identity validation must finish before external process execution");
+    }
+
+    {
+        auto request = make_request();
         request.sources[0].artifacts.dependencies.clear();
 
         const auto result = target.run(request);
