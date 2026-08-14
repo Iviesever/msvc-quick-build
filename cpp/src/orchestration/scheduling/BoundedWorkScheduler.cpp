@@ -137,6 +137,19 @@ BoundedWorkScheduler::run(
     const std::size_t item_count,
     const ParallelismPolicy policy,
     const std::function<bool(std::size_t)>& work) {
+    return run(
+        item_count,
+        policy,
+        ParallelismWorkload::compilation,
+        work);
+}
+
+std::expected<BoundedWorkSummary, BoundedWorkError>
+BoundedWorkScheduler::run(
+    const std::size_t item_count,
+    const ParallelismPolicy policy,
+    const ParallelismWorkload workload,
+    const std::function<bool(std::size_t)>& work) {
     if (!policy.valid()) {
         return std::unexpected(failure(
             BoundedWorkErrorCode::invalid_worker_count,
@@ -149,7 +162,8 @@ BoundedWorkScheduler::run(
     const ParallelismDecision decision = ParallelismResolver::resolve(
         policy,
         item_count,
-        std::thread::hardware_concurrency());
+        ParallelismResourceObserver::observe(),
+        workload);
     return run(item_count, decision.workers, work);
 }
 
