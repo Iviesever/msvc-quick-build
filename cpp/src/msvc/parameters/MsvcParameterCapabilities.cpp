@@ -17,7 +17,7 @@ struct ParsedVersion {
     ParsedVersion parsed;
     std::size_t index = 0;
 
-    const auto read_component = [&](int& value) mutable {
+    auto read_component = [&](int& value) {
         if (index >= version.size() || !std::isdigit(static_cast<unsigned char>(version[index]))) {
             return false;
         }
