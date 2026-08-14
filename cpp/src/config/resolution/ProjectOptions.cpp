@@ -23,6 +23,13 @@ void apply_build(
     }
     if (overrides.subsystem) effective.subsystem = *overrides.subsystem;
     if (overrides.target_kind) effective.target_kind = *overrides.target_kind;
+    if (overrides.precompiled_header) {
+        if (overrides.precompiled_header->enabled) {
+            effective.precompiled_header = overrides.precompiled_header->header;
+        } else {
+            effective.precompiled_header.reset();
+        }
+    }
     if (overrides.output_name) effective.output_name = overrides.output_name;
     append_all(effective.defines, overrides.defines);
     append_all(effective.include_directories, overrides.include_directories);
