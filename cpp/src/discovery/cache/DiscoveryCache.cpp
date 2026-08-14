@@ -288,6 +288,21 @@ private:
     };
 }
 
+[[nodiscard]] bool record_semantics_valid(
+    const DiscoveryCacheRecord& record,
+    const DiscoveryRequestIdentity& request) noexcept {
+    if (record.request != request
+        || record.result.sources.empty()
+        || record.result.sources.front().lexically_normal() != request.entry.lexically_normal()
+        || record.result.indexed_files != record.files.size()
+        || record.directories.empty()
+        || record.directories.front().path.lexically_normal()
+            != request.project_root.lexically_normal()) {
+        return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool snapshot_matches(
     const FileSnapshot& snapshot,
     const bool directory) noexcept {
@@ -343,7 +358,9 @@ std::optional<Result> try_reuse_discovery_cache(
     const DiscoveryRequestIdentity& request) noexcept {
     try {
         auto record = load_record(cache_file);
-        if (!record || record->request != request || !evidence_matches(*record)) {
+        if (!record
+            || !record_semantics_valid(*record, request)
+            || !evidence_matches(*record)) {
             return std::nullopt;
         }
         return std::move(record->result);
