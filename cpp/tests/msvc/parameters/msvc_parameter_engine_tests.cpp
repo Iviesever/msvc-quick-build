@@ -193,8 +193,15 @@ int main() {
            "linker registry should be case-insensitive");
     expect(MsvcParameterEngine::classify(ParameterTool::linker, "/OUT:escape.exe").ownership == ParameterOwnership::mqb_owned,
            "/OUT should remain MQB-owned linker routing");
-    expect(MsvcParameterEngine::classify(ParameterTool::linker, "/DEBUG:FASTLINK").ownership == ParameterOwnership::unsupported,
-           "removed /DEBUG:FASTLINK should be rejected explicitly");
+    expect(MsvcParameterEngine::classify(ParameterTool::linker, "/DEBUG:FASTLINK").ownership == ParameterOwnership::passthrough,
+           "/DEBUG:FASTLINK ownership is passthrough while toolchain lifecycle admission is deferred");
+    {
+        const std::vector<std::string> arguments{"/DEBUG:FASTLINK"};
+        auto routed = MsvcParameterEngine::route_linker(arguments);
+        expect(routed.has_value() && routed->passthrough.size() == 1
+                   && routed->passthrough.front() == "/DEBUG:FASTLINK",
+               "toolchain-conditional linker options must survive semantic routing for late admission");
+    }
 
     {
         const std::vector<std::string> arguments{"/STACK:8388608", "/DEBUG:FULL", "/machine:x86", "/subsystem:windows", "/ltcg"};
