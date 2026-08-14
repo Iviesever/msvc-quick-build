@@ -12,6 +12,7 @@
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/modules/ModuleDependencyGraph.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
+#include "mqb/orchestration/ParallelismPolicy.hpp"
 
 namespace mqb::orchestration {
 
@@ -34,7 +35,7 @@ struct ModuleCompileWaveRequest {
     modules::ModuleDependencyPlan plan;
     CompilerOptions compiler_options;
     std::filesystem::path working_directory;
-    std::size_t max_parallel_compiles{1};
+    ParallelismPolicy compile_parallelism{};
 };
 
 struct ModuleCompileResult {
