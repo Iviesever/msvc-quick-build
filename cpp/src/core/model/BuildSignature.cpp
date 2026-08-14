@@ -182,6 +182,12 @@ BuildSignature BuildSignature::for_compile(
         // Preserve the historical signature byte stream when typed LTCG is off.
         hasher.add_string("mqb.ltcg.compile.v1");
     }
+    if (options.precompiled_header) {
+        hasher.add_string("mqb.precompiled-header.compile.v1");
+        hasher.add_path(options.precompiled_header->header);
+        hasher.add_path(options.precompiled_header->artifact);
+        hasher.add_enum(options.precompiled_header->role);
+    }
 
     return BuildSignature{hasher.finish()};
 }
