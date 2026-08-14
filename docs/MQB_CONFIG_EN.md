@@ -33,6 +33,7 @@ modules
 {
   "version": 1,
   "build": {
+    "entry": "src/main.cpp",
     "configuration": "release",
     "architecture": "x64",
     "standard": "23",
@@ -66,6 +67,7 @@ modules
 
 | Field | Type | Meaning |
 |---|---|---|
+| `entry` | string | default entry used by `mqb build` / `mqb run` when no positional source is provided; relative to `mqb.json` |
 | `configuration` | string | `debug` / `release` |
 | `architecture` | string | `x86` / `x64` |
 | `standard` | string | `14`, `17`, `20`, `23`, `latest`; `c++...` spellings are also accepted |
@@ -80,6 +82,46 @@ modules
 | `libraries` | string[] | link libraries; not accepted for static targets |
 | `compiler_args` | string[] | ordered raw argv elements passed to `cl.exe` |
 | `linker_args` | string[] | ordered raw linker argv elements; not accepted for static targets |
+
+### Default entry
+
+`build.entry` is a project-level default entry, not a source list. It participates only when these command forms omit every positional source:
+
+```powershell
+mqb build
+mqb run
+```
+
+Entry selection is fixed as:
+
+```text
+explicit positional source(s)
+    > build.entry
+    > conventional fallback
+```
+
+The conventional fallback **does not recursively scan the project**. It checks only:
+
+```text
+<project-root>/main.c
+<project-root>/main.cpp
+<project-root>/main.cc
+<project-root>/main.cxx
+<project-root>/src/main.c
+<project-root>/src/main.cpp
+<project-root>/src/main.cc
+<project-root>/src/main.cxx
+```
+
+Exactly one candidate is required. Zero candidates require an explicit source or `build.entry`; multiple candidates require explicit disambiguation. If `build.entry` is configured but missing or has an unsupported translation-unit extension, MQB fails on that configured entry instead of silently falling back to a conventional main.
+
+Explicit sources always win, for example:
+
+```powershell
+mqb run tools/tool.cpp
+```
+
+Even when `build.entry` exists, this builds and runs `tools/tool.cpp`.
 
 ### Typed policy
 
@@ -112,6 +154,7 @@ module interface:   .ixx .cppm .mpp
 
 Rules:
 
+- an entry selected through `build.entry` or the unique conventional fallback enters the same smart-discovery path as an explicit single entry;
 - multiple positional sources already form an exact source set and do not depend on smart discovery;
 - v1 uses exact paths, not globs;
 - the entry TU cannot be excluded;
@@ -188,6 +231,12 @@ subsystem
 output
 ```
 
+Entry selection is a separate source-selection policy:
+
+```text
+explicit positional source(s) > build.entry > unique conventional main
+```
+
 Ordinary list-like inputs append deterministically:
 
 ```text
@@ -207,27 +256,49 @@ CLI relative path      -> invocation directory
 mqb.json relative path -> directory containing mqb.json
 ```
 
+`build.entry` uses the second base.
+
 Example:
 
 ```text
 project/
 ├─ mqb.json
-├─ main.cpp
+├─ src/main.cpp
 ├─ include/
 └─ nested/work/
+```
+
+Configuration:
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/main.cpp",
+    "include_dirs": ["include"]
+  }
+}
 ```
 
 From `project/nested/work`:
 
 ```powershell
-mqb ../../main.cpp
+mqb run
 ```
 
-MQB still loads `project/mqb.json`, resolves `"include_dirs": ["include"]` as `project/include`, and places writable artifacts under `project/.mqb/`.
+MQB still loads `project/mqb.json`, resolves the entry as `project/src/main.cpp`, resolves the include dir as `project/include`, and places writable artifacts under `project/.mqb/`.
+
+An explicit source remains invocation-relative:
+
+```powershell
+mqb ../../src/main.cpp
+```
 
 ## 8. Cache semantics
 
 MQB does not treat "the config file timestamp changed" as a global rebuild signal. Identity is derived from the **effective build semantics**.
+
+`build.entry` does not add a separate compile/link identity field; it selects the source-discovery entry for this invocation. The resolved source set and existing compiler/linker semantics continue to determine cache identity.
 
 Typical effects:
 
@@ -246,10 +317,11 @@ Missing recorded outputs also invalidate the corresponding compile/link/archive 
 ## 9. Explicit current boundaries
 
 - `exe`, `dll`, and `static` are supported;
-- `--run` applies only to executables;
+- `mqb run` and source-first `--run` apply only to executables;
 - static targets do not accept subsystem, library paths/libraries, or linker args;
-- **static-library targets that require the Modules/Header Units pipeline currently fail closed**;
-- discovery corrections use exact paths, not globs;
-- transitive `/DEFAULTLIB` dependencies are not promised to have complete freshness tracking.
+- **static-library targets that require the Modules/Header Units pipeline still fail closed**;
+- discovery corrections use exact paths and do not support globs;
+- conventional default-entry fallback is non-recursive and does not use globs;
+- freshness through indirect `/DEFAULTLIB`-style library propagation is not guaranteed to be complete.
 
-See [`ARCHITECTURE_EN.md`](ARCHITECTURE_EN.md) for the lower-level provider graph, artifact identity, and responsibility boundaries.
+See [`ARCHITECTURE_EN.md`](ARCHITECTURE_EN.md) for deeper provider-graph, artifact-identity, and responsibility boundaries.
