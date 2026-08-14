@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,5 +17,10 @@ struct Invocation {
 
 [[nodiscard]] std::expected<Invocation, std::string>
 resolve_invocation(mqb::cli::Options& options);
+
+[[nodiscard]] std::expected<std::filesystem::path, std::string>
+resolve_default_entry(
+    const std::filesystem::path& project_root,
+    const std::optional<std::filesystem::path>& configured_entry);
 
 } // namespace mqb::app
