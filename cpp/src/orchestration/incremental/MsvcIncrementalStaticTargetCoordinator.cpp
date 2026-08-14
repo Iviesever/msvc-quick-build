@@ -83,6 +83,7 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
     std::vector<std::string> seen_objects;
     std::vector<std::string> seen_dependencies;
     std::vector<std::string> seen_caches;
+    seen_objects.reserve(request.sources.size() + request.additional_objects.size());
     for (const auto& source : request.sources) {
         if (!insert_unique(seen_sources, source.source)) {
             return std::unexpected(failure(
@@ -107,6 +108,16 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
                 IncrementalStaticTargetErrorCode::duplicate_compile_cache,
                 "two static target translation units map to the same compile cache",
                 source.source));
+        }
+    }
+    for (const auto& object : request.additional_objects) {
+        if (object.empty() || !insert_unique(seen_objects, object)) {
+            return std::unexpected(failure(
+                IncrementalStaticTargetErrorCode::duplicate_object,
+                object.empty()
+                    ? "MQB-owned additional object path must not be empty"
+                    : "MQB-owned additional object collides with another static target object",
+                object));
         }
     }
 
@@ -145,7 +156,8 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
     IncrementalStaticTargetResult result;
     result.compiles.reserve(request.sources.size());
     std::vector<fs::path> objects;
-    objects.reserve(request.sources.size());
+    objects.reserve(request.sources.size() + request.additional_objects.size());
+    objects.insert(objects.end(), request.additional_objects.begin(), request.additional_objects.end());
     for (std::size_t index = 0; index < request.sources.size(); ++index) {
         if (!attempts[index]) {
             return std::unexpected(failure(
@@ -169,7 +181,7 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
         .cache_file = request.target.link_cache,
         .working_directory = request.working_directory,
         .link_time_code_generation = request.compiler_options.link_time_code_generation,
-        .force_archive = result.any_compiled,
+        .force_archive = request.force_downstream_rebuild || result.any_compiled,
     });
     timings.archive = std::chrono::duration_cast<std::chrono::nanoseconds>(
         Clock::now() - archive_started);
