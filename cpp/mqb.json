@@ -78,6 +78,7 @@
       "src/orchestration/incremental/MsvcIncrementalArchiveCoordinator.cpp",
       "src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp",
       "src/orchestration/incremental/MsvcIncrementalLinkCoordinator.cpp",
+      "src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp",
       "src/orchestration/incremental/MsvcIncrementalStaticTargetCoordinator.cpp",
       "src/orchestration/incremental/MsvcIncrementalTargetCoordinator.cpp",
       "src/orchestration/modules/ModuleCompilePlan.cpp",
