@@ -192,6 +192,29 @@ BuildSignature BuildSignature::for_compile(
     return BuildSignature{hasher.finish()};
 }
 
+BuildSignature BuildSignature::for_module_scan(
+    const std::filesystem::path& source,
+    const TranslationUnitKind kind,
+    const ToolchainIdentity& toolchain,
+    const CompilerOptions& options) {
+    StableHasher hasher;
+    hasher.add_string("mqb.module-scan.signature.v1");
+    hasher.add_path(source);
+    hasher.add_enum(kind);
+    hasher.add_path(toolchain.compiler);
+    hasher.add_string(toolchain.version);
+    hasher.add_string(toolchain.binary_stamp);
+
+    // Keep this recipe aligned with MsvcModuleDependencyScanner::build_arguments:
+    // only policy that can change P1689 topology belongs in the scan identity.
+    hasher.add_enum(options.configuration);
+    hasher.add_enum(options.standard);
+    hasher.add_strings(options.defines);
+    hasher.add_paths(options.include_directories);
+    hasher.add_strings(options.additional_arguments);
+    return BuildSignature{hasher.finish()};
+}
+
 BuildSignature BuildSignature::for_link(
     const std::span<const std::filesystem::path> objects,
     const std::filesystem::path& output,
