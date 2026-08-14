@@ -33,6 +33,7 @@ modules
 {
   "version": 1,
   "build": {
+    "entry": "src/main.cpp",
     "configuration": "release",
     "architecture": "x64",
     "standard": "23",
@@ -66,6 +67,7 @@ modules
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
+| `entry` | string | `mqb build` / `mqb run` 未提供 positional source 时使用的默认入口；路径相对 `mqb.json` |
 | `configuration` | string | `debug` / `release` |
 | `architecture` | string | `x86` / `x64` |
 | `standard` | string | `14`、`17`、`20`、`23`、`latest`；也接受 `c++...` 拼写 |
@@ -80,6 +82,46 @@ modules
 | `libraries` | string[] | link libraries；static target 不接受 |
 | `compiler_args` | string[] | 按顺序传给 `cl.exe` 的原始 argv element |
 | `linker_args` | string[] | 按顺序传给 linker 的原始 argv element；static target 不接受 |
+
+### 默认入口
+
+`build.entry` 是项目级默认入口，不是 source list。它只在下列形式没有显式 positional source 时参与解析：
+
+```powershell
+mqb build
+mqb run
+```
+
+优先级固定为：
+
+```text
+显式 positional source(s)
+    > build.entry
+    > conventional fallback
+```
+
+conventional fallback **不会递归扫描项目**。它只检查：
+
+```text
+<project-root>/main.c
+<project-root>/main.cpp
+<project-root>/main.cc
+<project-root>/main.cxx
+<project-root>/src/main.c
+<project-root>/src/main.cpp
+<project-root>/src/main.cc
+<project-root>/src/main.cxx
+```
+
+只有恰好一个候选存在时才会采用；0 个候选要求显式 source 或 `build.entry`，多个候选要求用户消歧。若已经配置 `build.entry` 但对应文件缺失或扩展名不受支持，MQB 会直接报错，不会悄悄回退到 conventional main。
+
+显式 source 始终优先，例如：
+
+```powershell
+mqb run tools/tool.cpp
+```
+
+即使项目设置了 `build.entry`，这里仍构建并运行 `tools/tool.cpp`。
 
 ### Typed policy
 
@@ -112,6 +154,7 @@ module interface:   .ixx .cppm .mpp
 
 规则：
 
+- `build.entry` 或唯一 conventional fallback 解析出的入口，与显式单入口一样进入 smart discovery；
 - 多个 positional source 本身就是精确 source set，不依赖 smart discovery；
 - v1 使用精确路径，不支持 glob；
 - entry TU 不能被排除；
@@ -188,6 +231,12 @@ subsystem
 output
 ```
 
+入口选择是独立的 source-selection policy：
+
+```text
+显式 positional source(s) > build.entry > 唯一 conventional main
+```
+
 普通 list-like 输入按顺序追加：
 
 ```text
@@ -207,27 +256,49 @@ CLI relative path      -> invocation directory
 mqb.json relative path -> directory containing mqb.json
 ```
 
+`build.entry` 属于后者。
+
 例如：
 
 ```text
 project/
 ├─ mqb.json
-├─ main.cpp
+├─ src/main.cpp
 ├─ include/
 └─ nested/work/
+```
+
+配置：
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/main.cpp",
+    "include_dirs": ["include"]
+  }
+}
 ```
 
 从 `project/nested/work` 运行：
 
 ```powershell
-mqb ../../main.cpp
+mqb run
 ```
 
-仍会加载 `project/mqb.json`，把 `"include_dirs": ["include"]` 解析为 `project/include`，并把 writable artifacts 放到 `project/.mqb/`。
+仍会加载 `project/mqb.json`，把 entry 解析为 `project/src/main.cpp`、include dir 解析为 `project/include`，并把 writable artifacts 放到 `project/.mqb/`。
+
+显式形式仍按 invocation directory 解析：
+
+```powershell
+mqb ../../src/main.cpp
+```
 
 ## 8. Cache 语义
 
 MQB 不以“配置文件时间戳变化”作为全量 rebuild 信号；它根据**生效后的构建语义**计算 identity。
+
+`build.entry` 自身不额外进入 compile/link identity；它只决定本次 source-selection 的入口。解析出的实际 source、discovery 结果与既有 compiler/linker semantics 继续决定 cache identity。
 
 典型影响：
 
@@ -246,10 +317,11 @@ MQB 不以“配置文件时间戳变化”作为全量 rebuild 信号；它根�
 ## 9. 当前明确边界
 
 - `exe`、`dll`、`static` 均受支持；
-- `--run` 仅适用于 executable；
+- `mqb run` 与 source-first `--run` 仅适用于 executable；
 - static target 不接受 subsystem、library paths/libraries、linker args；
 - **需要 Modules/Header Units pipeline 的 static-library target 当前仍 fail closed**；
 - discovery correction 使用精确路径，不支持 glob；
+- default-entry conventional fallback 不递归、不使用 glob；
 - 间接 `/DEFAULTLIB` 传递依赖不承诺完全的新鲜度跟踪。
 
 更底层的 provider graph、artifact identity 与职责边界见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
