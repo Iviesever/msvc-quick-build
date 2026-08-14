@@ -393,7 +393,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
                 .compiler_options = std::move(compiler_options),
                 .project_root = project_root,
                 .target_name = target_name,
-                .parallelism = parallelism,
+                .max_parallel_jobs = parallelism,
                 .timings = &timing_session,
                 .force_downstream_rebuild = pch_compiled,
                 .verbose = options.verbose,
@@ -424,7 +424,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
                     ? std::optional<fs::path>{project_config->file}
                     : std::nullopt,
                 .target_name = target_name,
-                .parallelism = parallelism,
+                .max_parallel_jobs = parallelism,
                 .timings = &timing_session,
                 .force_named_modules = discovery_requires_module_pipeline
                     || has_external_module_providers,
@@ -490,7 +490,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         .compiler_options = std::move(compiler_options),
         .link_options = std::move(link_options),
         .working_directory = project_root,
-        .compile_parallelism = parallelism,
+        .max_parallel_compiles = parallelism,
         .force_downstream_rebuild = pch_compiled,
     };
 
