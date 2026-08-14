@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -40,6 +41,39 @@ read_text(const fs::path& path) {
     return text;
 }
 
+[[nodiscard]] std::optional<FileSnapshot> snapshot_path(
+    const fs::path& path,
+    const bool directory) {
+    std::error_code error_code;
+    const auto status = fs::status(path, error_code);
+    if (error_code) return std::nullopt;
+    if (directory ? !fs::is_directory(status) : !fs::is_regular_file(status)) {
+        return std::nullopt;
+    }
+    const auto modified = fs::last_write_time(path, error_code);
+    if (error_code) return std::nullopt;
+    return FileSnapshot{
+        .path = path.lexically_normal(),
+        .exists = true,
+        .modified = modified,
+    };
+}
+
+void seal_snapshots(
+    std::vector<FileSnapshot>& snapshots,
+    const bool directory,
+    bool& cacheable) {
+    if (!cacheable) return;
+    for (auto& snapshot : snapshots) {
+        auto current = snapshot_path(snapshot.path, directory);
+        if (!current || current->modified != snapshot.modified) {
+            cacheable = false;
+            return;
+        }
+        snapshot = std::move(*current);
+    }
+}
+
 } // namespace
 
 std::expected<SourceTextAnalysis, std::string>
@@ -57,6 +91,12 @@ std::expected<SourceIndex, Error> build_source_index(
     const fs::path& root,
     const std::unordered_set<std::string>& excluded_directory_keys) {
     SourceIndex result;
+    if (auto root_snapshot = snapshot_path(root, true)) {
+        result.directory_snapshots.push_back(std::move(*root_snapshot));
+    } else {
+        result.cacheable = false;
+    }
+
     std::error_code error_code;
     fs::recursive_directory_iterator iterator{
         root,
@@ -83,9 +123,21 @@ std::expected<SourceIndex, Error> build_source_index(
         if (item.is_directory(error_code)) {
             const bool configured_excluded = !error_code
                 && excluded_directory_keys.contains(path_key(item.path()));
-            if (!error_code
-                && (default_excluded_directory(item.path()) || configured_excluded)) {
+            const bool excluded = !error_code
+                && (default_excluded_directory(item.path()) || configured_excluded);
+            if (excluded) {
                 iterator.disable_recursion_pending();
+            } else if (!error_code) {
+                fs::path absolute = fs::absolute(item.path(), error_code).lexically_normal();
+                if (!error_code) {
+                    if (auto snapshot = snapshot_path(absolute, true)) {
+                        result.directory_snapshots.push_back(std::move(*snapshot));
+                    } else {
+                        result.cacheable = false;
+                    }
+                } else {
+                    result.cacheable = false;
+                }
             }
             error_code.clear();
             continue;
@@ -100,8 +152,15 @@ std::expected<SourceIndex, Error> build_source_index(
         record.path = fs::absolute(item.path(), error_code).lexically_normal();
         if (error_code) {
             error_code.clear();
+            result.cacheable = false;
             continue;
         }
+        if (auto snapshot = snapshot_path(record.path, false)) {
+            result.file_snapshots.push_back(std::move(*snapshot));
+        } else {
+            result.cacheable = false;
+        }
+
         record.translation_unit_kind = classify_translation_unit_path(record.path);
         record.kind = record.translation_unit_kind
             ? IndexedFileKind::translation_unit
@@ -118,6 +177,7 @@ std::expected<SourceIndex, Error> build_source_index(
                 && record.translation_unit_kind == TranslationUnitKind::source
                 && analysis->defines_main;
         } else {
+            result.cacheable = false;
             result.warnings.push_back(Warning{
                 .code = WarningCode::file_read_failed,
                 .path = record.path,
@@ -130,6 +190,8 @@ std::expected<SourceIndex, Error> build_source_index(
         result.files.push_back(std::move(record));
     }
 
+    seal_snapshots(result.file_snapshots, false, result.cacheable);
+    seal_snapshots(result.directory_snapshots, true, result.cacheable);
     return result;
 }
 
