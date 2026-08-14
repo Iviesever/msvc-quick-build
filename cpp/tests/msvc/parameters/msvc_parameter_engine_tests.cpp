@@ -62,7 +62,7 @@ void verify_current_official_coverage() {
         "/sourceDependencies", "/sourceDependencies:directives", "/std:c++14",
         "/std:c++17", "/std:c++20", "/std:c++latest", "/std:c11", "/std:c17",
         "/std:clatest", "/TC", "/Tcfile.c", "/TP", "/Tpfile.cpp", "/translateInclude",
-        "/UNAME", "/u", "/utf-8", "/V", "/validate-charset", "/vd2", "/vlen:256",
+        "/UNAME", "/u", "/utf-8", "/V", "/validate-charset", "/vd2", "/vlen",
         "/vmb", "/vmg", "/vmm", "/vms", "/vmv", "/volatile:iso", "/volatileMetadata",
         "/w", "/W0", "/W1", "/W2", "/W3", "/W4", "/w14242", "/Wall", "/wd4996",
         "/we4715", "/WL", "/wo4267", "/Wv:19.40", "/WX", "/X", "/Y-", "/Ycpch.hpp",
@@ -134,7 +134,7 @@ int main() {
            "/MP should be rejected because MQB owns TU scheduling");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/F1048576").ownership == ParameterOwnership::unsupported,
            "compiler /F should fail closed because MQB links separately; use linker /STACK");
-    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/cgthreads8").ownership == ParameterOwnership::passthrough,
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/cgthreads8").ownership == ParameterOwnership::pashthrough,
            "compiler prefix routing must not confuse /cgthreads with /c");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/EHsc").ownership == ParameterOwnership::passthrough,
            "compiler prefix routing must not confuse /EHsc with preprocess-only /E");
