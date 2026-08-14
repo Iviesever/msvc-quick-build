@@ -143,7 +143,9 @@ scan_requested_module_sources(
     std::vector<std::optional<ScanAttempt>> attempts(request.sources.size());
 
     const auto scheduled = BoundedWorkScheduler::run(
-        request.sources.size(), request.max_parallel_scans,
+        request.sources.size(),
+        request.max_parallel_scans,
+        ParallelismWorkload::dependency_scan,
         [&](const std::size_t index) {
             attempts[index].emplace(scan_module_source(
                 request.sources[index],
