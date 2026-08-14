@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "mqb/core/FileSnapshot.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/discovery/ModuleSyntax.hpp"
 #include "mqb/discovery/SourceDiscovery.hpp"
@@ -34,6 +35,9 @@ struct SourceIndex {
     std::vector<IndexedFile> files;
     std::unordered_map<std::string, std::size_t> index_by_path;
     std::vector<Warning> warnings;
+    std::vector<FileSnapshot> file_snapshots;
+    std::vector<FileSnapshot> directory_snapshots;
+    bool cacheable{true};
 };
 
 [[nodiscard]] std::expected<SourceTextAnalysis, std::string>
