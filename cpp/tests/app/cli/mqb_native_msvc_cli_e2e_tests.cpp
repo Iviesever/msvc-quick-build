@@ -118,6 +118,21 @@ void verify_parser_contract() {
     }
 
     {
+        const std::vector arguments{"main.cpp"sv, "/Iinclude"sv, "/DATTACHED=1"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "attached native /I and /D forms should parse");
+        if (parsed) {
+            expect(parsed->include_directories.size() == 1
+                       && parsed->include_directories.front() == "include",
+                   "attached /I should use structured include-directory routing");
+            expect(parsed->defines.size() == 1 && parsed->defines.front() == "ATTACHED=1",
+                   "attached /D should use structured define routing");
+            expect(parsed->compiler_arguments.empty(),
+                   "attached /I and /D should not remain duplicate raw compiler switches");
+        }
+    }
+
+    {
         const std::vector arguments{
             "main.cpp"sv, "/O2"sv, "/std:c++20"sv, "/link"sv,
             "/STACK:8388608"sv, "/DEBUG:FULL"sv, "/subsystem:console"sv};
@@ -165,6 +180,17 @@ void verify_parser_contract() {
                        && parsed->build.run_arguments[0] == "child argument"
                        && parsed->build.run_arguments[1] == "/W4",
                    "program argv after -- must remain opaque");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "@hidden.rsp"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "native response syntax should reach parameter routing");
+        if (parsed) {
+            expect(parsed->compiler_arguments.size() == 1
+                       && parsed->compiler_arguments.front() == "@hidden.rsp",
+                   "@response must not be misclassified as a positional source");
         }
     }
 
@@ -295,6 +321,18 @@ void verify_candidate_e2e(const fs::path& mqb_executable) {
         expect(removed->exit_code == 2, "direct removed /DEBUG:FASTLINK should fail closed");
         expect(removed->stderr_text.find("DEBUG:FASTLINK") != std::string::npos,
                "removed native linker option should report the rejected switch");
+    }
+
+    auto response = run_process(
+        runner,
+        mqb_executable,
+        tree.root,
+        {"main.cpp", "--env", "vs", "--no-discover", "@hidden.rsp"});
+    expect(response.has_value(), "direct compiler response syntax invocation should launch");
+    if (response) {
+        expect(response->exit_code == 2, "direct @response should fail closed before cl.exe");
+        expect(response->stderr_text.find("response files") != std::string::npos,
+               "direct @response should retain parameter-engine safety diagnostics");
     }
 }
 
