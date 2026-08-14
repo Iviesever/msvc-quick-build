@@ -2,7 +2,7 @@
 
 **简体中文 | [English](README_EN.md)**
 
-MQB 是面向 **Windows + MSVC** 的原生 C/C++ 构建工具。给它一个或多个源文件，它负责源码发现、增量编译、Modules/Header Units 依赖排序、链接/归档，以及可选的构建后运行。
+MQB 是面向 **Windows + MSVC** 的原生 C/C++ 构建工具。给它一个项目入口或源文件，它负责源码发现、增量编译、Modules/Header Units 依赖排序、链接/归档，以及可选的构建后运行。
 
 最新稳定版与下载：[GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases/latest)
 
@@ -26,9 +26,39 @@ mqb --help
 
 ## 快速开始
 
-### 单文件
+### 构建 / 运行项目
+
+对于根目录或 `src/` 下只有一个 conventional `main.{c,cpp,cc,cxx}` 的简单项目：
 
 ```powershell
+mqb build
+mqb run
+mqb run -- input.txt "hello world" 42
+```
+
+正式项目可在 `mqb.json` 中设置稳定的默认入口：
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/main.cpp"
+  }
+}
+```
+
+显式 source 永远优先于 `build.entry`：
+
+```powershell
+mqb run tools/tool.cpp
+```
+
+### Source-first 兼容形式
+
+原有直接构建形式继续支持：
+
+```powershell
+mqb main.cpp
 mqb main.cpp --run
 ```
 
@@ -37,7 +67,7 @@ mqb main.cpp --run
 ### 精确多源文件
 
 ```powershell
-mqb main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
+mqb build main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
 ```
 
 多个 positional sources 表示精确 source set，不再自动扩展源码集合。
@@ -45,23 +75,16 @@ mqb main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
 ### Target kinds
 
 ```powershell
-mqb main.cpp -o app
-mqb api.cpp --type dll -o codec
-mqb math.cpp vector.cpp --type static -o math
+mqb build main.cpp -o app
+mqb build api.cpp --type dll -o codec
+mqb build math.cpp vector.cpp --type static -o math
 ```
 
-支持 `exe`、`dll`、`static`。
-
-### 把参数传给程序
-
-```powershell
-mqb main.cpp --run -- input.txt "hello world" 42
-```
-
-`--` 后的内容只属于目标程序，不参与构建参数解析。
+支持 `exe`、`dll`、`static`。`mqb run` 只适用于 executable target。
 
 ## 核心能力
 
+- `mqb build` / `mqb run` 项目命令与 fail-closed 默认入口解析。
 - `.c` / `.cpp` / `.cc` / `.cxx` 原生 MSVC 构建。
 - Visual Studio 与 portable MSVC toolchain discovery。
 - 基于 `/sourceDependencies` 的 header freshness 与增量编译。
@@ -69,6 +92,7 @@ mqb main.cpp --run -- input.txt "hello world" 42
 - `-j / --jobs` 有界并行 scan/compile。
 - `exe` / `dll` / `static` typed targets。
 - typed runtime、LTCG、subsystem policy。
+- 原生 MSVC compiler/linker 参数与 `/link` 分界。
 - project-local named modules 与 header units。
 - external/prebuilt named-module IFC providers。
 - MSVC toolchain-owned `import std` / `import std.compat`。
@@ -96,6 +120,7 @@ MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成�
 {
   "version": 1,
   "build": {
+    "entry": "src/main.cpp",
     "configuration": "release",
     "standard": "latest",
     "type": "exe",
@@ -104,6 +129,8 @@ MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成�
   }
 }
 ```
+
+`build.entry` 相对 `mqb.json` 解析，仅在 `mqb build` / `mqb run` 没有显式 positional source 时使用。若未设置，MQB 只在 project root 与 `src/` 中寻找 conventional `main.{c,cpp,cc,cxx}`；必须恰好命中一个，否则明确报错。
 
 External/prebuilt module IFC 也可在配置中声明：
 
@@ -123,6 +150,8 @@ External/prebuilt module IFC 也可在配置中声明：
 ## 常用 CLI
 
 ```text
+mqb build [source...] [options]
+mqb run [source...] [options] [-- program-args...]
 mqb <source...> [options]
 ```
 
@@ -143,13 +172,15 @@ mqb <source...> [options]
 | `-D <value>` | preprocessor definition |
 | `-L <dir>` / `--lib-path <dir>` | library search directory |
 | `-l <name>` / `--lib <name>` | library |
+| `/option` / `-option` | 原生 MSVC compiler 参数 |
+| `/link <...>` | 后续 build 参数路由到 linker |
 | `--compiler-arg <arg>` | 原样 compiler argv element |
 | `--linker-arg <arg>` | 原样 linker argv element |
 | `--env <auto|vs|portable>` | toolchain selection |
-| `--run` | 构建后运行 executable |
+| `--run` | source-first 兼容形式：构建后运行 executable |
 | `-v, --verbose` | 详细输出 |
 | `-h, --help` | 完整 CLI 帮助 |
-| `--` | 后续参数传给目标程序 |
+| `--` | `mqb run` / `--run` 后续参数传给目标程序 |
 
 完整参数列表以当前 binary 的 `mqb --help` 为准。
 
