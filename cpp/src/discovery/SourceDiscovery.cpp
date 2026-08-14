@@ -87,11 +87,16 @@ using detail::path_key;
 }
 
 [[nodiscard]] std::optional<fs::path> prepare_cache_file(
-    const std::optional<fs::path>& requested) {
-    if (!requested || requested->empty()) return std::nullopt;
+    const bool enabled,
+    const std::optional<fs::path>& requested,
+    const fs::path& root) {
+    if (!enabled) return std::nullopt;
     try {
+        const fs::path candidate = requested && !requested->empty()
+            ? *requested
+            : root / ".mqb" / "cache" / "discovery" / "source-discovery.mqbcache";
         std::error_code error_code;
-        fs::path absolute = fs::absolute(*requested, error_code).lexically_normal();
+        fs::path absolute = fs::absolute(candidate, error_code).lexically_normal();
         if (error_code) return std::nullopt;
         return absolute;
     } catch (...) {
@@ -210,7 +215,10 @@ SourceDiscovery::discover(const Request& request) {
         .extra_sources = extra_sources,
         .excluded_sources = excluded_sources,
     };
-    const std::optional<fs::path> cache_file = prepare_cache_file(request.cache_file);
+    const std::optional<fs::path> cache_file = prepare_cache_file(
+        request.persistent_cache,
+        request.cache_file,
+        root);
     if (cache_file) {
         if (auto cached = detail::try_reuse_discovery_cache(*cache_file, cache_identity)) {
             return std::move(*cached);
