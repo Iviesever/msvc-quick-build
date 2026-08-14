@@ -1,0 +1,129 @@
+name: Performance Evidence
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: performance-evidence-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Compare base and candidate
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.pull_request.title, 'perf:')
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v7
+        with:
+          path: candidate
+
+      - name: Checkout exact PR base
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+
+      - name: Checkout baseline for manual run
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          path: baseline
+
+      - name: Acquire one pinned historical MQB seed
+        id: seed
+        shell: pwsh
+        run: |
+          $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+          $seed = & (Join-Path $candidateRoot 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $candidateRoot `
+            -OutputRoot (Join-Path $env:GITHUB_WORKSPACE 'performance-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$seed" >> $env:GITHUB_OUTPUT
+
+      - name: Build exact baseline Release MQB
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE 'baseline'
+          $version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
+          $output = Join-Path $env:GITHUB_WORKSPACE 'performance-out/baseline/mqb.exe'
+          $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+            -RepoRoot $root `
+            -Version $version `
+            -Configuration Release `
+            -Clean `
+            -OutputPath $output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+            throw "Baseline Release MQB missing: $mqb"
+          }
+
+      - name: Build candidate Release MQB
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+          $version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
+          $output = Join-Path $env:GITHUB_WORKSPACE 'performance-out/candidate/mqb.exe'
+          $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+            -RepoRoot $root `
+            -Version $version `
+            -Configuration Release `
+            -Clean `
+            -OutputPath $output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+            throw "Candidate Release MQB missing: $mqb"
+          }
+
+      - name: Compare benchmark medians on the same runner
+        shell: pwsh
+        run: |
+          $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+          $baselineMqb = Join-Path $env:GITHUB_WORKSPACE 'performance-out/baseline/mqb.exe'
+          $candidateMqb = Join-Path $env:GITHUB_WORKSPACE 'performance-out/candidate/mqb.exe'
+          $comparison = Join-Path $env:GITHUB_WORKSPACE 'performance-out/benchmark-comparison.json'
+          & (Join-Path $candidateRoot 'tests/native/compare_mqb_benchmarks.ps1') `
+            -BaselineMqbPath $baselineMqb `
+            -CandidateMqbPath $candidateMqb `
+            -Iterations 5 `
+            -OutputPath $comparison
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Publish comparison summary
+        shell: pwsh
+        run: |
+          $comparisonPath = Join-Path $env:GITHUB_WORKSPACE 'performance-out/benchmark-comparison.json'
+          $report = Get-Content -LiteralPath $comparisonPath -Raw | ConvertFrom-Json
+          $lines = [System.Collections.Generic.List[string]]::new()
+          $lines.Add('## MQB performance evidence')
+          $lines.Add('')
+          $lines.Add('Negative deltas mean the candidate is faster. These values are review evidence, not correctness thresholds.')
+          $lines.Add('')
+          $lines.Add('| Scenario | Base total ms | Candidate total ms | Total Δ% | Base discovery ms | Candidate discovery ms | Discovery Δ% |')
+          $lines.Add('|---|---:|---:|---:|---:|---:|---:|')
+          foreach ($row in @($report.comparison)) {
+            $totalDelta = if ($null -eq $row.total_delta_pct) { 'n/a' } else { [string]$row.total_delta_pct }
+            $discoveryDelta = if ($null -eq $row.discovery_delta_pct) { 'n/a' } else { [string]$row.discovery_delta_pct }
+            $lines.Add("| $($row.scenario) | $($row.baseline_total_ms) | $($row.candidate_total_ms) | $totalDelta | $($row.baseline_discovery_ms) | $($row.candidate_discovery_ms) | $discoveryDelta |")
+          }
+          $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: mqb-performance-evidence
+          path: performance-out/benchmark-comparison.json
+          if-no-files-found: error
+          retention-days: 30
