@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,8 @@ namespace mqb {
 namespace {
 
 namespace fs = std::filesystem;
+using FileTimeRep = fs::file_time_type::duration::rep;
+static_assert(std::is_integral_v<FileTimeRep> && sizeof(FileTimeRep) <= sizeof(std::int64_t));
 
 constexpr std::array<std::uint8_t, 8> magic{
     'M', 'Q', 'B', 'C', 'A', 'C', 'H', 'E'};
@@ -67,15 +70,13 @@ constexpr std::uint32_t max_dependency_count = 100000u;
 
 [[nodiscard]] std::int64_t timestamp_to_i64(
     const fs::file_time_type value) noexcept {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-        value.time_since_epoch()).count();
+    return static_cast<std::int64_t>(value.time_since_epoch().count());
 }
 
 [[nodiscard]] fs::file_time_type timestamp_from_i64(
     const std::int64_t value) noexcept {
     return fs::file_time_type{
-        std::chrono::duration_cast<fs::file_time_type::duration>(
-            std::chrono::nanoseconds{value})};
+        fs::file_time_type::duration{static_cast<FileTimeRep>(value)}};
 }
 
 class BinaryWriter {
@@ -325,7 +326,6 @@ serialize(const fs::path& file, const CompileCacheEntry& entry) {
             }
         }
     }
-
     return writer.bytes();
 }
 
@@ -432,12 +432,9 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
             if (!scan_source) return std::unexpected(scan_source.error());
             if (!scan_output) return std::unexpected(scan_output.error());
             auto scan_dependency_count = reader.read_u32();
-            if (!scan_dependency_count) {
-                return std::unexpected(scan_dependency_count.error());
-            }
+            if (!scan_dependency_count) return std::unexpected(scan_dependency_count.error());
             if (*scan_dependency_count > max_dependency_count) {
-                return std::unexpected(reader.corrupt(
-                    "scan dependency count exceeds safety limit"));
+                return std::unexpected(reader.corrupt("scan dependency count exceeds safety limit"));
             }
             std::vector<FileSnapshot> scan_dependencies;
             scan_dependencies.reserve(*scan_dependency_count);
