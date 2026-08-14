@@ -174,6 +174,7 @@ Assert-ExactFiles -Root $discoveryTestsRoot -Expected @(
     'c_source_discovery_tests.cpp',
     'module_source_discovery_tests.cpp',
     'module_syntax_tests.cpp',
+    'source_discovery_cache_tests.cpp',
     'source_discovery_corrections_tests.cpp',
     'source_discovery_tests.cpp'
 )
