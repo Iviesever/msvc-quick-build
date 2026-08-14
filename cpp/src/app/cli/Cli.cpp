@@ -189,6 +189,15 @@ long_equals_value(
     return value;
 }
 
+[[nodiscard]] std::expected<app::performance::Format, Error>
+parse_timings_format(const std::string_view value) {
+    if (value == "text") return app::performance::Format::text;
+    if (value == "json") return app::performance::Format::json;
+    return std::unexpected(error(
+        "unsupported timings format '" + std::string{value}
+        + "' (expected text or json)"));
+}
+
 } // namespace
 
 std::expected<Options, Error>
@@ -213,6 +222,18 @@ parse_arguments(const std::span<const std::string_view> arguments) {
         }
         if (argument == "--verbose" || argument == "-v") {
             options.verbose = true;
+            continue;
+        }
+        if (argument == "--timings") {
+            options.timings = app::performance::Format::text;
+            continue;
+        }
+        if (argument.starts_with("--timings=")) {
+            auto value = long_equals_value(argument, "--timings=");
+            if (!value) return std::unexpected(value.error());
+            auto format = parse_timings_format(*value);
+            if (!format) return std::unexpected(format.error());
+            options.timings = *format;
             continue;
         }
         if (argument == "--discover") {
@@ -527,6 +548,8 @@ Options:
   -j, --jobs <N>          Maximum concurrent TU scans/compiles (default: hardware concurrency)
   -o, --output <name>     Set target name under .mqb/bin/
   --run                   Run an executable after a successful build
+  --timings               Show phase timings and cache hit/miss counters
+  --timings=<text|json>   Select human-readable or JSON-line timing output
   --module-ifc <name=path>
                            Bind one external/prebuilt named module to a read-only IFC
   -I <dir>, -I<dir>       Add an include directory
@@ -558,6 +581,7 @@ MQB v5 intentionally does not accept the PowerShell-era command aliases. Use the
 shown above; unknown legacy spellings fail instead of silently entering a compatibility path.
 
 Job count is execution policy only; changing -j does not invalidate build caches.
+Timing output is observation-only and never participates in build/cache identity.
 Discovery is source selection only. Incremental header freshness uses MSVC
 /sourceDependencies metadata; /scanDependencies is module topology only.
 
