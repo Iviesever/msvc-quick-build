@@ -42,7 +42,7 @@ workers = min(hardware budget, ready work items)
 - named-module compile 会**逐 dependency level**按该层 ready width 重新解析；
 - header unit / toolchain-owned module provider 进入对应 ready level 后使用同一策略。
 
-PR8 不加入诸如“只用 75% 核心”之类经验常数。内存压力、机器负载、TU 成本估计等资源自适应属于后续 throughput 阶段。
+MQB 不加入诸如“只用 75% 核心”之类经验常数。内存压力、机器瞬时负载和 TU 成本预测只有在能够形成稳定、可验证的资源模型时才应进入 scheduler，而不会依据 hosted-runner 偶然数据硬编码。
 
 ### `fixed(N)`
 
@@ -53,6 +53,42 @@ workers = min(N, ready work items)
 ```
 
 硬件线程数不会把用户明确指定的 `N` 再改写成另一策略。最终是否适合该机器由用户负责选择。
+
+## Caller-participating scheduler
+
+当解析出的 `worker_count > 1` 时，MQB 将**调用 scheduler 的当前线程本身算作一个 logical worker**，只额外创建 `worker_count - 1` 个后台线程：
+
+```text
+logical workers = caller + background workers
+background threads created = worker_count - 1
+```
+
+这不会改变并发上限、任务索引分配、stop/exception 语义或 public `worker_count`，但会确定性消除每次 parallel dispatch 的一个线程创建/销毁。对 named-module graph 来说，每个 dependency level 都能获得这项收益。
+
+单 worker 仍使用原有 inline fast path，不创建后台线程。
+
+## Warm P1689 scan reuse
+
+Named Modules / Header Unit pipeline 的 compile/link warm cache hit 还不足以构成真正 no-op：如果每次都重新启动 `cl.exe /scanDependencies`，module topology 仍有固定进程成本。
+
+MQB 因此把可复用的 P1689 topology evidence **封存在成功 compile 的现有 compile cache 中**，而不是创建第二套独立 scan-cache artifact。compile cache v3 可选保存：
+
+- scan recipe signature；
+- source 的精确文件时间快照；
+- P1689 `.scan` artifact 的精确快照；
+- 成功 `/sourceDependencies` 得到的 textual include dependency 快照。
+
+只有成功 compile 才能 seal 这份 evidence。若 source/header 在 scan 之后、compile 完成之前已经变化，则该次 compile cache 不写入 scan evidence。
+
+下一次 module scan 只有在 signature、source、`.scan` 和全部 textual dependency snapshot **全部精确匹配**时才能复用旧 P1689；任何 cache 读取失败、snapshot 失败、metadata 损坏或 P1689 parse 失败都会 fail-open 到正常 raw scan，而不会让性能缓存成为新的构建失败面。
+
+工具链提供的 `std` / `std.compat` module provider 与项目源码共用同一套 scan-reuse 规则。
+
+### Cache wire compatibility
+
+新写入的 compile cache 是 v3。历史 v2 cache 仍可读取，只是没有 scan evidence，因此第一次 module build 会正常重新 scan；后续成功 compile 才会获得 warm scan reuse。v1 继续按原策略拒绝。
+
+scan evidence 使用 native `file_time_type` tick count 原样持久化，不做跨 epoch 的纳秒换算，避免范围溢出或精度损失。
 
 ## 单一并行所有权
 
@@ -78,6 +114,8 @@ MQB workers × cl.exe /MP workers
 
 只要源码、依赖、工具链和构建配方不变，改变 jobs policy 后仍应保持 warm cache hit。
 
+P1689 scan signature 是独立的 topology recipe identity，只包含会影响 scan 的输入；runtime library 与 LTCG 等不进入 scan identity。
+
 ## C++ API 兼容性
 
 原有 request 字段名保持不变，例如：
@@ -99,11 +137,13 @@ MQB workers × cl.exe /MP workers
 
 ## 测试契约
 
-PR8 使用结构性测试而不是 hosted-runner 毫秒阈值：
+结构性正确性测试不使用 hosted-runner 毫秒阈值：
 
 - resolver 可注入 hardware concurrency，验证 unknown / hardware-limited / work-limited / fixed ceiling；
-- numeric C++ API compatibility 和 fixed(0) fail-closed 被锁定；
-- CLI parser 覆盖四种 `auto` 写法；
-- ordinary 四 TU E2E 在 fixed → auto 后必须全部 compile/link cache hit；
-- `import std` P1689 module E2E 在 fixed → auto 后必须保持 consumer/provider/link warm reuse；
+- multi-worker barrier test 验证 caller 实际参与，同时 observed concurrency 仍严格等于 logical worker 上限；
+- scan signature test 锁定 topology-affecting 与非 scan 输入边界；
+- scan evidence test 锁定 source/header/P1689 artifact 任一 snapshot 变化必失效；
+- compile-cache v3 round-trip 与 v2 compatibility 被直接验证；
+- module coordinator 验证 cold scan、warm zero-scan、单 source mutation 精确 rescan、成功 rebuild 后重新 seal；
+- ordinary 与 `import std` E2E 继续验证 jobs policy 不污染 compile/link cache；
 - Debug/Release self-host、完整 native test graph 和 Release package validation 仍是最终合并门。
