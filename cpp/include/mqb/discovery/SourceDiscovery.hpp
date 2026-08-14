@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,9 @@ struct Request {
     std::vector<std::filesystem::path> excluded_directories;
     std::vector<std::filesystem::path> extra_sources;
     std::vector<std::filesystem::path> excluded_sources;
+    // Optional performance-only state. Cache load/validation/write failures
+    // always fall back to ordinary discovery and never become build failures.
+    std::optional<std::filesystem::path> cache_file;
 };
 
 struct Result {
@@ -48,6 +52,9 @@ struct Result {
     // that requires the P1689/module pipeline, even if discovery found no local
     // interface provider (for example `import external.module;`).
     bool requires_module_pipeline{false};
+    // True only when the result was restored from validated persistent
+    // discovery evidence without recursively re-indexing/re-reading sources.
+    bool reused{false};
 };
 
 class SourceDiscovery {
