@@ -122,13 +122,12 @@ void verify_parser_contract() {
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value(), "attached native /I and /D forms should parse");
         if (parsed) {
-            expect(parsed->include_directories.size() == 1
-                       && parsed->include_directories.front() == "include",
-                   "attached /I should use structured include-directory routing");
-            expect(parsed->defines.size() == 1 && parsed->defines.front() == "ATTACHED=1",
-                   "attached /D should use structured define routing");
-            expect(parsed->compiler_arguments.empty(),
-                   "attached /I and /D should not remain duplicate raw compiler switches");
+            expect(parsed->include_directories.empty() && parsed->defines.empty(),
+                   "attached native options should stay out of CLI-owned structured parsing");
+            expect(parsed->compiler_arguments.size() == 2
+                       && parsed->compiler_arguments[0] == "/Iinclude"
+                       && parsed->compiler_arguments[1] == "/DATTACHED=1",
+                   "attached /I and /D should remain opaque native tokens for parameter routing");
         }
     }
 
