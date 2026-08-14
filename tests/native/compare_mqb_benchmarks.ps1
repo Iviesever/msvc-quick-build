@@ -14,6 +14,15 @@ function Get-FullPath {
     return [System.IO.Path]::GetFullPath($Path)
 }
 
+function Get-DeltaPercent {
+    param(
+        [Parameter(Mandatory = $true)][double]$Baseline,
+        [Parameter(Mandatory = $true)][double]$Candidate
+    )
+    if ($Baseline -eq 0.0) { return $null }
+    return (($Candidate - $Baseline) / $Baseline) * 100.0
+}
+
 $BaselineMqbPath = Get-FullPath $BaselineMqbPath
 $CandidateMqbPath = Get-FullPath $CandidateMqbPath
 foreach ($path in @($BaselineMqbPath, $CandidateMqbPath)) {
@@ -63,22 +72,23 @@ try {
                 throw "Candidate benchmark is missing scenario '$scenario'"
             }
             $candidateRow = $candidateByScenario[$scenario]
-            $baselineMedian = [double]$baselineRow.median_total_ms
-            $candidateMedian = [double]$candidateRow.median_total_ms
-            $deltaMs = $candidateMedian - $baselineMedian
-            $deltaPct = if ($baselineMedian -eq 0.0) {
-                $null
-            }
-            else {
-                ($deltaMs / $baselineMedian) * 100.0
-            }
+            $baselineTotal = [double]$baselineRow.median_total_ms
+            $candidateTotal = [double]$candidateRow.median_total_ms
+            $baselineDiscovery = [double]$baselineRow.median_discovery_ms
+            $candidateDiscovery = [double]$candidateRow.median_discovery_ms
+            $totalDeltaPct = Get-DeltaPercent -Baseline $baselineTotal -Candidate $candidateTotal
+            $discoveryDeltaPct = Get-DeltaPercent -Baseline $baselineDiscovery -Candidate $candidateDiscovery
 
             [PSCustomObject]@{
                 scenario = $scenario
-                baseline_median_ms = [Math]::Round($baselineMedian, 3)
-                candidate_median_ms = [Math]::Round($candidateMedian, 3)
-                delta_ms = [Math]::Round($deltaMs, 3)
-                delta_pct = if ($null -eq $deltaPct) { $null } else { [Math]::Round($deltaPct, 2) }
+                baseline_total_ms = [Math]::Round($baselineTotal, 3)
+                candidate_total_ms = [Math]::Round($candidateTotal, 3)
+                total_delta_ms = [Math]::Round(($candidateTotal - $baselineTotal), 3)
+                total_delta_pct = if ($null -eq $totalDeltaPct) { $null } else { [Math]::Round($totalDeltaPct, 2) }
+                baseline_discovery_ms = [Math]::Round($baselineDiscovery, 3)
+                candidate_discovery_ms = [Math]::Round($candidateDiscovery, 3)
+                discovery_delta_ms = [Math]::Round(($candidateDiscovery - $baselineDiscovery), 3)
+                discovery_delta_pct = if ($null -eq $discoveryDeltaPct) { $null } else { [Math]::Round($discoveryDeltaPct, 2) }
             }
         }
     )
@@ -94,7 +104,7 @@ try {
 
     Write-Host "`n=== Median wall-clock comparison ==="
     $comparison | Sort-Object scenario | Format-Table -AutoSize
-    Write-Host 'Negative delta means the candidate is faster. Timings are review evidence, not CI pass/fail thresholds.'
+    Write-Host 'Negative deltas mean the candidate is faster. Timings are review evidence, not CI pass/fail thresholds.'
 
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         $parent = Split-Path -Parent $OutputPath
@@ -102,7 +112,7 @@ try {
             New-Item -ItemType Directory -Path $parent -Force | Out-Null
         }
         [PSCustomObject]@{
-            schema_version = 1
+            schema_version = 2
             generated_utc = [DateTime]::UtcNow.ToString('o')
             iterations = $Iterations
             baseline_mqb = $BaselineMqbPath
