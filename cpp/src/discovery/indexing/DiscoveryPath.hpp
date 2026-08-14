@@ -5,6 +5,7 @@
 #include <string>
 
 #include "mqb/core/TranslationUnitClassifier.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::discovery::detail {
 
@@ -36,7 +37,7 @@ namespace fs = std::filesystem;
 }
 
 [[nodiscard]] inline std::string path_key(const fs::path& path) {
-    return ascii_lower(utf8_path_text(path.lexically_normal()));
+    return mqb::platform::windows::path_identity_key(path);
 }
 
 [[nodiscard]] inline bool inside_root(const fs::path& root, const fs::path& path) {
