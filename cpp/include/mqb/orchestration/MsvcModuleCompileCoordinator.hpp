@@ -35,7 +35,7 @@ struct ModuleCompileWaveRequest {
     modules::ModuleDependencyPlan plan;
     CompilerOptions compiler_options;
     std::filesystem::path working_directory;
-    ParallelismPolicy compile_parallelism{};
+    ParallelismPolicy max_parallel_compiles{};
 };
 
 struct ModuleCompileResult {
