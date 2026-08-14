@@ -69,6 +69,7 @@
       "src/core/model/TranslationUnitClassifier.cpp",
       "src/discovery/analysis/ModuleSyntax.cpp",
       "src/discovery/analysis/SourceTextAnalysis.cpp",
+      "src/discovery/cache/DiscoveryCache.cpp",
       "src/discovery/indexing/SourceIndex.cpp",
       "src/discovery/selection/SourceSelectionGraph.cpp",
       "src/discovery/SourceDiscovery.cpp",
