@@ -70,10 +70,10 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
             IncrementalStaticTargetErrorCode::no_sources,
             "static target build requires at least one source file"));
     }
-    if (request.max_parallel_compiles == 0) {
+    if (!request.max_parallel_compiles.valid()) {
         return std::unexpected(failure(
             IncrementalStaticTargetErrorCode::invalid_parallelism,
-            "static target compile parallelism must be at least one"));
+            "static target compile parallelism must be automatic or a positive fixed worker count"));
     }
 
     TargetTimings timings;

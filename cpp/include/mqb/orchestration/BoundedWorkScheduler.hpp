@@ -5,6 +5,8 @@
 #include <functional>
 #include <string>
 
+#include "mqb/orchestration/ParallelismPolicy.hpp"
+
 namespace mqb::orchestration {
 
 enum class BoundedWorkErrorCode {
@@ -33,6 +35,16 @@ public:
     run(
         std::size_t item_count,
         std::size_t max_workers,
+        const std::function<bool(std::size_t)>& work);
+
+    // Automatic policy is resolved against the current ready batch instead of
+    // being converted to a fixed integer earlier in application composition.
+    // Fixed policy remains a hard user ceiling. This overload deliberately owns
+    // the hardware-concurrency observation so callers can preserve policy intent.
+    [[nodiscard]] static std::expected<BoundedWorkSummary, BoundedWorkError>
+    run(
+        std::size_t item_count,
+        ParallelismPolicy policy,
         const std::function<bool(std::size_t)>& work);
 };
 

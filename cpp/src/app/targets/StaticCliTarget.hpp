@@ -9,6 +9,7 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
+#include "mqb/orchestration/ParallelismPolicy.hpp"
 #include "mqb/process/Process.hpp"
 
 namespace mqb::app::performance {
@@ -24,7 +25,7 @@ struct StaticCliTargetRequest {
     CompilerOptions compiler_options;
     std::filesystem::path project_root;
     std::string target_name;
-    std::size_t max_parallel_jobs{1};
+    orchestration::ParallelismPolicy max_parallel_jobs{};
     app::performance::Session* timings{};
     bool force_downstream_rebuild{false};
     bool verbose{false};

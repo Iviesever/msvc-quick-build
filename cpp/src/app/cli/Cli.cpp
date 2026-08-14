@@ -110,18 +110,22 @@ parse_subsystem(const std::string_view value) {
         + "' (expected console or windows)"));
 }
 
-[[nodiscard]] std::expected<std::size_t, Error>
+[[nodiscard]] std::expected<orchestration::ParallelismPolicy, Error>
 parse_jobs(const std::string_view value) {
+    if (value == "auto") {
+        return orchestration::ParallelismPolicy::automatic();
+    }
+
     std::size_t jobs = 0;
     const char* const begin = value.data();
     const char* const end = value.data() + value.size();
     const auto [parsed_end, parse_error] = std::from_chars(begin, end, jobs);
     if (parse_error != std::errc{} || parsed_end != end || jobs == 0) {
         return std::unexpected(error(
-            "invalid compile job count '" + std::string{value}
-            + "' (expected a positive integer)"));
+            "invalid compile job policy '" + std::string{value}
+            + "' (expected auto or a positive integer)"));
     }
-    return jobs;
+    return orchestration::ParallelismPolicy::fixed(jobs);
 }
 
 [[nodiscard]] std::expected<msvc::ToolchainPreference, Error>
@@ -589,7 +593,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto value = attached_or_next(arguments, index, argument, "-l");
             if (!value) return std::unexpected(value.error());
             if (value->empty()) return std::unexpected(error("empty library name"));
-            options.libraries.emplace_back(std::string{*value});
+            options.libraries.emplace_back(*value);
             continue;
         }
         if (!argument.empty() && argument.front() == '@') {
@@ -689,7 +693,7 @@ Options:
   --subsystem <console|windows>
                            Explicitly select PE subsystem for executable/DLL targets
   --x86 | --x64           Explicitly select target architecture
-  -j, --jobs <N>          Maximum concurrent TU scans/compiles (default: hardware concurrency)
+  -j, --jobs <auto|N>     Adaptive or fixed maximum concurrent TU scans/compiles (default: auto)
   -o, --output <name>     Set target name under .mqb/bin/
   --run                   Legacy source-first alias for build-then-run; prefer `mqb run`
   --timings               Show phase timings and cache hit/miss counters
@@ -743,7 +747,9 @@ MQB v5 intentionally does not accept the PowerShell-era single-dash command alia
 native options shown above; unknown legacy spellings fail instead of silently entering a
 compatibility path.
 
-Job count is execution policy only; changing -j does not invalidate build caches.
+Job policy is execution-only and never enters build/cache identity. `auto` resolves against the
+current ready batch and the operating system's available hardware concurrency; a positive N is
+a hard user ceiling. MQB owns this process-level parallelism and does not stack compiler /MP.
 Timing output is observation-only and never participates in build/cache identity.
 Discovery is source selection only. Incremental header freshness uses MSVC
 /sourceDependencies metadata; /scanDependencies is module topology only.

@@ -36,6 +36,58 @@ void update_max(std::atomic<int>& maximum, const int value) {
 int main() {
     using mqb::orchestration::BoundedWorkErrorCode;
     using mqb::orchestration::BoundedWorkScheduler;
+    using mqb::orchestration::ParallelismMode;
+    using mqb::orchestration::ParallelismPolicy;
+    using mqb::orchestration::ParallelismResolver;
+
+    {
+        const ParallelismPolicy automatic;
+        expect(automatic.is_automatic() && automatic.valid(),
+               "default parallelism policy should be valid automatic policy");
+
+        const ParallelismPolicy numeric_compatibility = 4;
+        expect(!numeric_compatibility.is_automatic()
+                   && numeric_compatibility.fixed_jobs == 4
+                   && numeric_compatibility == 4,
+               "legacy numeric request initializer should become fixed policy");
+        const ParallelismPolicy zero_compatibility = 0;
+        expect(!zero_compatibility.valid() && zero_compatibility == 0,
+               "legacy zero request initializer should remain invalid");
+    }
+
+    {
+        const auto unknown_hardware = ParallelismResolver::resolve(
+            ParallelismPolicy::automatic(), 8, 0);
+        expect(unknown_hardware.workers == 1,
+               "automatic policy should fall back to one worker when hardware count is unknown");
+
+        const auto work_limited = ParallelismResolver::resolve(
+            ParallelismPolicy::automatic(), 3, 16);
+        expect(work_limited.workers == 3
+                   && work_limited.mode == ParallelismMode::automatic,
+               "automatic policy should clamp hardware budget to ready work width");
+
+        const auto hardware_limited = ParallelismResolver::resolve(
+            ParallelismPolicy::automatic(), 12, 4);
+        expect(hardware_limited.workers == 4,
+               "automatic policy should respect the available hardware budget");
+
+        const auto fixed_work_limited = ParallelismResolver::resolve(
+            ParallelismPolicy::fixed(9), 2, 64);
+        expect(fixed_work_limited.workers == 2
+                   && fixed_work_limited.mode == ParallelismMode::fixed,
+               "fixed policy should still clamp to ready work width");
+
+        const auto fixed_limit = ParallelismResolver::resolve(
+            ParallelismPolicy::fixed(2), 12, 64);
+        expect(fixed_limit.workers == 2,
+               "fixed policy should remain a hard user ceiling regardless of hardware count");
+
+        const auto no_work = ParallelismResolver::resolve(
+            ParallelismPolicy::automatic(), 0, 16);
+        expect(no_work.workers == 0,
+               "zero ready work should resolve to zero workers");
+    }
 
     {
         const auto invalid = BoundedWorkScheduler::run(4, 0, [](std::size_t) { return true; });
@@ -43,6 +95,16 @@ int main() {
         if (!invalid) {
             expect(invalid.error().code == BoundedWorkErrorCode::invalid_worker_count,
                    "zero workers should report invalid_worker_count");
+        }
+
+        const auto invalid_policy = BoundedWorkScheduler::run(
+            4,
+            ParallelismPolicy::fixed(0),
+            [](std::size_t) { return true; });
+        expect(!invalid_policy, "fixed zero policy should be rejected");
+        if (!invalid_policy) {
+            expect(invalid_policy.error().code == BoundedWorkErrorCode::invalid_worker_count,
+                   "fixed zero policy should report invalid_worker_count");
         }
     }
 

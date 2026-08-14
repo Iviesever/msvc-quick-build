@@ -17,6 +17,15 @@ namespace {
 
 namespace diagnostics = mqb::app::diagnostics;
 
+void print_jobs(const orchestration::ParallelismPolicy policy) {
+    std::cout << "  jobs:    ";
+    if (policy.is_automatic()) {
+        std::cout << "auto\n";
+    } else {
+        std::cout << policy.fixed_jobs << '\n';
+    }
+}
+
 } // namespace
 
 int run_static_target(
@@ -26,8 +35,9 @@ int run_static_target(
     if (request.verbose) {
         std::cout << "[target] " << request.target_name << '\n'
                   << "  project: " << diagnostics::path_text(request.project_root) << '\n'
-                  << "  type:    static\n"
-                  << "  cl:      " << diagnostics::path_text(toolchain.identity.compiler) << '\n'
+                  << "  type:    static\n";
+        print_jobs(request.max_parallel_jobs);
+        std::cout << "  cl:      " << diagnostics::path_text(toolchain.identity.compiler) << '\n'
                   << "  lib:     " << diagnostics::path_text(toolchain.librarian) << '\n';
         for (const auto& object : request.additional_objects) {
             std::cout << "  object:  " << diagnostics::path_text(object) << " (MQB-owned)\n";

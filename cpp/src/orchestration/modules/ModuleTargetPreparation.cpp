@@ -54,10 +54,10 @@ prepare_module_target(
             IncrementalModuleTargetErrorCode::no_sources,
             "module target requires at least one source"));
     }
-    if (request.max_parallel_scans == 0 || request.max_parallel_compiles == 0) {
+    if (!request.max_parallel_scans.valid() || !request.max_parallel_compiles.valid()) {
         return std::unexpected(failure(
             IncrementalModuleTargetErrorCode::invalid_parallelism,
-            "module target scan and compile parallelism must both be at least one"));
+            "module target scan and compile parallelism must be automatic or a positive fixed worker count"));
     }
 
     const auto preparation_started = Clock::now();
