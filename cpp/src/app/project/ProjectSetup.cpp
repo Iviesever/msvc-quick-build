@@ -97,6 +97,24 @@ template <typename T>
     return {};
 }
 
+[[nodiscard]] std::string unknown_profile_message(
+    const std::string_view requested,
+    const mqb::config::ProjectConfig& config) {
+    std::string message = "unknown profile '" + std::string{requested} + "'";
+    if (config.profiles.empty()) {
+        message += "; mqb.json defines no profiles";
+        return message;
+    }
+    message += "; available profiles:";
+    for (const auto& [name, profile] : config.profiles) {
+        (void)profile;
+        message += " '";
+        message += name;
+        message += "'";
+    }
+    return message;
+}
+
 } // namespace
 
 std::expected<ProjectSetup, ProjectSetupError>
@@ -125,6 +143,24 @@ prepare_project(
     const std::filesystem::path project_root = project_config
         ? project_config->project_root
         : invocation_directory;
+
+    mqb::config::ProjectProfile* selected_profile = nullptr;
+    if (options.profile) {
+        if (!project_config) {
+            return std::unexpected(ProjectSetupError{
+                .message = "--profile requires an mqb.json project configuration",
+                .config_error = std::nullopt,
+            });
+        }
+        const auto profile = project_config->profiles.find(*options.profile);
+        if (profile == project_config->profiles.end()) {
+            return std::unexpected(ProjectSetupError{
+                .message = unknown_profile_message(*options.profile, *project_config),
+                .config_error = std::nullopt,
+            });
+        }
+        selected_profile = &profile->second;
+    }
 
     for (auto& provider : options.external_module_providers) {
         if (provider.interface_file.is_relative()) {
@@ -164,6 +200,16 @@ prepare_project(
             });
         }
     }
+    if (selected_profile) {
+        const std::string layer = "profile '" + *options.profile + "'";
+        auto normalized = normalize_native_parameters(selected_profile->build, layer);
+        if (!normalized) {
+            return std::unexpected(ProjectSetupError{
+                .message = normalized.error(),
+                .config_error = std::nullopt,
+            });
+        }
+    }
     if (auto normalized = normalize_native_parameters(
             cli_overrides.build,
             "CLI"); !normalized) {
@@ -174,10 +220,12 @@ prepare_project(
     }
 
     const bool subsystem_explicit = cli_overrides.build.subsystem.has_value()
+        || (selected_profile && selected_profile->build.subsystem.has_value())
         || (project_config && project_config->build.subsystem.has_value());
 
     auto effective = mqb::config::resolve_project_options(
         project_config ? &*project_config : nullptr,
+        selected_profile,
         cli_overrides);
     options.build.configuration = effective.configuration;
     options.build.architecture = effective.architecture;
