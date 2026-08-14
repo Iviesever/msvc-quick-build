@@ -257,6 +257,7 @@ $orchestrationLeafFiles = [ordered]@{
         'MsvcIncrementalArchiveCoordinator.cpp',
         'MsvcIncrementalCompileCoordinator.cpp',
         'MsvcIncrementalLinkCoordinator.cpp',
+        'MsvcIncrementalPchCoordinator.cpp',
         'MsvcIncrementalStaticTargetCoordinator.cpp',
         'MsvcIncrementalTargetCoordinator.cpp'
     )
