@@ -23,6 +23,7 @@
 #include "mqb/discovery/SourceDiscovery.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
+#include "mqb/msvc/MsvcParameterCapabilities.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
@@ -82,6 +83,43 @@ void add_portable_root_if_missing(
         message += diagnostics::path_text(path);
     }
     return message;
+}
+
+[[nodiscard]] bool validate_parameter_capabilities(
+    const mqb::msvc::ParameterTool tool,
+    const std::vector<std::string>& arguments,
+    const std::string_view vc_tools_version) {
+    for (const auto& argument : arguments) {
+        const auto capability = mqb::msvc::MsvcParameterCapabilities::inspect(
+            tool,
+            argument,
+            vc_tools_version);
+        if (capability.lifecycle == mqb::msvc::ParameterLifecycle::active) {
+            continue;
+        }
+
+        std::string message = "MSVC ";
+        message += mqb::msvc::to_string(tool);
+        message += " option '";
+        message += argument;
+        message += "' is ";
+        message += mqb::msvc::to_string(capability.lifecycle);
+        message += " for toolset ";
+        message += vc_tools_version;
+        if (!capability.guidance.empty()) {
+            message += ": ";
+            message += capability.guidance;
+        }
+
+        if (capability.lifecycle == mqb::msvc::ParameterLifecycle::deprecated) {
+            diagnostics::print_warning(message);
+            continue;
+        }
+
+        diagnostics::print_error(message);
+        return false;
+    }
+    return true;
 }
 
 void print_jobs(const mqb::orchestration::ParallelismPolicy policy) {
@@ -268,6 +306,17 @@ int Application::run(const std::span<const std::string_view> arguments) {
             toolchain.error().message,
             toolchain.error().path));
         return 3;
+    }
+
+    if (!validate_parameter_capabilities(
+            mqb::msvc::ParameterTool::compiler,
+            options.compiler_arguments,
+            toolchain->identity.version)
+        || !validate_parameter_capabilities(
+            mqb::msvc::ParameterTool::linker,
+            options.linker_arguments,
+            toolchain->identity.version)) {
+        return 2;
     }
 
     mqb::CompilerOptions compiler_options;

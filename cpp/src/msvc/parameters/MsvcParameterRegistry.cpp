@@ -148,7 +148,9 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
         return classified(ParameterTool::linker, ParameterOwnership::mqb_owned, "/" + body, "MQB owns target identity, primary link artifacts, or structured library search inputs");
     }
 
-    if (body == "DEBUG:FASTLINK") return linker_unsupported(body, "/DEBUG:FASTLINK is removed from current Visual Studio toolchains; use /DEBUG:FULL");
+    if (body == "DEBUG:FASTLINK") {
+        return classified(ParameterTool::linker, ParameterOwnership::passthrough, "/DEBUG:FASTLINK", "availability is toolchain-version conditional and is validated after MSVC discovery");
+    }
     if (body == "LTCG:INCREMENTAL" || body == "LTCG:NOSTATUS" || body == "LTCG:STATUS") return linker_unsupported(body, "current MQB LTCG policy is boolean and cannot preserve this /LTCG mode yet");
     if (body == "DRIVER" || body.starts_with("DRIVER:")) return linker_unsupported(body, "kernel-driver target shape requires a first-class MQB target policy");
     if (body == "KERNEL") return linker_unsupported(body, "kernel-mode linking is coupled to compiler policy that MQB does not model yet");

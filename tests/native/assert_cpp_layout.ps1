@@ -219,6 +219,7 @@ $msvcLeafFiles = [ordered]@{
     'linker' = @('MsvcLibraryResolver.cpp', 'MsvcLinker.cpp')
     'modules' = @('MsvcModuleDependencyScanner.cpp')
     'parameters' = @(
+        'MsvcParameterCapabilities.cpp',
         'MsvcParameterEngine.cpp',
         'MsvcParameterRegistry.cpp',
         'MsvcParameterRegistry.hpp'
@@ -246,7 +247,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'msvc') -LeafFiles ([ordered]@{
         'module_dependency_scanner_integration_tests.cpp',
         'module_dependency_scanner_tests.cpp'
     )
-    'parameters' = @('msvc_parameter_engine_tests.cpp')
+    'parameters' = @('msvc_parameter_capabilities_tests.cpp', 'msvc_parameter_engine_tests.cpp')
     'toolchain' = @('portable_tests.cpp', 'visual_studio_tests.cpp')
 })
 
