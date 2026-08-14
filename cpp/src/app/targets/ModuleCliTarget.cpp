@@ -86,7 +86,7 @@ int run_module_target(
         }
         std::cout << "  pipeline: named-modules\n"
                   << "  type:    " << to_string(request.link_options.target_kind) << '\n';
-        print_jobs(request.parallelism);
+        print_jobs(request.max_parallel_jobs);
         std::cout << "  cl:      " << diagnostics::path_text(toolchain.identity.compiler) << '\n'
                   << "  link:    " << diagnostics::path_text(toolchain.linker) << '\n';
         for (const auto& source : routed_sources) {
@@ -144,7 +144,7 @@ int run_module_target(
         .compiler_options = std::move(request.compiler_options),
         .link_options = std::move(request.link_options),
         .working_directory = request.project_root,
-        .parallelism = request.parallelism,
+        .max_parallel_jobs = request.max_parallel_jobs,
         .force_named_modules = request.force_named_modules,
     };
     auto result = router.run(target_request);
