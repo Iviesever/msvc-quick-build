@@ -13,6 +13,10 @@
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/process/Process.hpp"
 
+namespace mqb::app::performance {
+class Session;
+}
+
 namespace mqb::cli {
 
 [[nodiscard]] bool is_module_interface_source(const std::filesystem::path& source);
@@ -26,6 +30,7 @@ struct ModuleCliTargetRequest {
     std::optional<std::filesystem::path> config_file;
     std::string target_name;
     std::size_t max_parallel_jobs{1};
+    app::performance::Session* timings{};
     bool jobs_explicit{false};
     bool force_named_modules{false};
     bool verbose{false};
