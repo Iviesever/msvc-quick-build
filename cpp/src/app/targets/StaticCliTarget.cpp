@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "Diagnostics.hpp"
+#include "PerformanceTimings.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLibrarian.hpp"
@@ -52,6 +53,14 @@ int run_static_target(
         return result.error().code == orchestration::IncrementalStaticTargetErrorCode::archive_failed
             ? 5
             : 4;
+    }
+
+    if (request.timings) {
+        request.timings->add_target(result->timings);
+        for (const auto& compile : result->compiles) {
+            request.timings->record_compile(compile.result.compiled);
+        }
+        request.timings->record_archive(result->archive.archived);
     }
 
     for (const auto& compile : result->compiles) {
