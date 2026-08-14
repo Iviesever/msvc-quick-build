@@ -134,7 +134,7 @@ foreach ($leaf in $appLeafFiles.Keys) {
     Assert-ExactFiles -Root $leafRoot -Expected $appLeafFiles[$leaf]
 }
 Assert-LeafLayout -Root (Join-Path $testsRoot 'app') -LeafFiles ([ordered]@{
-    'cli' = @('build_policy_cli_tests.cpp', 'cli_argument_tests.cpp')
+    'cli' = @('build_policy_cli_tests.cpp', 'cli_argument_tests.cpp', 'native_msvc_cli_tests.cpp')
 })
 
 # Project configuration. JSON grammar belongs to the json layer; config owns
