@@ -197,6 +197,110 @@ int main(const int argc, char* argv[]) {
         expect(fs::is_regular_file(pch_file), "repair should restore the owned .pch artifact");
     }
 
+    // Exercise the project/profile/CLI scalar precedence through the real
+    // candidate binary from a nested invocation directory. Config/profile PCH
+    // paths must remain config-relative while CLI PCH paths remain invocation-relative.
+    write_text(tree.root / "include/base.hpp", "#pragma once\ninline constexpr int base_marker = 1;\n");
+    write_text(tree.root / "include/profile.hpp", "#pragma once\ninline constexpr int profile_marker = 2;\n");
+    write_text(tree.root / "include/cli.hpp", "#pragma once\ninline constexpr int cli_marker = 3;\n");
+    write_text(
+        tree.root / "config_main.cpp",
+        "#include \"include/base.hpp\"\n"
+        "int main() { return base_marker == 1 ? 0 : 1; }\n");
+    write_text(
+        tree.root / "mqb.json",
+        R"json({
+  "version": 1,
+  "build": {
+    "pch": "include/base.hpp"
+  },
+  "profiles": {
+    "profile": {
+      "build": {
+        "pch": "include/profile.hpp"
+      }
+    },
+    "off": {
+      "build": {
+        "pch": false
+      }
+    }
+  }
+})json");
+    const fs::path nested = tree.root / "nested/work";
+    fs::create_directories(nested);
+
+    auto config_base = run_process(
+        runner,
+        mqb_executable,
+        nested,
+        {"build", "../../config_main.cpp", "--env", "vs", "--no-discover",
+         "-o", "pch_config_base"});
+    expect(config_base.has_value(), "base-config PCH build should launch from nested directory");
+    if (config_base) {
+        if (config_base->exit_code != 0) dump_failure(*config_base);
+        expect(config_base->exit_code == 0, "base-config PCH build should succeed");
+        expect(contains(*config_base, "[pch]") && contains(*config_base, "base.hpp"),
+               "base build.pch should resolve relative to mqb.json and create that PCH");
+    }
+
+    auto profile_override = run_process(
+        runner,
+        mqb_executable,
+        nested,
+        {"build", "../../config_main.cpp", "--env", "vs", "--no-discover",
+         "--profile", "profile", "-o", "pch_config_profile"});
+    expect(profile_override.has_value(), "profile PCH override build should launch");
+    if (profile_override) {
+        if (profile_override->exit_code != 0) dump_failure(*profile_override);
+        expect(profile_override->exit_code == 0, "profile PCH override should build successfully");
+        expect(contains(*profile_override, "[pch]") && contains(*profile_override, "profile.hpp"),
+               "selected profile PCH should override base PCH using config-relative path semantics");
+    }
+
+    auto profile_disable = run_process(
+        runner,
+        mqb_executable,
+        nested,
+        {"build", "../../config_main.cpp", "--env", "vs", "--no-discover",
+         "--profile", "off", "-o", "pch_config_profile_off"});
+    expect(profile_disable.has_value(), "profile PCH disable build should launch");
+    if (profile_disable) {
+        if (profile_disable->exit_code != 0) dump_failure(*profile_disable);
+        expect(profile_disable->exit_code == 0, "profile pch:false should disable base PCH and still build");
+        expect(!contains(*profile_disable, "[pch]") && !contains(*profile_disable, "[up-to-date] pch"),
+               "profile pch:false should suppress PCH orchestration inherited from base config");
+    }
+
+    auto cli_override = run_process(
+        runner,
+        mqb_executable,
+        nested,
+        {"build", "../../config_main.cpp", "--env", "vs", "--no-discover",
+         "--profile", "profile", "--pch", "../../include/cli.hpp",
+         "-o", "pch_config_cli"});
+    expect(cli_override.has_value(), "CLI PCH override build should launch");
+    if (cli_override) {
+        if (cli_override->exit_code != 0) dump_failure(*cli_override);
+        expect(cli_override->exit_code == 0, "CLI PCH override should build successfully");
+        expect(contains(*cli_override, "[pch]") && contains(*cli_override, "cli.hpp"),
+               "CLI --pch should override selected profile and resolve relative to invocation directory");
+    }
+
+    auto cli_disable = run_process(
+        runner,
+        mqb_executable,
+        nested,
+        {"build", "../../config_main.cpp", "--env", "vs", "--no-discover",
+         "--profile", "profile", "--no-pch", "-o", "pch_config_cli_off"});
+    expect(cli_disable.has_value(), "CLI PCH disable build should launch");
+    if (cli_disable) {
+        if (cli_disable->exit_code != 0) dump_failure(*cli_disable);
+        expect(cli_disable->exit_code == 0, "CLI --no-pch should override selected profile and build");
+        expect(!contains(*cli_disable, "[pch]") && !contains(*cli_disable, "[up-to-date] pch"),
+               "CLI --no-pch should suppress profile/base PCH orchestration");
+    }
+
     write_text(tree.root / "plain.c", "int main(void) { return 0; }\n");
     auto c_rejected = run_process(
         runner,
