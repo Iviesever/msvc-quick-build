@@ -60,7 +60,31 @@ int main() {
                    "default standard should be C++23");
             expect(parsed->toolchain_preference == mqb::msvc::ToolchainPreference::automatic,
                    "default toolchain preference should be automatic");
+            expect(parsed->timings == mqb::app::performance::Format::disabled,
+                   "timing output should remain disabled by default");
         }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--timings"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value()
+                   && parsed->timings == mqb::app::performance::Format::text,
+               "--timings should enable human-readable timing output");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--timings=json"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value()
+                   && parsed->timings == mqb::app::performance::Format::json,
+               "--timings=json should enable machine-readable timing output");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "--timings=xml"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "unsupported timing output formats should be rejected");
     }
 
     {
