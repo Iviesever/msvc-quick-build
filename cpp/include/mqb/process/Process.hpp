@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -28,6 +29,7 @@ struct ProcessResult {
     int exit_code{};
     std::string stdout_text;
     std::string stderr_text;
+    std::chrono::nanoseconds launch_duration{};
 };
 
 enum class ProcessErrorCode {
