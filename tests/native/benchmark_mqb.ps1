@@ -89,8 +89,9 @@ inline int shared_value() { return 40; }
 int helper_value() { return shared_value() + 2; }
 '@
         Set-Content -LiteralPath (Join-Path $ordinaryRoot 'main.cpp') -Encoding utf8 -Value @'
+#include "common.hpp"
 int helper_value();
-int main() { return helper_value() == 42 ? 0 : 1; }
+int main() { return helper_value() == shared_value() + 2 ? 0 : 1; }
 '@
 
         $ordinaryArgs = @('main.cpp', 'helper.cpp', '--output', 'bench')
@@ -133,10 +134,18 @@ $summary = @(
         Group-Object scenario |
         ForEach-Object {
             $group = @($_.Group)
+            $sortedTotals = @($group.total_ms | Sort-Object)
+            $middle = [int][Math]::Floor($sortedTotals.Count / 2)
+            $median = if (($sortedTotals.Count % 2) -eq 0) {
+                ($sortedTotals[$middle - 1] + $sortedTotals[$middle]) / 2.0
+            }
+            else {
+                $sortedTotals[$middle]
+            }
             [PSCustomObject]@{
                 scenario = $_.Name
                 samples = $group.Count
-                median_total_ms = [Math]::Round((($group.total_ms | Sort-Object)[[int][Math]::Floor(($group.Count - 1) / 2)]), 3)
+                median_total_ms = [Math]::Round($median, 3)
                 min_total_ms = [Math]::Round((($group.total_ms | Measure-Object -Minimum).Minimum), 3)
                 max_total_ms = [Math]::Round((($group.total_ms | Measure-Object -Maximum).Maximum), 3)
             }
