@@ -47,7 +47,7 @@ MsvcTargetRouter::run(const RoutedTargetRequest& request) const {
             .compiler_options = request.compiler_options,
             .link_options = request.link_options,
             .working_directory = request.working_directory,
-            .max_parallel_compiles = request.max_parallel_jobs,
+            .compile_parallelism = request.parallelism,
         };
         auto result = ordinary_target_.run(ordinary_request);
         if (!result) {
@@ -92,8 +92,8 @@ MsvcTargetRouter::run(const RoutedTargetRequest& request) const {
         .compiler_options = request.compiler_options,
         .link_options = request.link_options,
         .working_directory = request.working_directory,
-        .max_parallel_scans = request.max_parallel_jobs,
-        .max_parallel_compiles = request.max_parallel_jobs,
+        .scan_parallelism = request.parallelism,
+        .compile_parallelism = request.parallelism,
     };
     auto result = module_target_.run(module_request);
     if (!result) {
