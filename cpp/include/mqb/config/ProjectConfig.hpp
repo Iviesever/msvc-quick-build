@@ -21,6 +21,7 @@ struct BuildOverrides {
     std::optional<LinkSubsystem> subsystem;
     std::optional<TargetKind> target_kind;
     std::optional<std::filesystem::path> entry;
+    std::optional<PrecompiledHeaderPolicy> precompiled_header;
     std::optional<std::string> output_name;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;
