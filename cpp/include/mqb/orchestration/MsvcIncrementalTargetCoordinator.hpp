@@ -32,7 +32,7 @@ struct IncrementalTargetRequest {
     CompilerOptions compiler_options;
     LinkOptions link_options;
     std::filesystem::path working_directory;
-    ParallelismPolicy compile_parallelism{};
+    ParallelismPolicy max_parallel_compiles{};
     bool force_downstream_rebuild{false};
 };
 
