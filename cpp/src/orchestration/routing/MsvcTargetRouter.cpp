@@ -116,11 +116,18 @@ MsvcTargetRouter::run(const RoutedTargetRequest& request) const {
             ++routed.compile_hits;
         }
     }
+    for (const auto& compile : result->compiles.header_unit_compiles) {
+        if (compile.result.compiled) {
+            ++routed.compile_misses;
+        } else {
+            ++routed.compile_hits;
+        }
+    }
 
     // Module-target execution may append toolchain-owned std/std.compat sources
     // after the caller's source prefix. Keep public compile ordering scoped to
-    // the original target while still letting provider rebuilds affect
-    // any_compiled, cache counters, and downstream link freshness.
+    // the original target while still letting generated providers and header
+    // units affect any_compiled, cache counters, and downstream link freshness.
     const std::size_t public_source_count = std::min(
         request.sources.size(),
         result->compiles.compiles.size());
