@@ -15,6 +15,17 @@
 
 namespace mqb {
 
+// P1689 topology can only be reused when it is sealed by a successful compile.
+// The compile cache is that transaction boundary: the evidence below records
+// the exact scan recipe and filesystem state that produced the topology which
+// this successful compile consumed.
+struct ModuleScanEvidence {
+    BuildSignature signature;
+    FileSnapshot source;
+    FileSnapshot output;
+    std::vector<FileSnapshot> dependencies;
+};
+
 struct CompileCacheEntry {
     std::filesystem::path source;
     TranslationUnitKind kind{TranslationUnitKind::source};
@@ -22,6 +33,7 @@ struct CompileCacheEntry {
     BuildSignature signature;
     std::vector<Artifact> outputs;
     std::vector<std::filesystem::path> dependencies;
+    std::optional<ModuleScanEvidence> module_scan;
 };
 
 struct CompileCacheValidation {
@@ -42,6 +54,16 @@ public:
         const FileSnapshot& source_snapshot,
         std::span<const FileSnapshot> output_snapshots,
         std::span<const FileSnapshot> dependency_snapshots);
+};
+
+class ModuleScanEvidenceValidator {
+public:
+    [[nodiscard]] static bool reusable(
+        const ModuleScanEvidence& evidence,
+        const BuildSignature& current_signature,
+        const FileSnapshot& current_source,
+        const FileSnapshot& current_output,
+        std::span<const FileSnapshot> current_dependencies) noexcept;
 };
 
 } // namespace mqb
