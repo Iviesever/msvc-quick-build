@@ -17,8 +17,15 @@
 
 namespace mqb::cli {
 
+enum class Command {
+    direct,
+    build,
+    run,
+};
+
 struct Options {
     BuildRequest build;
+    Command command{Command::direct};
     std::optional<BuildConfiguration> configuration_override;
     std::optional<Architecture> architecture_override;
     std::optional<CppStandard> standard_override;
