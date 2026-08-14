@@ -29,8 +29,8 @@ struct IncrementalModuleTargetRequest {
     CompilerOptions compiler_options;
     LinkOptions link_options;
     std::filesystem::path working_directory;
-    ParallelismPolicy scan_parallelism{};
-    ParallelismPolicy compile_parallelism{};
+    ParallelismPolicy max_parallel_scans{};
+    ParallelismPolicy max_parallel_compiles{};
 };
 
 struct ModuleTargetScanResult {
