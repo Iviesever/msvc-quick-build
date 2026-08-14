@@ -53,6 +53,43 @@ mqb run -- input.txt "hello world" 42
 mqb run tools/tool.cpp
 ```
 
+### Named profiles
+
+常用构建策略可以声明成显式命名 profile，而不用重复一长串 CLI 参数：
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/main.cpp",
+    "standard": "23"
+  },
+  "profiles": {
+    "dev": {
+      "build": {
+        "configuration": "debug",
+        "runtime": "MDd",
+        "compiler_args": ["/W4"]
+      }
+    },
+    "release": {
+      "build": {
+        "configuration": "release",
+        "ltcg": true,
+        "compiler_args": ["/O2"]
+      }
+    }
+  }
+}
+```
+
+```powershell
+mqb build --profile release
+mqb run --profile dev -- input.txt
+```
+
+第一版 profile 是**单个显式 overlay**：一次只能选择一个，没有继承、没有多 profile 叠加，也没有隐式默认 profile。优先级为 `CLI > selected profile > base mqb.json > built-in`；list 输入按 base → profile → CLI 追加。Profile 不能设置 `build.entry`，因此切换构建策略不会悄悄切换项目入口。
+
 ### Source-first 兼容形式
 
 原有直接构建形式继续支持：
@@ -85,6 +122,7 @@ mqb build math.cpp vector.cpp --type static -o math
 ## 核心能力
 
 - `mqb build` / `mqb run` 项目命令与 fail-closed 默认入口解析。
+- `mqb.json` named profiles 与 `base < profile < CLI` 分层解析。
 - `.c` / `.cpp` / `.cc` / `.cxx` 原生 MSVC 构建。
 - Visual Studio 与 portable MSVC toolchain discovery。
 - 基于 `/sourceDependencies` 的 header freshness 与增量编译。
@@ -132,6 +170,8 @@ MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成�
 
 `build.entry` 相对 `mqb.json` 解析，仅在 `mqb build` / `mqb run` 没有显式 positional source 时使用。若未设置，MQB 只在 project root 与 `src/` 中寻找 conventional `main.{c,cpp,cc,cxx}`；必须恰好命中一个，否则明确报错。
 
+Named profile 也声明在同一配置文件中，并用 `--profile <name>` 显式选择。Profile 内路径同样相对 `mqb.json`，native compiler/linker arguments 仍经过统一的 MSVC Parameter Engine；profile 名本身不是额外 cache 维度，最终生效的构建语义才决定 cache identity。
+
 External/prebuilt module IFC 也可在配置中声明：
 
 ```json
@@ -145,7 +185,7 @@ External/prebuilt module IFC 也可在配置中声明：
 }
 ```
 
-完整字段、路径基准、CLI/config precedence 和 module provider 规则见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
+完整字段、profiles、路径基准、CLI/config precedence 和 module provider 规则见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
 
 ## 常用 CLI
 
@@ -157,6 +197,7 @@ mqb <source...> [options]
 
 | 选项 | 作用 |
 |---|---|
+| `--profile <name>` | 选择 `mqb.json` 中一个 named profile |
 | `--debug` / `--release` | 构建配置 |
 | `--std <14|17|20|23|latest>` | C++ 标准 |
 | `--type <exe|dll|static>` | target kind |
@@ -188,7 +229,7 @@ mqb <source...> [options]
 
 | 主题 | 文档 |
 |---|---|
-| `mqb.json` 配置与 precedence | [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) |
+| `mqb.json` 配置、profiles 与 precedence | [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) |
 | 安装、PATH、卸载 | [`docs/INSTALLATION.md`](docs/INSTALLATION.md) |
 | 架构与 Modules/cache 模型 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | 开发 MQB | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
