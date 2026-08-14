@@ -32,7 +32,7 @@ namespace fs = std::filesystem;
 
 std::expected<ModuleCompileWaveResult, ModuleCompileError>
 MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const {
-    if (!request.compile_parallelism.valid()) {
+    if (!request.max_parallel_compiles.valid()) {
         return std::unexpected(failure(
             ModuleCompileErrorCode::invalid_parallelism,
             "module compile parallelism must be automatic or a positive fixed worker count"));
@@ -50,7 +50,7 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
 
     for (const auto& level : plan.level_indices) {
         const auto scheduled = BoundedWorkScheduler::run(
-            level.size(), request.compile_parallelism,
+            level.size(), request.max_parallel_compiles,
             [&](const std::size_t level_index) {
                 const std::size_t node_index = level[level_index];
                 bool force_rebuild = false;
