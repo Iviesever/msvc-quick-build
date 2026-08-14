@@ -36,7 +36,7 @@ int run_static_target(
         std::cout << "[target] " << request.target_name << '\n'
                   << "  project: " << diagnostics::path_text(request.project_root) << '\n'
                   << "  type:    static\n";
-        print_jobs(request.parallelism);
+        print_jobs(request.max_parallel_jobs);
         std::cout << "  cl:      " << diagnostics::path_text(toolchain.identity.compiler) << '\n'
                   << "  lib:     " << diagnostics::path_text(toolchain.librarian) << '\n';
         for (const auto& object : request.additional_objects) {
@@ -60,7 +60,7 @@ int run_static_target(
         .target = request.target,
         .compiler_options = std::move(request.compiler_options),
         .working_directory = request.project_root,
-        .compile_parallelism = request.parallelism,
+        .max_parallel_compiles = request.max_parallel_jobs,
         .force_downstream_rebuild = request.force_downstream_rebuild,
     });
     if (!result) {
