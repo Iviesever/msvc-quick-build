@@ -134,7 +134,7 @@ int main() {
            "/MP should be rejected because MQB owns TU scheduling");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/F1048576").ownership == ParameterOwnership::unsupported,
            "compiler /F should fail closed because MQB links separately; use linker /STACK");
-    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/cgthreads8").ownership == ParameterOwnership::pashthrough,
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/cgthreads8").ownership == ParameterOwnership::passthrough,
            "compiler prefix routing must not confuse /cgthreads with /c");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/EHsc").ownership == ParameterOwnership::passthrough,
            "compiler prefix routing must not confuse /EHsc with preprocess-only /E");
