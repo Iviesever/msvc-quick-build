@@ -112,6 +112,14 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         add_reason_once(result.validation.reasons, BuildReason::explicit_rebuild);
     }
 
+    // The validator is authoritative for incremental freshness. Once it says
+    // this compile is reusable there is no action for the generic planner to
+    // derive, so return directly on the hot no-op path. Cold/miss paths still
+    // flow through BuildPlanner and retain all existing structural validation.
+    if (result.validation.reusable()) {
+        return result;
+    }
+
     const std::array<CompilePlanItem, 1> items{
         CompilePlanItem{
             .unit = request.unit,
