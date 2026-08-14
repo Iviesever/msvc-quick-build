@@ -60,6 +60,9 @@ int main() {
     const fs::path app_header = tree.root / "src" / "app.hpp";
     const fs::path app_source = tree.root / "src" / "app.cpp";
     const fs::path stringy_source = tree.root / "src" / "stringy.cpp";
+    const fs::path raw_include_noise = tree.root / "src" / "raw_include_noise.cpp";
+    const fs::path raw_main_source = tree.root / "src" / "raw_main_source.cpp";
+    const fs::path macro_main_source = tree.root / "src" / "macro_main_source.cpp";
     const fs::path helper_a_header = tree.root / "a" / "helper.hpp";
     const fs::path helper_a_source = tree.root / "a" / "helper.cpp";
     const fs::path helper_b_header = tree.root / "b" / "helper.hpp";
@@ -89,6 +92,24 @@ int main() {
         "#include \"app.hpp\"\n"
         "const char* text_that_is_not_a_main = \"main(\";\n"
         "int stringy() { return text_that_is_not_a_main[0]; }\n");
+    write_text(
+        raw_include_noise,
+        "const char* discovery_noise = R\"mqb(\n"
+        "#include \"app.hpp\"\n"
+        ")mqb\";\n"
+        "int raw_include_noise() { return 0; }\n");
+    write_text(
+        raw_main_source,
+        "#include \"app.hpp\"\n"
+        "const char* raw_main_text = R\"mqb(\n"
+        "int main() { return 99; }\n"
+        ")mqb\";\n"
+        "int raw_main_source() { return app(); }\n");
+    write_text(
+        macro_main_source,
+        "#include \"app.hpp\"\n"
+        "#define MQB_FAKE_MAIN main(\n"
+        "int macro_main_source() { return app(); }\n");
     write_text(helper_a_header, "#pragma once\nint helper_a();\n");
     write_text(
         helper_a_source,
@@ -135,6 +156,12 @@ int main() {
                "shared header should connect app.cpp");
         expect(contains_source(discovered->sources, stringy_source),
                "string literal containing main( must not classify a TU as another entry point");
+        expect(!contains_source(discovered->sources, raw_include_noise),
+               "quoted include text inside a raw string literal must not create a discovery edge");
+        expect(contains_source(discovered->sources, raw_main_source),
+               "main-like text inside a raw string literal must not create a second-main barrier");
+        expect(contains_source(discovered->sources, macro_main_source),
+               "main-like text inside a preprocessing directive must not create a second-main barrier");
         expect(contains_source(discovered->sources, helper_a_source),
                "same-basename header ownership should connect helper A");
         expect(contains_source(discovered->sources, helper_b_source),
@@ -151,8 +178,8 @@ int main() {
                "include-like text in comments must not create graph edges");
         expect(!contains_source(discovered->sources, generated),
                "default build directories must not be indexed");
-        expect(discovered->sources.size() == 6,
-               "fixture should discover exactly entry + five connected non-main TUs");
+        expect(discovered->sources.size() == 8,
+               "fixture should discover exactly entry + seven connected non-main TUs");
 
         const auto repeated = mqb::discovery::SourceDiscovery::discover(request);
         expect(repeated.has_value() && repeated->sources == discovered->sources,

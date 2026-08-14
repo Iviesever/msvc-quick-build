@@ -37,6 +37,15 @@ function Assert-NoDirectFiles {
     }
 }
 
+function Assert-NoDirectDirectories {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $directories = @(Get-ChildItem -LiteralPath $Root -Directory | Select-Object -ExpandProperty Name)
+    if ($directories.Count -ne 0) {
+        throw "Responsibility leaf '$Root' must not contain subdirectories: $($directories -join ', ')"
+    }
+}
+
 function Assert-ExactFiles {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -139,6 +148,34 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'config') -LeafFiles ([ordered]@{
     'integration' = @('build_policy_config_tests.cpp', 'project_config_tests.cpp')
     'resolution' = @('project_options_tests.cpp')
 })
+
+# Source discovery. The public facade remains at the discovery root while
+# source-text analysis, filesystem indexing, and graph selection own separate
+# private leaves. Module syntax is lexical analysis, not traversal policy.
+$discoveryRoot = Join-Path $srcRoot 'discovery'
+Assert-DirectDirectories -Root $discoveryRoot -Allowed @('analysis', 'indexing', 'selection')
+Assert-ExactFiles -Root $discoveryRoot -Expected @('SourceDiscovery.cpp')
+$discoveryLeafFiles = [ordered]@{
+    'analysis' = @('ModuleSyntax.cpp', 'SourceTextAnalysis.cpp', 'SourceTextAnalysis.hpp')
+    'indexing' = @('DiscoveryPath.hpp', 'SourceIndex.cpp', 'SourceIndex.hpp')
+    'selection' = @('SourceSelectionGraph.cpp', 'SourceSelectionGraph.hpp')
+}
+foreach ($leaf in $discoveryLeafFiles.Keys) {
+    $leafRoot = Join-Path $discoveryRoot $leaf
+    if (-not (Test-Path -LiteralPath $leafRoot -PathType Container)) {
+        throw "Required discovery responsibility directory not found: $leafRoot"
+    }
+    Assert-ExactFiles -Root $leafRoot -Expected $discoveryLeafFiles[$leaf]
+}
+$discoveryTestsRoot = Join-Path $testsRoot 'discovery'
+Assert-NoDirectDirectories -Root $discoveryTestsRoot
+Assert-ExactFiles -Root $discoveryTestsRoot -Expected @(
+    'c_source_discovery_tests.cpp',
+    'module_source_discovery_tests.cpp',
+    'module_syntax_tests.cpp',
+    'source_discovery_corrections_tests.cpp',
+    'source_discovery_tests.cpp'
+)
 
 # Toolchain-independent core. Public headers stay in include/mqb/core as a
 # stable facade while implementation/test ownership is explicit.
