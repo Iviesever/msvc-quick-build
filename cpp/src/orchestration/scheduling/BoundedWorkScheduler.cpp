@@ -123,4 +123,25 @@ BoundedWorkScheduler::run(
     };
 }
 
+std::expected<BoundedWorkSummary, BoundedWorkError>
+BoundedWorkScheduler::run(
+    const std::size_t item_count,
+    const ParallelismPolicy policy,
+    const std::function<bool(std::size_t)>& work) {
+    if (!policy.valid()) {
+        return std::unexpected(failure(
+            BoundedWorkErrorCode::invalid_worker_count,
+            "fixed parallelism policy requires at least one worker"));
+    }
+    if (item_count == 0) {
+        return BoundedWorkSummary{};
+    }
+
+    const ParallelismDecision decision = ParallelismResolver::resolve(
+        policy,
+        item_count,
+        std::thread::hardware_concurrency());
+    return run(item_count, decision.workers, work);
+}
+
 } // namespace mqb::orchestration
