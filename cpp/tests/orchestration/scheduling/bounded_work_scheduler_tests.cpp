@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "mqb/orchestration/BoundedWorkScheduler.hpp"
@@ -56,10 +57,13 @@ int main() {
 
     {
         std::vector<std::size_t> order;
+        const auto caller_thread = std::this_thread::get_id();
+        std::thread::id callback_thread;
         const auto sequential = BoundedWorkScheduler::run(
             6,
             1,
             [&](const std::size_t index) {
+                callback_thread = std::this_thread::get_id();
                 order.push_back(index);
                 return true;
             });
@@ -70,6 +74,8 @@ int main() {
             expect(!sequential->stop_requested && !sequential->stopped_before_all_items,
                    "successful single-worker scheduling should not report early stop");
         }
+        expect(callback_thread == caller_thread,
+               "single-worker scheduling should execute inline without creating a worker thread");
         expect(order == std::vector<std::size_t>({0, 1, 2, 3, 4, 5}),
                "single-worker scheduling should preserve monotonic index order");
     }
@@ -187,6 +193,21 @@ int main() {
         if (!threw) {
             expect(threw.error().code == BoundedWorkErrorCode::callback_threw,
                    "callback exception should report callback_threw");
+        }
+    }
+
+    {
+        const auto threw_inline = BoundedWorkScheduler::run(
+            1,
+            1,
+            [](std::size_t) -> bool {
+                throw std::runtime_error{"inline-scheduler-test"};
+            });
+        expect(!threw_inline,
+               "inline single-worker callback exception should remain a scheduler error");
+        if (!threw_inline) {
+            expect(threw_inline.error().code == BoundedWorkErrorCode::callback_threw,
+                   "inline callback exception should report callback_threw");
         }
     }
 
