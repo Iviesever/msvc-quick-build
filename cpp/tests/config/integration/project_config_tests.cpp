@@ -52,6 +52,7 @@ int main() {
     "architecture": "x86",
     "standard": "latest",
     "type": "static",
+    "entry": "src/main.cpp",
     "output": "demo",
     "defines": ["ONE=1", "TEXT=\u6d4b\u8bd5"],
     "include_dirs": ["include", "unicode/\u6d4b\u8bd5"],
@@ -94,6 +95,9 @@ int main() {
                "latest standard override should decode");
         expect(loaded->build.target_kind == mqb::TargetKind::static_library,
                "static target kind should decode");
+        expect(loaded->build.entry
+                   && *loaded->build.entry == (tree.root / "src/main.cpp").lexically_normal(),
+               "build.entry should resolve relative to mqb.json");
         expect(loaded->build.output_name && *loaded->build.output_name == "demo",
                "output override should decode");
         expect(loaded->build.defines.size() == 2,
@@ -162,8 +166,8 @@ int main() {
     if (minimal) {
         expect(!minimal->build.configuration && !minimal->build.architecture
                    && !minimal->build.standard && !minimal->build.target_kind
-                   && !minimal->build.output_name,
-               "missing build scalar fields must remain unset rather than receiving defaults");
+                   && !minimal->build.entry && !minimal->build.output_name,
+               "missing build scalar/path fields must remain unset rather than receiving defaults");
         expect(minimal->build.defines.empty() && minimal->build.include_directories.empty()
                    && minimal->build.library_directories.empty() && minimal->build.libraries.empty(),
                "missing build list fields must remain empty overrides");
@@ -172,6 +176,11 @@ int main() {
         expect(minimal->modules.external_providers.empty(),
                "missing modules policy must remain an empty override");
     }
+
+    write_text(config_file, R"json({"version":1,"build":{"entry":""}})json");
+    auto empty_entry = mqb::config::ProjectConfigLoader::load(config_file);
+    expect(!empty_entry && empty_entry.error().code == mqb::config::ErrorCode::schema_error,
+           "build.entry must be a non-empty string");
 
     write_text(config_file, R"json({"version":1,"modules":{"external":{"vendor.math":7}}})json");
     auto bad_provider_type = mqb::config::ProjectConfigLoader::load(config_file);
