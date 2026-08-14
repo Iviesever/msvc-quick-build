@@ -79,10 +79,13 @@
       "src/orchestration/incremental/MsvcIncrementalTargetCoordinator.cpp",
       "src/orchestration/modules/ModuleCompilePlan.cpp",
       "src/orchestration/modules/ModuleCompileRequestFactory.cpp",
+      "src/orchestration/modules/ModuleTargetArtifactRegistry.cpp",
       "src/orchestration/modules/ModuleTargetLinkRequestFactory.cpp",
       "src/orchestration/modules/ModuleTargetPreparation.cpp",
+      "src/orchestration/modules/ModuleTargetScanner.cpp",
       "src/orchestration/modules/MsvcModuleCompileCoordinator.cpp",
       "src/orchestration/modules/MsvcModuleTargetCoordinator.cpp",
+      "src/orchestration/modules/StandardLibraryModuleProvider.cpp",
       "src/orchestration/routing/MsvcTargetRouter.cpp",
       "src/platform/windows/CommandLine.cpp",
       "src/platform/windows/WindowsProcessRunner.cpp"
