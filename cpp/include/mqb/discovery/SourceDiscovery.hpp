@@ -39,8 +39,10 @@ struct Request {
     std::vector<std::filesystem::path> excluded_directories;
     std::vector<std::filesystem::path> extra_sources;
     std::vector<std::filesystem::path> excluded_sources;
-    // Optional performance-only state. Cache load/validation/write failures
-    // always fall back to ordinary discovery and never become build failures.
+    // Performance-only persistent state. The default cache lives under the
+    // discovery root's .mqb/cache/discovery directory. Callers may disable it
+    // or override the file path. Cache failures always fall back to discovery.
+    bool persistent_cache{true};
     std::optional<std::filesystem::path> cache_file;
 };
 
