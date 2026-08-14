@@ -199,7 +199,7 @@ prepare_project(
     if (options.build.run_after_build
         && options.build.target_kind != mqb::TargetKind::executable) {
         return std::unexpected(ProjectSetupError{
-            .message = "--run is only valid for executable targets",
+            .message = "run mode is only valid for executable targets",
             .config_error = std::nullopt,
         });
     }
