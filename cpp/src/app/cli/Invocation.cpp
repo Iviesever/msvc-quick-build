@@ -77,6 +77,15 @@ conventional_entry_candidates(const fs::path& project_root) {
         for (const auto name : names) {
             const fs::path candidate = (directory / name).lexically_normal();
             std::error_code error_code;
+            const bool exists = fs::exists(candidate, error_code);
+            if (error_code) {
+                return std::unexpected(
+                    "failed to inspect default entry candidate "
+                    + diagnostics::path_text(candidate) + ": " + error_code.message());
+            }
+            if (!exists) {
+                continue;
+            }
             const bool regular = fs::is_regular_file(candidate, error_code);
             if (error_code) {
                 return std::unexpected(
@@ -176,7 +185,7 @@ resolve_default_entry(
     if (candidates->empty()) {
         return std::unexpected(
             "no default entry found; pass a source file or set build.entry in mqb.json "
-            "(conventional fallback checks main.{c,cpp,cc,cxx} in the project root and src/)" );
+            "(conventional fallback checks main.{c,cpp,cc,cxx} in the project root and src/)");
     }
 
     std::string message =
