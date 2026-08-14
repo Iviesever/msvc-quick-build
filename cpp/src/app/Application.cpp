@@ -6,7 +6,6 @@
 #include <iostream>
 #include <optional>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -29,6 +28,7 @@
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalPchCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
+#include "mqb/orchestration/ParallelismPolicy.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 #include "mqb/process/Process.hpp"
 
@@ -82,6 +82,15 @@ void add_portable_root_if_missing(
         message += diagnostics::path_text(path);
     }
     return message;
+}
+
+void print_jobs(const mqb::orchestration::ParallelismPolicy policy) {
+    std::cout << "  jobs:    ";
+    if (policy.is_automatic()) {
+        std::cout << "auto\n";
+    } else {
+        std::cout << policy.fixed_jobs << '\n';
+    }
 }
 
 void print_pch_failure(const mqb::orchestration::IncrementalPchError& error) {
@@ -208,14 +217,8 @@ int Application::run(const std::span<const std::string_view> arguments) {
     }
     options.build.sources = sources;
 
-    const unsigned int hardware_threads = std::thread::hardware_concurrency();
-    const std::size_t requested_compile_jobs = options.jobs.value_or(
-        hardware_threads == 0
-            ? std::size_t{1}
-            : static_cast<std::size_t>(hardware_threads));
-    const std::size_t compile_jobs = std::max<std::size_t>(
-        1,
-        std::min(requested_compile_jobs, sources.size()));
+    const mqb::orchestration::ParallelismPolicy parallelism = options.jobs.value_or(
+        mqb::orchestration::ParallelismPolicy::automatic());
 
     auto layout = mqb::ProjectArtifactLayout::create(project_root);
     if (!layout) {
@@ -390,7 +393,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
                 .compiler_options = std::move(compiler_options),
                 .project_root = project_root,
                 .target_name = target_name,
-                .max_parallel_jobs = compile_jobs,
+                .parallelism = parallelism,
                 .timings = &timing_session,
                 .force_downstream_rebuild = pch_compiled,
                 .verbose = options.verbose,
@@ -421,9 +424,8 @@ int Application::run(const std::span<const std::string_view> arguments) {
                     ? std::optional<fs::path>{project_config->file}
                     : std::nullopt,
                 .target_name = target_name,
-                .max_parallel_jobs = compile_jobs,
+                .parallelism = parallelism,
                 .timings = &timing_session,
-                .jobs_explicit = options.jobs.has_value(),
                 .force_named_modules = discovery_requires_module_pipeline
                     || has_external_module_providers,
                 .verbose = options.verbose,
@@ -441,10 +443,9 @@ int Application::run(const std::span<const std::string_view> arguments) {
             std::cout << "  config:  " << diagnostics::path_text(project_config->file) << '\n';
         }
         std::cout << "  type:    " << mqb::to_string(options.build.target_kind) << '\n'
-                  << "  ltcg:    " << (effective.link_time_code_generation ? "on" : "off") << '\n'
-                  << "  jobs:    " << compile_jobs
-                  << (options.jobs ? "" : " (auto)") << '\n'
-                  << "  cl:      " << diagnostics::path_text(toolchain->identity.compiler) << '\n'
+                  << "  ltcg:    " << (effective.link_time_code_generation ? "on" : "off") << '\n';
+        print_jobs(parallelism);
+        std::cout << "  cl:      " << diagnostics::path_text(toolchain->identity.compiler) << '\n'
                   << "  link:    " << diagnostics::path_text(toolchain->linker) << '\n';
         if (pch_artifacts && effective.precompiled_header) {
             std::cout << "  pch:     " << diagnostics::path_text(*effective.precompiled_header) << '\n'
@@ -489,7 +490,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         .compiler_options = std::move(compiler_options),
         .link_options = std::move(link_options),
         .working_directory = project_root,
-        .max_parallel_compiles = compile_jobs,
+        .compile_parallelism = parallelism,
         .force_downstream_rebuild = pch_compiled,
     };
 
