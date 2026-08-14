@@ -12,6 +12,7 @@
 #include "mqb/orchestration/MsvcIncrementalArchiveCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
+#include "mqb/orchestration/TargetTimings.hpp"
 
 namespace mqb::orchestration {
 
@@ -46,6 +47,7 @@ struct IncrementalStaticTargetError {
 struct IncrementalStaticTargetResult {
     std::vector<TargetCompileResult> compiles;
     IncrementalArchiveResult archive;
+    TargetTimings timings;
     bool any_compiled{false};
 };
 

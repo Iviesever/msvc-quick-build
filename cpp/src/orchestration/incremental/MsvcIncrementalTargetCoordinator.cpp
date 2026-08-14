@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -17,6 +18,7 @@ namespace mqb::orchestration {
 namespace {
 
 namespace fs = std::filesystem;
+using Clock = std::chrono::steady_clock;
 
 [[nodiscard]] std::string windows_path_key(const fs::path& path) {
     std::string value = path.lexically_normal().generic_string();
@@ -85,6 +87,9 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
             "target compile parallelism must be at least one"));
     }
 
+    TargetTimings timings;
+    const auto queue_started = Clock::now();
+
     std::vector<std::string> seen_sources;
     std::vector<std::string> seen_objects;
     std::vector<std::string> seen_dependencies;
@@ -123,7 +128,10 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
 
     using CompileAttempt = std::expected<IncrementalCompileResult, IncrementalCompileError>;
     std::vector<std::optional<CompileAttempt>> attempts(request.sources.size());
+    timings.compile_queue = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - queue_started);
 
+    const auto compile_started = Clock::now();
     const auto scheduled = BoundedWorkScheduler::run(
         request.sources.size(),
         request.max_parallel_compiles,
@@ -133,6 +141,8 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
             attempts[index].emplace(compile_coordinator_.run(compile_request));
             return attempts[index]->has_value();
         });
+    timings.compile = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - compile_started);
     if (!scheduled) {
         return std::unexpected(failure(
             IncrementalTargetErrorCode::scheduling_failed,
@@ -186,7 +196,10 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
         .working_directory = request.working_directory,
         .force_relink = result.any_compiled,
     };
+    const auto link_started = Clock::now();
     auto linked = link_coordinator_.run(link_request);
+    timings.link = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - link_started);
     if (!linked) {
         IncrementalTargetError error = failure(
             IncrementalTargetErrorCode::link_failed,
@@ -195,6 +208,7 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
         return std::unexpected(std::move(error));
     }
     result.link = std::move(*linked);
+    result.timings = timings;
     return result;
 }
 

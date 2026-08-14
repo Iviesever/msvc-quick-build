@@ -11,6 +11,7 @@ struct ModuleTargetPreparation {
     std::vector<ModuleTargetScanResult> scans;
     modules::ModuleDependencyPlan plan;
     ModuleCompileWaveRequest compile_request;
+    TargetTimings timings;
 };
 
 [[nodiscard]] std::expected<ModuleTargetPreparation, IncrementalModuleTargetError>

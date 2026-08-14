@@ -60,6 +60,9 @@ struct RoutedTargetResult {
     MsvcTargetPipeline pipeline{MsvcTargetPipeline::ordinary};
     std::vector<TargetCompileResult> compiles;
     IncrementalLinkResult link;
+    TargetTimings timings;
+    std::size_t compile_hits{};
+    std::size_t compile_misses{};
     bool any_compiled{false};
 };
 

@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -598,6 +599,7 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
     }
 
     PROCESS_INFORMATION process_info{};
+    const auto launch_started = std::chrono::steady_clock::now();
     const BOOL created = ::CreateProcessW(
         executable.c_str(),
         command_line.data(),
@@ -609,6 +611,8 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
         working_directory ? working_directory->c_str() : nullptr,
         startup,
         &process_info);
+    const auto launch_duration = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - launch_started);
     if (!created) {
         return std::unexpected(error(
             ProcessErrorCode::launch_failed,
@@ -631,6 +635,7 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
     thread_handle.reset();
 
     process::ProcessResult result;
+    result.launch_duration = launch_duration;
     std::optional<DWORD> stdout_error;
     std::optional<DWORD> stderr_error;
     std::optional<std::thread> stdout_reader;

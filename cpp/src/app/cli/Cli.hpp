@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "PerformanceTimings.hpp"
 #include "mqb/core/BuildRequest.hpp"
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/LinkOptions.hpp"
@@ -36,6 +37,7 @@ struct Options {
     std::vector<std::filesystem::path> portable_roots;
     std::optional<bool> discovery_override;
     std::optional<std::size_t> jobs;
+    app::performance::Format timings{app::performance::Format::disabled};
     bool discover_sources{true};
     bool verbose{false};
     bool show_help{false};

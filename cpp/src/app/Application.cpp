@@ -13,6 +13,7 @@
 #include "Diagnostics.hpp"
 #include "Invocation.hpp"
 #include "ModuleCliTarget.hpp"
+#include "PerformanceTimings.hpp"
 #include "ProjectSetup.hpp"
 #include "StaticCliTarget.hpp"
 #include "mqb/core/CompilerOptions.hpp"
@@ -83,6 +84,8 @@ void add_portable_root_if_missing(
 } // namespace
 
 int Application::run(const std::span<const std::string_view> arguments) {
+    const auto application_started = performance::Clock::now();
+
     auto parsed = mqb::cli::parse_arguments(arguments);
     if (!parsed) {
         std::cerr << "error: " << parsed.error().message << "\n\n" << mqb::cli::usage();
@@ -93,6 +96,8 @@ int Application::run(const std::span<const std::string_view> arguments) {
         std::cout << mqb::cli::usage();
         return 0;
     }
+
+    performance::Session timing_session{options.timings, application_started};
 
     auto invocation = resolve_invocation(options);
     if (!invocation) {
@@ -135,7 +140,9 @@ int Application::run(const std::span<const std::string_view> arguments) {
             discovery_request.extra_sources = effective.discovery_extra_sources;
             discovery_request.excluded_sources = effective.discovery_exclude_sources;
         }
+        const auto discovery_started = performance::Clock::now();
         auto discovered = mqb::discovery::SourceDiscovery::discover(discovery_request);
+        timing_session.add_discovery(performance::Clock::now() - discovery_started);
         if (!discovered) {
             diagnostics::print_error(message_with_path(
                 "source discovery failed: " + discovered.error().message,
@@ -262,6 +269,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
                 .project_root = project_root,
                 .target_name = target_name,
                 .max_parallel_jobs = compile_jobs,
+                .timings = &timing_session,
                 .verbose = options.verbose,
             },
             *toolchain,
@@ -291,6 +299,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
                     : std::nullopt,
                 .target_name = target_name,
                 .max_parallel_jobs = compile_jobs,
+                .timings = &timing_session,
                 .jobs_explicit = options.jobs.has_value(),
                 .force_named_modules = discovery_requires_module_pipeline
                     || has_external_module_providers,
@@ -361,6 +370,12 @@ int Application::run(const std::span<const std::string_view> arguments) {
         return result.error().code == mqb::orchestration::IncrementalTargetErrorCode::link_failed ? 5 : 4;
     }
 
+    timing_session.add_target(result->timings);
+    for (const auto& compile : result->compiles) {
+        timing_session.record_compile(compile.result.compiled);
+    }
+    timing_session.record_link(result->link.linked);
+
     for (const auto& compile : result->compiles) {
         diagnostics::print_compile_warnings(compile.result);
         const fs::path label = display_source(project_root, compile.source);
@@ -408,6 +423,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
             "failed to run executable: " + run_result.error().message);
         return 6;
     }
+    timing_session.record_run_startup(run_result->launch_duration);
     diagnostics::print_process_output(*run_result);
     return run_result->exit_code;
 }

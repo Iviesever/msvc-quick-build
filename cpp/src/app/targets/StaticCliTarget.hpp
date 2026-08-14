@@ -11,6 +11,10 @@
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/process/Process.hpp"
 
+namespace mqb::app::performance {
+class Session;
+}
+
 namespace mqb::cli {
 
 struct StaticCliTargetRequest {
@@ -20,6 +24,7 @@ struct StaticCliTargetRequest {
     std::filesystem::path project_root;
     std::string target_name;
     std::size_t max_parallel_jobs{1};
+    app::performance::Session* timings{};
     bool verbose{false};
 };
 

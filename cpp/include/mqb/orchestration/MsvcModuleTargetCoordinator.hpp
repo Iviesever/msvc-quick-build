@@ -14,6 +14,7 @@
 #include "mqb/msvc/MsvcModuleDependencyScanner.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
 #include "mqb/orchestration/MsvcModuleCompileCoordinator.hpp"
+#include "mqb/orchestration/TargetTimings.hpp"
 
 namespace mqb::orchestration {
 
@@ -76,6 +77,7 @@ struct IncrementalModuleTargetResult {
     modules::ModuleDependencyPlan plan;
     ModuleCompileWaveResult compiles;
     IncrementalLinkResult link;
+    TargetTimings timings;
 };
 
 class MsvcModuleTargetCoordinator {

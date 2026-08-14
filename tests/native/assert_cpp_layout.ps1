@@ -122,7 +122,7 @@ Assert-DirectDirectories -Root $appRoot -Allowed @('cli', 'diagnostics', 'projec
 Assert-ExactFiles -Root $appRoot -Expected @('Application.cpp', 'Application.hpp', 'main.cpp')
 $appLeafFiles = [ordered]@{
     'cli' = @('Cli.cpp', 'Cli.hpp', 'Invocation.cpp', 'Invocation.hpp')
-    'diagnostics' = @('Diagnostics.cpp', 'Diagnostics.hpp')
+    'diagnostics' = @('Diagnostics.cpp', 'Diagnostics.hpp', 'PerformanceTimings.cpp', 'PerformanceTimings.hpp')
     'project' = @('ProjectSetup.cpp', 'ProjectSetup.hpp')
     'targets' = @('ModuleCliTarget.cpp', 'ModuleCliTarget.hpp', 'StaticCliTarget.cpp', 'StaticCliTarget.hpp')
 }

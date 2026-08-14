@@ -1,5 +1,6 @@
 #include "ModuleTargetPreparation.hpp"
 
+#include <chrono>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -16,6 +17,7 @@ namespace mqb::orchestration::detail {
 namespace {
 
 namespace fs = std::filesystem;
+using Clock = std::chrono::steady_clock;
 
 [[nodiscard]] IncrementalModuleTargetError failure(
     const IncrementalModuleTargetErrorCode code,
@@ -58,6 +60,8 @@ prepare_module_target(
             "module target scan and compile parallelism must both be at least one"));
     }
 
+    const auto preparation_started = Clock::now();
+
     ModuleTargetArtifactRegistry artifacts{request.sources.size()};
     for (const auto& source : request.sources) {
         if (auto registered = artifacts.add_requested_source(source); !registered) {
@@ -68,6 +72,7 @@ prepare_module_target(
         return std::unexpected(std::move(registered.error()));
     }
 
+    const auto scan_started = Clock::now();
     auto scanned = scan_requested_module_sources(request, scanner);
     if (!scanned) {
         return std::unexpected(std::move(scanned.error()));
@@ -87,6 +92,8 @@ prepare_module_target(
             compile_sources); !injected) {
         return std::unexpected(std::move(injected.error()));
     }
+    prepared.timings.dependency_scan = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - scan_started);
 
     auto plan = modules::ModuleDependencyGraphBuilder::build(
         scanned_units,
@@ -150,6 +157,10 @@ prepare_module_target(
         .working_directory = request.working_directory,
         .max_parallel_compiles = request.max_parallel_compiles,
     };
+
+    const auto preparation_total = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - preparation_started);
+    prepared.timings.compile_queue = preparation_total - prepared.timings.dependency_scan;
     return prepared;
 }
 
