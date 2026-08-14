@@ -12,6 +12,7 @@
 #include "mqb/orchestration/MsvcIncrementalArchiveCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
+#include "mqb/orchestration/ParallelismPolicy.hpp"
 #include "mqb/orchestration/TargetTimings.hpp"
 
 namespace mqb::orchestration {
@@ -22,7 +23,7 @@ struct IncrementalStaticTargetRequest {
     TargetArtifacts target;
     CompilerOptions compiler_options;
     std::filesystem::path working_directory;
-    std::size_t max_parallel_compiles{1};
+    ParallelismPolicy compile_parallelism{};
     bool force_downstream_rebuild{false};
 };
 
