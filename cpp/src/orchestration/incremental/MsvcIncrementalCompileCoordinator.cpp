@@ -6,7 +6,6 @@
 #include <filesystem>
 #include <optional>
 #include <string>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -15,85 +14,33 @@
 #include "mqb/core/CompileCacheFile.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 
+#include "IncrementalFileSnapshot.hpp"
+
 namespace mqb::orchestration {
 namespace {
 
-namespace fs = std::filesystem;
-
-struct SnapshotResult {
-    FileSnapshot snapshot;
-    std::optional<IncrementalCompileWarning> warning;
-};
-
-[[nodiscard]] SnapshotResult missing_snapshot(const fs::path& path) {
-    return SnapshotResult{
-        .snapshot = FileSnapshot{
-            .path = path,
-            .exists = false,
-        },
-    };
-}
-
-[[nodiscard]] SnapshotResult snapshot_file(const fs::path& path) {
-    if (path.empty()) {
-        return missing_snapshot(path);
-    }
-
-    std::error_code error_code;
-    const fs::file_status status = fs::status(path, error_code);
-    if (error_code) {
-        if (error_code == std::errc::no_such_file_or_directory) {
-            return missing_snapshot(path);
-        }
-        return SnapshotResult{
-            .snapshot = FileSnapshot{
-                .path = path,
-                .exists = false,
-            },
-            .warning = IncrementalCompileWarning{
-                .code = IncrementalCompileWarningCode::file_snapshot_failed,
-                .path = path,
-                .message = "failed to query file type while validating compile cache",
-            },
-        };
-    }
-    if (!fs::is_regular_file(status)) {
-        return missing_snapshot(path);
-    }
-
-    const auto modified = fs::last_write_time(path, error_code);
-    if (error_code) {
-        if (error_code == std::errc::no_such_file_or_directory) {
-            return missing_snapshot(path);
-        }
-        return SnapshotResult{
-            .snapshot = FileSnapshot{
-                .path = path,
-                .exists = false,
-            },
-            .warning = IncrementalCompileWarning{
-                .code = IncrementalCompileWarningCode::file_snapshot_failed,
-                .path = path,
-                .message = "failed to read file timestamp while validating compile cache",
-            },
-        };
-    }
-
-    return SnapshotResult{
-        .snapshot = FileSnapshot{
-            .path = path,
-            .exists = true,
-            .modified = modified,
-        },
-    };
-}
-
-void append_warning(
+void append_snapshot_warning(
     std::vector<IncrementalCompileWarning>& warnings,
-    std::optional<IncrementalCompileWarning> warning) {
-    if (warning) {
-        warnings.push_back(std::move(*warning));
+    const std::filesystem::path& path,
+    std::optional<detail::IncrementalFileSnapshotFailure> failure) {
+    if (!failure) {
+        return;
     }
+
+    std::string message;
+    switch (failure->kind) {
+    case detail::IncrementalFileSnapshotFailureKind::status:
+        message = "failed to query file type while validating compile cache";
+        break;
+    case detail::IncrementalFileSnapshotFailureKind::timestamp:
+        message = "failed to read file timestamp while validating compile cache";
+        break;
+    }
+    warnings.push_back(IncrementalCompileWarning{
+        .code = IncrementalCompileWarningCode::file_snapshot_failed,
+        .path = path,
+        .message = std::move(message),
+    });
 }
 
 void add_reason_once(
@@ -122,14 +69,20 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         cached_entry = std::move(*loaded_cache);
     }
 
-    auto source_snapshot = snapshot_file(request.unit.source);
-    append_warning(result.warnings, std::move(source_snapshot.warning));
+    auto source_snapshot = detail::snapshot_regular_file(request.unit.source);
+    append_snapshot_warning(
+        result.warnings,
+        request.unit.source,
+        std::move(source_snapshot.failure));
 
     std::vector<FileSnapshot> output_snapshots;
     output_snapshots.reserve(request.unit.outputs.size());
     for (const auto& output : request.unit.outputs) {
-        auto output_snapshot = snapshot_file(output.path);
-        append_warning(result.warnings, std::move(output_snapshot.warning));
+        auto output_snapshot = detail::snapshot_regular_file(output.path);
+        append_snapshot_warning(
+            result.warnings,
+            output.path,
+            std::move(output_snapshot.failure));
         output_snapshots.push_back(std::move(output_snapshot.snapshot));
     }
 
@@ -137,8 +90,11 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
     if (cached_entry) {
         dependency_snapshots.reserve(cached_entry->dependencies.size());
         for (const auto& dependency : cached_entry->dependencies) {
-            auto dependency_snapshot = snapshot_file(dependency);
-            append_warning(result.warnings, std::move(dependency_snapshot.warning));
+            auto dependency_snapshot = detail::snapshot_regular_file(dependency);
+            append_snapshot_warning(
+                result.warnings,
+                dependency,
+                std::move(dependency_snapshot.failure));
             dependency_snapshots.push_back(std::move(dependency_snapshot.snapshot));
         }
     }

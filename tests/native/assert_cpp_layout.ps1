@@ -247,6 +247,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'msvc') -LeafFiles ([ordered]@{
 # in include/mqb/orchestration for API stability.
 $orchestrationLeafFiles = [ordered]@{
     'incremental' = @(
+        'IncrementalFileSnapshot.hpp',
         'MsvcIncrementalArchiveCoordinator.cpp',
         'MsvcIncrementalCompileCoordinator.cpp',
         'MsvcIncrementalLinkCoordinator.cpp',
@@ -266,6 +267,7 @@ $orchestrationLeafFiles = [ordered]@{
 Assert-LeafLayout -Root (Join-Path $srcRoot 'orchestration') -LeafFiles $orchestrationLeafFiles
 Assert-LeafLayout -Root (Join-Path $testsRoot 'orchestration') -LeafFiles ([ordered]@{
     'incremental' = @(
+        'incremental_archive_coordinator_tests.cpp',
         'incremental_compile_coordinator_tests.cpp',
         'incremental_link_coordinator_tests.cpp',
         'incremental_target_coordinator_tests.cpp'

@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <optional>
 #include <string>
-#include <system_error>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -15,19 +14,25 @@
 #include "mqb/core/BuildSignature.hpp"
 #include "mqb/core/FileSnapshot.hpp"
 
+#include "IncrementalFileSnapshot.hpp"
+
 namespace mqb::orchestration {
 namespace {
 
 namespace fs = std::filesystem;
 
-[[nodiscard]] std::expected<FileSnapshot, std::string> snapshot_file(const fs::path& path) {
-    std::error_code ec;
-    const bool exists = fs::exists(path, ec);
-    if (ec) return std::unexpected("failed to query file existence: " + ec.message());
-    if (!exists) return FileSnapshot{.path = path, .exists = false};
-    const auto modified = fs::last_write_time(path, ec);
-    if (ec) return std::unexpected("failed to query file timestamp: " + ec.message());
-    return FileSnapshot{.path = path, .exists = true, .modified = modified};
+[[nodiscard]] std::string snapshot_failure_message(
+    const detail::IncrementalFileSnapshotFailure& failure) {
+    const char* prefix = nullptr;
+    switch (failure.kind) {
+    case detail::IncrementalFileSnapshotFailureKind::status:
+        prefix = "failed to query file type: ";
+        break;
+    case detail::IncrementalFileSnapshotFailureKind::timestamp:
+        prefix = "failed to query file timestamp: ";
+        break;
+    }
+    return std::string{prefix} + failure.error_code.message();
 }
 
 void snapshot_inputs(
@@ -36,16 +41,15 @@ void snapshot_inputs(
     std::vector<IncrementalArchiveWarning>& warnings) {
     snapshots.reserve(paths.size());
     for (const auto& path : paths) {
-        if (auto snapshot = snapshot_file(path)) {
-            snapshots.push_back(std::move(*snapshot));
-        } else {
+        auto snapshot = detail::snapshot_regular_file(path);
+        if (snapshot.failure) {
             warnings.push_back(IncrementalArchiveWarning{
                 .code = IncrementalArchiveWarningCode::file_snapshot_failed,
                 .path = path,
-                .message = snapshot.error(),
+                .message = snapshot_failure_message(*snapshot.failure),
             });
-            snapshots.push_back(FileSnapshot{.path = path, .exists = false});
         }
+        snapshots.push_back(std::move(snapshot.snapshot));
     }
 }
 
@@ -76,16 +80,15 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
         });
     }
 
-    FileSnapshot output_snapshot{.path = request.output, .exists = false};
-    if (auto snapshot = snapshot_file(request.output)) {
-        output_snapshot = std::move(*snapshot);
-    } else {
+    auto output_snapshot_result = detail::snapshot_regular_file(request.output);
+    if (output_snapshot_result.failure) {
         result.warnings.push_back(IncrementalArchiveWarning{
             .code = IncrementalArchiveWarningCode::file_snapshot_failed,
             .path = request.output,
-            .message = snapshot.error(),
+            .message = snapshot_failure_message(*output_snapshot_result.failure),
         });
     }
+    FileSnapshot output_snapshot = std::move(output_snapshot_result.snapshot);
 
     std::vector<FileSnapshot> object_snapshots;
     snapshot_inputs(request.objects, object_snapshots, result.warnings);

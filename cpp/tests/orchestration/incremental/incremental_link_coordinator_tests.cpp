@@ -206,6 +206,72 @@ int main() {
     }
     expect(runner.calls == 4, "corrupt metadata should invoke link.exe exactly once more");
 
+    const fs::path directory_object = fixture.path() / "obj" / "directory-input.obj";
+    const fs::path directory_output = fixture.path() / "bin" / "directory-input.exe";
+    const fs::path directory_cache = fixture.path() / "cache" / "directory-input.linkcache";
+    write_text(directory_object, "regular object before directory regression");
+
+    LinkerLikeRunner directory_runner;
+    directory_runner.output = directory_output;
+    mqb::msvc::MsvcLinker directory_linker{toolchain, directory_runner};
+    mqb::orchestration::MsvcIncrementalLinkCoordinator directory_coordinator{
+        toolchain, directory_linker};
+    const mqb::orchestration::IncrementalLinkRequest directory_request{
+        .objects = {directory_object},
+        .output = directory_output,
+        .options = debug_options,
+        .cache_file = directory_cache,
+        .working_directory = fixture.path(),
+        .force_relink = false,
+    };
+
+    const auto directory_cold = directory_coordinator.run(directory_request);
+    expect(directory_cold.has_value() && directory_cold->linked,
+           "directory regression fixture should create a warm link cache");
+    const auto directory_warm = directory_coordinator.run(directory_request);
+    expect(directory_warm.has_value() && !directory_warm->linked,
+           "directory regression fixture should begin as a reusable warm link");
+    expect(directory_runner.calls == 1,
+           "directory regression warm-up should invoke link.exe only for the cold build");
+
+    std::error_code directory_error;
+    const auto directory_output_time = fs::last_write_time(directory_output, directory_error);
+    expect(!directory_error,
+           "directory regression should read the existing output timestamp");
+    directory_error.clear();
+    fs::remove(directory_object, directory_error);
+    expect(!directory_error,
+           "directory regression should replace the object file");
+    directory_error.clear();
+    fs::create_directory(directory_object, directory_error);
+    expect(!directory_error,
+           "directory regression should create a directory at the object path");
+    directory_error.clear();
+    fs::last_write_time(
+        directory_object,
+        directory_output_time - std::chrono::hours{1},
+        directory_error);
+    expect(!directory_error,
+           "directory regression should make the directory older than the linked output");
+
+    const auto directory_recheck = directory_coordinator.run(directory_request);
+    expect(directory_recheck.has_value(),
+           "directory object recheck should remain an incremental validation operation");
+    if (directory_recheck) {
+        expect(directory_recheck->linked,
+               "a directory at an object path must not be accepted as a reusable file input");
+        expect(has_reason(
+                   directory_recheck->validation,
+                   mqb::BuildReason::link_inputs_changed),
+               "directory object should invalidate link input freshness");
+        expect(!has_warning(
+                   *directory_recheck,
+                   mqb::orchestration::IncrementalLinkWarningCode::file_snapshot_failed),
+               "non-regular object paths should be ordinary missing snapshots, not I/O warnings");
+    }
+    expect(directory_runner.calls == 2,
+           "directory object should force exactly one conservative relink");
+
     std::error_code ignored;
     fs::remove(cache_file, ignored);
     fs::remove(output, ignored);
