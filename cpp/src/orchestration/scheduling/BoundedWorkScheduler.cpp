@@ -159,10 +159,13 @@ BoundedWorkScheduler::run(
         return BoundedWorkSummary{};
     }
 
+    const ParallelismResourceSnapshot resources = policy.is_automatic()
+        ? ParallelismResourceObserver::observe()
+        : ParallelismResourceSnapshot{};
     const ParallelismDecision decision = ParallelismResolver::resolve(
         policy,
         item_count,
-        ParallelismResourceObserver::observe(),
+        resources,
         workload);
     return run(item_count, decision.workers, work);
 }
