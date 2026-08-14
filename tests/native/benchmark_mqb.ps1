@@ -71,6 +71,17 @@ function Invoke-TimedMqb {
     }
 }
 
+function Get-Median {
+    param([Parameter(Mandatory = $true)][double[]]$Values)
+
+    $sorted = @($Values | Sort-Object)
+    $middle = [int][Math]::Floor($sorted.Count / 2)
+    if (($sorted.Count % 2) -eq 0) {
+        return ($sorted[$middle - 1] + $sorted[$middle]) / 2.0
+    }
+    return $sorted[$middle]
+}
+
 $results = [System.Collections.Generic.List[object]]::new()
 $benchmarkRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("mqb-benchmark-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $benchmarkRoot | Out-Null
@@ -107,6 +118,31 @@ int main() { return helper_value() == shared_value() + 2 ? 0 : 1; }
         $results.Add((Invoke-TimedMqb -Scenario 'build-run' -Iteration $iteration -WorkingDirectory $ordinaryRoot -Arguments ($ordinaryArgs + @('--run'))))
         $results.Add((Invoke-TimedMqb -Scenario 'link-only' -Iteration $iteration -WorkingDirectory $ordinaryRoot -Arguments ($ordinaryArgs + @('--linker-arg', '/MAP'))))
 
+        # Dedicated smart-discovery fixture. Only the entry TU is passed to MQB;
+        # helper.cpp must be found through the shared local header graph. The
+        # warm sample therefore isolates the cost of repeated filesystem
+        # enumeration/source-text analysis that persistent discovery can avoid.
+        $discoveryRoot = Join-Path $benchmarkRoot "discovery-$iteration"
+        New-Item -ItemType Directory -Path (Join-Path $discoveryRoot 'src') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $discoveryRoot 'src/common.hpp') -Encoding utf8 -Value @'
+#pragma once
+int helper_value();
+'@
+        Set-Content -LiteralPath (Join-Path $discoveryRoot 'src/helper.cpp') -Encoding utf8 -Value @'
+#include "common.hpp"
+int helper_value() { return 42; }
+'@
+        Set-Content -LiteralPath (Join-Path $discoveryRoot 'main.cpp') -Encoding utf8 -Value @'
+#include "src/common.hpp"
+int main() { return helper_value() == 42 ? 0 : 1; }
+'@
+        $discoveryArgs = @('main.cpp', '--output', 'discovery_bench')
+        $results.Add((Invoke-TimedMqb -Scenario 'discovery-cold' -Iteration $iteration -WorkingDirectory $discoveryRoot -Arguments $discoveryArgs))
+        $results.Add((Invoke-TimedMqb -Scenario 'discovery-no-op' -Iteration $iteration -WorkingDirectory $discoveryRoot -Arguments $discoveryArgs))
+
+        Add-Content -LiteralPath (Join-Path $discoveryRoot 'src/common.hpp') -Encoding utf8 -Value "// discovery invalidation $iteration"
+        $results.Add((Invoke-TimedMqb -Scenario 'discovery-header' -Iteration $iteration -WorkingDirectory $discoveryRoot -Arguments $discoveryArgs))
+
         $moduleRoot = Join-Path $benchmarkRoot "modules-$iteration"
         New-Item -ItemType Directory -Path $moduleRoot | Out-Null
         Set-Content -LiteralPath (Join-Path $moduleRoot 'bench_math.ixx') -Encoding utf8 -Value @'
@@ -134,18 +170,13 @@ $summary = @(
         Group-Object scenario |
         ForEach-Object {
             $group = @($_.Group)
-            $sortedTotals = @($group.total_ms | Sort-Object)
-            $middle = [int][Math]::Floor($sortedTotals.Count / 2)
-            $median = if (($sortedTotals.Count % 2) -eq 0) {
-                ($sortedTotals[$middle - 1] + $sortedTotals[$middle]) / 2.0
-            }
-            else {
-                $sortedTotals[$middle]
-            }
+            $medianTotal = Get-Median -Values @($group.total_ms)
+            $medianDiscovery = Get-Median -Values @($group.discovery_ms)
             [PSCustomObject]@{
                 scenario = $_.Name
                 samples = $group.Count
-                median_total_ms = [Math]::Round($median, 3)
+                median_total_ms = [Math]::Round($medianTotal, 3)
+                median_discovery_ms = [Math]::Round($medianDiscovery, 3)
                 min_total_ms = [Math]::Round((($group.total_ms | Measure-Object -Minimum).Minimum), 3)
                 max_total_ms = [Math]::Round((($group.total_ms | Measure-Object -Maximum).Maximum), 3)
             }
@@ -162,7 +193,7 @@ if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
     [PSCustomObject]@{
-        schema_version = 1
+        schema_version = 2
         generated_utc = [DateTime]::UtcNow.ToString('o')
         mqb = $MqbPath
         iterations = $Iterations
