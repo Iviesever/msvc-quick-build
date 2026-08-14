@@ -90,6 +90,29 @@ mqb run --profile dev -- input.txt
 
 第一版 profile 是**单个显式 overlay**：一次只能选择一个，没有继承、没有多 profile 叠加，也没有隐式默认 profile。优先级为 `CLI > selected profile > base mqb.json > built-in`；list 输入按 base → profile → CLI 追加。Profile 不能设置 `build.entry`，因此切换构建策略不会悄悄切换项目入口。
 
+### First-class PCH
+
+普通 C++ target 可以把 MSVC 预编译头交给 MQB 作为一等构建产物管理：
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/main.cpp",
+    "pch": "include/pch.hpp"
+  }
+}
+```
+
+也可以直接从 CLI 启用或覆盖：
+
+```powershell
+mqb build --pch include/pch.hpp
+mqb build --profile dev --no-pch
+```
+
+PCH 是 scalar policy，遵循 `CLI > selected profile > base mqb.json > disabled default`。MQB 自己拥有 synthetic creator、`.pch`、配对 creator `.obj`、`/FI`、`/Yc` / `/Yu` 与 `/Fp`，并把 `.pch` 纳入 consumer cache dependency；raw PCH structural switches 不与这套模型竞争。当前 first-class PCH 支持普通 C++ 的 `exe` / `dll` / `static` target，C TU 和需要 Modules/Header Units pipeline 的 target 会 fail closed。详见 [`docs/PRECOMPILED_HEADERS.md`](docs/PRECOMPILED_HEADERS.md)。
+
 ### Source-first 兼容形式
 
 原有直接构建形式继续支持：
@@ -123,6 +146,7 @@ mqb build math.cpp vector.cpp --type static -o math
 
 - `mqb build` / `mqb run` 项目命令与 fail-closed 默认入口解析。
 - `mqb.json` named profiles 与 `base < profile < CLI` 分层解析。
+- 普通 C++ target 的 first-class MSVC PCH、独立 PCH cache 与自动 consumer invalidation。
 - `.c` / `.cpp` / `.cc` / `.cxx` 原生 MSVC 构建。
 - Visual Studio 与 portable MSVC toolchain discovery。
 - 基于 `/sourceDependencies` 的 header freshness 与增量编译。
@@ -138,7 +162,7 @@ mqb build math.cpp vector.cpp --type static -o math
 - Windows Unicode-safe artifact/path identity。
 - 所有 writable build state 收敛到项目 `.mqb/`。
 
-> 当前边界：需要 Modules/Header Units pipeline 的 `static` target 仍会显式拒绝；普通静态库构建不受影响。
+> 当前边界：first-class PCH 暂不与 C TU 或 Modules/Header Units pipeline 混用；需要 Modules/Header Units pipeline 的 `static` target 仍会显式拒绝。普通 C++ PCH 与普通静态库构建不受影响。
 
 ## `mqb.json`
 
@@ -162,6 +186,7 @@ MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成�
     "configuration": "release",
     "standard": "latest",
     "type": "exe",
+    "pch": "include/pch.hpp",
     "output": "app",
     "include_dirs": ["include"]
   }
@@ -169,6 +194,8 @@ MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成�
 ```
 
 `build.entry` 相对 `mqb.json` 解析，仅在 `mqb build` / `mqb run` 没有显式 positional source 时使用。若未设置，MQB 只在 project root 与 `src/` 中寻找 conventional `main.{c,cpp,cc,cxx}`；必须恰好命中一个，否则明确报错。
+
+`build.pch` 可为非空 header 路径或 `false`。配置/profile 中的 PCH 路径相对 `mqb.json`；CLI `--pch` 路径相对 invocation directory。Profile 可覆盖或用 `pch: false` 关闭 base PCH，CLI `--pch` / `--no-pch` 再覆盖 profile。
 
 Named profile 也声明在同一配置文件中，并用 `--profile <name>` 显式选择。Profile 内路径同样相对 `mqb.json`，native compiler/linker arguments 仍经过统一的 MSVC Parameter Engine；profile 名本身不是额外 cache 维度，最终生效的构建语义才决定 cache identity。
 
@@ -185,7 +212,7 @@ External/prebuilt module IFC 也可在配置中声明：
 }
 ```
 
-完整字段、profiles、路径基准、CLI/config precedence 和 module provider 规则见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。
+完整字段、profiles、路径基准、CLI/config precedence 和 module provider 规则见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。PCH artifact、ownership 与 invalidation 模型见 [`docs/PRECOMPILED_HEADERS.md`](docs/PRECOMPILED_HEADERS.md)。
 
 ## 常用 CLI
 
@@ -198,6 +225,7 @@ mqb <source...> [options]
 | 选项 | 作用 |
 |---|---|
 | `--profile <name>` | 选择 `mqb.json` 中一个 named profile |
+| `--pch <header>` / `--no-pch` | 启用/覆盖 first-class PCH，或关闭继承的 PCH policy |
 | `--debug` / `--release` | 构建配置 |
 | `--std <14|17|20|23|latest>` | C++ 标准 |
 | `--type <exe|dll|static>` | target kind |
@@ -230,6 +258,7 @@ mqb <source...> [options]
 | 主题 | 文档 |
 |---|---|
 | `mqb.json` 配置、profiles 与 precedence | [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) |
+| First-class PCH ownership、cache 与 invalidation | [`docs/PRECOMPILED_HEADERS.md`](docs/PRECOMPILED_HEADERS.md) |
 | 安装、PATH、卸载 | [`docs/INSTALLATION.md`](docs/INSTALLATION.md) |
 | 架构与 Modules/cache 模型 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | 开发 MQB | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
