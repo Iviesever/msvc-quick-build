@@ -43,7 +43,7 @@ scan_requested_module_sources(
     std::vector<std::optional<ScanAttempt>> attempts(request.sources.size());
 
     const auto scheduled = BoundedWorkScheduler::run(
-        request.sources.size(), request.scan_parallelism,
+        request.sources.size(), request.max_parallel_scans,
         [&](const std::size_t index) {
             const auto& source = request.sources[index];
             msvc::ModuleScanInvocation invocation{
