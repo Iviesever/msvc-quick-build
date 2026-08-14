@@ -42,6 +42,7 @@ profiles
     "runtime": "MT",
     "ltcg": true,
     "subsystem": "console",
+    "pch": "include/pch.hpp",
     "output": "game",
     "defines": ["GAME_BUILD=1"],
     "include_dirs": ["include", "third_party/include"],
@@ -66,6 +67,7 @@ profiles
       "build": {
         "configuration": "debug",
         "runtime": "MDd",
+        "pch": false,
         "compiler_args": ["/W4"]
       },
       "discovery": {
@@ -95,6 +97,7 @@ profiles
 | `runtime` | string | `MD`, `MDd`, `MT`, `MTd` |
 | `ltcg` | boolean | couples compile `/GL` with downstream `/LTCG` |
 | `subsystem` | string | `console` / `windows`; not accepted for static targets |
+| `pch` | string / `false` | enable first-class PCH for ordinary C++ targets; path is relative to `mqb.json`; `false` disables inherited PCH policy |
 | `output` | string | target name under `.mqb/bin/`; extension follows target kind |
 | `defines` | string[] | preprocessor definitions without `/D` |
 | `include_dirs` | string[] | include search paths |
@@ -145,9 +148,59 @@ Even when `build.entry` exists, this builds and runs `tools/tool.cpp`.
 
 `build.entry` may appear **only in the root `build` layer**. Profiles are build-policy overlays and cannot change project identity through `profiles.<name>.build.entry`; strict schema validation rejects that field.
 
+### First-class PCH
+
+`build.pch` is scalar policy. Enabling it requires a non-empty header path:
+
+```json
+{
+  "version": 1,
+  "build": {
+    "pch": "include/pch.hpp"
+  }
+}
+```
+
+Boolean `true` is rejected because "enabled without naming a header" cannot form stable PCH identity. `false` explicitly disables PCH inherited from a lower layer:
+
+```json
+{
+  "version": 1,
+  "build": {
+    "pch": "include/pch.hpp"
+  },
+  "profiles": {
+    "clean": {
+      "build": {
+        "pch": false
+      }
+    }
+  }
+}
+```
+
+CLI forms:
+
+```powershell
+mqb build --pch include/pch.hpp
+mqb build --profile dev --no-pch
+```
+
+PCH precedence is:
+
+```text
+explicit CLI > selected profile > base mqb.json > disabled default
+```
+
+Config/profile PCH paths are relative to `mqb.json`; a `--pch` path is relative to the invocation directory.
+
+MQB owns the synthetic creator, `.pch`, paired creator `.obj`, `/FI`, `/Yc` / `/Yu`, `/Fp`, and PCH cache/dependency tracking. Raw PCH structural switches cannot bypass this ownership. The `.pch` is an explicit consumer compile-cache dependency, and rebuilding the creator forces downstream link/archive work. See [`PRECOMPILED_HEADERS_EN.md`](PRECOMPILED_HEADERS_EN.md) for the complete artifact and invalidation contract.
+
+First-class PCH currently supports ordinary C++ source sets for `exe` / `dll` / `static`. Combining it with a C translation unit or the Modules/Header Unit pipeline fails closed.
+
 ### Typed policy
 
-`type`, `runtime`, `ltcg`, and `subsystem` are typed MQB policies, not string aliases for MSVC flags. The backend owns the final command-line spelling; raw compiler/linker arguments should not be used to bypass conflicting typed policy.
+`type`, `runtime`, `ltcg`, `subsystem`, and `pch` are structured MQB policies, not string aliases for MSVC flags. The backend owns final command-line spelling; raw compiler/linker arguments should not bypass typed policy or MQB-owned artifact routing.
 
 `ltcg: true` affects both compile and the downstream target:
 
@@ -242,7 +295,7 @@ discovery
 modules
 ```
 
-Those sections reuse the same typed-policy, list, path, and module-provider decoding rules as the root layers, except that profile-local `build.entry` is prohibited.
+Those sections reuse the same typed-policy, list, path, and module-provider decoding rules as the root layers, except that profile-local `build.entry` is prohibited. A profile may replace base `build.pch` with another header or disable it with `false`.
 
 Example:
 
@@ -252,6 +305,7 @@ Example:
   "build": {
     "entry": "src/main.cpp",
     "standard": "23",
+    "pch": "include/pch.hpp",
     "defines": ["PROJECT=1"]
   },
   "profiles": {
@@ -259,6 +313,7 @@ Example:
       "build": {
         "configuration": "debug",
         "runtime": "MDd",
+        "pch": false,
         "defines": ["DEV=1"],
         "compiler_args": ["/W4"]
       }
@@ -295,9 +350,9 @@ The current contract is deliberately small and deterministic:
 - there is no implicit default profile; omitting `--profile` means base config + CLI only;
 - `--profile` requires an `mqb.json` project configuration;
 - an unknown profile fails closed and reports the available profile names;
-- relative paths inside a profile use the `mqb.json` directory as their base, exactly like root config paths;
+- relative paths inside a profile, including `pch`, use the `mqb.json` directory as their base, exactly like root config paths;
 - profile `compiler_args` / `linker_args` still flow through the same MSVC Parameter Engine. Semantic native options are normalized within the profile layer before higher-precedence CLI policy is applied;
-- a profile may select typed policy such as `type`, so the final target still passes through the same executable/static/DLL validity gates.
+- a profile may select policy such as `type` and `pch`, so the final target still passes through the same executable/static/DLL/PCH validity gates.
 
 ## 7. Precedence
 
@@ -317,10 +372,13 @@ type
 runtime
 ltcg
 subsystem
+pch
 output
 ```
 
-Within one layer, typed policy and equivalent native MSVC semantic options must agree or MQB fails closed before toolchain execution. For example, a profile that declares `runtime: "MT"` and `/MD` is rejected.
+PCH's built-in default is disabled; `pch: false` and `--no-pch` are explicit scalar overrides.
+
+Within one layer, typed policy and equivalent native MSVC semantic options must agree or MQB fails closed before toolchain execution. For example, a profile that declares `runtime: "MT"` and `/MD` is rejected. PCH structural `/Yc`, `/Yu`, and `/Fp` switches are MQB-owned and are not raw aliases that can be configured alongside `pch`.
 
 Entry selection is a separate source-selection policy:
 
@@ -347,7 +405,7 @@ CLI relative path                 -> invocation directory
 mqb.json / profile relative path  -> directory containing mqb.json
 ```
 
-`build.entry` uses the second base but is valid only in the root build layer.
+Both `build.entry` and `build.pch` are config-relative paths. `entry` is valid only in the root build layer, while `pch` may be overridden by a profile. CLI `--pch` remains invocation-relative.
 
 Example:
 
@@ -355,6 +413,7 @@ Example:
 project/
 ├─ mqb.json
 ├─ src/main.cpp
+├─ include/pch.hpp
 ├─ include/
 └─ nested/work/
 ```
@@ -366,6 +425,7 @@ Configuration:
   "version": 1,
   "build": {
     "entry": "src/main.cpp",
+    "pch": "include/pch.hpp",
     "include_dirs": ["include"]
   },
   "profiles": {
@@ -384,12 +444,12 @@ From `project/nested/work`:
 mqb run --profile dev
 ```
 
-MQB still loads `project/mqb.json`, resolves the entry as `project/src/main.cpp`, the base include directory as `project/include`, the profile include directory as `project/third_party/dev/include`, and places writable artifacts under `project/.mqb/`.
+MQB still loads `project/mqb.json`, resolves the entry as `project/src/main.cpp`, PCH as `project/include/pch.hpp`, the base include directory as `project/include`, the profile include directory as `project/third_party/dev/include`, and places writable artifacts under `project/.mqb/`.
 
 Explicit CLI sources and paths remain invocation-relative:
 
 ```powershell
-mqb ../../src/main.cpp
+mqb ../../src/main.cpp --pch ../../include/pch.hpp
 ```
 
 ## 9. Cache semantics
@@ -398,9 +458,12 @@ MQB does not treat "the config file timestamp changed" or "the profile name chan
 
 `build.entry` does not add a separate compile/link identity field; it selects the source-discovery entry for this invocation. The profile name is likewise not a separate cache dimension. Two profiles that resolve to identical effective build policy/source graphs should reuse the same existing cache identity.
 
+PCH identity is derived from the final effective PCH header/artifact/role together with normal compiler/toolchain semantics; the profile name itself does not add another dimension. The creator has its own compile cache, and `.pch` is an explicit dependency of consumer compile caches. A missing `.pch` triggers creator repair; rebuilding the creator invalidates consumers and forces downstream link/archive work.
+
 Typical effects:
 
 - `runtime`, compiler args, and typed module references change compile identity;
+- `pch` changes creator/consumer compile identity and propagates freshness through the `.pch` dependency;
 - `ltcg` changes compile and link/archive identity;
 - `subsystem` changes link identity only;
 - libraries, library dirs, and linker args change link identity;
@@ -409,7 +472,7 @@ Typical effects:
 - changing an external/prebuilt IFC invalidates dependent consumer compile caches;
 - changing the selected MSVC toolchain identity does not silently reuse incompatible toolchain-owned standard-library IFCs.
 
-Missing recorded outputs also invalidate the corresponding compile/link/archive cache and trigger repair.
+Missing recorded outputs invalidate the corresponding compile/link/archive/PCH cache and trigger repair.
 
 `-j/--jobs` is execution policy. It is not part of build identity and is not a v1 configuration field.
 
@@ -417,6 +480,8 @@ Missing recorded outputs also invalidate the corresponding compile/link/archive 
 
 - `exe`, `dll`, and `static` are supported;
 - `mqb run` and source-first `--run` apply only to executables;
+- ordinary C++ `exe` / `dll` / `static` targets support first-class PCH;
+- first-class PCH combined with a C translation unit or Modules/Header Unit pipeline currently fails closed;
 - static targets do not accept subsystem, library paths/libraries, or linker args;
 - **static-library targets that require the Modules/Header Units pipeline still fail closed**;
 - discovery corrections use exact paths and do not support globs;
@@ -425,4 +490,4 @@ Missing recorded outputs also invalidate the corresponding compile/link/archive 
 - profiles cannot override `build.entry`;
 - freshness through indirect `/DEFAULTLIB`-style library propagation is not guaranteed to be complete.
 
-See [`ARCHITECTURE_EN.md`](ARCHITECTURE_EN.md) for deeper provider-graph, artifact-identity, and responsibility boundaries.
+See [`PRECOMPILED_HEADERS_EN.md`](PRECOMPILED_HEADERS_EN.md) for PCH artifact/ownership details and [`ARCHITECTURE_EN.md`](ARCHITECTURE_EN.md) for deeper provider-graph, artifact-identity, and responsibility boundaries.
