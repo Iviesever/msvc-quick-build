@@ -47,6 +47,17 @@ void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
     return it == snapshots.end() ? nullptr : &*it;
 }
 
+[[nodiscard]] const FileSnapshot* aligned_snapshot_or_find(
+    const std::span<const FileSnapshot> snapshots,
+    const std::filesystem::path& path,
+    const std::size_t preferred_index) {
+    if (preferred_index < snapshots.size()
+        && same_path(snapshots[preferred_index].path, path)) {
+        return &snapshots[preferred_index];
+    }
+    return find_snapshot(snapshots, path);
+}
+
 [[nodiscard]] bool same_outputs(
     const std::vector<Artifact>& cached,
     const std::vector<Artifact>& current) {
@@ -80,8 +91,12 @@ oldest_output_time(
     }
 
     std::optional<std::filesystem::file_time_type> oldest;
-    for (const auto& output : unit.outputs) {
-        const FileSnapshot* snapshot = find_snapshot(output_snapshots, output.path);
+    for (std::size_t index = 0; index < unit.outputs.size(); ++index) {
+        const auto& output = unit.outputs[index];
+        const FileSnapshot* snapshot = aligned_snapshot_or_find(
+            output_snapshots,
+            output.path,
+            index);
         if (snapshot == nullptr || !snapshot->exists) {
             return std::nullopt;
         }
@@ -109,8 +124,12 @@ CompileCacheValidation CompileCacheValidator::validate(
             add_reason(result.reasons, BuildReason::missing_output);
             return;
         }
-        for (const auto& output : current_unit.outputs) {
-            const auto* snapshot = find_snapshot(output_snapshots, output.path);
+        for (std::size_t index = 0; index < current_unit.outputs.size(); ++index) {
+            const auto& output = current_unit.outputs[index];
+            const auto* snapshot = aligned_snapshot_or_find(
+                output_snapshots,
+                output.path,
+                index);
             if (output.path.empty() || snapshot == nullptr || !snapshot->exists) {
                 add_reason(result.reasons, BuildReason::missing_output);
             }
@@ -155,8 +174,12 @@ CompileCacheValidation CompileCacheValidator::validate(
         add_reason(result.reasons, BuildReason::source_changed);
     }
 
-    for (const auto& dependency : cached.dependencies) {
-        const auto* snapshot = find_snapshot(dependency_snapshots, dependency);
+    for (std::size_t index = 0; index < cached.dependencies.size(); ++index) {
+        const auto& dependency = cached.dependencies[index];
+        const auto* snapshot = aligned_snapshot_or_find(
+            dependency_snapshots,
+            dependency,
+            index);
         if (snapshot == nullptr || !snapshot->exists) {
             add_reason(result.reasons, BuildReason::dependency_changed);
             continue;
