@@ -203,6 +203,8 @@ parse_timings_format(const std::string_view value) {
 std::expected<Options, Error>
 parse_arguments(const std::span<const std::string_view> arguments) {
     Options options;
+    bool native_linker_tail = false;
+    bool native_linker_tail_has_argument = false;
 
     for (std::size_t index = 0; index < arguments.size(); ++index) {
         const std::string_view argument = arguments[index];
@@ -212,6 +214,27 @@ parse_arguments(const std::span<const std::string_view> arguments) {
                 options.build.run_arguments.emplace_back(arguments[index]);
             }
             break;
+        }
+        if (native_linker_tail) {
+            if (argument == "/link" || argument == "-link") {
+                return std::unexpected(error("duplicate native MSVC /link separator"));
+            }
+            if (argument.starts_with("--")) {
+                return std::unexpected(error(
+                    "MQB option '" + std::string{argument}
+                    + "' must appear before native MSVC /link"));
+            }
+            options.linker_arguments.emplace_back(argument);
+            native_linker_tail_has_argument = true;
+            continue;
+        }
+        if (argument == "/link" || argument == "-link") {
+            if (options.build.sources.empty()) {
+                return std::unexpected(error(
+                    "native MSVC /link must appear after at least one source file"));
+            }
+            native_linker_tail = true;
+            continue;
         }
         if (is_legacy_option(argument)) {
             return std::unexpected(error("unknown option '" + std::string{argument} + "'"));
@@ -456,6 +479,18 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.libraries.emplace_back(*value);
             continue;
         }
+        if (argument == "/I") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            options.include_directories.emplace_back(std::string{*value});
+            continue;
+        }
+        if (argument == "/D") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            options.defines.emplace_back(std::string{*value});
+            continue;
+        }
         if (argument == "-I" || argument.starts_with("-I")) {
             auto value = attached_or_next(arguments, index, argument, "-I");
             if (!value) return std::unexpected(value.error());
@@ -484,6 +519,14 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.libraries.emplace_back(std::string{*value});
             continue;
         }
+        if (!argument.empty() && argument.front() == '/') {
+            options.compiler_arguments.emplace_back(argument);
+            continue;
+        }
+        if (argument.size() > 1 && argument.front() == '-' && argument[1] != '-') {
+            options.compiler_arguments.emplace_back(argument);
+            continue;
+        }
         if (!argument.empty() && argument.front() == '-') {
             return std::unexpected(error("unknown option '" + std::string{argument} + "'"));
         }
@@ -491,6 +534,9 @@ parse_arguments(const std::span<const std::string_view> arguments) {
         options.build.sources.emplace_back(std::string{argument});
     }
 
+    if (native_linker_tail && !native_linker_tail_has_argument) {
+        return std::unexpected(error("native MSVC /link requires at least one linker option"));
+    }
     if (!options.show_help && options.build.sources.empty()) {
         return std::unexpected(error("missing source file"));
     }
@@ -505,8 +551,8 @@ parse_arguments(const std::span<const std::string_view> arguments) {
 std::string_view usage() noexcept {
     return "MQB " MQB_VERSION " - MSVC Quick Build (C++ refactor)\n\n"
 R"(Usage:
-  mqb <entry.cpp> [options] [-- program-args...]
-  mqb <source.cpp> <more-sources...|module.ixx...> [options] [-- program-args...]
+  mqb <entry.cpp> [options] [MSVC-compiler-options] [/link linker-options...] [-- program-args...]
+  mqb <source.cpp> <more-sources...|module.ixx...> [options] [MSVC-compiler-options] [/link linker-options...] [-- program-args...]
 
 Project configuration:
   MQB searches upward from the invocation directory for the nearest mqb.json.
@@ -558,6 +604,9 @@ Options:
   --lib-path <dir>        Add a library search directory
   -l <name>, -l<name>     Link a library ('.lib' is optional)
   --lib <name>            Link a library
+  /option, -option        Route a native MSVC compiler switch through the parameter engine
+  /I <dir> | /D <value>  Native spaced include/define forms map to MQB structured inputs
+  /link <link-options...> Route the remaining build argv to native linker options
   --compiler-arg <arg>    Append one raw cl.exe argument
   --linker-arg <arg>      Append one raw link.exe argument
   --env <auto|vs|portable>
@@ -566,6 +615,13 @@ Options:
   -v, --verbose           Show config, discovery, toolchain, and artifact details
   -h, --help              Show this help and the embedded build version
   --                      Pass all remaining argv elements to an executable program
+
+Native MSVC compiler switches may use '/' or a single '-' prefix. MQB '--long' options remain
+in the MQB namespace. `/link` (or `-link`) is a one-way compiler-to-linker boundary for build
+arguments; MQB options must appear before it. The outer `--` delimiter still ends build parsing
+and starts executable argv, so `--run ... /link ... -- child-args` remains supported. Native
+switches are not semantically reimplemented by the CLI: they flow through the same ownership,
+normalization, conflict, and cache-identity rules as --compiler-arg/--linker-arg.
 
 Static libraries are produced by MSVC lib.exe from the compiled object set. Linker-only policy
 (libraries, library search paths, subsystem, and raw linker arguments) is rejected for static
