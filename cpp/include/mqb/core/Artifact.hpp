@@ -7,6 +7,7 @@ namespace mqb {
 enum class ArtifactKind {
     object,
     module_interface,
+    precompiled_header,
     executable,
     dynamic_library,
     static_library,
