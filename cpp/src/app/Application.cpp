@@ -1,6 +1,7 @@
 #include "Application.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -293,6 +294,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         compile_executor};
 
     std::optional<mqb::PrecompiledHeaderArtifacts> pch_artifacts;
+    bool pch_compiled = false;
     if (effective.precompiled_header) {
         if (module_target) {
             diagnostics::print_error(
@@ -331,16 +333,18 @@ int Application::run(const std::span<const std::string_view> arguments) {
             .working_directory = project_root,
         });
         mqb::orchestration::TargetTimings pch_timings;
-        pch_timings.compile = performance::Clock::now() - pch_started;
+        pch_timings.compile = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            performance::Clock::now() - pch_started);
         timing_session.add_target(pch_timings);
         if (!pch) {
             print_pch_failure(pch.error());
             return 4;
         }
 
-        timing_session.record_compile(pch->compile.compiled);
+        pch_compiled = pch->compile.compiled;
+        timing_session.record_compile(pch_compiled);
         diagnostics::print_compile_warnings(pch->compile);
-        if (pch->compile.compiled) {
+        if (pch_compiled) {
             std::cout << "[pch] "
                       << diagnostics::path_text(display_source(project_root, *effective.precompiled_header));
             diagnostics::print_reasons(pch->compile.validation.reasons);
@@ -379,12 +383,16 @@ int Application::run(const std::span<const std::string_view> arguments) {
         return mqb::cli::run_static_target(
             mqb::cli::StaticCliTargetRequest{
                 .sources = std::move(target_sources),
+                .additional_objects = pch_artifacts
+                    ? std::vector<fs::path>{pch_artifacts->object}
+                    : std::vector<fs::path>{},
                 .target = std::move(*target_artifacts),
                 .compiler_options = std::move(compiler_options),
                 .project_root = project_root,
                 .target_name = target_name,
                 .max_parallel_jobs = compile_jobs,
                 .timings = &timing_session,
+                .force_downstream_rebuild = pch_compiled,
                 .verbose = options.verbose,
             },
             *toolchain,
@@ -441,6 +449,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         if (pch_artifacts && effective.precompiled_header) {
             std::cout << "  pch:     " << diagnostics::path_text(*effective.precompiled_header) << '\n'
                       << "    file:  " << diagnostics::path_text(pch_artifacts->precompiled_header) << '\n'
+                      << "    obj:   " << diagnostics::path_text(pch_artifacts->object) << '\n'
                       << "    cache: " << diagnostics::path_text(pch_artifacts->compile_cache) << '\n';
         }
         for (const auto& source : target_sources) {
@@ -473,11 +482,15 @@ int Application::run(const std::span<const std::string_view> arguments) {
 
     const mqb::orchestration::IncrementalTargetRequest request{
         .sources = std::move(target_sources),
+        .additional_objects = pch_artifacts
+            ? std::vector<fs::path>{pch_artifacts->object}
+            : std::vector<fs::path>{},
         .target = std::move(*target_artifacts),
         .compiler_options = std::move(compiler_options),
         .link_options = std::move(link_options),
         .working_directory = project_root,
         .max_parallel_compiles = compile_jobs,
+        .force_downstream_rebuild = pch_compiled,
     };
 
     auto result = target_coordinator.run(request);
