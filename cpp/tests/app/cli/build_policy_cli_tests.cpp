@@ -64,6 +64,23 @@ int main() {
     }
 
     {
+        const std::vector<std::vector<std::string_view>> autoJobsCases{
+            {"main.cpp"sv, "-j"sv, "auto"sv},
+            {"main.cpp"sv, "-jauto"sv},
+            {"main.cpp"sv, "--jobs"sv, "auto"sv},
+            {"main.cpp"sv, "--jobs=auto"sv},
+        };
+        for (const auto& arguments : autoJobsCases) {
+            auto parsed = mqb::cli::parse_arguments(arguments);
+            expect(parsed.has_value(), "every documented auto jobs spelling should parse");
+            if (parsed) {
+                expect(parsed->jobs.has_value() && parsed->jobs->is_automatic(),
+                       "auto jobs spelling should preserve typed automatic policy");
+            }
+        }
+    }
+
+    {
         const std::vector<std::vector<std::string_view>> legacyCases{
             {"main.cpp"sv, "-type"sv, "dll"sv},
             {"main.cpp"sv, "-runtime"sv, "MDd"sv},
