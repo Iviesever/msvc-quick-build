@@ -11,6 +11,7 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
+#include "mqb/orchestration/ParallelismPolicy.hpp"
 #include "mqb/process/Process.hpp"
 
 namespace mqb::app::performance {
@@ -29,9 +30,8 @@ struct ModuleCliTargetRequest {
     std::filesystem::path project_root;
     std::optional<std::filesystem::path> config_file;
     std::string target_name;
-    std::size_t max_parallel_jobs{1};
+    orchestration::ParallelismPolicy parallelism{};
     app::performance::Session* timings{};
-    bool jobs_explicit{false};
     bool force_named_modules{false};
     bool verbose{false};
     bool run_after_build{false};
