@@ -235,6 +235,23 @@ int main() {
                "changing -j must not invalidate link cache");
     }
 
+    auto automatic = run_mqb(runner, mqb_executable, tree.root, "auto");
+    expect(automatic.has_value(), "warm adaptive-policy MQB invocation should launch");
+    if (automatic) {
+        if (automatic->exit_code != 0) dump_failure(*automatic);
+        expect(automatic->exit_code == 0,
+               "warm build should accept explicit -j auto");
+        expect(automatic->stdout_text.find("  jobs:    auto") != std::string::npos,
+               "verbose target output should preserve automatic policy identity");
+        expect(contains_line(automatic->stdout_text, "[up-to-date] main.cpp")
+                   && contains_line(automatic->stdout_text, "[up-to-date] a.cpp")
+                   && contains_line(automatic->stdout_text, "[up-to-date] b.cpp")
+                   && contains_line(automatic->stdout_text, "[up-to-date] c.cpp"),
+               "switching fixed jobs to auto must preserve all compile-cache hits");
+        expect(contains_line(automatic->stdout_text, "[up-to-date] parallel.exe"),
+               "switching fixed jobs to auto must preserve link-cache identity");
+    }
+
     auto warm_run = run_executable(runner, executable, tree.root);
     expect(warm_run.has_value() && warm_run->exit_code == 0,
            "warm reused executable should still launch");
@@ -293,7 +310,7 @@ int main() {
         runner,
         mqb_executable,
         std_tree.root,
-        "1",
+        "auto",
         "latest",
         "import-std",
         true);
@@ -301,11 +318,13 @@ int main() {
     if (std_warm) {
         if (std_warm->exit_code != 0) dump_failure(*std_warm);
         expect(std_warm->exit_code == 0,
-               "warm import std target should reuse toolchain-provider and consumer caches");
+               "warm import std target should reuse toolchain-provider and consumer caches under auto policy");
+        expect(std_warm->stdout_text.find("  jobs:    auto") != std::string::npos,
+               "module target verbose output should preserve automatic policy identity");
         expect(contains_line(std_warm->stdout_text, "[up-to-date] main.cpp"),
-               "warm import std consumer should remain compile-cache clean when only -j changes");
+               "warm import std consumer should remain compile-cache clean when fixed jobs become auto");
         expect(contains_line(std_warm->stdout_text, "[up-to-date] import-std.exe"),
-               "warm import std target should preserve final link cache");
+               "warm import std target should preserve final link cache under auto policy");
     }
 
     TempTree wrong_std_mode_tree{
