@@ -43,6 +43,7 @@
       "src/msvc/linker/MsvcLibraryResolver.cpp",
       "src/msvc/linker/MsvcLinker.cpp",
       "src/msvc/modules/MsvcModuleDependencyScanner.cpp",
+      "src/msvc/parameters/MsvcParameterEngine.cpp",
       "src/msvc/compiler/MsvcSourceDependenciesReader.cpp",
       "src/msvc/toolchain/MsvcToolchainLocator.cpp",
       "src/msvc/toolchain/PortableToolchainDiscovery.cpp",
