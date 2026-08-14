@@ -29,6 +29,7 @@
       "src/app/Application.cpp",
       "src/app/cli/Cli.cpp",
       "src/app/diagnostics/Diagnostics.cpp",
+      "src/app/diagnostics/PerformanceTimings.cpp",
       "src/app/cli/Invocation.cpp",
       "src/app/targets/ModuleCliTarget.cpp",
       "src/app/project/ProjectSetup.cpp",
