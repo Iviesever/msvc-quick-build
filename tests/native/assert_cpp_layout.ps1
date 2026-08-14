@@ -150,13 +150,14 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'config') -LeafFiles ([ordered]@{
 })
 
 # Source discovery. The public facade remains at the discovery root while
-# source-text analysis, filesystem indexing, and graph selection own separate
-# private leaves. Module syntax is lexical analysis, not traversal policy.
+# text analysis, persistent freshness state, indexing, and graph selection own
+# separate private leaves. Module syntax is lexical analysis, not traversal policy.
 $discoveryRoot = Join-Path $srcRoot 'discovery'
-Assert-DirectDirectories -Root $discoveryRoot -Allowed @('analysis', 'indexing', 'selection')
+Assert-DirectDirectories -Root $discoveryRoot -Allowed @('analysis', 'cache', 'indexing', 'selection')
 Assert-ExactFiles -Root $discoveryRoot -Expected @('SourceDiscovery.cpp')
 $discoveryLeafFiles = [ordered]@{
     'analysis' = @('ModuleSyntax.cpp', 'SourceTextAnalysis.cpp', 'SourceTextAnalysis.hpp')
+    'cache' = @('DiscoveryCache.cpp', 'DiscoveryCache.hpp')
     'indexing' = @('DiscoveryPath.hpp', 'SourceIndex.cpp', 'SourceIndex.hpp')
     'selection' = @('SourceSelectionGraph.cpp', 'SourceSelectionGraph.hpp')
 }
@@ -173,6 +174,7 @@ Assert-ExactFiles -Root $discoveryTestsRoot -Expected @(
     'c_source_discovery_tests.cpp',
     'module_source_discovery_tests.cpp',
     'module_syntax_tests.cpp',
+    'source_discovery_cache_tests.cpp',
     'source_discovery_corrections_tests.cpp',
     'source_discovery_tests.cpp'
 )

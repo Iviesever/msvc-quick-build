@@ -6,7 +6,7 @@ Performance work in MQB is measured against the existing `--timings=json` instru
 
 For a PR whose primary claim is lower build latency or higher throughput:
 
-1. benchmark a baseline MQB executable built from the PR base;
+1. benchmark a baseline MQB executable built from the exact PR base;
 2. benchmark the candidate executable from the PR head on the same machine;
 3. use the same iteration count for both executables;
 4. report at least the standard scenarios emitted by `tests/native/benchmark_mqb.ps1`:
@@ -16,12 +16,15 @@ For a PR whose primary claim is lower build latency or higher throughput:
    - `public-header`
    - `build-run`
    - `link-only`
+   - `discovery-cold`
+   - `discovery-no-op`
+   - `discovery-header`
    - `modules-cold`
    - `modules-no-op`
 5. attach or quote the comparison JSON/table in the PR description or review evidence;
 6. explain any material regression in a core scenario rather than hiding it behind the scenario being optimized.
 
-The canonical comparison command is:
+The canonical local comparison command is:
 
 ```powershell
 ./tests/native/compare_mqb_benchmarks.ps1 `
@@ -31,7 +34,24 @@ The canonical comparison command is:
   -OutputPath ./benchmark-comparison.json
 ```
 
-`delta_pct < 0` means the candidate is faster. The raw baseline and candidate benchmark records are embedded in the comparison JSON so phase timings and cache hit/miss counts remain auditable.
+Negative deltas mean the candidate is faster. The raw baseline and candidate benchmark records are embedded in the comparison JSON so phase timings and cache hit/miss counts remain auditable.
+
+## Automated PR evidence
+
+`.github/workflows/performance-evidence.yml` runs automatically for pull requests whose title starts with `perf:` and can also be invoked manually.
+
+The workflow:
+
+- checks out the candidate and the exact `pull_request.base.sha` into separate working trees;
+- acquires one pinned historical MQB seed;
+- independently builds Release MQB binaries from the base and candidate with each tree's own self-build script and manifest contract;
+- runs both benchmark suites serially on the same Windows runner with the same iteration count;
+- emits the comparison table into the GitHub Actions job summary;
+- uploads `benchmark-comparison.json` as a retained review artifact.
+
+The base is deliberately the immutable PR base SHA rather than the moving branch name. This makes the recorded performance comparison reproducible for that PR head even if `main` advances later.
+
+Running base first and candidate second may still introduce some operating-system cache/order bias. The measurements therefore remain review evidence rather than a numerical merge threshold. For a close or surprising result, reviewers should rerun the workflow or reproduce locally and examine phase-level timings instead of treating one percentage as absolute truth.
 
 ## What is and is not gated
 

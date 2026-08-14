@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,11 @@ struct Request {
     std::vector<std::filesystem::path> excluded_directories;
     std::vector<std::filesystem::path> extra_sources;
     std::vector<std::filesystem::path> excluded_sources;
+    // Performance-only persistent state. The default cache lives under the
+    // discovery root's .mqb/cache/discovery directory. Callers may disable it
+    // or override the file path. Cache failures always fall back to discovery.
+    bool persistent_cache{true};
+    std::optional<std::filesystem::path> cache_file;
 };
 
 struct Result {
@@ -48,6 +54,9 @@ struct Result {
     // that requires the P1689/module pipeline, even if discovery found no local
     // interface provider (for example `import external.module;`).
     bool requires_module_pipeline{false};
+    // True only when the result was restored from validated persistent
+    // discovery evidence without recursively re-indexing/re-reading sources.
+    bool reused{false};
 };
 
 class SourceDiscovery {
