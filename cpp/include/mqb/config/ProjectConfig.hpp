@@ -19,6 +19,7 @@ struct BuildOverrides {
     std::optional<bool> link_time_code_generation;
     std::optional<LinkSubsystem> subsystem;
     std::optional<TargetKind> target_kind;
+    std::optional<std::filesystem::path> entry;
     std::optional<std::string> output_name;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;

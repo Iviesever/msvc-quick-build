@@ -215,7 +215,7 @@ using JsonValue = json::Value;
         **object,
         {
             "configuration", "architecture", "standard", "runtime", "ltcg",
-            "subsystem", "type", "output", "defines", "include_dirs",
+            "subsystem", "type", "entry", "output", "defines", "include_dirs",
             "library_dirs", "libraries", "compiler_args", "linker_args",
         },
         "build");
@@ -303,6 +303,12 @@ using JsonValue = json::Value;
                 "build.type must be 'exe', 'dll', or 'static'"));
         }
         out.target_kind = *parsed;
+    }
+
+    if (auto it = (**object).find("entry"); it != (**object).end()) {
+        auto text = require_string(file, it->second, "build.entry");
+        if (!text) return std::unexpected(text.error());
+        out.entry = resolve_path(root, *text);
     }
 
     if (auto it = (**object).find("output"); it != (**object).end()) {

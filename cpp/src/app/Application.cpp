@@ -118,8 +118,25 @@ int Application::run(const std::span<const std::string_view> arguments) {
     auto& project_config = project->config;
     auto& effective = project->effective;
     const fs::path& project_root = project->project_root;
-    const auto& requested_sources = invocation->requested_sources;
 
+    if (invocation->requested_sources.empty()) {
+        auto entry = resolve_default_entry(
+            project_root,
+            project_config ? project_config->build.entry : std::nullopt);
+        if (!entry) {
+            diagnostics::print_error(entry.error());
+            return 2;
+        }
+        invocation->requested_sources.push_back(std::move(*entry));
+        if (options.verbose) {
+            std::cout << "[entry] "
+                      << diagnostics::path_text(
+                             display_source(project_root, invocation->requested_sources.front()))
+                      << '\n';
+        }
+    }
+
+    const auto& requested_sources = invocation->requested_sources;
     std::vector<fs::path> sources = requested_sources;
     bool discovery_requires_module_pipeline = false;
     if (options.discover_sources

@@ -203,10 +203,22 @@ parse_timings_format(const std::string_view value) {
 std::expected<Options, Error>
 parse_arguments(const std::span<const std::string_view> arguments) {
     Options options;
+    std::size_t first_argument = 0;
+    if (!arguments.empty()) {
+        if (arguments.front() == "build") {
+            options.command = Command::build;
+            first_argument = 1;
+        } else if (arguments.front() == "run") {
+            options.command = Command::run;
+            options.build.run_after_build = true;
+            first_argument = 1;
+        }
+    }
+
     bool native_linker_tail = false;
     bool native_linker_tail_has_argument = false;
 
-    for (std::size_t index = 0; index < arguments.size(); ++index) {
+    for (std::size_t index = first_argument; index < arguments.size(); ++index) {
         const std::string_view argument = arguments[index];
 
         if (argument == "--") {
@@ -229,7 +241,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             continue;
         }
         if (argument == "/link" || argument == "-link") {
-            if (options.build.sources.empty()) {
+            if (options.build.sources.empty() && options.command == Command::direct) {
                 return std::unexpected(error(
                     "native MSVC /link must appear after at least one source file"));
             }
@@ -270,6 +282,10 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             continue;
         }
         if (argument == "--run") {
+            if (options.command == Command::build) {
+                return std::unexpected(error(
+                    "mqb build does not accept --run; use 'mqb run' instead"));
+            }
             options.build.run_after_build = true;
             continue;
         }
@@ -541,13 +557,15 @@ parse_arguments(const std::span<const std::string_view> arguments) {
     if (native_linker_tail && !native_linker_tail_has_argument) {
         return std::unexpected(error("native MSVC /link requires at least one linker option"));
     }
-    if (!options.show_help && options.build.sources.empty()) {
+    if (!options.show_help
+        && options.build.sources.empty()
+        && options.command == Command::direct) {
         return std::unexpected(error("missing source file"));
     }
     if (!options.show_help
         && !options.build.run_after_build
         && !options.build.run_arguments.empty()) {
-        return std::unexpected(error("arguments after -- require --run"));
+        return std::unexpected(error("arguments after -- require 'mqb run' or --run"));
     }
     return options;
 }
@@ -555,13 +573,26 @@ parse_arguments(const std::span<const std::string_view> arguments) {
 std::string_view usage() noexcept {
     return "MQB " MQB_VERSION " - MSVC Quick Build (C++ refactor)\n\n"
 R"(Usage:
+  mqb build [entry.cpp] [options] [MSVC-compiler-options] [/link linker-options...]
+  mqb run [entry.cpp] [options] [MSVC-compiler-options] [/link linker-options...] [-- program-args...]
   mqb <entry.cpp> [options] [MSVC-compiler-options] [/link linker-options...] [-- program-args...]
   mqb <source.cpp> <more-sources...|module.ixx...> [options] [MSVC-compiler-options] [/link linker-options...] [-- program-args...]
+
+Commands:
+  build                     Build without running; source may be omitted when a default entry resolves
+  run                       Build an executable and run it; source may be omitted when a default entry resolves
+
+Default entry resolution for `mqb build` / `mqb run` with no positional source:
+  1. build.entry from the nearest mqb.json (config-relative)
+  2. exactly one conventional main source under project root or project root/src
+     using main.c, main.cpp, main.cc, or main.cxx
+  Zero or multiple conventional candidates fail closed; pass a source or set build.entry.
 
 Project configuration:
   MQB searches upward from the invocation directory for the nearest mqb.json.
   Scalar precedence is: explicit CLI > mqb.json > built-in defaults.
   Config paths are relative to mqb.json; CLI paths are relative to the invocation directory.
+  Explicit positional sources always take precedence over build.entry.
   External named-module IFCs may be declared under modules.external as logical-name -> IFC path.
 
 Source selection:
@@ -597,7 +628,7 @@ Options:
   --x86 | --x64           Explicitly select target architecture
   -j, --jobs <N>          Maximum concurrent TU scans/compiles (default: hardware concurrency)
   -o, --output <name>     Set target name under .mqb/bin/
-  --run                   Run an executable after a successful build
+  --run                   Legacy source-first alias for build-then-run; prefer `mqb run`
   --timings               Show phase timings and cache hit/miss counters
   --timings=<text|json>   Select human-readable or JSON-line timing output
   --module-ifc <name=path>
@@ -623,11 +654,12 @@ Options:
 Native MSVC compiler switches may use '/' or a single '-' prefix. MQB '--long' options remain
 in the MQB namespace. `/link` (or `-link`) is a one-way compiler-to-linker boundary for build
 arguments; MQB options must appear before it. The outer `--` delimiter still ends build parsing
-and starts executable argv, so `--run ... /link ... -- child-args` remains supported. Native
-switches and @response syntax are not semantically reimplemented by the CLI: they flow through
-the same ownership, normalization, conflict, and cache-identity rules as
---compiler-arg/--linker-arg. Bare `/I` and `/D` are the only native compiler forms that consume
-a following argv element in the CLI; attached forms remain opaque native tokens.
+and starts executable argv. `mqb run ... /link ... -- child-args` and the legacy source-first
+`--run` form remain supported. Native switches and @response syntax are not semantically
+reimplemented by the CLI: they flow through the same ownership, normalization, conflict, and
+cache-identity rules as --compiler-arg/--linker-arg. Bare `/I` and `/D` are the only native
+compiler forms that consume a following argv element in the CLI; attached forms remain opaque
+native tokens.
 
 Static libraries are produced by MSVC lib.exe from the compiled object set. Linker-only policy
 (libraries, library search paths, subsystem, and raw linker arguments) is rejected for static
@@ -639,8 +671,9 @@ quoted string into multiple switches. Project config entries are applied first a
 append afterward. Typed runtime/LTCG and structured artifact routing are emitted after raw
 arguments so the BuildPlan remains authoritative.
 
-MQB v5 intentionally does not accept the PowerShell-era command aliases. Use the native options
-shown above; unknown legacy spellings fail instead of silently entering a compatibility path.
+MQB v5 intentionally does not accept the PowerShell-era single-dash command aliases. Use the
+native options shown above; unknown legacy spellings fail instead of silently entering a
+compatibility path.
 
 Job count is execution policy only; changing -j does not invalidate build caches.
 Timing output is observation-only and never participates in build/cache identity.

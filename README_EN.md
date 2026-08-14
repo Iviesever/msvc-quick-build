@@ -2,7 +2,7 @@
 
 **[简体中文](README.md) | English**
 
-MQB is a native C/C++ build tool for **Windows + MSVC**. Give it one or more source files and it handles source discovery, incremental compilation, Modules/Header Units ordering, linking/archiving, and optional execution after a successful build.
+MQB is a native C/C++ build tool for **Windows + MSVC**. Give it a project entry or source files and it handles source discovery, incremental compilation, Modules/Header Units ordering, linking/archiving, and optional execution after a successful build.
 
 Latest stable release and downloads: [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases/latest)
 
@@ -26,9 +26,39 @@ See [`docs/INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) for install, PATH, and 
 
 ## Quick start
 
-### Single file
+### Build / run a project
+
+For a simple project with exactly one conventional `main.{c,cpp,cc,cxx}` under the project root or `src/`:
 
 ```powershell
+mqb build
+mqb run
+mqb run -- input.txt "hello world" 42
+```
+
+A real project can declare a stable default entry in `mqb.json`:
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/main.cpp"
+  }
+}
+```
+
+An explicit source always wins over `build.entry`:
+
+```powershell
+mqb run tools/tool.cpp
+```
+
+### Source-first compatibility form
+
+The existing direct form remains supported:
+
+```powershell
+mqb main.cpp
 mqb main.cpp --run
 ```
 
@@ -37,7 +67,7 @@ A single entry source enables smart discovery by default; writable build state s
 ### Exact multi-source build
 
 ```powershell
-mqb main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
+mqb build main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
 ```
 
 Multiple positional sources form an exact source set; MQB does not expand it through automatic source discovery.
@@ -45,23 +75,16 @@ Multiple positional sources form an exact source set; MQB does not expand it thr
 ### Target kinds
 
 ```powershell
-mqb main.cpp -o app
-mqb api.cpp --type dll -o codec
-mqb math.cpp vector.cpp --type static -o math
+mqb build main.cpp -o app
+mqb build api.cpp --type dll -o codec
+mqb build math.cpp vector.cpp --type static -o math
 ```
 
-Supported target kinds are `exe`, `dll`, and `static`.
-
-### Pass arguments to the program
-
-```powershell
-mqb main.cpp --run -- input.txt "hello world" 42
-```
-
-Everything after `--` belongs to the target program and is not parsed as a build option.
+Supported target kinds are `exe`, `dll`, and `static`. `mqb run` applies only to executable targets.
 
 ## Core capabilities
 
+- `mqb build` / `mqb run` project commands with fail-closed default-entry resolution.
 - Native MSVC builds for `.c` / `.cpp` / `.cc` / `.cxx`.
 - Visual Studio and portable MSVC toolchain discovery.
 - Header freshness and incremental compilation from `/sourceDependencies`.
@@ -69,6 +92,7 @@ Everything after `--` belongs to the target program and is not parsed as a build
 - Bounded parallel scan/compile with `-j / --jobs`.
 - Typed `exe` / `dll` / `static` targets.
 - Typed runtime, LTCG, and subsystem policy.
+- Native MSVC compiler/linker arguments with a `/link` boundary.
 - Project-local named modules and header units.
 - External/prebuilt named-module IFC providers.
 - MSVC toolchain-owned `import std` / `import std.compat`.
@@ -96,6 +120,7 @@ A common configuration:
 {
   "version": 1,
   "build": {
+    "entry": "src/main.cpp",
     "configuration": "release",
     "standard": "latest",
     "type": "exe",
@@ -104,6 +129,8 @@ A common configuration:
   }
 }
 ```
+
+`build.entry` is resolved relative to `mqb.json` and is used only when `mqb build` / `mqb run` has no explicit positional source. Without it, MQB checks only conventional `main.{c,cpp,cc,cxx}` files in the project root and `src/`; exactly one candidate must exist or MQB fails with a diagnostic.
 
 External/prebuilt module IFCs can also be declared in configuration:
 
@@ -123,6 +150,8 @@ See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for the complete schema, pa
 ## Common CLI
 
 ```text
+mqb build [source...] [options]
+mqb run [source...] [options] [-- program-args...]
 mqb <source...> [options]
 ```
 
@@ -143,13 +172,15 @@ mqb <source...> [options]
 | `-D <value>` | Preprocessor definition |
 | `-L <dir>` / `--lib-path <dir>` | Library search directory |
 | `-l <name>` / `--lib <name>` | Library |
+| `/option` / `-option` | Native MSVC compiler argument |
+| `/link <...>` | Route following build arguments to the linker |
 | `--compiler-arg <arg>` | Raw compiler argv element |
 | `--linker-arg <arg>` | Raw linker argv element |
 | `--env <auto|vs|portable>` | Toolchain selection |
-| `--run` | Run executable after build |
+| `--run` | Source-first compatibility form: run executable after build |
 | `-v, --verbose` | Verbose output |
 | `-h, --help` | Complete CLI help |
-| `--` | Pass remaining arguments to the target program |
+| `--` | Pass remaining arguments to the target program under `mqb run` / `--run` |
 
 Use the current binary's `mqb --help` as the complete CLI reference.
 
