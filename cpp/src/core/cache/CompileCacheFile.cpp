@@ -1,6 +1,7 @@
 #include "mqb/core/CompileCacheFile.hpp"
 
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,7 @@
 
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildSignature.hpp"
+#include "mqb/core/FileSnapshot.hpp"
 #include "mqb/core/ToolchainIdentity.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 
@@ -28,7 +30,8 @@ namespace fs = std::filesystem;
 
 constexpr std::array<std::uint8_t, 8> magic{
     'M', 'Q', 'B', 'C', 'A', 'C', 'H', 'E'};
-constexpr std::uint32_t format_version = 2;
+constexpr std::uint32_t legacy_format_version = 2;
+constexpr std::uint32_t format_version = 3;
 constexpr std::size_t max_cache_file_size = 64u * 1024u * 1024u;
 constexpr std::uint32_t max_string_size = 4u * 1024u * 1024u;
 constexpr std::uint32_t max_output_count = 100000u;
@@ -62,11 +65,22 @@ constexpr std::uint32_t max_dependency_count = 100000u;
     return fs::path{bytes}.lexically_normal();
 }
 
+[[nodiscard]] std::int64_t timestamp_to_i64(
+    const fs::file_time_type value) noexcept {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        value.time_since_epoch()).count();
+}
+
+[[nodiscard]] fs::file_time_type timestamp_from_i64(
+    const std::int64_t value) noexcept {
+    return fs::file_time_type{
+        std::chrono::duration_cast<fs::file_time_type::duration>(
+            std::chrono::nanoseconds{value})};
+}
+
 class BinaryWriter {
 public:
-    void write_u8(const std::uint8_t value) {
-        bytes_.push_back(value);
-    }
+    void write_u8(const std::uint8_t value) { bytes_.push_back(value); }
 
     void write_u32(const std::uint32_t value) {
         for (std::uint32_t shift = 0; shift < 32u; shift += 8u) {
@@ -78,6 +92,10 @@ public:
         for (std::uint32_t shift = 0; shift < 64u; shift += 8u) {
             write_u8(static_cast<std::uint8_t>((value >> shift) & 0xffu));
         }
+    }
+
+    void write_i64(const std::int64_t value) {
+        write_u64(std::bit_cast<std::uint64_t>(value));
     }
 
     void write_bytes(const std::span<const std::uint8_t> bytes) {
@@ -108,18 +126,11 @@ private:
 
 class BinaryReader {
 public:
-    BinaryReader(
-        const fs::path& file,
-        const std::span<const std::uint8_t> bytes)
+    BinaryReader(const fs::path& file, const std::span<const std::uint8_t> bytes)
         : file_(file), bytes_(bytes) {}
 
-    [[nodiscard]] std::size_t offset() const noexcept {
-        return offset_;
-    }
-
-    [[nodiscard]] bool at_end() const noexcept {
-        return offset_ == bytes_.size();
-    }
+    [[nodiscard]] std::size_t offset() const noexcept { return offset_; }
+    [[nodiscard]] bool at_end() const noexcept { return offset_ == bytes_.size(); }
 
     [[nodiscard]] std::expected<std::uint8_t, CompileCacheFileError> read_u8() {
         if (offset_ >= bytes_.size()) {
@@ -132,9 +143,7 @@ public:
         std::uint32_t value = 0;
         for (std::uint32_t shift = 0; shift < 32u; shift += 8u) {
             auto byte = read_u8();
-            if (!byte) {
-                return std::unexpected(byte.error());
-            }
+            if (!byte) return std::unexpected(byte.error());
             value |= static_cast<std::uint32_t>(*byte) << shift;
         }
         return value;
@@ -144,26 +153,27 @@ public:
         std::uint64_t value = 0;
         for (std::uint32_t shift = 0; shift < 64u; shift += 8u) {
             auto byte = read_u8();
-            if (!byte) {
-                return std::unexpected(byte.error());
-            }
+            if (!byte) return std::unexpected(byte.error());
             value |= static_cast<std::uint64_t>(*byte) << shift;
         }
         return value;
     }
 
+    [[nodiscard]] std::expected<std::int64_t, CompileCacheFileError> read_i64() {
+        auto value = read_u64();
+        if (!value) return std::unexpected(value.error());
+        return std::bit_cast<std::int64_t>(*value);
+    }
+
     [[nodiscard]] std::expected<std::string, CompileCacheFileError> read_string() {
         auto length = read_u32();
-        if (!length) {
-            return std::unexpected(length.error());
-        }
+        if (!length) return std::unexpected(length.error());
         if (*length > max_string_size) {
             return std::unexpected(corrupt("cache string length exceeds safety limit"));
         }
         if (static_cast<std::size_t>(*length) > bytes_.size() - offset_) {
             return std::unexpected(corrupt("cache string extends past end of file"));
         }
-
         const char* begin = reinterpret_cast<const char*>(bytes_.data() + offset_);
         std::string value{begin, begin + *length};
         offset_ += *length;
@@ -172,9 +182,7 @@ public:
 
     [[nodiscard]] std::expected<fs::path, CompileCacheFileError> read_path() {
         auto value = read_string();
-        if (!value) {
-            return std::unexpected(value.error());
-        }
+        if (!value) return std::unexpected(value.error());
         return path_from_utf8(*value);
     }
 
@@ -200,6 +208,46 @@ private:
     return value <= static_cast<std::uint32_t>(ArtifactKind::static_library);
 }
 
+[[nodiscard]] std::expected<void, CompileCacheFileError> write_snapshot(
+    BinaryWriter& writer,
+    const fs::path& file,
+    const FileSnapshot& snapshot,
+    const std::string_view role) {
+    if (snapshot.path.empty() || !snapshot.exists) {
+        return std::unexpected(make_error(
+            CompileCacheFileErrorCode::file_write_failed,
+            file,
+            0,
+            std::string{role} + " snapshot must be an existing non-empty path"));
+    }
+    if (!writer.write_path(snapshot.path)) {
+        return std::unexpected(make_error(
+            CompileCacheFileErrorCode::file_write_failed,
+            file,
+            0,
+            std::string{role} + " snapshot path is too long for cache format"));
+    }
+    writer.write_i64(timestamp_to_i64(snapshot.modified));
+    return {};
+}
+
+[[nodiscard]] std::expected<FileSnapshot, CompileCacheFileError> read_snapshot(
+    BinaryReader& reader,
+    const std::string_view role) {
+    auto path = reader.read_path();
+    auto modified = reader.read_i64();
+    if (!path) return std::unexpected(path.error());
+    if (!modified) return std::unexpected(modified.error());
+    if (path->empty()) {
+        return std::unexpected(reader.corrupt(std::string{role} + " snapshot path is empty"));
+    }
+    return FileSnapshot{
+        .path = std::move(*path),
+        .exists = true,
+        .modified = timestamp_from_i64(*modified),
+    };
+}
+
 [[nodiscard]] std::expected<std::vector<std::uint8_t>, CompileCacheFileError>
 serialize(const fs::path& file, const CompileCacheEntry& entry) {
     if (entry.outputs.empty()) {
@@ -209,19 +257,15 @@ serialize(const fs::path& file, const CompileCacheEntry& entry) {
             0,
             "compile cache entry must contain at least one planned output"));
     }
-    if (entry.outputs.size() > max_output_count) {
+    if (entry.outputs.size() > max_output_count
+        || entry.dependencies.size() > max_dependency_count
+        || (entry.module_scan
+            && entry.module_scan->dependencies.size() > max_dependency_count)) {
         return std::unexpected(make_error(
             CompileCacheFileErrorCode::file_write_failed,
             file,
             0,
-            "output count exceeds cache format safety limit"));
-    }
-    if (entry.dependencies.size() > max_dependency_count) {
-        return std::unexpected(make_error(
-            CompileCacheFileErrorCode::file_write_failed,
-            file,
-            0,
-            "dependency count exceeds cache format safety limit"));
+            "cache entry count exceeds format safety limit"));
     }
 
     BinaryWriter writer;
@@ -230,41 +274,26 @@ serialize(const fs::path& file, const CompileCacheEntry& entry) {
 
     if (!writer.write_path(entry.source)) {
         return std::unexpected(make_error(
-            CompileCacheFileErrorCode::file_write_failed,
-            file,
-            0,
+            CompileCacheFileErrorCode::file_write_failed, file, 0,
             "source path is too long for cache format"));
     }
     writer.write_u32(static_cast<std::uint32_t>(entry.kind));
-
     if (!writer.write_path(entry.toolchain.compiler)
         || !writer.write_string(entry.toolchain.version)
         || !writer.write_string(entry.toolchain.binary_stamp)) {
         return std::unexpected(make_error(
-            CompileCacheFileErrorCode::file_write_failed,
-            file,
-            0,
+            CompileCacheFileErrorCode::file_write_failed, file, 0,
             "toolchain identity is too large for cache format"));
     }
-
     writer.write_u64(entry.signature.digest().high);
     writer.write_u64(entry.signature.digest().low);
 
     writer.write_u32(static_cast<std::uint32_t>(entry.outputs.size()));
     for (const auto& output : entry.outputs) {
-        if (output.path.empty()) {
+        if (output.path.empty() || !writer.write_path(output.path)) {
             return std::unexpected(make_error(
-                CompileCacheFileErrorCode::file_write_failed,
-                file,
-                0,
-                "compile cache output path must not be empty"));
-        }
-        if (!writer.write_path(output.path)) {
-            return std::unexpected(make_error(
-                CompileCacheFileErrorCode::file_write_failed,
-                file,
-                0,
-                "output path is too long for cache format"));
+                CompileCacheFileErrorCode::file_write_failed, file, 0,
+                "compile cache output path is empty or too long"));
         }
         writer.write_u32(static_cast<std::uint32_t>(output.kind));
     }
@@ -273,10 +302,27 @@ serialize(const fs::path& file, const CompileCacheEntry& entry) {
     for (const auto& dependency : entry.dependencies) {
         if (!writer.write_path(dependency)) {
             return std::unexpected(make_error(
-                CompileCacheFileErrorCode::file_write_failed,
-                file,
-                0,
+                CompileCacheFileErrorCode::file_write_failed, file, 0,
                 "dependency path is too long for cache format"));
+        }
+    }
+
+    writer.write_u8(entry.module_scan ? 1u : 0u);
+    if (entry.module_scan) {
+        const auto& evidence = *entry.module_scan;
+        writer.write_u64(evidence.signature.digest().high);
+        writer.write_u64(evidence.signature.digest().low);
+        if (auto written = write_snapshot(writer, file, evidence.source, "source"); !written) {
+            return std::unexpected(written.error());
+        }
+        if (auto written = write_snapshot(writer, file, evidence.output, "scan output"); !written) {
+            return std::unexpected(written.error());
+        }
+        writer.write_u32(static_cast<std::uint32_t>(evidence.dependencies.size()));
+        for (const auto& dependency : evidence.dependencies) {
+            if (auto written = write_snapshot(writer, file, dependency, "scan dependency"); !written) {
+                return std::unexpected(written.error());
+            }
         }
     }
 
@@ -287,18 +333,13 @@ serialize(const fs::path& file, const CompileCacheEntry& entry) {
 deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     if (bytes.size() < magic.size() + sizeof(std::uint32_t)) {
         return std::unexpected(make_error(
-            CompileCacheFileErrorCode::invalid_magic,
-            file,
-            0,
+            CompileCacheFileErrorCode::invalid_magic, file, 0,
             "cache file is too short"));
     }
-
     for (std::size_t index = 0; index < magic.size(); ++index) {
         if (bytes[index] != magic[index]) {
             return std::unexpected(make_error(
-                CompileCacheFileErrorCode::invalid_magic,
-                file,
-                index,
+                CompileCacheFileErrorCode::invalid_magic, file, index,
                 "cache magic does not match MQB format"));
         }
     }
@@ -306,16 +347,11 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     BinaryReader reader{file, bytes};
     for (std::size_t index = 0; index < magic.size(); ++index) {
         auto ignored = reader.read_u8();
-        if (!ignored) {
-            return std::unexpected(ignored.error());
-        }
+        if (!ignored) return std::unexpected(ignored.error());
     }
-
     auto version = reader.read_u32();
-    if (!version) {
-        return std::unexpected(version.error());
-    }
-    if (*version != format_version) {
+    if (!version) return std::unexpected(version.error());
+    if (*version != legacy_format_version && *version != format_version) {
         return std::unexpected(make_error(
             CompileCacheFileErrorCode::unsupported_version,
             file,
@@ -331,7 +367,6 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     auto signature_high = reader.read_u64();
     auto signature_low = reader.read_u64();
     auto output_count = reader.read_u32();
-
     if (!source) return std::unexpected(source.error());
     if (!kind_value) return std::unexpected(kind_value.error());
     if (!compiler) return std::unexpected(compiler.error());
@@ -340,12 +375,12 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     if (!signature_high) return std::unexpected(signature_high.error());
     if (!signature_low) return std::unexpected(signature_low.error());
     if (!output_count) return std::unexpected(output_count.error());
-
     if (!valid_translation_unit_kind(*kind_value)) {
         return std::unexpected(reader.corrupt("invalid translation-unit kind in cache file"));
     }
     if (*output_count == 0 || *output_count > max_output_count) {
-        return std::unexpected(reader.corrupt("output count is outside the supported safety range"));
+        return std::unexpected(reader.corrupt(
+            "output count is outside the supported safety range"));
     }
 
     std::vector<Artifact> outputs;
@@ -372,15 +407,55 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     if (*dependency_count > max_dependency_count) {
         return std::unexpected(reader.corrupt("dependency count exceeds safety limit"));
     }
-
     std::vector<fs::path> dependencies;
     dependencies.reserve(*dependency_count);
     for (std::uint32_t index = 0; index < *dependency_count; ++index) {
         auto dependency = reader.read_path();
-        if (!dependency) {
-            return std::unexpected(dependency.error());
-        }
+        if (!dependency) return std::unexpected(dependency.error());
         dependencies.push_back(std::move(*dependency));
+    }
+
+    std::optional<ModuleScanEvidence> module_scan;
+    if (*version == format_version) {
+        auto present = reader.read_u8();
+        if (!present) return std::unexpected(present.error());
+        if (*present > 1u) {
+            return std::unexpected(reader.corrupt("invalid module scan evidence presence marker"));
+        }
+        if (*present == 1u) {
+            auto scan_signature_high = reader.read_u64();
+            auto scan_signature_low = reader.read_u64();
+            if (!scan_signature_high) return std::unexpected(scan_signature_high.error());
+            if (!scan_signature_low) return std::unexpected(scan_signature_low.error());
+            auto scan_source = read_snapshot(reader, "source");
+            auto scan_output = read_snapshot(reader, "scan output");
+            if (!scan_source) return std::unexpected(scan_source.error());
+            if (!scan_output) return std::unexpected(scan_output.error());
+            auto scan_dependency_count = reader.read_u32();
+            if (!scan_dependency_count) {
+                return std::unexpected(scan_dependency_count.error());
+            }
+            if (*scan_dependency_count > max_dependency_count) {
+                return std::unexpected(reader.corrupt(
+                    "scan dependency count exceeds safety limit"));
+            }
+            std::vector<FileSnapshot> scan_dependencies;
+            scan_dependencies.reserve(*scan_dependency_count);
+            for (std::uint32_t index = 0; index < *scan_dependency_count; ++index) {
+                auto dependency = read_snapshot(reader, "scan dependency");
+                if (!dependency) return std::unexpected(dependency.error());
+                scan_dependencies.push_back(std::move(*dependency));
+            }
+            module_scan = ModuleScanEvidence{
+                .signature = BuildSignature::from_digest(SignatureDigest{
+                    .high = *scan_signature_high,
+                    .low = *scan_signature_low,
+                }),
+                .source = std::move(*scan_source),
+                .output = std::move(*scan_output),
+                .dependencies = std::move(scan_dependencies),
+            };
+        }
     }
 
     if (!reader.at_end()) {
@@ -401,6 +476,7 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
         }),
         .outputs = std::move(outputs),
         .dependencies = std::move(dependencies),
+        .module_scan = std::move(module_scan),
     };
 }
 
@@ -424,9 +500,7 @@ CompileCacheFile::load(const fs::path& file) {
             0,
             "failed to query cache file"));
     }
-    if (!exists) {
-        return std::optional<CompileCacheEntry>{};
-    }
+    if (!exists) return std::optional<CompileCacheEntry>{};
 
     const auto size = fs::file_size(file, error_code);
     if (error_code) {
@@ -452,7 +526,6 @@ CompileCacheFile::load(const fs::path& file) {
             0,
             "failed to open cache file"));
     }
-
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
     if (!bytes.empty()) {
         stream.read(
@@ -468,18 +541,14 @@ CompileCacheFile::load(const fs::path& file) {
     }
 
     auto entry = deserialize(file, bytes);
-    if (!entry) {
-        return std::unexpected(entry.error());
-    }
+    if (!entry) return std::unexpected(entry.error());
     return std::optional<CompileCacheEntry>{std::move(*entry)};
 }
 
 std::expected<void, CompileCacheFileError>
 CompileCacheFile::save(const fs::path& file, const CompileCacheEntry& entry) {
     auto bytes = serialize(file, entry);
-    if (!bytes) {
-        return std::unexpected(bytes.error());
-    }
+    if (!bytes) return std::unexpected(bytes.error());
 
     std::error_code error_code;
     if (!file.parent_path().empty()) {
@@ -503,7 +572,6 @@ CompileCacheFile::save(const fs::path& file, const CompileCacheEntry& entry) {
                 0,
                 "failed to open temporary cache file for writing"));
         }
-
         if (!bytes->empty()) {
             stream.write(
                 reinterpret_cast<const char*>(bytes->data()),
@@ -550,7 +618,6 @@ CompileCacheFile::save(const fs::path& file, const CompileCacheEntry& entry) {
             0,
             "failed to install new cache entry"));
     }
-
     return {};
 }
 
