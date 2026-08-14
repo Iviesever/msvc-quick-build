@@ -95,7 +95,7 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
     std::vector<std::string> seen_dependencies;
     std::vector<std::string> seen_compile_caches;
     seen_sources.reserve(request.sources.size());
-    seen_objects.reserve(request.sources.size());
+    seen_objects.reserve(request.sources.size() + request.additional_objects.size());
     seen_dependencies.reserve(request.sources.size());
     seen_compile_caches.reserve(request.sources.size());
 
@@ -125,6 +125,16 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
                 source.source));
         }
     }
+    for (const auto& object : request.additional_objects) {
+        if (object.empty() || !insert_unique(seen_objects, object)) {
+            return std::unexpected(failure(
+                IncrementalTargetErrorCode::duplicate_object,
+                object.empty()
+                    ? "MQB-owned additional object path must not be empty"
+                    : "MQB-owned additional object collides with another target object",
+                object));
+        }
+    }
 
     using CompileAttempt = std::expected<IncrementalCompileResult, IncrementalCompileError>;
     std::vector<std::optional<CompileAttempt>> attempts(request.sources.size());
@@ -149,9 +159,6 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
             "target compile scheduler failed: " + scheduled.error().message));
     }
 
-    // Work indices are assigned monotonically. After all workers join, scanning
-    // in source order therefore selects the lowest-index compile failure even if
-    // several in-flight compiles failed concurrently.
     for (std::size_t index = 0; index < attempts.size(); ++index) {
         if (!attempts[index]) {
             continue;
@@ -169,7 +176,8 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
     IncrementalTargetResult result;
     result.compiles.reserve(request.sources.size());
     std::vector<fs::path> objects;
-    objects.reserve(request.sources.size());
+    objects.reserve(request.sources.size() + request.additional_objects.size());
+    objects.insert(objects.end(), request.additional_objects.begin(), request.additional_objects.end());
 
     for (std::size_t index = 0; index < request.sources.size(); ++index) {
         if (!attempts[index]) {
@@ -194,7 +202,7 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
         .options = request.link_options,
         .cache_file = request.target.link_cache,
         .working_directory = request.working_directory,
-        .force_relink = result.any_compiled,
+        .force_relink = request.force_downstream_rebuild || result.any_compiled,
     };
     const auto link_started = Clock::now();
     auto linked = link_coordinator_.run(link_request);
