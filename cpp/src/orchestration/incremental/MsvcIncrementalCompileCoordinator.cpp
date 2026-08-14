@@ -13,6 +13,7 @@
 #include "mqb/core/CompileCache.hpp"
 #include "mqb/core/CompileCacheFile.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
+#include "mqb/msvc/MsvcSourceDependenciesReader.hpp"
 
 #include "IncrementalFileSnapshot.hpp"
 
@@ -49,6 +50,68 @@ void add_reason_once(
     if (std::find(reasons.begin(), reasons.end(), reason) == reasons.end()) {
         reasons.push_back(reason);
     }
+}
+
+void seal_module_scan_evidence(
+    CompileCacheEntry& cache_entry,
+    const IncrementalCompileRequest& request,
+    const ToolchainIdentity& toolchain,
+    std::vector<IncrementalCompileWarning>& warnings) {
+    if (!request.module_scan_output) {
+        return;
+    }
+
+    // Re-read the compiler's successful /sourceDependencies output instead of
+    // using cache_entry.dependencies: the latter also contains generated IFC
+    // and PCH inputs which can legitimately be newer than the P1689 scan.
+    const auto dependencies = msvc::MsvcSourceDependenciesReader::read(
+        request.source_dependencies_file);
+    if (!dependencies) {
+        return;
+    }
+
+    auto source = detail::snapshot_regular_file(request.unit.source);
+    append_snapshot_warning(warnings, request.unit.source, std::move(source.failure));
+    auto output = detail::snapshot_regular_file(*request.module_scan_output);
+    append_snapshot_warning(warnings, *request.module_scan_output, std::move(output.failure));
+    if (!source.snapshot.exists || !output.snapshot.exists) {
+        return;
+    }
+
+    std::vector<FileSnapshot> include_snapshots;
+    include_snapshots.reserve(dependencies->includes.size());
+    for (const auto& dependency : dependencies->includes) {
+        auto snapshot = detail::snapshot_regular_file(dependency);
+        append_snapshot_warning(warnings, dependency, std::move(snapshot.failure));
+        if (!snapshot.snapshot.exists) {
+            return;
+        }
+        include_snapshots.push_back(std::move(snapshot.snapshot));
+    }
+
+    // A source/header mutation after /scanDependencies but before the compile
+    // completed means the topology artifact is not a trustworthy description
+    // of the successful compile. In that case keep the normal compile cache but
+    // deliberately omit scan evidence so the next build rescans.
+    if (source.snapshot.modified > output.snapshot.modified) {
+        return;
+    }
+    for (const auto& dependency : include_snapshots) {
+        if (dependency.modified > output.snapshot.modified) {
+            return;
+        }
+    }
+
+    cache_entry.module_scan = ModuleScanEvidence{
+        .signature = BuildSignature::for_module_scan(
+            request.unit.source,
+            request.unit.kind,
+            toolchain,
+            request.options),
+        .source = std::move(source.snapshot),
+        .output = std::move(output.snapshot),
+        .dependencies = std::move(include_snapshots),
+    };
 }
 
 } // namespace
@@ -157,6 +220,12 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
 
     result.compiled = true;
     result.process = std::move(executed->process);
+
+    seal_module_scan_evidence(
+        executed->cache_entry,
+        request,
+        toolchain_.identity,
+        result.warnings);
 
     auto saved_cache = CompileCacheFile::save(
         request.cache_file,
