@@ -59,16 +59,28 @@ void apply_modules(
     }
 }
 
+void apply_profile(
+    EffectiveProjectOptions& effective,
+    const ProjectProfile& profile) {
+    apply_build(effective, profile.build);
+    apply_discovery(effective, profile.discovery);
+    apply_modules(effective, profile.modules);
+}
+
 } // namespace
 
 EffectiveProjectOptions resolve_project_options(
     const ProjectConfig* project_config,
+    const ProjectProfile* profile,
     const ProjectOverrides& cli_overrides) {
     EffectiveProjectOptions effective;
     if (project_config != nullptr) {
         apply_build(effective, project_config->build);
         apply_discovery(effective, project_config->discovery);
         apply_modules(effective, project_config->modules);
+    }
+    if (profile != nullptr) {
+        apply_profile(effective, *profile);
     }
     apply_build(effective, cli_overrides.build);
     apply_discovery(effective, cli_overrides.discovery);
