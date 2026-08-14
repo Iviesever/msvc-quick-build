@@ -170,6 +170,14 @@ prepare_project(
             provider.interface_file = provider.interface_file.lexically_normal();
         }
     }
+    if (options.pch_override && options.pch_override->enabled) {
+        if (options.pch_override->header.is_relative()) {
+            options.pch_override->header = (
+                invocation_directory / options.pch_override->header).lexically_normal();
+        } else {
+            options.pch_override->header = options.pch_override->header.lexically_normal();
+        }
+    }
 
     mqb::config::ProjectOverrides cli_overrides;
     cli_overrides.build.configuration = options.configuration_override;
@@ -179,6 +187,7 @@ prepare_project(
     cli_overrides.build.runtime_library = options.runtime_override;
     cli_overrides.build.link_time_code_generation = options.ltcg_override;
     cli_overrides.build.subsystem = options.subsystem_override;
+    cli_overrides.build.precompiled_header = options.pch_override;
     cli_overrides.build.output_name = options.build.output_name;
     cli_overrides.build.defines = options.defines;
     cli_overrides.build.include_directories = options.include_directories;
