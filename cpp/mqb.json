@@ -8,12 +8,23 @@
     "runtime": "MT",
     "subsystem": "console",
     "output": "mqb",
-    "include_dirs": ["include", "src/app/cli", "src/app/diagnostics", "src/app/project", "src/app/targets"],
-    "compiler_args": ["/W4", "/permissive-"]
+    "include_dirs": [
+      "include",
+      "src/app/cli",
+      "src/app/diagnostics",
+      "src/app/project",
+      "src/app/targets"
+    ],
+    "compiler_args": [
+      "/W4",
+      "/permissive-"
+    ]
   },
   "discovery": {
     "enabled": true,
-    "exclude_dirs": ["tests"],
+    "exclude_dirs": [
+      "tests"
+    ],
     "extra_sources": [
       "src/app/Application.cpp",
       "src/app/cli/Cli.cpp",
