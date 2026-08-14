@@ -73,6 +73,83 @@ void verify_parser_contract() {
     using namespace std::string_view_literals;
 
     {
+        const std::vector arguments{"build"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "mqb build should parse without an explicit source");
+        if (parsed) {
+            expect(parsed->command == mqb::cli::Command::build,
+                   "build should record command intent");
+            expect(parsed->build.sources.empty(),
+                   "build should defer omitted source resolution until project setup");
+            expect(!parsed->build.run_after_build,
+                   "build command should not request execution");
+        }
+    }
+
+    {
+        const std::vector arguments{"run"sv, "--"sv, "child"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "mqb run should parse without an explicit source");
+        if (parsed) {
+            expect(parsed->command == mqb::cli::Command::run,
+                   "run should record command intent");
+            expect(parsed->build.run_after_build,
+                   "run command should reuse build-after-run execution policy");
+            expect(parsed->build.sources.empty(),
+                   "run should defer omitted source resolution until project setup");
+            expect(parsed->build.run_arguments.size() == 1
+                       && parsed->build.run_arguments.front() == "child",
+                   "run command should make the outer -- delimiter immediately useful");
+        }
+    }
+
+    {
+        const std::vector arguments{"build"sv, "main.cpp"sv, "/O2"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "build with an explicit source should parse");
+        if (parsed) {
+            expect(parsed->build.sources.size() == 1
+                       && parsed->build.sources.front() == "main.cpp",
+                   "explicit source should remain authoritative under build command");
+            expect(parsed->compiler_arguments.size() == 1
+                       && parsed->compiler_arguments.front() == "/O2",
+                   "build command should preserve native compiler syntax");
+        }
+    }
+
+    {
+        const std::vector arguments{
+            "build"sv, "/O2"sv, "/link"sv, "/DEBUG:FULL"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(),
+               "build command should allow native compiler/linker policy before default entry resolves");
+        if (parsed) {
+            expect(parsed->compiler_arguments.size() == 1
+                       && parsed->compiler_arguments.front() == "/O2",
+                   "source-less build command should preserve compiler policy");
+            expect(parsed->linker_arguments.size() == 1
+                       && parsed->linker_arguments.front() == "/DEBUG:FULL",
+                   "source-less build command should preserve /link tail");
+        }
+    }
+
+    {
+        const std::vector arguments{"build"sv, "--run"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "mqb build --run should fail instead of creating two command spellings");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "source-first compatibility syntax should remain valid");
+        if (parsed) {
+            expect(parsed->command == mqb::cli::Command::direct,
+                   "source-first syntax should remain direct mode");
+        }
+    }
+
+    {
         const std::vector arguments{"main.cpp"sv, "/W4"sv, "/O2"sv, "/fp:fast"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value(), "slash-prefixed native compiler switches should parse");
@@ -233,7 +310,7 @@ void verify_parser_contract() {
     }
 }
 
-void verify_candidate_e2e(const fs::path& mqb_executable) {
+void verify_native_candidate_e2e(const fs::path& mqb_executable) {
     const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
     TempTree tree{.root = fs::temp_directory_path() / ("mqb_native_msvc_cli_" + std::to_string(unique))};
     fs::create_directories(tree.root);
@@ -335,6 +412,144 @@ void verify_candidate_e2e(const fs::path& mqb_executable) {
     }
 }
 
+void verify_command_candidate_e2e(const fs::path& mqb_executable) {
+    const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+    TempTree tree{.root = fs::temp_directory_path() / ("mqb_command_cli_" + std::to_string(unique))};
+    fs::create_directories(tree.root);
+    mqb::platform::windows::WindowsProcessRunner runner;
+
+    const fs::path conventional = tree.root / "conventional";
+    write_text(
+        conventional / "main.cpp",
+        "#include <cstdio>\n"
+        "int main(int argc, char** argv) {\n"
+        "  std::printf(\"conventional:%s\\n\", argc > 1 ? argv[1] : \"none\");\n"
+        "  return 0;\n"
+        "}\n");
+
+    auto build = run_process(
+        runner,
+        mqb_executable,
+        conventional,
+        {"build", "--env", "vs", "--no-discover", "-o", "command_build", "/W4"});
+    expect(build.has_value(), "source-less mqb build should launch");
+    if (build) {
+        if (build->exit_code != 0) dump_failure(*build);
+        expect(build->exit_code == 0,
+               "mqb build should resolve the unique conventional main.cpp and build it");
+    }
+    expect(fs::is_regular_file(conventional / ".mqb/bin/command_build.exe"),
+           "mqb build should produce the conventional-entry target");
+
+    auto run = run_process(
+        runner,
+        mqb_executable,
+        conventional,
+        {"run", "--env", "vs", "--no-discover", "-o", "command_run", "--", "hello"});
+    expect(run.has_value(), "source-less mqb run should launch");
+    if (run) {
+        if (run->exit_code != 0) dump_failure(*run);
+        expect(run->exit_code == 0, "mqb run should build and run the conventional entry");
+        expect(run->stdout_text.find("conventional:hello") != std::string::npos,
+               "mqb run should preserve child argv after --");
+    }
+
+    const fs::path configured = tree.root / "configured";
+    write_text(
+        configured / "main.cpp",
+        "#include <cstdio>\nint main() { std::puts(\"wrong-conventional\"); return 0; }\n");
+    write_text(
+        configured / "app/start.cpp",
+        "#include <cstdio>\n"
+        "int main(int argc, char** argv) {\n"
+        "  std::printf(\"configured:%s\\n\", argc > 1 ? argv[1] : \"none\");\n"
+        "  return 0;\n"
+        "}\n");
+    write_text(
+        configured / "explicit.cpp",
+        "#include <cstdio>\n"
+        "int main(int argc, char** argv) {\n"
+        "  std::printf(\"explicit:%s\\n\", argc > 1 ? argv[1] : \"none\");\n"
+        "  return 0;\n"
+        "}\n");
+    write_text(
+        configured / "mqb.json",
+        R"json({
+  "version": 1,
+  "build": {
+    "entry": "app/start.cpp",
+    "output": "configured_target"
+  }
+})json");
+
+    auto configured_run = run_process(
+        runner,
+        mqb_executable,
+        configured,
+        {"run", "--env", "vs", "--no-discover", "--", "cfg"});
+    expect(configured_run.has_value(), "configured-entry mqb run should launch");
+    if (configured_run) {
+        if (configured_run->exit_code != 0) dump_failure(*configured_run);
+        expect(configured_run->exit_code == 0,
+               "mqb run should build and execute build.entry from mqb.json");
+        expect(configured_run->stdout_text.find("configured:cfg") != std::string::npos,
+               "build.entry should take precedence over a conventional main.cpp");
+        expect(configured_run->stdout_text.find("wrong-conventional") == std::string::npos,
+               "configured build.entry should prevent conventional fallback selection");
+    }
+
+    auto explicit_run = run_process(
+        runner,
+        mqb_executable,
+        configured,
+        {"run", "explicit.cpp", "--env", "vs", "--no-discover", "-o", "explicit_target",
+         "--", "chosen"});
+    expect(explicit_run.has_value(), "explicit-source mqb run should launch");
+    if (explicit_run) {
+        if (explicit_run->exit_code != 0) dump_failure(*explicit_run);
+        expect(explicit_run->exit_code == 0,
+               "explicit source should remain valid when build.entry is configured");
+        expect(explicit_run->stdout_text.find("explicit:chosen") != std::string::npos,
+               "explicit source should take precedence over build.entry");
+    }
+
+    const fs::path ambiguous = tree.root / "ambiguous";
+    write_text(ambiguous / "main.cpp", "int main() { return 0; }\n");
+    write_text(ambiguous / "src/main.cpp", "int main() { return 0; }\n");
+    auto ambiguity = run_process(
+        runner,
+        mqb_executable,
+        ambiguous,
+        {"build", "--env", "vs", "--no-discover"});
+    expect(ambiguity.has_value(), "ambiguous default-entry build should launch");
+    if (ambiguity) {
+        expect(ambiguity->exit_code == 2,
+               "multiple conventional default entries should fail before toolchain execution");
+        expect(ambiguity->stderr_text.find("multiple conventional default entries")
+                   != std::string::npos,
+               "ambiguous default-entry failure should explain how to disambiguate");
+    }
+
+    const fs::path missing_configured = tree.root / "missing-configured";
+    write_text(missing_configured / "main.cpp", "int main() { return 0; }\n");
+    write_text(
+        missing_configured / "mqb.json",
+        R"json({"version":1,"build":{"entry":"missing.cpp"}})json");
+    auto missing = run_process(
+        runner,
+        mqb_executable,
+        missing_configured,
+        {"build", "--env", "vs", "--no-discover"});
+    expect(missing.has_value(), "missing configured-entry build should launch");
+    if (missing) {
+        expect(missing->exit_code == 2,
+               "invalid configured build.entry should fail instead of falling back to main.cpp");
+        expect(missing->stderr_text.find("configured build.entry does not exist")
+                   != std::string::npos,
+               "missing configured entry should retain a dedicated path diagnostic");
+    }
+}
+
 } // namespace
 
 int main(const int argc, char* argv[]) {
@@ -344,7 +559,8 @@ int main(const int argc, char* argv[]) {
     }
 
     verify_parser_contract();
-    verify_candidate_e2e(fs::path{argv[1]});
+    verify_native_candidate_e2e(fs::path{argv[1]});
+    verify_command_candidate_e2e(fs::path{argv[1]});
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
