@@ -108,6 +108,21 @@ int main() {
         library_snapshots);
     expect(warm.reusable(), "matching object and library inputs should be reusable");
 
+    auto unordered_object_snapshots = object_snapshots;
+    std::reverse(unordered_object_snapshots.begin(), unordered_object_snapshots.end());
+    const auto unordered_warm = mqb::LinkCacheValidator::validate(
+        objects,
+        libraries,
+        output,
+        linker,
+        options,
+        cached,
+        output_snapshot,
+        unordered_object_snapshots,
+        library_snapshots);
+    expect(unordered_warm.reusable(),
+           "unordered snapshot callers should retain path-based fallback compatibility");
+
     const auto cold = mqb::LinkCacheValidator::validate(
         objects,
         libraries,

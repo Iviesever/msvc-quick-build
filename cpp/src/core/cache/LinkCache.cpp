@@ -10,7 +10,7 @@ namespace {
 [[nodiscard]] bool same_path(
     const std::filesystem::path& left,
     const std::filesystem::path& right) {
-    return left.lexically_normal() == right.lexically_normal();
+    return left == right || left.lexically_normal() == right.lexically_normal();
 }
 
 [[nodiscard]] bool same_paths(
@@ -53,13 +53,25 @@ void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
     return it == snapshots.end() ? nullptr : &*it;
 }
 
+[[nodiscard]] const FileSnapshot* aligned_snapshot_or_find(
+    const std::span<const FileSnapshot> snapshots,
+    const std::filesystem::path& path,
+    const std::size_t preferred_index) {
+    if (preferred_index < snapshots.size()
+        && same_path(snapshots[preferred_index].path, path)) {
+        return &snapshots[preferred_index];
+    }
+    return find_snapshot(snapshots, path);
+}
+
 void validate_freshness(
     const std::span<const std::filesystem::path> inputs,
     const std::span<const FileSnapshot> snapshots,
     const FileSnapshot& output_snapshot,
     std::vector<BuildReason>& reasons) {
-    for (const auto& input : inputs) {
-        const auto* snapshot = find_snapshot(snapshots, input);
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+        const auto& input = inputs[index];
+        const auto* snapshot = aligned_snapshot_or_find(snapshots, input, index);
         if (snapshot == nullptr || !snapshot->exists) {
             add_reason(reasons, BuildReason::link_inputs_changed);
             continue;
@@ -74,8 +86,9 @@ void validate_side_outputs(
     const std::span<const std::filesystem::path> cached_side_outputs,
     const std::span<const FileSnapshot> snapshots,
     std::vector<BuildReason>& reasons) {
-    for (const auto& output : cached_side_outputs) {
-        const auto* snapshot = find_snapshot(snapshots, output);
+    for (std::size_t index = 0; index < cached_side_outputs.size(); ++index) {
+        const auto& output = cached_side_outputs[index];
+        const auto* snapshot = aligned_snapshot_or_find(snapshots, output, index);
         if (snapshot == nullptr || !snapshot->exists) {
             add_reason(reasons, BuildReason::missing_output);
         }

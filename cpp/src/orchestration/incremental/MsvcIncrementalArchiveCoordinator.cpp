@@ -103,6 +103,12 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
         request.force_archive,
         request.link_time_code_generation);
 
+    // A reusable archive validation already proves that there is no archive
+    // action to schedule. Keep the generic planner on miss/rebuild paths only.
+    if (result.validation.reusable()) {
+        return result;
+    }
+
     auto plan = BuildPlanner::plan_archive(ArchivePlanItem{
         .objects = request.objects,
         .output = request.output,

@@ -10,7 +10,7 @@ namespace {
 [[nodiscard]] bool same_path(
     const std::filesystem::path& left,
     const std::filesystem::path& right) {
-    return left.lexically_normal() == right.lexically_normal();
+    return left == right || left.lexically_normal() == right.lexically_normal();
 }
 
 [[nodiscard]] bool same_paths(
@@ -44,6 +44,17 @@ void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
         snapshots.begin(), snapshots.end(),
         [&path](const FileSnapshot& snapshot) { return same_path(snapshot.path, path); });
     return it == snapshots.end() ? nullptr : &*it;
+}
+
+[[nodiscard]] const FileSnapshot* aligned_snapshot_or_find(
+    const std::span<const FileSnapshot> snapshots,
+    const std::filesystem::path& path,
+    const std::size_t preferred_index) {
+    if (preferred_index < snapshots.size()
+        && same_path(snapshots[preferred_index].path, path)) {
+        return &snapshots[preferred_index];
+    }
+    return find_snapshot(snapshots, path);
 }
 
 } // namespace
@@ -87,8 +98,9 @@ ArchiveCacheValidation ArchiveCacheValidator::validate(
     }
     if (!output_snapshot.exists) add_reason(result.reasons, BuildReason::missing_output);
 
-    for (const auto& object : current_objects) {
-        const auto* snapshot = find_snapshot(object_snapshots, object);
+    for (std::size_t index = 0; index < current_objects.size(); ++index) {
+        const auto& object = current_objects[index];
+        const auto* snapshot = aligned_snapshot_or_find(object_snapshots, object, index);
         if (snapshot == nullptr || !snapshot->exists) {
             add_reason(result.reasons, BuildReason::archive_inputs_changed);
             continue;

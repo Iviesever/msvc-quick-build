@@ -39,6 +39,35 @@ BoundedWorkScheduler::run(
     }
 
     const std::size_t worker_count = std::min(item_count, max_workers);
+    if (worker_count == 1) {
+        std::size_t started_count = 0;
+        for (std::size_t index = 0; index < item_count; ++index) {
+            ++started_count;
+            bool keep_running = false;
+            try {
+                keep_running = work(index);
+            } catch (...) {
+                return std::unexpected(failure(
+                    BoundedWorkErrorCode::callback_threw,
+                    "bounded work callback threw an exception"));
+            }
+            if (!keep_running) {
+                return BoundedWorkSummary{
+                    .worker_count = 1,
+                    .started_count = started_count,
+                    .stop_requested = true,
+                    .stopped_before_all_items = started_count < item_count,
+                };
+            }
+        }
+        return BoundedWorkSummary{
+            .worker_count = 1,
+            .started_count = started_count,
+            .stop_requested = false,
+            .stopped_before_all_items = false,
+        };
+    }
+
     std::atomic<std::size_t> next_index{0};
     std::atomic<std::size_t> started_count{0};
     std::atomic<bool> stop_requested{false};
