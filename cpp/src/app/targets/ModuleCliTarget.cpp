@@ -42,6 +42,15 @@ namespace diagnostics = mqb::app::diagnostics;
     return safe_relative(relative) ? relative : source;
 }
 
+void print_jobs(const orchestration::ParallelismPolicy policy) {
+    std::cout << "  jobs:    ";
+    if (policy.is_automatic()) {
+        std::cout << "auto\n";
+    } else {
+        std::cout << policy.fixed_jobs << '\n';
+    }
+}
+
 } // namespace
 
 bool is_module_interface_source(const fs::path& source) {
@@ -76,10 +85,9 @@ int run_module_target(
             std::cout << "  config:  " << diagnostics::path_text(*request.config_file) << '\n';
         }
         std::cout << "  pipeline: named-modules\n"
-                  << "  type:    " << to_string(request.link_options.target_kind) << '\n'
-                  << "  jobs:    " << request.max_parallel_jobs
-                  << (request.jobs_explicit ? "" : " (auto)") << '\n'
-                  << "  cl:      " << diagnostics::path_text(toolchain.identity.compiler) << '\n'
+                  << "  type:    " << to_string(request.link_options.target_kind) << '\n';
+        print_jobs(request.parallelism);
+        std::cout << "  cl:      " << diagnostics::path_text(toolchain.identity.compiler) << '\n'
                   << "  link:    " << diagnostics::path_text(toolchain.linker) << '\n';
         for (const auto& source : routed_sources) {
             std::cout << "  source:  "
@@ -136,7 +144,7 @@ int run_module_target(
         .compiler_options = std::move(request.compiler_options),
         .link_options = std::move(request.link_options),
         .working_directory = request.project_root,
-        .max_parallel_jobs = request.max_parallel_jobs,
+        .parallelism = request.parallelism,
         .force_named_modules = request.force_named_modules,
     };
     auto result = router.run(target_request);
