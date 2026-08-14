@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -17,6 +18,7 @@ namespace mqb::orchestration {
 namespace {
 
 namespace fs = std::filesystem;
+using Clock = std::chrono::steady_clock;
 
 [[nodiscard]] std::string windows_path_key(const fs::path& path) {
     std::string value = path.lexically_normal().generic_string();
@@ -74,6 +76,9 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
             "static target compile parallelism must be at least one"));
     }
 
+    TargetTimings timings;
+    const auto queue_started = Clock::now();
+
     std::vector<std::string> seen_sources;
     std::vector<std::string> seen_objects;
     std::vector<std::string> seen_dependencies;
@@ -107,6 +112,10 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
 
     using CompileAttempt = std::expected<IncrementalCompileResult, IncrementalCompileError>;
     std::vector<std::optional<CompileAttempt>> attempts(request.sources.size());
+    timings.compile_queue = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - queue_started);
+
+    const auto compile_started = Clock::now();
     const auto scheduled = BoundedWorkScheduler::run(
         request.sources.size(), request.max_parallel_compiles,
         [&](const std::size_t index) {
@@ -114,6 +123,8 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
             attempts[index].emplace(compile_coordinator_.run(compile_request));
             return attempts[index]->has_value();
         });
+    timings.compile = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - compile_started);
     if (!scheduled) {
         return std::unexpected(failure(
             IncrementalStaticTargetErrorCode::scheduling_failed,
@@ -151,6 +162,7 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
         objects.push_back(request.sources[index].artifacts.object);
     }
 
+    const auto archive_started = Clock::now();
     auto archived = archive_coordinator_.run(IncrementalArchiveRequest{
         .objects = std::move(objects),
         .output = request.target.executable,
@@ -159,6 +171,8 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
         .link_time_code_generation = request.compiler_options.link_time_code_generation,
         .force_archive = result.any_compiled,
     });
+    timings.archive = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - archive_started);
     if (!archived) {
         auto error = failure(
             IncrementalStaticTargetErrorCode::archive_failed,
@@ -167,6 +181,7 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
         return std::unexpected(std::move(error));
     }
     result.archive = std::move(*archived);
+    result.timings = timings;
     return result;
 }
 
