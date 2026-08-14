@@ -168,6 +168,8 @@ int main() {
         std::barrier gate{static_cast<std::ptrdiff_t>(concurrent_workers)};
         std::atomic<int> active{0};
         std::atomic<int> maximum_active{0};
+        std::atomic<bool> caller_participated{false};
+        const auto caller_thread = std::this_thread::get_id();
         std::vector<std::atomic<bool>> seen(5);
         for (auto& value : seen) value.store(false, std::memory_order_relaxed);
 
@@ -175,6 +177,9 @@ int main() {
             seen.size(),
             concurrent_workers,
             [&](const std::size_t index) {
+                if (std::this_thread::get_id() == caller_thread) {
+                    caller_participated.store(true, std::memory_order_relaxed);
+                }
                 seen[index].store(true, std::memory_order_relaxed);
                 const int now_active = active.fetch_add(1, std::memory_order_relaxed) + 1;
                 update_max(maximum_active, now_active);
@@ -192,8 +197,10 @@ int main() {
             expect(concurrent->started_count == seen.size(),
                    "successful concurrent scheduling should start every item");
         }
+        expect(caller_participated.load(std::memory_order_relaxed),
+               "multi-worker scheduling should use the caller as one logical worker");
         expect(maximum_active.load(std::memory_order_relaxed) == 3,
-               "three workers should be observably active at the same time");
+               "three logical workers should be observably active at the same time");
         for (std::size_t index = 0; index < seen.size(); ++index) {
             expect(seen[index].load(std::memory_order_relaxed),
                    "every successful work index should run exactly once");

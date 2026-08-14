@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "ModuleTargetScanner.hpp"
+
 namespace mqb::orchestration::detail {
 namespace {
 
@@ -24,14 +26,6 @@ namespace fs = std::filesystem;
         .message = std::move(message),
         .source = std::move(source),
     };
-}
-
-[[nodiscard]] std::optional<fs::path> working_directory_for(
-    const fs::path& requested,
-    const fs::path& source) {
-    if (!requested.empty()) return requested;
-    if (!source.parent_path().empty()) return source.parent_path();
-    return std::nullopt;
 }
 
 [[nodiscard]] bool standard_library_module_name(
@@ -105,10 +99,6 @@ inject_standard_library_module_providers(
     ModuleTargetArtifactRegistry& artifacts,
     std::vector<modules::ScannedModuleUnit>& scanned_units,
     std::vector<ModuleCompileSourceRequest>& compile_sources) {
-    // P1689 from the user's selected TUs is the only trigger for standard-library
-    // provider injection. Newly scanned toolchain providers may in turn require
-    // another toolchain-owned standard module (std.compat -> std), so repeat to
-    // a fixed point before handing the complete topology to the graph owner.
     std::unordered_set<std::string> injected_standard_modules;
     while (auto pending = next_standard_library_requirement(
                scanned_units,
@@ -160,16 +150,16 @@ inject_standard_library_module_providers(
             return std::unexpected(std::move(registered.error()));
         }
 
-        msvc::ModuleScanInvocation invocation{
+        ModuleCompileSourceRequest provider{
             .source = *source,
-            .output_file = source_artifacts->module_dependencies,
-            .options = request.compiler_options,
+            .artifacts = *source_artifacts,
             .kind = TranslationUnitKind::module_interface,
-            .working_directory = working_directory_for(
-                request.working_directory,
-                *source),
         };
-        auto scan = scanner.scan(invocation);
+        auto scan = scan_module_source(
+            provider,
+            request.compiler_options,
+            request.working_directory,
+            scanner);
         if (!scan) {
             IncrementalModuleTargetError error = failure(
                 IncrementalModuleTargetErrorCode::scan_failed,
@@ -194,11 +184,7 @@ inject_standard_library_module_providers(
             .rule = scan->dependencies.rules.front(),
             .toolchain_owned = true,
         });
-        compile_sources.push_back(ModuleCompileSourceRequest{
-            .source = *source,
-            .artifacts = std::move(*source_artifacts),
-            .kind = TranslationUnitKind::module_interface,
-        });
+        compile_sources.push_back(std::move(provider));
         injected_standard_modules.emplace(std::move(pending->logical_name));
     }
 

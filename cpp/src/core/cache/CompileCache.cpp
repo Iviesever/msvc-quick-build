@@ -28,7 +28,17 @@ namespace {
     return left.kind == right.kind && same_path(left.path, right.path);
 }
 
-void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
+[[nodiscard]] bool same_snapshot(
+    const FileSnapshot& left,
+    const FileSnapshot& right) {
+    return same_path(left.path, right.path)
+        && left.exists == right.exists
+        && (!left.exists || left.modified == right.modified);
+}
+
+void add_reason(
+    std::vector<BuildReason>& reasons,
+    const BuildReason reason) {
     if (std::find(reasons.begin(), reasons.end(), reason) == reasons.end()) {
         reasons.push_back(reason);
     }
@@ -43,7 +53,6 @@ void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
         [&path](const FileSnapshot& snapshot) {
             return same_path(snapshot.path, path);
         });
-
     return it == snapshots.end() ? nullptr : &*it;
 }
 
@@ -158,7 +167,9 @@ CompileCacheValidation CompileCacheValidator::validate(
         current_unit,
         current_toolchain,
         current_options);
-    if (cached.signature != current_signature && same_source_identity && toolchain_matches) {
+    if (cached.signature != current_signature
+        && same_source_identity
+        && toolchain_matches) {
         add_reason(result.reasons, BuildReason::compiler_options_changed);
     }
 
@@ -167,7 +178,9 @@ CompileCacheValidation CompileCacheValidator::validate(
     }
     validate_outputs();
 
-    const auto freshness_anchor = oldest_output_time(current_unit, output_snapshots);
+    const auto freshness_anchor = oldest_output_time(
+        current_unit,
+        output_snapshots);
     if (!source_snapshot.exists) {
         add_reason(result.reasons, BuildReason::source_changed);
     } else if (freshness_anchor && source_snapshot.modified > *freshness_anchor) {
@@ -184,13 +197,36 @@ CompileCacheValidation CompileCacheValidator::validate(
             add_reason(result.reasons, BuildReason::dependency_changed);
             continue;
         }
-
         if (freshness_anchor && snapshot->modified > *freshness_anchor) {
             add_reason(result.reasons, BuildReason::dependency_changed);
         }
     }
 
     return result;
+}
+
+bool ModuleScanEvidenceValidator::reusable(
+    const ModuleScanEvidence& evidence,
+    const BuildSignature& current_signature,
+    const FileSnapshot& current_source,
+    const FileSnapshot& current_output,
+    const std::span<const FileSnapshot> current_dependencies) {
+    if (evidence.signature != current_signature
+        || !same_snapshot(evidence.source, current_source)
+        || !same_snapshot(evidence.output, current_output)
+        || !evidence.source.exists
+        || !evidence.output.exists
+        || evidence.dependencies.size() != current_dependencies.size()) {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < evidence.dependencies.size(); ++index) {
+        if (!same_snapshot(evidence.dependencies[index], current_dependencies[index])
+            || !current_dependencies[index].exists) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace mqb

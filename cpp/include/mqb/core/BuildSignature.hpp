@@ -29,6 +29,12 @@ public:
         const ToolchainIdentity& toolchain,
         const CompilerOptions& options);
 
+    [[nodiscard]] static BuildSignature for_module_scan(
+        const std::filesystem::path& source,
+        TranslationUnitKind kind,
+        const ToolchainIdentity& toolchain,
+        const CompilerOptions& options);
+
     [[nodiscard]] static BuildSignature for_link(
         std::span<const std::filesystem::path> objects,
         const std::filesystem::path& output,

@@ -23,6 +23,10 @@ struct IncrementalCompileRequest {
     CompilerOptions options;
     std::filesystem::path cache_file;
     std::filesystem::path source_dependencies_file;
+    // Named-module sources carry the P1689 artifact that preceded this compile.
+    // A successful compile can then seal scan-reuse evidence into its compile
+    // cache. Ordinary and header-unit compile requests leave this empty.
+    std::optional<std::filesystem::path> module_scan_output;
     std::optional<std::filesystem::path> working_directory;
     bool force_rebuild{false};
 };

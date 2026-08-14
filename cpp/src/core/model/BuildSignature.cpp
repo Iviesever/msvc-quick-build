@@ -192,6 +192,34 @@ BuildSignature BuildSignature::for_compile(
     return BuildSignature{hasher.finish()};
 }
 
+BuildSignature BuildSignature::for_module_scan(
+    const std::filesystem::path& source,
+    const TranslationUnitKind kind,
+    const ToolchainIdentity& toolchain,
+    const CompilerOptions& options) {
+    StableHasher hasher;
+    hasher.add_string("mqb.module-scan.signature.v1");
+
+    hasher.add_path(source);
+    hasher.add_enum(kind);
+
+    hasher.add_path(toolchain.compiler);
+    hasher.add_string(toolchain.version);
+    hasher.add_string(toolchain.binary_stamp);
+
+    // Keep this identity aligned with policy that can affect the P1689 topology
+    // scan. Runtime library, LTCG, PCH bindings, and graph-selected IFC
+    // references are compile/link policy and intentionally do not invalidate it.
+    hasher.add_enum(options.configuration);
+    hasher.add_enum(options.architecture);
+    hasher.add_enum(options.standard);
+    hasher.add_strings(options.defines);
+    hasher.add_paths(options.include_directories);
+    hasher.add_strings(options.additional_arguments);
+
+    return BuildSignature{hasher.finish()};
+}
+
 BuildSignature BuildSignature::for_link(
     const std::span<const std::filesystem::path> objects,
     const std::filesystem::path& output,

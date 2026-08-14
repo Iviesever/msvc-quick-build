@@ -2,11 +2,18 @@
 
 #include <expected>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "mqb/core/BuildSignature.hpp"
+#include "mqb/core/CompileCache.hpp"
+#include "mqb/core/CompileCacheFile.hpp"
+#include "mqb/core/FileSnapshot.hpp"
+#include "mqb/modules/P1689.hpp"
 #include "mqb/orchestration/BoundedWorkScheduler.hpp"
 
 namespace mqb::orchestration::detail {
@@ -33,7 +40,100 @@ namespace fs = std::filesystem;
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<FileSnapshot> snapshot_regular_file(const fs::path& path) {
+    if (path.empty()) return std::nullopt;
+    std::error_code error_code;
+    const auto status = fs::status(path, error_code);
+    if (error_code || !fs::is_regular_file(status)) return std::nullopt;
+    const auto modified = fs::last_write_time(path, error_code);
+    if (error_code) return std::nullopt;
+    return FileSnapshot{
+        .path = path,
+        .exists = true,
+        .modified = modified,
+    };
+}
+
+[[nodiscard]] std::optional<std::string> read_text_file(const fs::path& path) {
+    std::ifstream stream{path, std::ios::binary};
+    if (!stream) return std::nullopt;
+    std::string text{
+        std::istreambuf_iterator<char>{stream},
+        std::istreambuf_iterator<char>{}};
+    if (stream.bad()) return std::nullopt;
+    return text;
+}
+
+[[nodiscard]] std::optional<msvc::ModuleScanResult> try_reuse_scan(
+    const ModuleCompileSourceRequest& source,
+    const CompilerOptions& options,
+    msvc::MsvcModuleDependencyScanner& scanner) {
+    auto loaded = CompileCacheFile::load(source.artifacts.compile_cache);
+    if (!loaded || !*loaded || !(**loaded).module_scan) {
+        return std::nullopt;
+    }
+    const auto& evidence = *(**loaded).module_scan;
+
+    const BuildSignature signature = BuildSignature::for_module_scan(
+        source.source,
+        source.kind,
+        scanner.toolchain().identity,
+        options);
+    auto source_snapshot = snapshot_regular_file(source.source);
+    auto output_snapshot = snapshot_regular_file(source.artifacts.module_dependencies);
+    if (!source_snapshot || !output_snapshot) {
+        return std::nullopt;
+    }
+
+    std::vector<FileSnapshot> dependency_snapshots;
+    dependency_snapshots.reserve(evidence.dependencies.size());
+    for (const auto& dependency : evidence.dependencies) {
+        auto snapshot = snapshot_regular_file(dependency.path);
+        if (!snapshot) return std::nullopt;
+        dependency_snapshots.push_back(std::move(*snapshot));
+    }
+
+    if (!ModuleScanEvidenceValidator::reusable(
+            evidence,
+            signature,
+            *source_snapshot,
+            *output_snapshot,
+            dependency_snapshots)) {
+        return std::nullopt;
+    }
+
+    auto text = read_text_file(source.artifacts.module_dependencies);
+    if (!text) return std::nullopt;
+    auto dependencies = modules::P1689Parser::parse(*text);
+    if (!dependencies) return std::nullopt;
+
+    return msvc::ModuleScanResult{
+        .process = process::ProcessResult{},
+        .dependencies = std::move(*dependencies),
+        .reused = true,
+    };
+}
+
 } // namespace
+
+std::expected<msvc::ModuleScanResult, msvc::ModuleScanError>
+scan_module_source(
+    const ModuleCompileSourceRequest& source,
+    const CompilerOptions& options,
+    const fs::path& working_directory,
+    msvc::MsvcModuleDependencyScanner& scanner) {
+    if (auto reused = try_reuse_scan(source, options, scanner)) {
+        return std::move(*reused);
+    }
+
+    return scanner.scan(msvc::ModuleScanInvocation{
+        .source = source.source,
+        .output_file = source.artifacts.module_dependencies,
+        .options = options,
+        .kind = source.kind,
+        .working_directory = working_directory_for(working_directory, source.source),
+    });
+}
 
 std::expected<ModuleTargetScanBatch, IncrementalModuleTargetError>
 scan_requested_module_sources(
@@ -45,17 +145,11 @@ scan_requested_module_sources(
     const auto scheduled = BoundedWorkScheduler::run(
         request.sources.size(), request.max_parallel_scans,
         [&](const std::size_t index) {
-            const auto& source = request.sources[index];
-            msvc::ModuleScanInvocation invocation{
-                .source = source.source,
-                .output_file = source.artifacts.module_dependencies,
-                .options = request.compiler_options,
-                .kind = source.kind,
-                .working_directory = working_directory_for(
-                    request.working_directory,
-                    source.source),
-            };
-            attempts[index].emplace(scanner.scan(invocation));
+            attempts[index].emplace(scan_module_source(
+                request.sources[index],
+                request.compiler_options,
+                request.working_directory,
+                scanner));
             return attempts[index]->has_value();
         });
     if (!scheduled) {

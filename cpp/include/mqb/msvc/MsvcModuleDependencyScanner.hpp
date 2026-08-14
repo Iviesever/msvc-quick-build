@@ -25,6 +25,7 @@ struct ModuleScanInvocation {
 struct ModuleScanResult {
     process::ProcessResult process;
     modules::P1689Document dependencies;
+    bool reused{false};
 };
 
 enum class ModuleScanErrorCode {

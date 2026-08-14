@@ -81,30 +81,39 @@ BoundedWorkScheduler::run(
         stop_requested.store(true, std::memory_order_release);
     };
 
-    std::vector<std::thread> workers;
-    workers.reserve(worker_count);
-    for (std::size_t worker_index = 0; worker_index < worker_count; ++worker_index) {
-        workers.emplace_back([&] {
-            while (!stop_requested.load(std::memory_order_acquire)) {
-                const std::size_t index = next_index.fetch_add(1, std::memory_order_relaxed);
-                if (index >= item_count) {
-                    return;
-                }
+    const auto worker_loop = [&] {
+        while (!stop_requested.load(std::memory_order_acquire)) {
+            const std::size_t index = next_index.fetch_add(1, std::memory_order_relaxed);
+            if (index >= item_count) {
+                return;
+            }
 
-                started_count.fetch_add(1, std::memory_order_relaxed);
-                try {
-                    if (!work(index)) {
-                        request_stop();
-                    }
-                } catch (...) {
-                    callback_threw.store(true, std::memory_order_release);
+            started_count.fetch_add(1, std::memory_order_relaxed);
+            try {
+                if (!work(index)) {
                     request_stop();
                 }
+            } catch (...) {
+                callback_threw.store(true, std::memory_order_release);
+                request_stop();
             }
-        });
+        }
+    };
+
+    // The caller is already an available execution context. Count it as one of
+    // the logical workers instead of creating worker_count background threads
+    // and immediately parking the caller in join(). This preserves the exact
+    // concurrency ceiling while removing one thread creation/destruction from
+    // every parallel dispatch (including every named-module dependency level).
+    std::vector<std::thread> background_workers;
+    background_workers.reserve(worker_count - 1);
+    for (std::size_t worker_index = 1; worker_index < worker_count; ++worker_index) {
+        background_workers.emplace_back(worker_loop);
     }
 
-    for (auto& worker : workers) {
+    worker_loop();
+
+    for (auto& worker : background_workers) {
         worker.join();
     }
 

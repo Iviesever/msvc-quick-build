@@ -37,6 +37,7 @@ IncrementalCompileRequest make_module_compile_request(
         .options = options,
         .cache_file = source.artifacts.compile_cache,
         .source_dependencies_file = source.artifacts.dependencies,
+        .module_scan_output = source.artifacts.module_dependencies,
         .working_directory = working_directory.empty()
             ? std::optional<fs::path>{source.source.parent_path()}
             : std::optional<fs::path>{working_directory},
