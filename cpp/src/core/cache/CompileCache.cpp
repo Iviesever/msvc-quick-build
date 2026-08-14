@@ -28,6 +28,14 @@ namespace {
     return left.kind == right.kind && same_path(left.path, right.path);
 }
 
+[[nodiscard]] bool same_snapshot(
+    const FileSnapshot& left,
+    const FileSnapshot& right) noexcept {
+    return same_path(left.path, right.path)
+        && left.exists == right.exists
+        && (!left.exists || left.modified == right.modified);
+}
+
 void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
     if (std::find(reasons.begin(), reasons.end(), reason) == reasons.end()) {
         reasons.push_back(reason);
@@ -191,6 +199,30 @@ CompileCacheValidation CompileCacheValidator::validate(
     }
 
     return result;
+}
+
+bool ModuleScanEvidenceValidator::reusable(
+    const ModuleScanEvidence& evidence,
+    const BuildSignature& current_signature,
+    const FileSnapshot& current_source,
+    const FileSnapshot& current_output,
+    const std::span<const FileSnapshot> current_dependencies) noexcept {
+    if (evidence.signature != current_signature
+        || !same_snapshot(evidence.source, current_source)
+        || !same_snapshot(evidence.output, current_output)
+        || !evidence.source.exists
+        || !evidence.output.exists
+        || evidence.dependencies.size() != current_dependencies.size()) {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < evidence.dependencies.size(); ++index) {
+        if (!same_snapshot(evidence.dependencies[index], current_dependencies[index])
+            || !current_dependencies[index].exists) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace mqb
