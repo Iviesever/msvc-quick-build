@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Diagnostics.hpp"
+#include "PerformanceTimings.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
@@ -154,6 +155,17 @@ int run_module_target(
         return 4;
     }
 
+    if (request.timings) {
+        request.timings->add_target(result->timings);
+        for (std::size_t index = 0; index < result->compile_hits; ++index) {
+            request.timings->record_compile(false);
+        }
+        for (std::size_t index = 0; index < result->compile_misses; ++index) {
+            request.timings->record_compile(true);
+        }
+        request.timings->record_link(result->link.linked);
+    }
+
     for (const auto& compile : result->compiles) {
         diagnostics::print_compile_warnings(compile.result);
         const fs::path label = display_source(request.project_root, compile.source);
@@ -198,6 +210,9 @@ int run_module_target(
     if (!run_result) {
         diagnostics::print_error("failed to run executable: " + run_result.error().message);
         return 6;
+    }
+    if (request.timings) {
+        request.timings->record_run_startup(run_result->launch_duration);
     }
     diagnostics::print_process_output(*run_result);
     return run_result->exit_code;
