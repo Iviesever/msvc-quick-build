@@ -34,7 +34,10 @@ struct CompileCacheEntry {
 
 struct CompileCacheValidation {
     std::vector<BuildReason> reasons;
-    [[nodiscard]] bool reusable() const noexcept { return reasons.empty(); }
+
+    [[nodiscard]] bool reusable() const noexcept {
+        return reasons.empty();
+    }
 };
 
 class CompileCacheValidator {
