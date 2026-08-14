@@ -84,6 +84,16 @@ void append_common_compile_arguments(
     if (options.link_time_code_generation) arguments.emplace_back("/GL");
 }
 
+void append_precompiled_header_arguments(
+    std::vector<std::string>& arguments,
+    const PrecompiledHeaderBinding& binding) {
+    const std::string header = path_to_utf8(binding.header);
+    arguments.push_back("/FI" + header);
+    arguments.push_back(
+        std::string{binding.role == PrecompiledHeaderRole::create ? "/Yc" : "/Yu"} + header);
+    arguments.push_back("/Fp" + path_to_utf8(binding.artifact));
+}
+
 [[nodiscard]] std::string header_name_argument(const HeaderUnitLookupMethod lookup_method) {
     return lookup_method == HeaderUnitLookupMethod::angle ? "/headerName:angle" : "/headerName:quote";
 }
@@ -102,7 +112,7 @@ build_compile_arguments(const CompileInvocation& invocation) {
     const bool c_translation_unit = is_c_translation_unit_path(invocation.source);
     std::vector<std::string> arguments;
     arguments.reserve(
-        23 + invocation.options.defines.size()
+        26 + invocation.options.defines.size()
         + invocation.options.include_directories.size()
         + invocation.options.additional_arguments.size()
         + (invocation.module_references.size() * 2)
@@ -129,6 +139,9 @@ build_compile_arguments(const CompileInvocation& invocation) {
     if (invocation.source_dependencies) {
         arguments.emplace_back("/sourceDependencies");
         arguments.push_back(path_to_utf8(*invocation.source_dependencies));
+    }
+    if (invocation.options.precompiled_header) {
+        append_precompiled_header_arguments(arguments, *invocation.options.precompiled_header);
     }
     arguments.push_back("/Fo" + path_to_utf8(invocation.object));
     arguments.push_back(path_to_utf8(invocation.source));
