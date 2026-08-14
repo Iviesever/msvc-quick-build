@@ -25,7 +25,7 @@ struct StaticCliTargetRequest {
     CompilerOptions compiler_options;
     std::filesystem::path project_root;
     std::string target_name;
-    orchestration::ParallelismPolicy parallelism{};
+    orchestration::ParallelismPolicy max_parallel_jobs{};
     app::performance::Session* timings{};
     bool force_downstream_rebuild{false};
     bool verbose{false};
