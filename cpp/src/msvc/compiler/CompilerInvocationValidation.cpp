@@ -43,6 +43,16 @@ validate_compiler_options(const CompilerOptions& options) {
             return std::unexpected(invalid_request("additional compiler argument must not be empty"));
         }
     }
+    if (options.precompiled_header) {
+        if (options.precompiled_header->header.empty()) {
+            return std::unexpected(invalid_request(
+                "precompiled header binding must have a non-empty header path"));
+        }
+        if (options.precompiled_header->artifact.empty()) {
+            return std::unexpected(invalid_request(
+                "precompiled header binding must have a non-empty .pch artifact path"));
+        }
+    }
     return {};
 }
 
@@ -59,6 +69,14 @@ validate_module_contract(const CompileInvocation& invocation) {
     if (uses_module_contract && predates_cpp20(invocation.options.standard)) {
         return std::unexpected(invalid_request(
             "module and header-unit compilation requires C++20 or newer"));
+    }
+    if (uses_module_contract && invocation.options.precompiled_header) {
+        return std::unexpected(invalid_request(
+            "precompiled headers are not supported in the Modules/Header Unit compile pipeline"));
+    }
+    if (is_c_translation_unit_path(invocation.source) && invocation.options.precompiled_header) {
+        return std::unexpected(invalid_request(
+            "first-class precompiled headers currently require ordinary C++ translation units"));
     }
 
     if (invocation.kind == TranslationUnitKind::module_interface) {
@@ -146,6 +164,10 @@ validate_header_unit_compile_invocation(const HeaderUnitCompileInvocation& invoc
     if (predates_cpp20(invocation.options.standard)) {
         return std::unexpected(invalid_request(
             "header-unit compilation requires C++20 or newer"));
+    }
+    if (invocation.options.precompiled_header) {
+        return std::unexpected(invalid_request(
+            "precompiled headers are not supported for header-unit producer compilation"));
     }
     return validate_compiler_options(invocation.options);
 }
