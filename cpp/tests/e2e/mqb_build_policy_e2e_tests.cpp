@@ -283,6 +283,68 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                "unchanged typed LTCG should reuse /LTCG link cache");
     }
 
+    // Native semantic switches are normalized into the same typed build model.
+    const fs::path native_semantic_executable = tree.root / ".mqb" / "bin" / "native_semantic.exe";
+    auto native_semantic = run_mqb(
+        runner,
+        mqb_executable,
+        tree.root,
+        {
+            "-o", "native_semantic",
+            "--compiler-arg", "/DPOLICY_VALUE=4",
+            "--compiler-arg", "/std:c++20",
+            "--compiler-arg", "/MT",
+            "--linker-arg", "/SUBSYSTEM:CONSOLE",
+        });
+    expect(native_semantic.has_value(), "native semantic policy invocation should launch");
+    if (native_semantic) {
+        if (native_semantic->exit_code != 0) dump_failure(*native_semantic);
+        expect(native_semantic->exit_code == 0,
+               "native /std, CRT, and subsystem semantics should normalize and build");
+    }
+
+    auto native_semantic_run = run_executable(runner, native_semantic_executable, tree.root);
+    expect(native_semantic_run.has_value() && native_semantic_run->exit_code == 0,
+           "native semantic policy executable should run");
+    if (native_semantic_run) {
+        expect(native_semantic_run->stdout_text.find("policy=4") != std::string::npos,
+               "native semantic normalization must preserve safe passthrough compiler policy");
+    }
+
+    auto semantic_conflict = run_mqb(
+        runner,
+        mqb_executable,
+        tree.root,
+        {
+            "--runtime", "MT",
+            "--compiler-arg", "/MD",
+            "--compiler-arg", "/DPOLICY_VALUE=1",
+        });
+    expect(semantic_conflict.has_value(), "same-layer semantic conflict invocation should launch MQB");
+    if (semantic_conflict) {
+        expect(semantic_conflict->exit_code == 2,
+               "typed/native same-layer runtime conflict should fail before compilation");
+        expect(semantic_conflict->stderr_text.find(
+                   "conflicting typed and native MSVC values for runtime library") != std::string::npos,
+               "same-layer semantic conflict should produce an ownership-aware diagnostic");
+    }
+
+    auto owned_escape = run_mqb(
+        runner,
+        mqb_executable,
+        tree.root,
+        {
+            "--compiler-arg", "/Foescape.obj",
+            "--compiler-arg", "/DPOLICY_VALUE=1",
+        });
+    expect(owned_escape.has_value(), "MQB-owned escape invocation should launch MQB");
+    if (owned_escape) {
+        expect(owned_escape->exit_code == 2,
+               "MQB-owned /Fo escape should fail before cl.exe");
+        expect(owned_escape->stderr_text.find("MQB-owned") != std::string::npos,
+               "owned structural rejection should explain MQB ownership");
+    }
+
     const fs::path config_map = tree.root / "config-policy.map";
     const std::string config = std::string{R"json({
   "version": 1,
@@ -290,8 +352,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     "standard": "17",
     "ltcg": true,
     "output": "config_policy",
-    "compiler_args": ["/DPOLICY_VALUE=3"],
-    "linker_args": ["/MAP:)json"}
+    "compiler_args": ["/DPOLICY_VALUE=3", "/std:c++17", "/GL"],
+    "linker_args": ["/LTCG", "/MAP:)json"}
         + path_text(config_map)
         + R"json("]
   }
@@ -302,13 +364,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     expect(config_cold.has_value(), "config build-policy invocation should launch");
     if (config_cold) {
         if (config_cold->exit_code != 0) dump_failure(*config_cold);
-        expect(config_cold->exit_code == 0, "C++17 config build-policy target should succeed");
+        expect(config_cold->exit_code == 0,
+               "matching typed/native config semantics should normalize and build");
         expect(config_cold->stdout_text.find("[compile] main.cpp") != std::string::npos,
                "config standard/compiler/LTCG policy should produce a fresh compile");
         expect(config_cold->stdout_text.find("[link] config_policy.exe") != std::string::npos,
                "config linker/LTCG policy should produce the configured target");
     }
-    expect(fs::is_regular_file(config_map), "mqb.json linker_args should reach link.exe");
+    expect(fs::is_regular_file(config_map), "mqb.json safe linker_args should reach link.exe");
 
     const fs::path config_executable = tree.root / ".mqb" / "bin" / "config_policy.exe";
     auto config_run = run_executable(runner, config_executable, tree.root);
@@ -339,7 +402,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (config_cli_disable) {
         if (config_cli_disable->exit_code != 0) dump_failure(*config_cli_disable);
         expect(config_cli_disable->exit_code == 0,
-               "--no-ltcg should override build.ltcg=true and remain buildable");
+               "--no-ltcg should override normalized build.ltcg=true and remain buildable");
         expect(config_cli_disable->stdout_text.find("[compile] main.cpp") != std::string::npos
                    && config_cli_disable->stdout_text.find("compiler options changed") != std::string::npos,
                "CLI disablement should invalidate the config-driven /GL compile identity");

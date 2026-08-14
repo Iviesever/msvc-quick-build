@@ -1,9 +1,103 @@
 #include "ProjectSetup.hpp"
 
+#include <expected>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 
+#include "mqb/msvc/MsvcParameterEngine.hpp"
+
 namespace mqb::app {
+namespace {
+
+template <typename T>
+[[nodiscard]] std::expected<void, std::string> merge_semantic_value(
+    std::optional<T>& structured,
+    const std::optional<T>& routed,
+    const std::string_view layer,
+    const std::string_view name) {
+    if (!routed) {
+        return {};
+    }
+    if (structured && *structured != *routed) {
+        return std::unexpected(
+            std::string{layer} + " has conflicting typed and native MSVC values for "
+            + std::string{name});
+    }
+    structured = routed;
+    return {};
+}
+
+[[nodiscard]] std::string parameter_error_message(
+    const std::string_view layer,
+    const mqb::msvc::ParameterError& error) {
+    std::string message{layer};
+    message += " ";
+    message += mqb::msvc::to_string(error.tool);
+    message += " parameter";
+    if (!error.argument.empty()) {
+        message += " '";
+        message += error.argument;
+        message += "'";
+    }
+    message += ": ";
+    message += error.message;
+    return message;
+}
+
+[[nodiscard]] std::expected<void, std::string> normalize_native_parameters(
+    mqb::config::BuildOverrides& build,
+    const std::string_view layer) {
+    auto compiler = mqb::msvc::MsvcParameterEngine::route_compiler(
+        std::span<const std::string>{build.compiler_arguments});
+    if (!compiler) {
+        return std::unexpected(parameter_error_message(layer, compiler.error()));
+    }
+
+    auto linker = mqb::msvc::MsvcParameterEngine::route_linker(
+        std::span<const std::string>{build.linker_arguments});
+    if (!linker) {
+        return std::unexpected(parameter_error_message(layer, linker.error()));
+    }
+
+    if (auto merged = merge_semantic_value(
+            build.standard, compiler->standard, layer, "C++ standard"); !merged) {
+        return std::unexpected(merged.error());
+    }
+    if (auto merged = merge_semantic_value(
+            build.runtime_library, compiler->runtime_library, layer, "runtime library"); !merged) {
+        return std::unexpected(merged.error());
+    }
+    if (auto merged = merge_semantic_value(
+            build.architecture, linker->architecture, layer, "target architecture"); !merged) {
+        return std::unexpected(merged.error());
+    }
+    if (auto merged = merge_semantic_value(
+            build.subsystem, linker->subsystem, layer, "link subsystem"); !merged) {
+        return std::unexpected(merged.error());
+    }
+
+    std::optional<bool> routed_ltcg = compiler->link_time_code_generation;
+    if (linker->link_time_code_generation) {
+        if (routed_ltcg && *routed_ltcg != *linker->link_time_code_generation) {
+            return std::unexpected(
+                std::string{layer}
+                + " has conflicting native MSVC /GL and /LTCG policy");
+        }
+        routed_ltcg = linker->link_time_code_generation;
+    }
+    if (auto merged = merge_semantic_value(
+            build.link_time_code_generation, routed_ltcg, layer, "LTCG"); !merged) {
+        return std::unexpected(merged.error());
+    }
+
+    build.compiler_arguments = std::move(compiler->passthrough);
+    build.linker_arguments = std::move(linker->passthrough);
+    return {};
+}
+
+} // namespace
 
 std::expected<ProjectSetup, ProjectSetupError>
 prepare_project(
@@ -28,8 +122,6 @@ prepare_project(
         project_config = std::move(*loaded);
     }
 
-    const bool subsystem_explicit = options.subsystem_override.has_value()
-        || (project_config && project_config->build.subsystem.has_value());
     const std::filesystem::path project_root = project_config
         ? project_config->project_root
         : invocation_directory;
@@ -60,6 +152,29 @@ prepare_project(
     cli_overrides.build.linker_arguments = options.linker_arguments;
     cli_overrides.discovery.enabled = options.discovery_override;
     cli_overrides.modules.external_providers = options.external_module_providers;
+
+    if (project_config) {
+        auto normalized = normalize_native_parameters(
+            project_config->build,
+            "mqb.json");
+        if (!normalized) {
+            return std::unexpected(ProjectSetupError{
+                .message = normalized.error(),
+                .config_error = std::nullopt,
+            });
+        }
+    }
+    if (auto normalized = normalize_native_parameters(
+            cli_overrides.build,
+            "CLI"); !normalized) {
+        return std::unexpected(ProjectSetupError{
+            .message = normalized.error(),
+            .config_error = std::nullopt,
+        });
+    }
+
+    const bool subsystem_explicit = cli_overrides.build.subsystem.has_value()
+        || (project_config && project_config->build.subsystem.has_value());
 
     auto effective = mqb::config::resolve_project_options(
         project_config ? &*project_config : nullptr,
