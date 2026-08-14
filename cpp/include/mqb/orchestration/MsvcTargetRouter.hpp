@@ -38,7 +38,7 @@ struct RoutedTargetRequest {
     CompilerOptions compiler_options;
     LinkOptions link_options;
     std::filesystem::path working_directory;
-    ParallelismPolicy parallelism{};
+    ParallelismPolicy max_parallel_jobs{};
     // Execution-routing state only. This is used when discovery observed module
     // syntax but found no local named-module interface provider, including a
     // header-unit-only entry. It must not affect compile/link cache identity.
