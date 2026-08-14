@@ -12,6 +12,7 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
+#include "mqb/orchestration/TargetTimings.hpp"
 
 namespace mqb::orchestration {
 
@@ -57,6 +58,7 @@ struct IncrementalTargetError {
 struct IncrementalTargetResult {
     std::vector<TargetCompileResult> compiles;
     IncrementalLinkResult link;
+    TargetTimings timings;
     bool any_compiled{false};
 };
 
