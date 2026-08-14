@@ -92,7 +92,9 @@ struct TempTree {
     return std::move(*result);
 }
 
-[[nodiscard]] std::vector<std::string> raw_policy(int value, const fs::path& map_file) {
+[[nodiscard]] std::vector<std::string> raw_policy(
+    int value,
+    const fs::path& map_file) {
     return {
         "-o", "policy",
         "--compiler-arg", "/DPOLICY_VALUE=" + std::to_string(value),
@@ -144,16 +146,22 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     expect(fs::is_regular_file(map_file), "raw /MAP linker argument should produce its side artifact");
 
     auto cold_run = run_executable(runner, executable, tree.root);
-    expect(cold_run.has_value() && cold_run->exit_code == 0, "cold raw-policy executable should run");
-    if (cold_run) expect(cold_run->stdout_text.find("policy=1") != std::string::npos, "raw compiler define should affect executable behavior");
+    expect(cold_run.has_value() && cold_run->exit_code == 0,
+           "cold raw-policy executable should run");
+    if (cold_run) {
+        expect(cold_run->stdout_text.find("policy=1") != std::string::npos,
+               "raw compiler define should affect executable behavior");
+    }
 
     auto warm = run_mqb(runner, mqb_executable, tree.root, raw_policy(1, map_file));
     expect(warm.has_value(), "warm raw-policy invocation should launch");
     if (warm) {
         if (warm->exit_code != 0) dump_failure(*warm);
         expect(warm->exit_code == 0, "warm raw-policy build should succeed");
-        expect(contains_line(warm->stdout_text, "[up-to-date] main.cpp"), "unchanged raw compiler policy should reuse compile cache");
-        expect(contains_line(warm->stdout_text, "[up-to-date] policy.exe"), "unchanged raw linker policy should reuse link cache");
+        expect(contains_line(warm->stdout_text, "[up-to-date] main.cpp"),
+               "unchanged raw compiler policy should reuse compile cache");
+        expect(contains_line(warm->stdout_text, "[up-to-date] policy.exe"),
+               "unchanged raw linker policy should reuse link cache");
     }
 
     auto compiler_changed = run_mqb(runner, mqb_executable, tree.root, raw_policy(2, map_file));
@@ -167,13 +175,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         expect(compiler_changed->stdout_text.find("[link] policy.exe") != std::string::npos,
                "fresh compile from raw compiler change should force relink");
     }
+
     auto compiler_changed_run = run_executable(runner, executable, tree.root);
-    expect(compiler_changed_run.has_value() && compiler_changed_run->exit_code == 0, "compiler-policy changed executable should run");
-    if (compiler_changed_run) expect(compiler_changed_run->stdout_text.find("policy=2") != std::string::npos, "changed raw compiler argument should affect executable behavior");
+    expect(compiler_changed_run.has_value() && compiler_changed_run->exit_code == 0,
+           "compiler-policy changed executable should run");
+    if (compiler_changed_run) {
+        expect(compiler_changed_run->stdout_text.find("policy=2") != std::string::npos,
+               "changed raw compiler argument should affect executable behavior");
+    }
 
     std::error_code remove_error;
     fs::remove(map_file, remove_error);
-    expect(!remove_error && !fs::exists(map_file), "test should remove the first map artifact before linker-only rebuild");
+    expect(!remove_error && !fs::exists(map_file),
+           "test should remove the first map artifact before linker-only rebuild");
 
     auto linker_policy = raw_policy(2, map_file);
     linker_policy.emplace_back("--linker-arg");
@@ -183,12 +197,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (linker_changed) {
         if (linker_changed->exit_code != 0) dump_failure(*linker_changed);
         expect(linker_changed->exit_code == 0, "linker-policy changed build should succeed");
-        expect(contains_line(linker_changed->stdout_text, "[up-to-date] main.cpp"), "linker-only policy change must not recompile the TU");
+        expect(contains_line(linker_changed->stdout_text, "[up-to-date] main.cpp"),
+               "linker-only policy change must not recompile the TU");
         expect(linker_changed->stdout_text.find("[link] policy.exe") != std::string::npos
                    && linker_changed->stdout_text.find("linker options changed") != std::string::npos,
                "raw linker argument change should invalidate link recipe identity only");
     }
-    expect(fs::is_regular_file(map_file), "linker-only rebuild should execute raw /MAP policy and recreate its side artifact");
+    expect(fs::is_regular_file(map_file),
+           "linker-only rebuild should execute raw /MAP policy and recreate its side artifact");
 
     auto runtime_policy = raw_policy(2, map_file);
     runtime_policy.emplace_back("--runtime");
@@ -201,7 +217,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         expect(runtime_changed->stdout_text.find("[compile] main.cpp") != std::string::npos
                    && runtime_changed->stdout_text.find("compiler options changed") != std::string::npos,
                "typed runtime change should invalidate compile recipe identity");
-        expect(runtime_changed->stdout_text.find("[link] policy.exe") != std::string::npos, "typed runtime change should relink after recompilation");
+        expect(runtime_changed->stdout_text.find("[link] policy.exe") != std::string::npos,
+               "typed runtime change should relink after recompilation");
     }
 
     auto runtime_warm = run_mqb(runner, mqb_executable, tree.root, runtime_policy);
@@ -209,8 +226,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (runtime_warm) {
         if (runtime_warm->exit_code != 0) dump_failure(*runtime_warm);
         expect(runtime_warm->exit_code == 0, "warm typed-runtime build should succeed");
-        expect(contains_line(runtime_warm->stdout_text, "[up-to-date] main.cpp"), "unchanged typed runtime should reuse compile cache");
-        expect(contains_line(runtime_warm->stdout_text, "[up-to-date] policy.exe"), "unchanged typed runtime should reuse link cache");
+        expect(contains_line(runtime_warm->stdout_text, "[up-to-date] main.cpp"),
+               "unchanged typed runtime should reuse compile cache");
+        expect(contains_line(runtime_warm->stdout_text, "[up-to-date] policy.exe"),
+               "unchanged typed runtime should reuse link cache");
     }
 
     auto windows_policy = runtime_policy;
@@ -221,7 +240,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (subsystem_changed) {
         if (subsystem_changed->exit_code != 0) dump_failure(*subsystem_changed);
         expect(subsystem_changed->exit_code == 0, "Windows-subsystem target should link successfully");
-        expect(contains_line(subsystem_changed->stdout_text, "[up-to-date] main.cpp"), "subsystem-only change must not recompile the TU");
+        expect(contains_line(subsystem_changed->stdout_text, "[up-to-date] main.cpp"),
+               "subsystem-only change must not recompile the TU");
         expect(subsystem_changed->stdout_text.find("[link] policy.exe") != std::string::npos
                    && subsystem_changed->stdout_text.find("linker options changed") != std::string::npos,
                "typed subsystem change should invalidate link recipe identity only");
@@ -232,8 +252,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (subsystem_warm) {
         if (subsystem_warm->exit_code != 0) dump_failure(*subsystem_warm);
         expect(subsystem_warm->exit_code == 0, "warm Windows-subsystem build should succeed");
-        expect(contains_line(subsystem_warm->stdout_text, "[up-to-date] main.cpp"), "unchanged subsystem should keep compile cache warm");
-        expect(contains_line(subsystem_warm->stdout_text, "[up-to-date] policy.exe"), "unchanged subsystem should keep link cache warm");
+        expect(contains_line(subsystem_warm->stdout_text, "[up-to-date] main.cpp"),
+               "unchanged subsystem should keep compile cache warm");
+        expect(contains_line(subsystem_warm->stdout_text, "[up-to-date] policy.exe"),
+               "unchanged subsystem should keep link cache warm");
     }
 
     auto ltcg_policy = windows_policy;
@@ -246,7 +268,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         expect(ltcg_changed->stdout_text.find("[compile] main.cpp") != std::string::npos
                    && ltcg_changed->stdout_text.find("compiler options changed") != std::string::npos,
                "enabling typed LTCG should invalidate compile identity for /GL");
-        expect(ltcg_changed->stdout_text.find("[link] policy.exe") != std::string::npos, "enabling typed LTCG should relink with /LTCG");
+        expect(ltcg_changed->stdout_text.find("[link] policy.exe") != std::string::npos,
+               "enabling typed LTCG should relink with /LTCG");
     }
 
     auto ltcg_warm = run_mqb(runner, mqb_executable, tree.root, ltcg_policy);
@@ -254,24 +277,32 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (ltcg_warm) {
         if (ltcg_warm->exit_code != 0) dump_failure(*ltcg_warm);
         expect(ltcg_warm->exit_code == 0, "warm typed LTCG executable build should succeed");
-        expect(contains_line(ltcg_warm->stdout_text, "[up-to-date] main.cpp"), "unchanged typed LTCG should reuse /GL compile cache");
-        expect(contains_line(ltcg_warm->stdout_text, "[up-to-date] policy.exe"), "unchanged typed LTCG should reuse /LTCG link cache");
+        expect(contains_line(ltcg_warm->stdout_text, "[up-to-date] main.cpp"),
+               "unchanged typed LTCG should reuse /GL compile cache");
+        expect(contains_line(ltcg_warm->stdout_text, "[up-to-date] policy.exe"),
+               "unchanged typed LTCG should reuse /LTCG link cache");
     }
 
     // Native semantic switches are normalized into the same typed build model.
     const fs::path native_semantic_executable = tree.root / ".mqb" / "bin" / "native_semantic.exe";
     auto native_semantic = run_mqb(
-        runner, mqb_executable, tree.root,
-        {"-o", "native_semantic",
-         "--compiler-arg", "/DPOLICY_VALUE=4",
-         "--compiler-arg", "/std:c++20",
-         "--compiler-arg", "/MT",
-         "--linker-arg", "/SUBSYSTEM:CONSOLE"});
+        runner,
+        mqb_executable,
+        tree.root,
+        {
+            "-o", "native_semantic",
+            "--compiler-arg", "/DPOLICY_VALUE=4",
+            "--compiler-arg", "/std:c++20",
+            "--compiler-arg", "/MT",
+            "--linker-arg", "/SUBSYSTEM:CONSOLE",
+        });
     expect(native_semantic.has_value(), "native semantic policy invocation should launch");
     if (native_semantic) {
         if (native_semantic->exit_code != 0) dump_failure(*native_semantic);
-        expect(native_semantic->exit_code == 0, "native /std, CRT, and subsystem semantics should normalize and build");
+        expect(native_semantic->exit_code == 0,
+               "native /std, CRT, and subsystem semantics should normalize and build");
     }
+
     auto native_semantic_run = run_executable(runner, native_semantic_executable, tree.root);
     expect(native_semantic_run.has_value() && native_semantic_run->exit_code == 0,
            "native semantic policy executable should run");
@@ -281,21 +312,35 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
 
     auto semantic_conflict = run_mqb(
-        runner, mqb_executable, tree.root,
-        {"--runtime", "MT", "--compiler-arg", "/MD", "--compiler-arg", "/DPOLICY_VALUE=1"});
+        runner,
+        mqb_executable,
+        tree.root,
+        {
+            "--runtime", "MT",
+            "--compiler-arg", "/MD",
+            "--compiler-arg", "/DPOLICY_VALUE=1",
+        });
     expect(semantic_conflict.has_value(), "same-layer semantic conflict invocation should launch MQB");
     if (semantic_conflict) {
-        expect(semantic_conflict->exit_code == 2, "typed/native same-layer runtime conflict should fail before compilation");
-        expect(semantic_conflict->stderr_text.find("conflicting typed and native MSVC values for runtime library") != std::string::npos,
+        expect(semantic_conflict->exit_code == 2,
+               "typed/native same-layer runtime conflict should fail before compilation");
+        expect(semantic_conflict->stderr_text.find(
+                   "conflicting typed and native MSVC values for runtime library") != std::string::npos,
                "same-layer semantic conflict should produce an ownership-aware diagnostic");
     }
 
     auto owned_escape = run_mqb(
-        runner, mqb_executable, tree.root,
-        {"--compiler-arg", "/Foescape.obj", "--compiler-arg", "/DPOLICY_VALUE=1"});
+        runner,
+        mqb_executable,
+        tree.root,
+        {
+            "--compiler-arg", "/Foescape.obj",
+            "--compiler-arg", "/DPOLICY_VALUE=1",
+        });
     expect(owned_escape.has_value(), "MQB-owned escape invocation should launch MQB");
     if (owned_escape) {
-        expect(owned_escape->exit_code == 2, "MQB-owned /Fo escape should fail before cl.exe");
+        expect(owned_escape->exit_code == 2,
+               "MQB-owned /Fo escape should fail before cl.exe");
         expect(owned_escape->stderr_text.find("MQB-owned") != std::string::npos,
                "owned structural rejection should explain MQB ownership");
     }
@@ -319,7 +364,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     expect(config_cold.has_value(), "config build-policy invocation should launch");
     if (config_cold) {
         if (config_cold->exit_code != 0) dump_failure(*config_cold);
-        expect(config_cold->exit_code == 0, "matching typed/native config semantics should normalize and build");
+        expect(config_cold->exit_code == 0,
+               "matching typed/native config semantics should normalize and build");
         expect(config_cold->stdout_text.find("[compile] main.cpp") != std::string::npos,
                "config standard/compiler/LTCG policy should produce a fresh compile");
         expect(config_cold->stdout_text.find("[link] config_policy.exe") != std::string::npos,
@@ -329,23 +375,34 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     const fs::path config_executable = tree.root / ".mqb" / "bin" / "config_policy.exe";
     auto config_run = run_executable(runner, config_executable, tree.root);
-    expect(config_run.has_value() && config_run->exit_code == 0, "config build-policy executable should run");
-    if (config_run) expect(config_run->stdout_text.find("policy=3") != std::string::npos, "mqb.json compiler_args should affect executable behavior");
+    expect(config_run.has_value() && config_run->exit_code == 0,
+           "config build-policy executable should run");
+    if (config_run) {
+        expect(config_run->stdout_text.find("policy=3") != std::string::npos,
+               "mqb.json compiler_args should affect executable behavior");
+    }
 
     auto config_warm = run_mqb(runner, mqb_executable, tree.root, {});
     expect(config_warm.has_value(), "warm config build-policy invocation should launch");
     if (config_warm) {
         if (config_warm->exit_code != 0) dump_failure(*config_warm);
         expect(config_warm->exit_code == 0, "warm config build-policy target should succeed");
-        expect(contains_line(config_warm->stdout_text, "[up-to-date] main.cpp"), "unchanged config compiler/LTCG policy should be reusable");
-        expect(contains_line(config_warm->stdout_text, "[up-to-date] config_policy.exe"), "unchanged config linker/LTCG policy should be reusable");
+        expect(contains_line(config_warm->stdout_text, "[up-to-date] main.cpp"),
+               "unchanged config compiler/LTCG policy should be reusable");
+        expect(contains_line(config_warm->stdout_text, "[up-to-date] config_policy.exe"),
+               "unchanged config linker/LTCG policy should be reusable");
     }
 
-    auto config_cli_disable = run_mqb(runner, mqb_executable, tree.root, {"--no-ltcg"});
+    auto config_cli_disable = run_mqb(
+        runner,
+        mqb_executable,
+        tree.root,
+        {"--no-ltcg"});
     expect(config_cli_disable.has_value(), "CLI LTCG-disable override invocation should launch");
     if (config_cli_disable) {
         if (config_cli_disable->exit_code != 0) dump_failure(*config_cli_disable);
-        expect(config_cli_disable->exit_code == 0, "--no-ltcg should override normalized build.ltcg=true and remain buildable");
+        expect(config_cli_disable->exit_code == 0,
+               "--no-ltcg should override normalized build.ltcg=true and remain buildable");
         expect(config_cli_disable->stdout_text.find("[compile] main.cpp") != std::string::npos
                    && config_cli_disable->stdout_text.find("compiler options changed") != std::string::npos,
                "CLI disablement should invalidate the config-driven /GL compile identity");
