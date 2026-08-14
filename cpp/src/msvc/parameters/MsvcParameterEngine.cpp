@@ -10,12 +10,7 @@
 namespace mqb::msvc {
 namespace {
 
-struct Rule {
-    std::string_view prefix;
-    ParameterOwnership ownership;
-    std::string_view canonical_name;
-    std::string_view rationale;
-};
+using namespace std::string_view_literals;
 
 [[nodiscard]] std::string upper_ascii(std::string_view value) {
     std::string result{value};
@@ -32,9 +27,17 @@ struct Rule {
     return {};
 }
 
+template <std::size_t N>
+[[nodiscard]] bool contains_exact(
+    const std::string_view value,
+    const std::array<std::string_view, N>& candidates) noexcept {
+    return std::find(candidates.begin(), candidates.end(), value) != candidates.end();
+}
+
+template <std::size_t N>
 [[nodiscard]] bool starts_with_any(
     const std::string_view value,
-    const std::span<const std::string_view> prefixes) noexcept {
+    const std::array<std::string_view, N>& prefixes) noexcept {
     return std::any_of(prefixes.begin(), prefixes.end(), [value](const std::string_view prefix) {
         return value.starts_with(prefix);
     });
@@ -96,14 +99,17 @@ struct Rule {
         return classification(ParameterTool::compiler, ParameterOwnership::semantic, "/GL", "normalized to coupled LTCG policy");
     }
 
-    static constexpr std::array owned{
-        "c"sv, "Fo"sv, "Fe"sv, "Fd"sv, "Fp"sv,
-        "ifcOutput"sv, "sourceDependencies"sv, "scanDependencies"sv,
-        "reference"sv, "headerUnit:"sv, "headerName:"sv, "ifcSearchDir"sv,
-        "stdIfcDir"sv, "exportHeader"sv, "interface"sv, "TC"sv, "TP"sv,
+    static constexpr std::array owned_exact{
+        "c"sv, "exportHeader"sv, "interface"sv, "TC"sv, "TP"sv,
         "link"sv, "LD"sv, "LDd"sv,
     };
-    if (starts_with_any(body, owned)) {
+    static constexpr std::array owned_prefix{
+        "Fo"sv, "Fe"sv, "Fd"sv, "Fp"sv,
+        "ifcOutput"sv, "sourceDependencies"sv, "scanDependencies"sv,
+        "reference"sv, "headerUnit:"sv, "headerName:"sv, "ifcSearchDir"sv,
+        "stdIfcDir"sv,
+    };
+    if (contains_exact(body, owned_exact) || starts_with_any(body, owned_prefix)) {
         return classification(
             ParameterTool::compiler,
             ParameterOwnership::mqb_owned,
@@ -111,13 +117,15 @@ struct Rule {
             "MQB owns compile mode, artifact routing, module topology, or downstream linking");
     }
 
-    static constexpr std::array unsupported{
-        "MP"sv, "Yc"sv, "Yu"sv, "Y-"sv,
+    static constexpr std::array unsupported_exact{
         "E"sv, "EP"sv, "P"sv, "Zs"sv, "LN"sv,
         "Gm"sv, "GX"sv, "GZ"sv, "Og"sv, "Wp64"sv,
+    };
+    static constexpr std::array unsupported_prefix{
+        "MP"sv, "Yc"sv, "Yu"sv, "Y-"sv,
         "experimental:preprocessor"sv, "errorReport"sv,
     };
-    if (starts_with_any(body, unsupported)) {
+    if (contains_exact(body, unsupported_exact) || starts_with_any(body, unsupported_prefix)) {
         return classification(
             ParameterTool::compiler,
             ParameterOwnership::unsupported,
@@ -129,25 +137,28 @@ struct Rule {
                     : "option changes the compile pipeline shape or is deprecated/removed");
     }
 
-    static constexpr std::array passthrough{
-        "?"sv, "AI"sv, "analyze"sv, "arch:"sv, "arm64EC"sv, "await"sv,
-        "bigobj"sv, "Brepro"sv, "Bt+"sv, "C"sv, "cgthreads"sv, "clr"sv,
-        "constexpr:"sv, "D"sv, "diagnostics:"sv, "doc"sv, "dynamicdeopt"sv,
-        "EH"sv, "execution-charset:"sv, "experimental:"sv, "external:"sv,
-        "F"sv, "FA"sv, "Fa"sv, "favor:"sv, "FC"sv, "FI"sv, "FS"sv,
-        "Gd"sv, "GF"sv, "Gh"sv, "GH"sv, "GR"sv, "GS"sv, "guard:"sv,
-        "Gw"sv, "Gy"sv, "hotpatch"sv, "I"sv, "J"sv, "JMC"sv,
-        "jumptablerdata"sv, "kernel"sv, "openmp"sv, "O1"sv, "O2"sv,
-        "Ob"sv, "Od"sv, "Oi"sv, "Os"sv, "Ot"sv, "Ox"sv, "Oy"sv,
-        "permissive"sv, "Qpar"sv, "Qspectre"sv, "RTC"sv, "sdl"sv,
-        "showIncludes"sv, "source-charset:"sv, "translateInclude"sv,
-        "utf-8"sv, "validate-charset"sv, "validateIfcChecksum"sv,
-        "volatile:"sv, "W0"sv, "W1"sv, "W2"sv, "W3"sv, "W4"sv,
-        "Wall"sv, "wd"sv, "we"sv, "WL"sv, "wo"sv, "Wv:"sv, "WX"sv,
-        "Z7"sv, "Za"sv, "Zc:"sv, "Zf"sv, "ZH:"sv, "Zi"sv, "Zl"sv,
-        "Zm"sv, "Zo"sv, "Zp"sv, "ZW"sv,
+    static constexpr std::array passthrough_exact{
+        "?"sv, "bigobj"sv, "Brepro"sv, "Bt+"sv, "C"sv, "dynamicdeopt"sv,
+        "FC"sv, "FS"sv, "GF"sv, "Gh"sv, "GH"sv, "Gw"sv, "Gy"sv,
+        "hotpatch"sv, "J"sv, "JMC"sv, "jumptablerdata"sv, "kernel"sv,
+        "O1"sv, "O2"sv, "Od"sv, "Os"sv, "Ot"sv, "Ox"sv, "Oy"sv,
+        "permissive"sv, "permissive-"sv, "sdl"sv, "sdl-"sv,
+        "showIncludes"sv, "utf-8"sv, "validate-charset"sv, "validateIfcChecksum"sv,
+        "W0"sv, "W1"sv, "W2"sv, "W3"sv, "W4"sv, "Wall"sv, "WL"sv,
+        "WX"sv, "WX-"sv, "Z7"sv, "Za"sv, "Zf"sv, "Zi"sv, "Zl"sv, "ZW"sv,
     };
-    if (starts_with_any(body, passthrough)) {
+    static constexpr std::array passthrough_prefix{
+        "AI"sv, "analyze"sv, "arch:"sv, "arm64EC"sv, "await"sv,
+        "cgthreads"sv, "clr"sv, "constexpr:"sv, "D"sv, "diagnostics:"sv,
+        "doc"sv, "EH"sv, "execution-charset:"sv, "experimental:"sv, "external:"sv,
+        "F"sv, "FA"sv, "Fa"sv, "favor:"sv, "FI"sv,
+        "Gd"sv, "GR"sv, "GS"sv, "guard:"sv, "I"sv, "openmp"sv,
+        "Ob"sv, "Oi"sv, "Qpar"sv, "Qspectre"sv, "RTC"sv,
+        "source-charset:"sv, "translateInclude"sv, "volatile:"sv,
+        "wd"sv, "we"sv, "wo"sv, "Wv:"sv,
+        "Zc:"sv, "ZH:"sv, "Zm"sv, "Zo"sv, "Zp"sv,
+    };
+    if (contains_exact(body, passthrough_exact) || starts_with_any(body, passthrough_prefix)) {
         return classification(
             ParameterTool::compiler,
             ParameterOwnership::passthrough,
@@ -183,15 +194,15 @@ struct Rule {
     }
     const std::string body = upper_ascii(raw_body);
 
-    if (body.starts_with("MACHINE:") || body.starts_with("SUBSYSTEM:") || body == "LTCG" || body.starts_with("LTCG:")) {
+    if (body.starts_with("MACHINE:") || body.starts_with("SUBSYSTEM:") || body == "LTCG" || body == "LTCG:OFF") {
         return classification(ParameterTool::linker, ParameterOwnership::semantic, "/" + body, "normalized to typed linker policy");
     }
 
-    static constexpr std::array owned{
-        "OUT:"sv, "DLL"sv, "IMPLIB:"sv, "LIBPATH:"sv, "PDB:"sv, "PDBALTPATH:"sv,
+    static constexpr std::array owned_prefix{
+        "OUT:"sv, "IMPLIB:"sv, "LIBPATH:"sv, "PDB:"sv, "PDBALTPATH:"sv,
         "PDBSTRIPPED:"sv, "ILK:"sv, "LTCGOUT:"sv, "WHOLEARCHIVE:"sv,
     };
-    if (starts_with_any(body, owned)) {
+    if (body == "DLL" || starts_with_any(std::string_view{body}, owned_prefix)) {
         return classification(
             ParameterTool::linker,
             ParameterOwnership::mqb_owned,
@@ -199,37 +210,51 @@ struct Rule {
             "MQB owns target identity, resolved library inputs, and primary debug/incremental artifacts");
     }
 
-    static constexpr std::array unsupported{
+    static constexpr std::array unsupported_prefix{
         "DEF:"sv, "ORDER:"sv, "STUB:"sv, "MANIFESTINPUT:"sv,
         "ASSEMBLYMODULE:"sv, "ASSEMBLYRESOURCE:"sv, "ASSEMBLYLINKRESOURCE:"sv,
         "WINMDFILE:"sv, "DEFAULTLIB:"sv,
     };
-    if (starts_with_any(body, unsupported)) {
+    if (body == "DEBUG:FASTLINK"
+        || body == "LTCG:INCREMENTAL"
+        || body == "LTCG:NOSTATUS"
+        || body == "LTCG:STATUS"
+        || starts_with_any(std::string_view{body}, unsupported_prefix)) {
         return classification(
             ParameterTool::linker,
             ParameterOwnership::unsupported,
             "/" + body,
-            "option introduces an input that is not yet represented in MQB's freshness graph");
+            body == "DEBUG:FASTLINK"
+                ? "/DEBUG:FASTLINK is removed from current Visual Studio toolchains; use /DEBUG:FULL"
+                : body.starts_with("LTCG:")
+                    ? "current MQB LTCG policy is boolean and cannot preserve this /LTCG mode yet"
+                    : "option introduces an input that is not yet represented in MQB's freshness graph");
     }
 
-    static constexpr std::array passthrough{
-        "?"sv, "ALIGN:"sv, "ALLOWBIND"sv, "ALLOWISOLATION"sv, "APPCONTAINER"sv,
-        "ARM64XFUNCTIONPADMINX64:"sv, "ASSEMBLYDEBUG"sv, "BASE:"sv, "CETCOMPAT"sv,
-        "CGTHREADS:"sv, "CLRIMAGETYPE:"sv, "CLRLOADEROPTIMIZATION:"sv, "COMMENT:"sv,
-        "DEBUG"sv, "DELAYLOAD:"sv, "DEPENDENTLOADFLAG:"sv, "DYNAMICBASE"sv,
-        "DYNAMICDEOPT"sv, "ENTRY:"sv, "ERRORREPORT:"sv, "EXPORT:"sv,
-        "FASTFAIL"sv, "FASTGENPROFILE"sv, "FIXED"sv, "FORCE"sv, "FUNCTIONPADMIN"sv,
-        "GENPROFILE"sv, "GUARD:"sv, "HEAP:"sv, "HIGHENTROPYVA"sv, "INCLUDE:"sv,
-        "INCREMENTAL"sv, "INCREMENTAL:NO"sv, "INFERASANLIBS"sv, "INTEGRITYCHECK"sv,
-        "KERNEL"sv, "LARGEADDRESSAWARE"sv, "LINKREPRO:"sv, "LINKREPROFULLPATHRSP:"sv,
-        "LINKREPROTARGET:"sv, "MAP"sv, "MAP:"sv, "MAPINFO:"sv, "MERGE:"sv,
-        "NATVIS:"sv, "NOASSEMBLY"sv, "NODEFAULTLIB"sv, "NODEFAULTLIB:"sv, "NOENTRY"sv,
-        "NOEXP"sv, "NOIMPLIB"sv, "NOLOGO"sv, "NXCOMPAT"sv, "OPT:"sv, "PROFILE"sv,
-        "RELEASE"sv, "SAFESEH"sv, "SECTION:"sv, "STACK:"sv, "SWAPRUN:"sv,
-        "TIME"sv, "TLBID:"sv, "TLBOUT:"sv, "TSAWARE"sv, "USEPROFILE"sv,
-        "VERBOSE"sv, "VERSION:"sv, "WINMD"sv, "WX"sv, "WX:NO"sv,
+    static constexpr std::array passthrough_exact{
+        "?"sv, "ALLOWBIND"sv, "ALLOWISOLATION"sv, "APPCONTAINER"sv,
+        "ASSEMBLYDEBUG"sv, "CETCOMPAT"sv, "DEBUG"sv, "DEBUG:FULL"sv,
+        "DYNAMICBASE"sv, "DYNAMICDEOPT"sv, "FASTFAIL"sv, "FASTGENPROFILE"sv,
+        "FIXED"sv, "FORCE"sv, "FUNCTIONPADMIN"sv, "GENPROFILE"sv,
+        "HIGHENTROPYVA"sv, "INCREMENTAL"sv, "INCREMENTAL:NO"sv,
+        "INFERASANLIBS"sv, "INTEGRITYCHECK"sv, "KERNEL"sv, "LARGEADDRESSAWARE"sv,
+        "MAP"sv, "NOASSEMBLY"sv, "NODEFAULTLIB"sv, "NOENTRY"sv, "NOEXP"sv,
+        "NOIMPLIB"sv, "NOLOGO"sv, "NXCOMPAT"sv, "PROFILE"sv, "RELEASE"sv,
+        "SAFESEH"sv, "TIME"sv, "TSAWARE"sv, "USEPROFILE"sv, "VERBOSE"sv,
+        "WINMD"sv, "WX"sv, "WX:NO"sv,
     };
-    if (starts_with_any(body, passthrough)) {
+    static constexpr std::array passthrough_prefix{
+        "ALIGN:"sv, "ARM64XFUNCTIONPADMINX64:"sv, "ASSEMBLYDEBUG:"sv, "BASE:"sv,
+        "CGTHREADS:"sv, "CLRIMAGETYPE:"sv, "CLRLOADEROPTIMIZATION:"sv, "COMMENT:"sv,
+        "DEBUGTYPE:"sv, "DELAYLOAD:"sv, "DEPENDENTLOADFLAG:"sv, "ENTRY:"sv,
+        "ERRORREPORT:"sv, "EXPORT:"sv, "FORCE:"sv, "GUARD:"sv, "HEAP:"sv,
+        "INCLUDE:"sv, "LINKREPRO:"sv, "LINKREPROFULLPATHRSP:"sv, "LINKREPROTARGET:"sv,
+        "MAP:"sv, "MAPINFO:"sv, "MERGE:"sv, "NATVIS:"sv, "NODEFAULTLIB:"sv,
+        "OPT:"sv, "SECTION:"sv, "STACK:"sv, "SWAPRUN:"sv, "TLBID:"sv,
+        "TLBOUT:"sv, "VERSION:"sv,
+    };
+    if (contains_exact(std::string_view{body}, passthrough_exact)
+        || starts_with_any(std::string_view{body}, passthrough_prefix)) {
         return classification(
             ParameterTool::linker,
             ParameterOwnership::passthrough,
@@ -271,22 +296,26 @@ struct Rule {
     if (body.starts_with("OUT:")) {
         return classification(ParameterTool::librarian, ParameterOwnership::mqb_owned, "/OUT", "MQB owns archive output identity and atomic replacement");
     }
-    static constexpr std::array unsupported{
-        "DEF:"sv, "EXTRACT:"sv, "LIST"sv, "NAME:"sv, "REMOVE:"sv,
-    };
-    if (starts_with_any(body, unsupported)) {
+    if (body == "LIST"
+        || body.starts_with("DEF:")
+        || body.starts_with("EXTRACT:")
+        || body.starts_with("NAME:")
+        || body.starts_with("REMOVE:")) {
         return classification(
             ParameterTool::librarian,
             ParameterOwnership::unsupported,
             "/" + body,
             "option changes lib.exe operating mode or archive membership outside MQB's graph");
     }
-    static constexpr std::array passthrough{
-        "?"sv, "ERRORREPORT:"sv, "EXPORT:"sv, "INCLUDE:"sv, "LIBPATH:"sv,
-        "LINKREPRO:"sv, "LINKREPROTARGET:"sv, "NODEFAULTLIB"sv, "NODEFAULTLIB:"sv,
-        "NOLOGO"sv, "SUBSYSTEM:"sv, "VERBOSE"sv, "WX"sv, "WX:NO"sv,
+    static constexpr std::array passthrough_exact{
+        "?"sv, "NODEFAULTLIB"sv, "NOLOGO"sv, "VERBOSE"sv, "WX"sv, "WX:NO"sv,
     };
-    if (starts_with_any(body, passthrough)) {
+    static constexpr std::array passthrough_prefix{
+        "ERRORREPORT:"sv, "EXPORT:"sv, "INCLUDE:"sv, "LIBPATH:"sv,
+        "LINKREPRO:"sv, "LINKREPROTARGET:"sv, "NODEFAULTLIB:"sv, "SUBSYSTEM:"sv,
+    };
+    if (contains_exact(std::string_view{body}, passthrough_exact)
+        || starts_with_any(std::string_view{body}, passthrough_prefix)) {
         return classification(
             ParameterTool::librarian,
             ParameterOwnership::passthrough,
@@ -340,7 +369,7 @@ template <typename T>
 
 [[nodiscard]] std::expected<CppStandard, ParameterError> parse_cpp_standard(const std::string& argument) {
     const std::string_view body = option_body(argument);
-    const std::string_view value = body.substr(std::string_view{"std:"}.size());
+    const std::string_view value = body.substr(4);
     if (value == "c++14") return CppStandard::cpp14;
     if (value == "c++17") return CppStandard::cpp17;
     if (value == "c++20") return CppStandard::cpp20;
@@ -455,11 +484,8 @@ MsvcParameterEngine::route_linker(const std::span<const std::string> arguments) 
             }
         } else if (body == "LTCG:OFF") {
             if (auto assigned = assign_semantic(routed.link_time_code_generation, false, ParameterTool::linker, argument, "LTCG"); !assigned) return std::unexpected(assigned.error());
-        } else if (body == "LTCG" || body == "LTCG:INCREMENTAL" || body == "LTCG:NOSTATUS" || body == "LTCG:STATUS") {
+        } else if (body == "LTCG") {
             if (auto assigned = assign_semantic(routed.link_time_code_generation, true, ParameterTool::linker, argument, "LTCG"); !assigned) return std::unexpected(assigned.error());
-            if (body != "LTCG") routed.passthrough.push_back(argument);
-        } else {
-            return std::unexpected(error(ParameterErrorCode::invalid_value, ParameterTool::linker, argument, "unsupported semantic linker option value"));
         }
     }
     return routed;
