@@ -23,6 +23,7 @@ struct EffectiveProjectOptions {
     bool link_time_code_generation{false};
     LinkSubsystem subsystem{LinkSubsystem::console};
     TargetKind target_kind{TargetKind::executable};
+    std::optional<std::filesystem::path> precompiled_header;
     std::optional<std::string> output_name;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;
