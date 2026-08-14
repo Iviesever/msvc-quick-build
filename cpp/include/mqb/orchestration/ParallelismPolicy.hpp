@@ -14,15 +14,21 @@ struct ParallelismPolicy {
     ParallelismMode mode{ParallelismMode::automatic};
     std::size_t fixed_jobs{1};
 
+    constexpr ParallelismPolicy() noexcept = default;
+
+    // Preserve source compatibility for existing request initializers such as
+    // `.max_parallel_compiles = 4` while upgrading the field type from a raw
+    // integer to an explicit scheduling policy. Zero becomes an invalid fixed
+    // policy and therefore keeps the existing fail-closed validation behavior.
+    constexpr ParallelismPolicy(const std::size_t jobs) noexcept
+        : mode(ParallelismMode::fixed), fixed_jobs(jobs) {}
+
     [[nodiscard]] static constexpr ParallelismPolicy automatic() noexcept {
         return ParallelismPolicy{};
     }
 
     [[nodiscard]] static constexpr ParallelismPolicy fixed(const std::size_t jobs) noexcept {
-        return ParallelismPolicy{
-            .mode = ParallelismMode::fixed,
-            .fixed_jobs = jobs,
-        };
+        return ParallelismPolicy{jobs};
     }
 
     [[nodiscard]] constexpr bool valid() const noexcept {
@@ -31,6 +37,18 @@ struct ParallelismPolicy {
 
     [[nodiscard]] constexpr bool is_automatic() const noexcept {
         return mode == ParallelismMode::automatic;
+    }
+
+    friend constexpr bool operator==(
+        const ParallelismPolicy policy,
+        const std::size_t jobs) noexcept {
+        return policy.mode == ParallelismMode::fixed && policy.fixed_jobs == jobs;
+    }
+
+    friend constexpr bool operator==(
+        const std::size_t jobs,
+        const ParallelismPolicy policy) noexcept {
+        return policy == jobs;
     }
 };
 
