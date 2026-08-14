@@ -14,6 +14,7 @@
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/LinkOptions.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
+#include "mqb/orchestration/ParallelismPolicy.hpp"
 
 namespace mqb::cli {
 
@@ -45,7 +46,7 @@ struct Options {
     msvc::ToolchainPreference toolchain_preference{msvc::ToolchainPreference::automatic};
     std::vector<std::filesystem::path> portable_roots;
     std::optional<bool> discovery_override;
-    std::optional<std::size_t> jobs;
+    std::optional<orchestration::ParallelismPolicy> jobs;
     app::performance::Format timings{app::performance::Format::disabled};
     bool discover_sources{true};
     bool verbose{false};
