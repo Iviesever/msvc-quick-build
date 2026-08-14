@@ -84,8 +84,8 @@ if ($includeDirs.Count -eq 0) { throw 'Native test config has no include_dirs.' 
 $allTestFiles = @(Get-ChildItem -LiteralPath $cppRoot -Recurse -File -Filter '*_tests.cpp' |
     Where-Object { $_.FullName -notmatch '[\\/]\.mqb[\\/]' } |
     Sort-Object FullName)
-if ($allTestFiles.Count -ne 71) {
-    throw "Native test manifest drift: expected 71 *_tests.cpp files, found $($allTestFiles.Count)."
+if ($allTestFiles.Count -ne 72) {
+    throw "Native test manifest drift: expected 72 *_tests.cpp files, found $($allTestFiles.Count)."
 }
 
 function Get-TestRelativePath {
@@ -121,7 +121,7 @@ $testWeightOverrides = [ordered]@{
 $relativeTestPaths = @($allTestFiles | ForEach-Object { Get-TestRelativePath -File $_ })
 foreach ($weightedPath in $testWeightOverrides.Keys) {
     if ($weightedPath -notin $relativeTestPaths) {
-        throw "Native test weight override is stale or missing from the 71-test manifest: $weightedPath"
+        throw "Native test weight override is stale or missing from the 72-test manifest: $weightedPath"
     }
 }
 
