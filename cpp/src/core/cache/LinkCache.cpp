@@ -10,7 +10,7 @@ namespace {
 [[nodiscard]] bool same_path(
     const std::filesystem::path& left,
     const std::filesystem::path& right) {
-    return left.lexically_normal() == right.lexically_normal();
+    return left == right || left.lexically_normal() == right.lexically_normal();
 }
 
 [[nodiscard]] bool same_paths(
