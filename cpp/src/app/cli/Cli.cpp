@@ -479,15 +479,17 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.libraries.emplace_back(*value);
             continue;
         }
-        if (argument == "/I") {
-            auto value = require_value(arguments, index, argument);
+        if (argument == "/I" || argument.starts_with("/I")) {
+            auto value = attached_or_next(arguments, index, argument, "/I");
             if (!value) return std::unexpected(value.error());
+            if (value->empty()) return std::unexpected(error("empty include directory"));
             options.include_directories.emplace_back(std::string{*value});
             continue;
         }
-        if (argument == "/D") {
-            auto value = require_value(arguments, index, argument);
+        if (argument == "/D" || argument.starts_with("/D")) {
+            auto value = attached_or_next(arguments, index, argument, "/D");
             if (!value) return std::unexpected(value.error());
+            if (value->empty()) return std::unexpected(error("empty preprocessor define"));
             options.defines.emplace_back(std::string{*value});
             continue;
         }
@@ -517,6 +519,10 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             if (!value) return std::unexpected(value.error());
             if (value->empty()) return std::unexpected(error("empty library name"));
             options.libraries.emplace_back(std::string{*value});
+            continue;
+        }
+        if (!argument.empty() && argument.front() == '@') {
+            options.compiler_arguments.emplace_back(argument);
             continue;
         }
         if (!argument.empty() && argument.front() == '/') {
@@ -605,7 +611,8 @@ Options:
   -l <name>, -l<name>     Link a library ('.lib' is optional)
   --lib <name>            Link a library
   /option, -option        Route a native MSVC compiler switch through the parameter engine
-  /I <dir> | /D <value>  Native spaced include/define forms map to MQB structured inputs
+  /I <dir>, /I<dir>       Native include-directory syntax; preserves MQB path resolution
+  /D <value>, /D<value>   Native preprocessor-definition syntax
   /link <link-options...> Route the remaining build argv to native linker options
   --compiler-arg <arg>    Append one raw cl.exe argument
   --linker-arg <arg>      Append one raw link.exe argument
@@ -620,8 +627,9 @@ Native MSVC compiler switches may use '/' or a single '-' prefix. MQB '--long' o
 in the MQB namespace. `/link` (or `-link`) is a one-way compiler-to-linker boundary for build
 arguments; MQB options must appear before it. The outer `--` delimiter still ends build parsing
 and starts executable argv, so `--run ... /link ... -- child-args` remains supported. Native
-switches are not semantically reimplemented by the CLI: they flow through the same ownership,
-normalization, conflict, and cache-identity rules as --compiler-arg/--linker-arg.
+switches and @response syntax are not semantically reimplemented by the CLI: they flow through
+the same ownership, normalization, conflict, and cache-identity rules as
+--compiler-arg/--linker-arg.
 
 Static libraries are produced by MSVC lib.exe from the compiled object set. Linker-only policy
 (libraries, library search paths, subsystem, and raw linker arguments) is rejected for static
