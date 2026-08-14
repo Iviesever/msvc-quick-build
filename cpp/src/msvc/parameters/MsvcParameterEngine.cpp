@@ -90,13 +90,25 @@ template <std::size_t N>
     }
 
     if (body == "MD" || body == "MDd" || body == "MT" || body == "MTd") {
-        return classification(ParameterTool::compiler, ParameterOwnership::semantic, "/runtime", "normalized to RuntimeLibrary");
+        return classification(
+            ParameterTool::compiler,
+            ParameterOwnership::semantic,
+            "/runtime",
+            "normalized to RuntimeLibrary");
     }
     if (body.starts_with("std:")) {
-        return classification(ParameterTool::compiler, ParameterOwnership::semantic, "/std", "C++ language modes normalize to CppStandard; C language modes remain validated passthrough");
+        return classification(
+            ParameterTool::compiler,
+            ParameterOwnership::semantic,
+            "/std",
+            "C++ language modes normalize to CppStandard; C language modes remain validated passthrough");
     }
     if (body == "GL") {
-        return classification(ParameterTool::compiler, ParameterOwnership::semantic, "/GL", "normalized to coupled LTCG policy");
+        return classification(
+            ParameterTool::compiler,
+            ParameterOwnership::semantic,
+            "/GL",
+            "normalized to coupled LTCG policy");
     }
 
     static constexpr std::array owned_exact{
@@ -120,41 +132,50 @@ template <std::size_t N>
     static constexpr std::array unsupported_exact{
         "E"sv, "EP"sv, "P"sv, "Zs"sv, "LN"sv,
         "Gm"sv, "GX"sv, "GZ"sv, "Og"sv, "Wp64"sv,
+        "Yd"sv, "Ze"sv, "Zg"sv,
     };
     static constexpr std::array unsupported_prefix{
-        "MP"sv, "Yc"sv, "Yu"sv, "Y-"sv,
+        "F"sv,
+        "MP"sv, "Yc"sv, "Yu"sv, "Y-"sv, "Yl"sv,
         "experimental:preprocessor"sv, "errorReport"sv,
     };
     if (contains_exact(body, unsupported_exact) || starts_with_any(body, unsupported_prefix)) {
+        std::string rationale = "option changes the compile pipeline shape or is deprecated/removed";
+        if (body.starts_with("MP")) {
+            rationale = "MQB owns TU parallelism; use -j/--jobs instead of cl.exe /MP";
+        } else if (body.starts_with("Y")) {
+            rationale = "PCH routing is reserved for MQB's first-class PCH pipeline";
+        } else if (body.starts_with("F")) {
+            rationale = "this /F* option controls an output/link artifact or linker-driven behavior that MQB must route structurally";
+        }
         return classification(
             ParameterTool::compiler,
             ParameterOwnership::unsupported,
             "/" + std::string{body},
-            body.starts_with("MP")
-                ? "MQB owns TU parallelism; use -j/--jobs instead of cl.exe /MP"
-                : body.starts_with("Y")
-                    ? "PCH routing is reserved for MQB's first-class PCH pipeline"
-                    : "option changes the compile pipeline shape or is deprecated/removed");
+            std::move(rationale));
     }
 
     static constexpr std::array passthrough_exact{
         "?"sv, "bigobj"sv, "Brepro"sv, "Bt+"sv, "C"sv, "dynamicdeopt"sv,
-        "FC"sv, "FS"sv, "GF"sv, "Gh"sv, "GH"sv, "Gw"sv, "Gy"sv,
-        "hotpatch"sv, "J"sv, "JMC"sv, "jumptablerdata"sv, "kernel"sv,
+        "FC"sv, "FS"sv, "GA"sv, "GF"sv, "Gh"sv, "GH"sv, "GT"sv,
+        "Gv"sv, "Gw"sv, "Gy"sv, "Gz"sv, "homeparams"sv, "hotpatch"sv,
+        "J"sv, "JMC"sv, "jumptablerdata"sv, "kernel"sv,
         "O1"sv, "O2"sv, "Od"sv, "Os"sv, "Ot"sv, "Ox"sv, "Oy"sv,
         "permissive"sv, "permissive-"sv, "sdl"sv, "sdl-"sv,
         "showIncludes"sv, "utf-8"sv, "validate-charset"sv, "validateIfcChecksum"sv,
         "W0"sv, "W1"sv, "W2"sv, "W3"sv, "W4"sv, "Wall"sv, "WL"sv,
-        "WX"sv, "WX-"sv, "Z7"sv, "Za"sv, "Zf"sv, "Zi"sv, "Zl"sv, "ZW"sv,
+        "WX"sv, "WX-"sv, "Z7"sv, "Za"sv, "Zf"sv, "Zi"sv, "ZI"sv,
+        "Zl"sv, "ZW"sv,
     };
     static constexpr std::array passthrough_prefix{
         "AI"sv, "analyze"sv, "arch:"sv, "arm64EC"sv, "await"sv,
         "cgthreads"sv, "clr"sv, "constexpr:"sv, "D"sv, "diagnostics:"sv,
         "doc"sv, "EH"sv, "execution-charset:"sv, "experimental:"sv, "external:"sv,
-        "F"sv, "FA"sv, "Fa"sv, "favor:"sv, "FI"sv,
+        "FA"sv, "Fa"sv, "favor:"sv, "FI"sv, "fp:"sv,
         "Gd"sv, "GR"sv, "GS"sv, "guard:"sv, "I"sv, "openmp"sv,
-        "Ob"sv, "Oi"sv, "Qpar"sv, "Qspectre"sv, "RTC"sv,
-        "source-charset:"sv, "translateInclude"sv, "volatile:"sv,
+        "Ob"sv, "Oi"sv, "QIntel-jcc-erratum"sv, "Qpar"sv, "Qsafe_fp_loads"sv,
+        "Qspectre"sv, "Qvec-report:"sv, "RTC"sv,
+        "source-charset:"sv, "translateInclude"sv, "vd"sv, "vm"sv, "volatile:"sv,
         "wd"sv, "we"sv, "wo"sv, "Wv:"sv,
         "Zc:"sv, "ZH:"sv, "Zm"sv, "Zo"sv, "Zp"sv,
     };
@@ -194,13 +215,20 @@ template <std::size_t N>
     }
     const std::string body = upper_ascii(raw_body);
 
-    if (body.starts_with("MACHINE:") || body.starts_with("SUBSYSTEM:") || body == "LTCG" || body == "LTCG:OFF") {
-        return classification(ParameterTool::linker, ParameterOwnership::semantic, "/" + body, "normalized to typed linker policy");
+    if (body.starts_with("MACHINE:")
+        || body.starts_with("SUBSYSTEM:")
+        || body == "LTCG"
+        || body == "LTCG:OFF") {
+        return classification(
+            ParameterTool::linker,
+            ParameterOwnership::semantic,
+            "/" + body,
+            "normalized to typed linker policy");
     }
 
     static constexpr std::array owned_prefix{
         "OUT:"sv, "IMPLIB:"sv, "LIBPATH:"sv, "PDB:"sv, "PDBALTPATH:"sv,
-        "PDBSTRIPPED:"sv, "ILK:"sv, "LTCGOUT:"sv, "WHOLEARCHIVE:"sv,
+        "PDBSTRIPPED:"sv, "ILK:"sv, "LTCGOUT:"sv,
     };
     if (body == "DLL" || starts_with_any(std::string_view{body}, owned_prefix)) {
         return classification(
@@ -238,9 +266,10 @@ template <std::size_t N>
         "FIXED"sv, "FORCE"sv, "FUNCTIONPADMIN"sv, "GENPROFILE"sv,
         "HIGHENTROPYVA"sv, "INCREMENTAL"sv, "INCREMENTAL:NO"sv,
         "INFERASANLIBS"sv, "INTEGRITYCHECK"sv, "KERNEL"sv, "LARGEADDRESSAWARE"sv,
-        "MAP"sv, "NOASSEMBLY"sv, "NODEFAULTLIB"sv, "NOENTRY"sv, "NOEXP"sv,
-        "NOIMPLIB"sv, "NOLOGO"sv, "NXCOMPAT"sv, "PROFILE"sv, "RELEASE"sv,
-        "SAFESEH"sv, "TIME"sv, "TSAWARE"sv, "USEPROFILE"sv, "VERBOSE"sv,
+        "MAP"sv, "MANIFEST"sv, "MANIFEST:NO"sv, "NOASSEMBLY"sv,
+        "NODEFAULTLIB"sv, "NOENTRY"sv, "NOEXP"sv, "NOIMPLIB"sv, "NOLOGO"sv,
+        "NXCOMPAT"sv, "PROFILE"sv, "RELEASE"sv, "SAFESEH"sv, "TIME"sv,
+        "TSAWARE"sv, "USEPROFILE"sv, "VERBOSE"sv, "WHOLEARCHIVE"sv,
         "WINMD"sv, "WX"sv, "WX:NO"sv,
     };
     static constexpr std::array passthrough_prefix{
@@ -248,10 +277,12 @@ template <std::size_t N>
         "CGTHREADS:"sv, "CLRIMAGETYPE:"sv, "CLRLOADEROPTIMIZATION:"sv, "COMMENT:"sv,
         "DEBUGTYPE:"sv, "DELAYLOAD:"sv, "DEPENDENTLOADFLAG:"sv, "ENTRY:"sv,
         "ERRORREPORT:"sv, "EXPORT:"sv, "FORCE:"sv, "GUARD:"sv, "HEAP:"sv,
-        "INCLUDE:"sv, "LINKREPRO:"sv, "LINKREPROFULLPATHRSP:"sv, "LINKREPROTARGET:"sv,
-        "MAP:"sv, "MAPINFO:"sv, "MERGE:"sv, "NATVIS:"sv, "NODEFAULTLIB:"sv,
-        "OPT:"sv, "SECTION:"sv, "STACK:"sv, "SWAPRUN:"sv, "TLBID:"sv,
-        "TLBOUT:"sv, "VERSION:"sv,
+        "IGNORE:"sv, "INCLUDE:"sv, "LINKREPRO:"sv, "LINKREPROFULLPATHRSP:"sv,
+        "LINKREPROTARGET:"sv, "MANIFESTDEPENDENCY:"sv, "MANIFESTFILE:"sv,
+        "MANIFESTUAC:"sv, "MAP:"sv, "MAPINFO:"sv, "MERGE:"sv, "NATVIS:"sv,
+        "NODEFAULTLIB:"sv, "OPT:"sv, "SECTION:"sv, "SOURCELINK:"sv,
+        "STACK:"sv, "SWAPRUN:"sv, "TIMESTAMP:"sv, "TLBID:"sv, "TLBOUT:"sv,
+        "VERSION:"sv, "WHOLEARCHIVE:"sv,
     };
     if (contains_exact(std::string_view{body}, passthrough_exact)
         || starts_with_any(std::string_view{body}, passthrough_prefix)) {
@@ -259,7 +290,9 @@ template <std::size_t N>
             ParameterTool::linker,
             ParameterOwnership::passthrough,
             "/" + body,
-            "validated linker option is preserved verbatim in link identity");
+            body.starts_with("WHOLEARCHIVE:")
+                ? "path-bearing /WHOLEARCHIVE is preserved in link identity; callers should also declare the library through structured inputs so freshness is tracked"
+                : "validated linker option is preserved verbatim in link identity");
     }
 
     return classification(
@@ -291,10 +324,18 @@ template <std::size_t N>
     const std::string body = upper_ascii(raw_body);
 
     if (body.starts_with("MACHINE:") || body == "LTCG") {
-        return classification(ParameterTool::librarian, ParameterOwnership::semantic, "/" + body, "normalized to typed archive policy");
+        return classification(
+            ParameterTool::librarian,
+            ParameterOwnership::semantic,
+            "/" + body,
+            "normalized to typed archive policy");
     }
     if (body.starts_with("OUT:")) {
-        return classification(ParameterTool::librarian, ParameterOwnership::mqb_owned, "/OUT", "MQB owns archive output identity and atomic replacement");
+        return classification(
+            ParameterTool::librarian,
+            ParameterOwnership::mqb_owned,
+            "/OUT",
+            "MQB owns archive output identity and atomic replacement");
     }
     if (body == "LIST"
         || body.starts_with("DEF:")
@@ -307,6 +348,7 @@ template <std::size_t N>
             "/" + body,
             "option changes lib.exe operating mode or archive membership outside MQB's graph");
     }
+
     static constexpr std::array passthrough_exact{
         "?"sv, "NODEFAULTLIB"sv, "NOLOGO"sv, "VERBOSE"sv, "WX"sv, "WX:NO"sv,
     };
@@ -322,6 +364,7 @@ template <std::size_t N>
             "/" + body,
             "validated librarian option is preserved verbatim in archive identity");
     }
+
     return classification(
         ParameterTool::librarian,
         ParameterOwnership::unsupported,
@@ -359,7 +402,9 @@ template <typename T>
     }
     if (classified.ownership == ParameterOwnership::unsupported) {
         return std::unexpected(error(
-            classified.canonical_name.empty() ? ParameterErrorCode::unknown_option : ParameterErrorCode::unsupported_option,
+            classified.canonical_name.empty()
+                ? ParameterErrorCode::unknown_option
+                : ParameterErrorCode::unsupported_option,
             classified.tool,
             argument,
             "MSVC option '" + argument + "' is not accepted: " + classified.rationale));
@@ -367,7 +412,8 @@ template <typename T>
     return {};
 }
 
-[[nodiscard]] std::expected<CppStandard, ParameterError> parse_cpp_standard(const std::string& argument) {
+[[nodiscard]] std::expected<CppStandard, ParameterError> parse_cpp_standard(
+    const std::string& argument) {
     const std::string_view body = option_body(argument);
     const std::string_view value = body.substr(4);
     if (value == "c++14") return CppStandard::cpp14;
@@ -415,10 +461,16 @@ MsvcParameterEngine::route_compiler(const std::span<const std::string> arguments
     routed.passthrough.reserve(arguments.size());
     for (const auto& argument : arguments) {
         if (argument.empty()) {
-            return std::unexpected(error(ParameterErrorCode::empty_argument, ParameterTool::compiler, argument, "empty raw compiler argument"));
+            return std::unexpected(error(
+                ParameterErrorCode::empty_argument,
+                ParameterTool::compiler,
+                argument,
+                "empty raw compiler argument"));
         }
         const auto classified = classify_compiler(argument);
-        if (auto accepted = reject_classification(classified, argument); !accepted) return std::unexpected(accepted.error());
+        if (auto accepted = reject_classification(classified, argument); !accepted) {
+            return std::unexpected(accepted.error());
+        }
         if (classified.ownership == ParameterOwnership::passthrough) {
             routed.passthrough.push_back(argument);
             continue;
@@ -426,15 +478,40 @@ MsvcParameterEngine::route_compiler(const std::span<const std::string> arguments
 
         const std::string_view body = option_body(argument);
         if (body == "MD") {
-            if (auto assigned = assign_semantic(routed.runtime_library, RuntimeLibrary::md, ParameterTool::compiler, argument, "runtime library"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.runtime_library,
+                    RuntimeLibrary::md,
+                    ParameterTool::compiler,
+                    argument,
+                    "runtime library"); !assigned) return std::unexpected(assigned.error());
         } else if (body == "MDd") {
-            if (auto assigned = assign_semantic(routed.runtime_library, RuntimeLibrary::mdd, ParameterTool::compiler, argument, "runtime library"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.runtime_library,
+                    RuntimeLibrary::mdd,
+                    ParameterTool::compiler,
+                    argument,
+                    "runtime library"); !assigned) return std::unexpected(assigned.error());
         } else if (body == "MT") {
-            if (auto assigned = assign_semantic(routed.runtime_library, RuntimeLibrary::mt, ParameterTool::compiler, argument, "runtime library"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.runtime_library,
+                    RuntimeLibrary::mt,
+                    ParameterTool::compiler,
+                    argument,
+                    "runtime library"); !assigned) return std::unexpected(assigned.error());
         } else if (body == "MTd") {
-            if (auto assigned = assign_semantic(routed.runtime_library, RuntimeLibrary::mtd, ParameterTool::compiler, argument, "runtime library"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.runtime_library,
+                    RuntimeLibrary::mtd,
+                    ParameterTool::compiler,
+                    argument,
+                    "runtime library"); !assigned) return std::unexpected(assigned.error());
         } else if (body == "GL") {
-            if (auto assigned = assign_semantic(routed.link_time_code_generation, true, ParameterTool::compiler, argument, "LTCG"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.link_time_code_generation,
+                    true,
+                    ParameterTool::compiler,
+                    argument,
+                    "LTCG"); !assigned) return std::unexpected(assigned.error());
         } else if (body.starts_with("std:")) {
             const std::string_view value = body.substr(4);
             if (value == "c11" || value == "c17" || value == "clatest") {
@@ -443,7 +520,12 @@ MsvcParameterEngine::route_compiler(const std::span<const std::string> arguments
             }
             auto standard = parse_cpp_standard(argument);
             if (!standard) return std::unexpected(standard.error());
-            if (auto assigned = assign_semantic(routed.standard, *standard, ParameterTool::compiler, argument, "C++ standard"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.standard,
+                    *standard,
+                    ParameterTool::compiler,
+                    argument,
+                    "C++ standard"); !assigned) return std::unexpected(assigned.error());
         }
     }
     return routed;
@@ -455,10 +537,16 @@ MsvcParameterEngine::route_linker(const std::span<const std::string> arguments) 
     routed.passthrough.reserve(arguments.size());
     for (const auto& argument : arguments) {
         if (argument.empty()) {
-            return std::unexpected(error(ParameterErrorCode::empty_argument, ParameterTool::linker, argument, "empty raw linker argument"));
+            return std::unexpected(error(
+                ParameterErrorCode::empty_argument,
+                ParameterTool::linker,
+                argument,
+                "empty raw linker argument"));
         }
         const auto classified = classify_linker(argument);
-        if (auto accepted = reject_classification(classified, argument); !accepted) return std::unexpected(accepted.error());
+        if (auto accepted = reject_classification(classified, argument); !accepted) {
+            return std::unexpected(accepted.error());
+        }
         if (classified.ownership == ParameterOwnership::passthrough) {
             routed.passthrough.push_back(argument);
             continue;
@@ -468,13 +556,28 @@ MsvcParameterEngine::route_linker(const std::span<const std::string> arguments) 
         if (body.starts_with("MACHINE:")) {
             auto architecture = parse_machine(ParameterTool::linker, argument);
             if (!architecture) return std::unexpected(architecture.error());
-            if (auto assigned = assign_semantic(routed.architecture, *architecture, ParameterTool::linker, argument, "target architecture"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.architecture,
+                    *architecture,
+                    ParameterTool::linker,
+                    argument,
+                    "target architecture"); !assigned) return std::unexpected(assigned.error());
         } else if (body.starts_with("SUBSYSTEM:")) {
             const std::string value = body.substr(std::string{"SUBSYSTEM:"}.size());
             if (value == "CONSOLE") {
-                if (auto assigned = assign_semantic(routed.subsystem, LinkSubsystem::console, ParameterTool::linker, argument, "subsystem"); !assigned) return std::unexpected(assigned.error());
+                if (auto assigned = assign_semantic(
+                        routed.subsystem,
+                        LinkSubsystem::console,
+                        ParameterTool::linker,
+                        argument,
+                        "subsystem"); !assigned) return std::unexpected(assigned.error());
             } else if (value == "WINDOWS") {
-                if (auto assigned = assign_semantic(routed.subsystem, LinkSubsystem::windows, ParameterTool::linker, argument, "subsystem"); !assigned) return std::unexpected(assigned.error());
+                if (auto assigned = assign_semantic(
+                        routed.subsystem,
+                        LinkSubsystem::windows,
+                        ParameterTool::linker,
+                        argument,
+                        "subsystem"); !assigned) return std::unexpected(assigned.error());
             } else {
                 return std::unexpected(error(
                     ParameterErrorCode::invalid_value,
@@ -483,9 +586,19 @@ MsvcParameterEngine::route_linker(const std::span<const std::string> arguments) 
                     "MQB currently supports typed /SUBSYSTEM:CONSOLE and /SUBSYSTEM:WINDOWS only"));
             }
         } else if (body == "LTCG:OFF") {
-            if (auto assigned = assign_semantic(routed.link_time_code_generation, false, ParameterTool::linker, argument, "LTCG"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.link_time_code_generation,
+                    false,
+                    ParameterTool::linker,
+                    argument,
+                    "LTCG"); !assigned) return std::unexpected(assigned.error());
         } else if (body == "LTCG") {
-            if (auto assigned = assign_semantic(routed.link_time_code_generation, true, ParameterTool::linker, argument, "LTCG"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.link_time_code_generation,
+                    true,
+                    ParameterTool::linker,
+                    argument,
+                    "LTCG"); !assigned) return std::unexpected(assigned.error());
         }
     }
     return routed;
@@ -497,10 +610,16 @@ MsvcParameterEngine::route_librarian(const std::span<const std::string> argument
     routed.passthrough.reserve(arguments.size());
     for (const auto& argument : arguments) {
         if (argument.empty()) {
-            return std::unexpected(error(ParameterErrorCode::empty_argument, ParameterTool::librarian, argument, "empty raw librarian argument"));
+            return std::unexpected(error(
+                ParameterErrorCode::empty_argument,
+                ParameterTool::librarian,
+                argument,
+                "empty raw librarian argument"));
         }
         const auto classified = classify_librarian(argument);
-        if (auto accepted = reject_classification(classified, argument); !accepted) return std::unexpected(accepted.error());
+        if (auto accepted = reject_classification(classified, argument); !accepted) {
+            return std::unexpected(accepted.error());
+        }
         if (classified.ownership == ParameterOwnership::passthrough) {
             routed.passthrough.push_back(argument);
             continue;
@@ -509,9 +628,19 @@ MsvcParameterEngine::route_librarian(const std::span<const std::string> argument
         if (body.starts_with("MACHINE:")) {
             auto architecture = parse_machine(ParameterTool::librarian, argument);
             if (!architecture) return std::unexpected(architecture.error());
-            if (auto assigned = assign_semantic(routed.architecture, *architecture, ParameterTool::librarian, argument, "target architecture"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.architecture,
+                    *architecture,
+                    ParameterTool::librarian,
+                    argument,
+                    "target architecture"); !assigned) return std::unexpected(assigned.error());
         } else if (body == "LTCG") {
-            if (auto assigned = assign_semantic(routed.link_time_code_generation, true, ParameterTool::librarian, argument, "LTCG"); !assigned) return std::unexpected(assigned.error());
+            if (auto assigned = assign_semantic(
+                    routed.link_time_code_generation,
+                    true,
+                    ParameterTool::librarian,
+                    argument,
+                    "LTCG"); !assigned) return std::unexpected(assigned.error());
         }
     }
     return routed;
