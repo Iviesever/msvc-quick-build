@@ -16,6 +16,22 @@ enum class RuntimeLibrary {
     mtd,
 };
 
+struct PrecompiledHeaderPolicy {
+    bool enabled{false};
+    std::filesystem::path header;
+};
+
+enum class PrecompiledHeaderRole {
+    create,
+    use,
+};
+
+struct PrecompiledHeaderBinding {
+    std::filesystem::path header;
+    std::filesystem::path artifact;
+    PrecompiledHeaderRole role{PrecompiledHeaderRole::use};
+};
+
 // Project/toolchain-independent identity for a read-only named-module IFC
 // supplied outside the current source graph. Provider selection remains owned
 // by the P1689 module graph; this registry only carries explicit policy into
@@ -40,6 +56,9 @@ struct CompilerOptions {
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;
     std::vector<std::string> additional_arguments;
+    // Per-compile binding emitted by MQB after raw arguments. A create binding
+    // owns the .pch output; a use binding consumes exactly that artifact.
+    std::optional<PrecompiledHeaderBinding> precompiled_header;
     // Explicit read-only provider registry. These entries are intentionally not
     // hashed wholesale into every compile signature: after P1689 resolution,
     // only the ModuleReference entries actually consumed by a TU participate in
