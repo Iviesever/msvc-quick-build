@@ -81,7 +81,7 @@ int main() {
         cli.build.subsystem = mqb::LinkSubsystem::console;
         cli.build.compiler_arguments = {"/WX"};
         cli.build.linker_arguments = {"/MAP:cli.map"};
-        const auto effective = mqb::config::resolve_project_options(&*loaded, cli);
+        const auto effective = mqb::config::resolve_project_options(&*loaded, nullptr, cli);
         expect(effective.standard == mqb::CppStandard::cpp14,
                "CLI scalar standard should override project config");
         expect(effective.target_kind == mqb::TargetKind::executable,
