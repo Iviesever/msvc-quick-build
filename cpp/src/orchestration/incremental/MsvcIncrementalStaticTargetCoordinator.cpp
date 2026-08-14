@@ -70,7 +70,7 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
             IncrementalStaticTargetErrorCode::no_sources,
             "static target build requires at least one source file"));
     }
-    if (!request.compile_parallelism.valid()) {
+    if (!request.max_parallel_compiles.valid()) {
         return std::unexpected(failure(
             IncrementalStaticTargetErrorCode::invalid_parallelism,
             "static target compile parallelism must be automatic or a positive fixed worker count"));
@@ -128,7 +128,7 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
 
     const auto compile_started = Clock::now();
     const auto scheduled = BoundedWorkScheduler::run(
-        request.sources.size(), request.compile_parallelism,
+        request.sources.size(), request.max_parallel_compiles,
         [&](const std::size_t index) {
             auto compile_request = compile_request_for(request.sources[index], request.compiler_options);
             attempts[index].emplace(compile_coordinator_.run(compile_request));
