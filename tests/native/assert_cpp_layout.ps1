@@ -206,7 +206,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'core') -LeafFiles ([ordered]@{
 })
 
 # MSVC backend primitives. Keep include/mqb/msvc stable, but do not flatten
-# compiler, linker, librarian, module-scanning, and toolchain discovery code.
+# compiler, linker, librarian, module-scanning, parameter-routing, and toolchain code.
 $msvcLeafFiles = [ordered]@{
     'compiler' = @(
         'CompilerArgumentBuilder.cpp', 'CompilerArgumentBuilder.hpp',
@@ -217,6 +217,7 @@ $msvcLeafFiles = [ordered]@{
     'librarian' = @('MsvcLibrarian.cpp')
     'linker' = @('MsvcLibraryResolver.cpp', 'MsvcLinker.cpp')
     'modules' = @('MsvcModuleDependencyScanner.cpp')
+    'parameters' = @('MsvcParameterEngine.cpp')
     'toolchain' = @(
         'MsvcToolchainLocator.cpp',
         'PortableToolchainDiscovery.cpp', 'PortableToolchainDiscovery.hpp',
@@ -240,6 +241,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'msvc') -LeafFiles ([ordered]@{
         'module_dependency_scanner_integration_tests.cpp',
         'module_dependency_scanner_tests.cpp'
     )
+    'parameters' = @('msvc_parameter_engine_tests.cpp')
     'toolchain' = @('portable_tests.cpp', 'visual_studio_tests.cpp')
 })
 
