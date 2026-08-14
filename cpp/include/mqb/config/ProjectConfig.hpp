@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -40,6 +41,12 @@ struct ModuleOverrides {
     std::vector<ExternalModuleProvider> external_providers;
 };
 
+struct ProjectProfile {
+    BuildOverrides build;
+    DiscoveryOverrides discovery;
+    ModuleOverrides modules;
+};
+
 struct ProjectConfig {
     int version{1};
     std::filesystem::path file;
@@ -47,6 +54,7 @@ struct ProjectConfig {
     BuildOverrides build;
     DiscoveryOverrides discovery;
     ModuleOverrides modules;
+    std::map<std::string, ProjectProfile, std::less<>> profiles;
 };
 
 enum class ErrorCode {
