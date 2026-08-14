@@ -54,7 +54,7 @@ prepare_module_target(
             IncrementalModuleTargetErrorCode::no_sources,
             "module target requires at least one source"));
     }
-    if (!request.scan_parallelism.valid() || !request.compile_parallelism.valid()) {
+    if (!request.max_parallel_scans.valid() || !request.max_parallel_compiles.valid()) {
         return std::unexpected(failure(
             IncrementalModuleTargetErrorCode::invalid_parallelism,
             "module target scan and compile parallelism must be automatic or a positive fixed worker count"));
@@ -155,7 +155,7 @@ prepare_module_target(
         .plan = prepared.plan,
         .compiler_options = request.compiler_options,
         .working_directory = request.working_directory,
-        .compile_parallelism = request.compile_parallelism,
+        .max_parallel_compiles = request.max_parallel_compiles,
     };
 
     const auto preparation_total = std::chrono::duration_cast<std::chrono::nanoseconds>(
