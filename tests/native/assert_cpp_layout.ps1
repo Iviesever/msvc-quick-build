@@ -257,9 +257,12 @@ $orchestrationLeafFiles = [ordered]@{
     'modules' = @(
         'ModuleCompilePlan.cpp', 'ModuleCompilePlan.hpp',
         'ModuleCompileRequestFactory.cpp', 'ModuleCompileRequestFactory.hpp',
+        'ModuleTargetArtifactRegistry.cpp', 'ModuleTargetArtifactRegistry.hpp',
         'ModuleTargetLinkRequestFactory.cpp', 'ModuleTargetLinkRequestFactory.hpp',
         'ModuleTargetPreparation.cpp', 'ModuleTargetPreparation.hpp',
-        'MsvcModuleCompileCoordinator.cpp', 'MsvcModuleTargetCoordinator.cpp'
+        'ModuleTargetScanner.cpp', 'ModuleTargetScanner.hpp',
+        'MsvcModuleCompileCoordinator.cpp', 'MsvcModuleTargetCoordinator.cpp',
+        'StandardLibraryModuleProvider.cpp', 'StandardLibraryModuleProvider.hpp'
     )
     'routing' = @('MsvcTargetRouter.cpp')
     'scheduling' = @('BoundedWorkScheduler.cpp')
