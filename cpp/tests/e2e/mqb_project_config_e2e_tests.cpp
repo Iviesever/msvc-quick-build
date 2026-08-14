@@ -161,6 +161,21 @@ struct TempTree {
     "exclude_dirs": ["tests"],
     "extra_sources": ["manual.cpp"],
     "exclude_sources": ["legacy.cpp"]
+  },
+  "profiles": {
+    "fast": {
+      "build": {
+        "configuration": "debug",
+        "output": "profile_product",
+        "compiler_args": ["/std:c++20", "/DPROFILE_VALUE=7", "/W4"],
+        "linker_args": ["/DEBUG:FULL"]
+      }
+    },
+    "static-check": {
+      "build": {
+        "type": "static"
+      }
+    }
   }
 })json";
 }
@@ -220,6 +235,9 @@ int main(int argc, char* argv[]) {
 #ifndef CONFIG_VALUE
 #error CONFIG_VALUE must come from mqb.json
 #endif
+#ifndef PROFILE_VALUE
+#define PROFILE_VALUE 0
+#endif
 #ifndef CLI_VALUE
 #define CLI_VALUE 0
 #endif
@@ -231,7 +249,8 @@ int main() {
 #else
     constexpr int debug_bonus = 0;
 #endif
-    std::printf("config-e2e=%d\n", value() + manual_value() + library_value() + CONFIG_VALUE + CLI_VALUE + debug_bonus);
+    std::printf("config-e2e=%d\n", value() + manual_value() + library_value()
+        + CONFIG_VALUE + PROFILE_VALUE + CLI_VALUE + debug_bonus);
     return 0;
 }
 )cpp");
@@ -306,6 +325,76 @@ int main() {
                "config-only define change should alter executable behavior");
     } else {
         expect(false, "config-changed executable should launch");
+    }
+
+    auto profile_build = run_mqb(
+        runner,
+        mqb_executable,
+        nested_working_directory,
+        {"--profile", "fast"});
+    expect(profile_build.has_value(), "selected-profile invocation should launch");
+    if (profile_build) {
+        if (profile_build->exit_code != 0) dump_failure(*profile_build);
+        expect(profile_build->exit_code == 0, "selected profile build should succeed");
+        expect(profile_build->stdout_text.find("[link] profile_product.exe") != std::string::npos,
+               "profile output scalar should override base config output");
+    }
+    const fs::path profile_exe = tree.root / ".mqb" / "bin" / "profile_product.exe";
+    auto profile_run = run_executable(runner, profile_exe, tree.root);
+    expect(profile_run.has_value() && profile_run->exit_code == 0,
+           "profile-built executable should launch");
+    if (profile_run) {
+        expect(profile_run->stdout_text.find("config-e2e=1117") != std::string::npos,
+               "profile debug configuration and native /D policy should overlay base config");
+    }
+
+    auto profile_cli_override = run_mqb(
+        runner,
+        mqb_executable,
+        nested_working_directory,
+        {"--profile=fast", "--release", "--std", "23", "-DCLI_VALUE=10", "-o", "profile_cli_product"});
+    expect(profile_cli_override.has_value(), "CLI-over-profile invocation should launch");
+    if (profile_cli_override) {
+        if (profile_cli_override->exit_code != 0) dump_failure(*profile_cli_override);
+        expect(profile_cli_override->exit_code == 0,
+               "CLI should override profile scalar semantics after profile native normalization");
+        expect(profile_cli_override->stdout_text.find("[link] profile_cli_product.exe") != std::string::npos,
+               "CLI output should override selected profile output");
+    }
+    const fs::path profile_cli_exe = tree.root / ".mqb" / "bin" / "profile_cli_product.exe";
+    auto profile_cli_run = run_executable(runner, profile_cli_exe, tree.root);
+    expect(profile_cli_run.has_value() && profile_cli_run->exit_code == 0,
+           "CLI-over-profile executable should launch");
+    if (profile_cli_run) {
+        expect(profile_cli_run->stdout_text.find("config-e2e=127") != std::string::npos,
+               "CLI release/define overrides should win while retaining profile and base list inputs");
+    }
+
+    auto unknown_profile = run_mqb(
+        runner,
+        mqb_executable,
+        nested_working_directory,
+        {"--profile", "missing"});
+    expect(unknown_profile.has_value(), "unknown profile invocation should launch candidate MQB");
+    if (unknown_profile) {
+        expect(unknown_profile->exit_code == 2,
+               "unknown profile should fail closed before build execution");
+        expect(unknown_profile->stderr_text.find("unknown profile 'missing'") != std::string::npos
+                   && unknown_profile->stderr_text.find("'fast'") != std::string::npos,
+               "unknown profile diagnostic should name the request and available profiles");
+    }
+
+    auto static_run = run_mqb(
+        runner,
+        mqb_executable,
+        nested_working_directory,
+        {"--profile", "static-check", "--run"});
+    expect(static_run.has_value(), "profile target-kind run validation should launch candidate MQB");
+    if (static_run) {
+        expect(static_run->exit_code == 2,
+               "profile selecting static target should be rejected by executable-only run contract");
+        expect(static_run->stderr_text.find("--run is only valid for executable targets") != std::string::npos,
+               "profile target-kind validation should preserve the established run diagnostic");
     }
 
     auto cli_override = run_mqb(

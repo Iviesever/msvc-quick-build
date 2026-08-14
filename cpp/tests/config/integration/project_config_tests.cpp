@@ -70,6 +70,34 @@ int main() {
       "vendor.math": "prebuilt/vendor.math.ifc",
       "vendor.text": "prebuilt/vendor text.ifc"
     }
+  },
+  "profiles": {
+    "dev": {
+      "build": {
+        "configuration": "debug",
+        "standard": "20",
+        "runtime": "MDd",
+        "defines": ["PROFILE_DEV=1"],
+        "include_dirs": ["profiles/dev/include"],
+        "compiler_args": ["/W4"]
+      },
+      "discovery": {
+        "enabled": true,
+        "extra_sources": ["profiles/dev/extra.cpp"]
+      },
+      "modules": {
+        "external": {
+          "vendor.math": "profiles/dev/vendor.math.ifc"
+        }
+      }
+    },
+    "ship": {
+      "build": {
+        "configuration": "release",
+        "ltcg": true,
+        "compiler_args": ["/O2"]
+      }
+    }
   }
 })json");
 
@@ -82,7 +110,7 @@ int main() {
     }
 
     auto loaded = mqb::config::ProjectConfigLoader::load(config_file);
-    expect(loaded.has_value(), "full version-1 config should load");
+    expect(loaded.has_value(), "full version-1 config with profiles should load");
     if (loaded) {
         expect(loaded->version == 1, "config version should be retained");
         expect(loaded->project_root == tree.root.lexically_normal(),
@@ -152,6 +180,36 @@ int main() {
                            == (tree.root / "prebuilt/vendor text.ifc").lexically_normal(),
                    "external provider mapping should preserve names and spaces in config-relative paths");
         }
+
+        expect(loaded->profiles.size() == 2,
+               "profiles object should decode every named profile");
+        const auto dev = loaded->profiles.find("dev");
+        expect(dev != loaded->profiles.end(), "dev profile should be addressable by name");
+        if (dev != loaded->profiles.end()) {
+            expect(dev->second.build.configuration == mqb::BuildConfiguration::debug,
+                   "profile build scalar should decode");
+            expect(dev->second.build.standard == mqb::CppStandard::cpp20,
+                   "profile C++ standard should decode");
+            expect(dev->second.build.runtime_library == mqb::RuntimeLibrary::mdd,
+                   "profile runtime should decode");
+            expect(!dev->second.build.entry,
+                   "profile build layer should never acquire project entry identity");
+            expect(dev->second.build.include_directories.size() == 1
+                       && dev->second.build.include_directories[0]
+                           == (tree.root / "profiles/dev/include").lexically_normal(),
+                   "profile paths should resolve relative to mqb.json");
+            expect(dev->second.discovery.enabled && *dev->second.discovery.enabled,
+                   "profile discovery scalar should decode");
+            expect(dev->second.discovery.extra_sources.size() == 1
+                       && dev->second.discovery.extra_sources[0]
+                           == (tree.root / "profiles/dev/extra.cpp").lexically_normal(),
+                   "profile discovery paths should resolve relative to mqb.json");
+            expect(dev->second.modules.external_providers.size() == 1
+                       && dev->second.modules.external_providers[0].logical_name == "vendor.math"
+                       && dev->second.modules.external_providers[0].interface_file
+                           == (tree.root / "profiles/dev/vendor.math.ifc").lexically_normal(),
+                   "profile module providers should decode with config-relative IFC paths");
+        }
     }
 
     write_text(config_file, R"json({"version":1,"build":{"type":"lib"}})json");
@@ -175,12 +233,28 @@ int main() {
                "missing discovery enabled field must remain unset");
         expect(minimal->modules.external_providers.empty(),
                "missing modules policy must remain an empty override");
+        expect(minimal->profiles.empty(),
+               "missing profiles object should remain an empty named-profile registry");
     }
 
     write_text(config_file, R"json({"version":1,"build":{"entry":""}})json");
     auto empty_entry = mqb::config::ProjectConfigLoader::load(config_file);
     expect(!empty_entry && empty_entry.error().code == mqb::config::ErrorCode::schema_error,
            "build.entry must be a non-empty string");
+
+    write_text(config_file, R"json({"version":1,"profiles":{"bad":{"build":{"entry":"other.cpp"}}}})json");
+    auto profile_entry = mqb::config::ProjectConfigLoader::load(config_file);
+    expect(!profile_entry && profile_entry.error().code == mqb::config::ErrorCode::schema_error,
+           "profile build.entry should be rejected as project identity rather than build policy");
+    if (!profile_entry) {
+        expect(profile_entry.error().message.find("build.entry is not allowed") != std::string::npos,
+               "profile entry rejection should explain the project-identity boundary");
+    }
+
+    write_text(config_file, R"json({"version":1,"profiles":{"bad":{"surprise":true}}})json");
+    auto bad_profile_field = mqb::config::ProjectConfigLoader::load(config_file);
+    expect(!bad_profile_field && bad_profile_field.error().code == mqb::config::ErrorCode::schema_error,
+           "unknown profile fields should be rejected by strict schema");
 
     write_text(config_file, R"json({"version":1,"modules":{"external":{"vendor.math":7}}})json");
     auto bad_provider_type = mqb::config::ProjectConfigLoader::load(config_file);

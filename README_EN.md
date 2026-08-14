@@ -53,6 +53,43 @@ An explicit source always wins over `build.entry`:
 mqb run tools/tool.cpp
 ```
 
+### Named profiles
+
+Frequently repeated build policy can be declared as an explicit named profile instead of repeating a long CLI sequence:
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/main.cpp",
+    "standard": "23"
+  },
+  "profiles": {
+    "dev": {
+      "build": {
+        "configuration": "debug",
+        "runtime": "MDd",
+        "compiler_args": ["/W4"]
+      }
+    },
+    "release": {
+      "build": {
+        "configuration": "release",
+        "ltcg": true,
+        "compiler_args": ["/O2"]
+      }
+    }
+  }
+}
+```
+
+```powershell
+mqb build --profile release
+mqb run --profile dev -- input.txt
+```
+
+The first profile version is a **single explicit overlay**: one profile per invocation, no inheritance, no multi-profile stacking, and no implicit default profile. Precedence is `CLI > selected profile > base mqb.json > built-in`; list inputs append in base → profile → CLI order. Profiles cannot set `build.entry`, so selecting build policy never silently changes project entry identity.
+
 ### Source-first compatibility form
 
 The existing direct form remains supported:
@@ -85,6 +122,7 @@ Supported target kinds are `exe`, `dll`, and `static`. `mqb run` applies only to
 ## Core capabilities
 
 - `mqb build` / `mqb run` project commands with fail-closed default-entry resolution.
+- Named `mqb.json` profiles with layered base < profile < CLI resolution.
 - Native MSVC builds for `.c` / `.cpp` / `.cc` / `.cxx`.
 - Visual Studio and portable MSVC toolchain discovery.
 - Header freshness and incremental compilation from `/sourceDependencies`.
@@ -132,6 +170,8 @@ A common configuration:
 
 `build.entry` is resolved relative to `mqb.json` and is used only when `mqb build` / `mqb run` has no explicit positional source. Without it, MQB checks only conventional `main.{c,cpp,cc,cxx}` files in the project root and `src/`; exactly one candidate must exist or MQB fails with a diagnostic.
 
+Named profiles live in the same configuration file and are selected explicitly with `--profile <name>`. Profile paths are also resolved relative to `mqb.json`, and native compiler/linker arguments still pass through the shared MSVC Parameter Engine. The profile name itself is not an extra cache dimension; final effective build semantics determine cache identity.
+
 External/prebuilt module IFCs can also be declared in configuration:
 
 ```json
@@ -145,7 +185,7 @@ External/prebuilt module IFCs can also be declared in configuration:
 }
 ```
 
-See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for the complete schema, path bases, CLI/config precedence, and module-provider rules.
+See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for the complete schema, profiles, path bases, CLI/config precedence, and module-provider rules.
 
 ## Common CLI
 
@@ -157,6 +197,7 @@ mqb <source...> [options]
 
 | Option | Purpose |
 |---|---|
+| `--profile <name>` | Select one named profile from `mqb.json` |
 | `--debug` / `--release` | Build configuration |
 | `--std <14|17|20|23|latest>` | C++ standard |
 | `--type <exe|dll|static>` | Target kind |
@@ -188,7 +229,7 @@ Use the current binary's `mqb --help` as the complete CLI reference.
 
 | Topic | Document |
 |---|---|
-| `mqb.json` configuration and precedence | [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) |
+| `mqb.json` configuration, profiles, and precedence | [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) |
 | Installation, PATH, and uninstall | [`docs/INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) |
 | Architecture and Modules/cache model | [`docs/ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) |
 | Developing MQB | [`docs/DEVELOPMENT_EN.md`](docs/DEVELOPMENT_EN.md) |

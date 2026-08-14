@@ -198,6 +198,15 @@ parse_timings_format(const std::string_view value) {
         + "' (expected text or json)"));
 }
 
+[[nodiscard]] std::expected<void, Error>
+select_profile(Options& options, const std::string_view value) {
+    if (options.profile) {
+        return std::unexpected(error("--profile may be specified only once"));
+    }
+    options.profile = std::string{value};
+    return {};
+}
+
 } // namespace
 
 std::expected<Options, Error>
@@ -269,6 +278,20 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto format = parse_timings_format(*value);
             if (!format) return std::unexpected(format.error());
             options.timings = *format;
+            continue;
+        }
+        if (argument == "--profile") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            auto selected = select_profile(options, *value);
+            if (!selected) return std::unexpected(selected.error());
+            continue;
+        }
+        if (argument.starts_with("--profile=")) {
+            auto value = long_equals_value(argument, "--profile=");
+            if (!value) return std::unexpected(value.error());
+            auto selected = select_profile(options, *value);
+            if (!selected) return std::unexpected(selected.error());
             continue;
         }
         if (argument == "--discover") {
@@ -590,9 +613,11 @@ Default entry resolution for `mqb build` / `mqb run` with no positional source:
 
 Project configuration:
   MQB searches upward from the invocation directory for the nearest mqb.json.
-  Scalar precedence is: explicit CLI > mqb.json > built-in defaults.
-  Config paths are relative to mqb.json; CLI paths are relative to the invocation directory.
+  Scalar precedence is: explicit CLI > selected profile > mqb.json > built-in defaults.
+  List-valued settings append in the same base -> profile -> CLI order.
+  Config/profile paths are relative to mqb.json; CLI paths are relative to the invocation directory.
   Explicit positional sources always take precedence over build.entry.
+  Profiles are selected explicitly with --profile and may not override build.entry.
   External named-module IFCs may be declared under modules.external as logical-name -> IFC path.
 
 Source selection:
@@ -614,6 +639,7 @@ other generated module provider. MSVC standard-library named modules require --s
 missing toolchain capability fails closed with a dedicated diagnostic.
 
 Options:
+  --profile <name>         Select one named profile from mqb.json
   --debug                  Explicitly select Debug compile/link preset
   --release                Explicitly select Release compile/link preset
   --config <debug|release> Select compile/link preset
@@ -667,9 +693,9 @@ targets. Typed LTCG remains valid for static targets and couples /GL compilation
 /LTCG archive policy.
 
 Raw compiler/linker arguments are one argv element per option occurrence; MQB does not split a
-quoted string into multiple switches. Project config entries are applied first and CLI raw args
-append afterward. Typed runtime/LTCG and structured artifact routing are emitted after raw
-arguments so the BuildPlan remains authoritative.
+quoted string into multiple switches. Project config entries are applied first, selected profile
+entries append/override next, and CLI entries apply last. Typed runtime/LTCG and structured
+artifact routing are emitted after raw arguments so the BuildPlan remains authoritative.
 
 MQB v5 intentionally does not accept the PowerShell-era single-dash command aliases. Use the
 native options shown above; unknown legacy spellings fail instead of silently entering a

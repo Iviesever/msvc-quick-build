@@ -5,7 +5,7 @@
 `mqb.json` 是 MQB 的版本化项目配置文件。MQB 从 invocation directory 向上查找最近的 `mqb.json`；找到后，该文件所在目录同时成为：
 
 - project root；
-- 配置相对路径的基准；
+- 配置与 profile 相对路径的基准；
 - `.mqb/` 构建状态的根目录。
 
 ## 1. 最小配置
@@ -25,6 +25,7 @@ version
 build
 discovery
 modules
+profiles
 ```
 
 ## 2. 完整示例
@@ -58,6 +59,25 @@ modules
   "modules": {
     "external": {
       "vendor.math": "third_party/ifc/vendor.math.ifc"
+    }
+  },
+  "profiles": {
+    "dev": {
+      "build": {
+        "configuration": "debug",
+        "runtime": "MDd",
+        "compiler_args": ["/W4"]
+      },
+      "discovery": {
+        "enabled": true
+      }
+    },
+    "release": {
+      "build": {
+        "configuration": "release",
+        "ltcg": true,
+        "compiler_args": ["/O2"]
+      }
     }
   }
 }
@@ -122,6 +142,8 @@ mqb run tools/tool.cpp
 ```
 
 即使项目设置了 `build.entry`，这里仍构建并运行 `tools/tool.cpp`。
+
+`build.entry` **只能声明在根 `build` 层**。Profile 是构建策略 overlay，不能通过 `profiles.<name>.build.entry` 改变项目身份；该字段会被 strict schema 直接拒绝。
 
 ### Typed policy
 
@@ -201,7 +223,7 @@ mqb main.cpp --module-ifc vendor.math=C:\sdk\vendor.math.ifc
 - MQB 不会把 external IFC 加入 source discovery 或 compile levels；
 - provider 缺失会在进入真正 consumer compile 前 fail closed；
 - provider identity 会进入 consumer compile/cache identity，替换 IFC 会使相关 cache 失效；
-- 同名 CLI provider 会覆盖同名 config provider；
+- base config、selected profile 与 CLI 按 logical module name 分层合并，后层同名 provider 定点覆盖前层；
 - CLI 内重复声明同一 logical module name 会报错。
 
 ### `std` / `std.compat`
@@ -210,12 +232,79 @@ mqb main.cpp --module-ifc vendor.math=C:\sdk\vendor.math.ifc
 
 当 P1689 requirement 实际出现 `std` / `std.compat` 时，MQB 才会查询当前 VC Tools 的标准库 module source，并把它作为 toolchain-owned provider 注入同一 module graph。当前 MSVC 标准库 named modules 要求满足 toolchain capability，并使用 `--std latest`。
 
-## 6. 优先级
+## 6. `profiles`
+
+`profiles` 是 profile name 到配置 overlay 的对象。每个 profile 只接受：
+
+```text
+build
+discovery
+modules
+```
+
+它们复用根层完全相同的 typed policy、list、路径和 module-provider 解码规则，但 `build.entry` 除外：profile 内禁止设置入口。
+
+示例：
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/main.cpp",
+    "standard": "23",
+    "defines": ["PROJECT=1"]
+  },
+  "profiles": {
+    "dev": {
+      "build": {
+        "configuration": "debug",
+        "runtime": "MDd",
+        "defines": ["DEV=1"],
+        "compiler_args": ["/W4"]
+      }
+    },
+    "release": {
+      "build": {
+        "configuration": "release",
+        "ltcg": true,
+        "compiler_args": ["/O2"]
+      }
+    }
+  }
+}
+```
+
+选择方式：
+
+```powershell
+mqb build --profile release
+mqb run --profile dev -- input.txt
+```
+
+也接受：
+
+```powershell
+mqb build --profile=release
+```
+
+当前契约刻意保持简单且确定：
+
+- 一次 invocation 最多选择一个 profile；重复 `--profile` 报错；
+- 不存在 profile inheritance；
+- 不支持多 profile stacking；
+- 没有隐式 default profile；未写 `--profile` 就只使用 base config + CLI；
+- `--profile` 需要项目存在 `mqb.json`；
+- 未找到 profile 时 fail closed，并列出可用 profile 名；
+- profile 中的 relative path 与 base config 一样，以 `mqb.json` 所在目录为基准；
+- profile 中的 `compiler_args` / `linker_args` 仍进入同一 MSVC Parameter Engine，semantic option 会先在 profile 自身层归一化，然后再由更高优先级 CLI 覆盖；
+- profile 可以选择 `type` 等 typed policy，因此最终 target 仍受同一 executable/static/DLL 合法性门禁约束。
+
+## 7. 优先级
 
 Scalar policy：
 
 ```text
-显式 CLI > mqb.json > built-in default
+显式 CLI > selected profile > base mqb.json > built-in default
 ```
 
 包括：
@@ -231,32 +320,34 @@ subsystem
 output
 ```
 
+同一层内，typed policy 与等价 native MSVC semantic option 必须一致，否则在进入 toolchain 前 fail closed。例如 profile 同时写 `runtime: "MT"` 与 `/MD` 会被拒绝。
+
 入口选择是独立的 source-selection policy：
 
 ```text
-显式 positional source(s) > build.entry > 唯一 conventional main
+显式 positional source(s) > root build.entry > 唯一 conventional main
 ```
 
 普通 list-like 输入按顺序追加：
 
 ```text
-mqb.json entries -> CLI entries
+base mqb.json entries -> selected profile entries -> CLI entries
 ```
 
-适用于 defines、include dirs、library dirs、libraries、compiler args、linker args。
+适用于 defines、include dirs、library dirs、libraries、compiler args、linker args，以及 discovery list corrections。
 
-External module provider registry 按 logical module name 合并；同名 CLI 项定点覆盖 config 项，而不是简单追加。
+External module provider registry 按 logical module name 合并；同名后层项定点覆盖前层项，而不是制造重复 provider。
 
-## 7. 路径基准
+## 8. 路径基准
 
 MQB 明确区分两种相对路径：
 
 ```text
-CLI relative path      -> invocation directory
-mqb.json relative path -> directory containing mqb.json
+CLI relative path                 -> invocation directory
+mqb.json / profile relative path  -> directory containing mqb.json
 ```
 
-`build.entry` 属于后者。
+`build.entry` 属于后者，但只能出现在 root build 层。
 
 例如：
 
@@ -276,6 +367,13 @@ project/
   "build": {
     "entry": "src/main.cpp",
     "include_dirs": ["include"]
+  },
+  "profiles": {
+    "dev": {
+      "build": {
+        "include_dirs": ["third_party/dev/include"]
+      }
+    }
   }
 }
 ```
@@ -283,22 +381,22 @@ project/
 从 `project/nested/work` 运行：
 
 ```powershell
-mqb run
+mqb run --profile dev
 ```
 
-仍会加载 `project/mqb.json`，把 entry 解析为 `project/src/main.cpp`、include dir 解析为 `project/include`，并把 writable artifacts 放到 `project/.mqb/`。
+仍会加载 `project/mqb.json`，把 entry 解析为 `project/src/main.cpp`、base include dir 解析为 `project/include`、profile include dir 解析为 `project/third_party/dev/include`，并把 writable artifacts 放到 `project/.mqb/`。
 
-显式形式仍按 invocation directory 解析：
+显式 CLI source/path 仍按 invocation directory 解析：
 
 ```powershell
 mqb ../../src/main.cpp
 ```
 
-## 8. Cache 语义
+## 9. Cache 语义
 
-MQB 不以“配置文件时间戳变化”作为全量 rebuild 信号；它根据**生效后的构建语义**计算 identity。
+MQB 不以“配置文件时间戳变化”或“profile 名变化”作为全量 rebuild 信号；它根据**最终生效的构建语义**计算 identity。
 
-`build.entry` 自身不额外进入 compile/link identity；它只决定本次 source-selection 的入口。解析出的实际 source、discovery 结果与既有 compiler/linker semantics 继续决定 cache identity。
+`build.entry` 自身不额外进入 compile/link identity；它只决定本次 source-selection 的入口。Profile name 也不是额外 cache 维度。两个 profile 如果解析成完全相同的 effective build policy/source graph，应复用同一套既有 cache identity。
 
 典型影响：
 
@@ -307,6 +405,7 @@ MQB 不以“配置文件时间戳变化”作为全量 rebuild 信号；它根�
 - `subsystem` 只影响 link identity；
 - libraries / library dirs / linker args 改变 link identity；
 - `type` 改变 downstream target ownership；
+- discovery/profile corrections 通过最终 source set 影响参与构建的 TUs；
 - external/prebuilt IFC identity 改变会使依赖它的 consumer compile cache 失效；
 - selected MSVC toolchain identity 改变时，不会静默复用不兼容的 toolchain-owned standard-library IFC。
 
@@ -314,7 +413,7 @@ MQB 不以“配置文件时间戳变化”作为全量 rebuild 信号；它根�
 
 `-j/--jobs` 是执行策略，不属于 build identity，也不是 v1 配置字段。
 
-## 9. 当前明确边界
+## 10. 当前明确边界
 
 - `exe`、`dll`、`static` 均受支持；
 - `mqb run` 与 source-first `--run` 仅适用于 executable；
@@ -322,6 +421,8 @@ MQB 不以“配置文件时间戳变化”作为全量 rebuild 信号；它根�
 - **需要 Modules/Header Units pipeline 的 static-library target 当前仍 fail closed**；
 - discovery correction 使用精确路径，不支持 glob；
 - default-entry conventional fallback 不递归、不使用 glob；
+- profile 当前仅支持单个显式选择，不支持继承、多 profile stacking 或 implicit default profile；
+- profile 不能覆盖 `build.entry`；
 - 间接 `/DEFAULTLIB` 传递依赖不承诺完全的新鲜度跟踪。
 
 更底层的 provider graph、artifact identity 与职责边界见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。

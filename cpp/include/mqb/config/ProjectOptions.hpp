@@ -41,6 +41,7 @@ struct EffectiveProjectOptions {
 
 [[nodiscard]] EffectiveProjectOptions resolve_project_options(
     const ProjectConfig* project_config,
+    const ProjectProfile* profile,
     const ProjectOverrides& cli_overrides);
 
 } // namespace mqb::config

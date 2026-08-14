@@ -5,7 +5,7 @@
 `mqb.json` is MQB's versioned project configuration file. MQB searches upward from the invocation directory for the nearest `mqb.json`. Once found, its directory becomes:
 
 - the project root;
-- the base for configuration-relative paths;
+- the base for configuration- and profile-relative paths;
 - the root of writable `.mqb/` build state.
 
 ## 1. Minimal configuration
@@ -25,6 +25,7 @@ version
 build
 discovery
 modules
+profiles
 ```
 
 ## 2. Complete example
@@ -58,6 +59,25 @@ modules
   "modules": {
     "external": {
       "vendor.math": "third_party/ifc/vendor.math.ifc"
+    }
+  },
+  "profiles": {
+    "dev": {
+      "build": {
+        "configuration": "debug",
+        "runtime": "MDd",
+        "compiler_args": ["/W4"]
+      },
+      "discovery": {
+        "enabled": true
+      }
+    },
+    "release": {
+      "build": {
+        "configuration": "release",
+        "ltcg": true,
+        "compiler_args": ["/O2"]
+      }
     }
   }
 }
@@ -122,6 +142,8 @@ mqb run tools/tool.cpp
 ```
 
 Even when `build.entry` exists, this builds and runs `tools/tool.cpp`.
+
+`build.entry` may appear **only in the root `build` layer**. Profiles are build-policy overlays and cannot change project identity through `profiles.<name>.build.entry`; strict schema validation rejects that field.
 
 ### Typed policy
 
@@ -201,7 +223,7 @@ Behavior:
 - it is not added to source discovery or compile levels;
 - a missing provider fails closed before the real consumer compile begins;
 - provider identity participates in consumer compile/cache identity, so replacing the IFC invalidates affected consumers;
-- a CLI provider overrides a config provider with the same logical name;
+- base config, selected profile, and CLI merge providers by logical name; a later layer replaces the matching earlier provider in place;
 - declaring the same logical name more than once on the CLI is an error.
 
 ### `std` / `std.compat`
@@ -210,12 +232,79 @@ Behavior:
 
 Only when a P1689 requirement actually references `std` or `std.compat` does MQB query the current VC Tools standard-library module source and inject it as a toolchain-owned provider into the same module graph. Current MSVC standard-library named modules require a supporting toolchain and `--std latest`.
 
-## 6. Precedence
+## 6. `profiles`
+
+`profiles` maps profile names to configuration overlays. Each profile accepts only:
+
+```text
+build
+discovery
+modules
+```
+
+Those sections reuse the same typed-policy, list, path, and module-provider decoding rules as the root layers, except that profile-local `build.entry` is prohibited.
+
+Example:
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/main.cpp",
+    "standard": "23",
+    "defines": ["PROJECT=1"]
+  },
+  "profiles": {
+    "dev": {
+      "build": {
+        "configuration": "debug",
+        "runtime": "MDd",
+        "defines": ["DEV=1"],
+        "compiler_args": ["/W4"]
+      }
+    },
+    "release": {
+      "build": {
+        "configuration": "release",
+        "ltcg": true,
+        "compiler_args": ["/O2"]
+      }
+    }
+  }
+}
+```
+
+Select a profile explicitly:
+
+```powershell
+mqb build --profile release
+mqb run --profile dev -- input.txt
+```
+
+The equals form is also accepted:
+
+```powershell
+mqb build --profile=release
+```
+
+The current contract is deliberately small and deterministic:
+
+- at most one profile may be selected per invocation; duplicate `--profile` is an error;
+- there is no profile inheritance;
+- multi-profile stacking is not supported;
+- there is no implicit default profile; omitting `--profile` means base config + CLI only;
+- `--profile` requires an `mqb.json` project configuration;
+- an unknown profile fails closed and reports the available profile names;
+- relative paths inside a profile use the `mqb.json` directory as their base, exactly like root config paths;
+- profile `compiler_args` / `linker_args` still flow through the same MSVC Parameter Engine. Semantic native options are normalized within the profile layer before higher-precedence CLI policy is applied;
+- a profile may select typed policy such as `type`, so the final target still passes through the same executable/static/DLL validity gates.
+
+## 7. Precedence
 
 Scalar policy:
 
 ```text
-explicit CLI > mqb.json > built-in default
+explicit CLI > selected profile > base mqb.json > built-in default
 ```
 
 This covers:
@@ -231,32 +320,34 @@ subsystem
 output
 ```
 
+Within one layer, typed policy and equivalent native MSVC semantic options must agree or MQB fails closed before toolchain execution. For example, a profile that declares `runtime: "MT"` and `/MD` is rejected.
+
 Entry selection is a separate source-selection policy:
 
 ```text
-explicit positional source(s) > build.entry > unique conventional main
+explicit positional source(s) > root build.entry > unique conventional main
 ```
 
 Ordinary list-like inputs append deterministically:
 
 ```text
-mqb.json entries -> CLI entries
+base mqb.json entries -> selected profile entries -> CLI entries
 ```
 
-This applies to defines, include dirs, library dirs, libraries, compiler args, and linker args.
+This applies to defines, include dirs, library dirs, libraries, compiler args, linker args, and discovery list corrections.
 
-The external module provider registry merges by logical module name. A CLI entry replaces the config entry with the same name rather than merely appending another provider.
+The external module provider registry merges by logical module name. A matching entry in a later layer replaces the earlier provider rather than creating a duplicate.
 
-## 7. Path bases
+## 8. Path bases
 
 MQB distinguishes two relative-path bases:
 
 ```text
-CLI relative path      -> invocation directory
-mqb.json relative path -> directory containing mqb.json
+CLI relative path                 -> invocation directory
+mqb.json / profile relative path  -> directory containing mqb.json
 ```
 
-`build.entry` uses the second base.
+`build.entry` uses the second base but is valid only in the root build layer.
 
 Example:
 
@@ -276,6 +367,13 @@ Configuration:
   "build": {
     "entry": "src/main.cpp",
     "include_dirs": ["include"]
+  },
+  "profiles": {
+    "dev": {
+      "build": {
+        "include_dirs": ["third_party/dev/include"]
+      }
+    }
   }
 }
 ```
@@ -283,22 +381,22 @@ Configuration:
 From `project/nested/work`:
 
 ```powershell
-mqb run
+mqb run --profile dev
 ```
 
-MQB still loads `project/mqb.json`, resolves the entry as `project/src/main.cpp`, resolves the include dir as `project/include`, and places writable artifacts under `project/.mqb/`.
+MQB still loads `project/mqb.json`, resolves the entry as `project/src/main.cpp`, the base include directory as `project/include`, the profile include directory as `project/third_party/dev/include`, and places writable artifacts under `project/.mqb/`.
 
-An explicit source remains invocation-relative:
+Explicit CLI sources and paths remain invocation-relative:
 
 ```powershell
 mqb ../../src/main.cpp
 ```
 
-## 8. Cache semantics
+## 9. Cache semantics
 
-MQB does not treat "the config file timestamp changed" as a global rebuild signal. Identity is derived from the **effective build semantics**.
+MQB does not treat "the config file timestamp changed" or "the profile name changed" as a global rebuild signal. Identity is derived from the **final effective build semantics**.
 
-`build.entry` does not add a separate compile/link identity field; it selects the source-discovery entry for this invocation. The resolved source set and existing compiler/linker semantics continue to determine cache identity.
+`build.entry` does not add a separate compile/link identity field; it selects the source-discovery entry for this invocation. The profile name is likewise not a separate cache dimension. Two profiles that resolve to identical effective build policy/source graphs should reuse the same existing cache identity.
 
 Typical effects:
 
@@ -307,6 +405,7 @@ Typical effects:
 - `subsystem` changes link identity only;
 - libraries, library dirs, and linker args change link identity;
 - `type` changes downstream target ownership;
+- discovery/profile corrections affect participating TUs through the final source set;
 - changing an external/prebuilt IFC invalidates dependent consumer compile caches;
 - changing the selected MSVC toolchain identity does not silently reuse incompatible toolchain-owned standard-library IFCs.
 
@@ -314,7 +413,7 @@ Missing recorded outputs also invalidate the corresponding compile/link/archive 
 
 `-j/--jobs` is execution policy. It is not part of build identity and is not a v1 configuration field.
 
-## 9. Explicit current boundaries
+## 10. Explicit current boundaries
 
 - `exe`, `dll`, and `static` are supported;
 - `mqb run` and source-first `--run` apply only to executables;
@@ -322,6 +421,8 @@ Missing recorded outputs also invalidate the corresponding compile/link/archive 
 - **static-library targets that require the Modules/Header Units pipeline still fail closed**;
 - discovery corrections use exact paths and do not support globs;
 - conventional default-entry fallback is non-recursive and does not use globs;
+- profiles currently support one explicit selection only: no inheritance, multi-profile stacking, or implicit default profile;
+- profiles cannot override `build.entry`;
 - freshness through indirect `/DEFAULTLIB`-style library propagation is not guaranteed to be complete.
 
 See [`ARCHITECTURE_EN.md`](ARCHITECTURE_EN.md) for deeper provider-graph, artifact-identity, and responsibility boundaries.
