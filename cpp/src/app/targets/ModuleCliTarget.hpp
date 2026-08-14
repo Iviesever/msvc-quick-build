@@ -30,7 +30,7 @@ struct ModuleCliTargetRequest {
     std::filesystem::path project_root;
     std::optional<std::filesystem::path> config_file;
     std::string target_name;
-    orchestration::ParallelismPolicy parallelism{};
+    orchestration::ParallelismPolicy max_parallel_jobs{};
     app::performance::Session* timings{};
     bool force_named_modules{false};
     bool verbose{false};
