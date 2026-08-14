@@ -18,10 +18,12 @@ namespace mqb::orchestration {
 
 struct IncrementalStaticTargetRequest {
     std::vector<TargetSourceRequest> sources;
+    std::vector<std::filesystem::path> additional_objects;
     TargetArtifacts target;
     CompilerOptions compiler_options;
     std::filesystem::path working_directory;
     std::size_t max_parallel_compiles{1};
+    bool force_downstream_rebuild{false};
 };
 
 enum class IncrementalStaticTargetErrorCode {

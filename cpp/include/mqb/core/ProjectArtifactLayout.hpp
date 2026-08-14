@@ -17,6 +17,14 @@ struct SourceArtifacts {
     std::filesystem::path compile_cache;
 };
 
+struct PrecompiledHeaderArtifacts {
+    std::filesystem::path source;
+    std::filesystem::path object;
+    std::filesystem::path dependencies;
+    std::filesystem::path precompiled_header;
+    std::filesystem::path compile_cache;
+};
+
 struct TargetArtifacts {
     // Existing field name is retained through the executable/DLL slice to keep
     // the incremental target API stable. Static-library work will generalize the
@@ -45,6 +53,12 @@ public:
 
     [[nodiscard]] std::expected<SourceArtifacts, ArtifactLayoutError>
     for_source(const std::filesystem::path& source) const;
+
+    [[nodiscard]] std::expected<PrecompiledHeaderArtifacts, ArtifactLayoutError>
+    for_precompiled_header(
+        std::string_view target_name,
+        BuildConfiguration configuration,
+        Architecture architecture) const;
 
     [[nodiscard]] std::expected<TargetArtifacts, ArtifactLayoutError>
     for_target(

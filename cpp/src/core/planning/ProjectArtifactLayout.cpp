@@ -155,6 +155,22 @@ namespace fs = std::filesystem;
     return ".exe";
 }
 
+[[nodiscard]] std::string_view configuration_name(const BuildConfiguration configuration) {
+    switch (configuration) {
+    case BuildConfiguration::debug: return "debug";
+    case BuildConfiguration::release: return "release";
+    }
+    return "debug";
+}
+
+[[nodiscard]] std::string_view architecture_name(const Architecture architecture) {
+    switch (architecture) {
+    case Architecture::x86: return "x86";
+    case Architecture::x64: return "x64";
+    }
+    return "x64";
+}
+
 } // namespace
 
 std::expected<ProjectArtifactLayout, ArtifactLayoutError>
@@ -196,6 +212,31 @@ ProjectArtifactLayout::for_source(const fs::path& source) const {
         .compile_cache = append_suffix(
             artifact_root_ / "cache" / "compile" / key,
             ".mqbcache"),
+    };
+}
+
+std::expected<PrecompiledHeaderArtifacts, ArtifactLayoutError>
+ProjectArtifactLayout::for_precompiled_header(
+    const std::string_view target_name,
+    const BuildConfiguration configuration,
+    const Architecture architecture) const {
+    if (!valid_target_name(target_name)) {
+        return std::unexpected(failure(
+            ArtifactLayoutErrorCode::invalid_target_name,
+            fs::path{std::string{target_name}},
+            "target name must be one filename component"));
+    }
+
+    const fs::path key = fs::path{std::string{target_name}}
+        / std::string{configuration_name(configuration)}
+        / std::string{architecture_name(architecture)};
+    const fs::path root = artifact_root_ / "pch" / key;
+    return PrecompiledHeaderArtifacts{
+        .source = root / "creator.cpp",
+        .object = root / "creator.obj",
+        .dependencies = root / "creator.deps.json",
+        .precompiled_header = root / "project.pch",
+        .compile_cache = artifact_root_ / "cache" / "pch" / key / "creator.mqbcache",
     };
 }
 

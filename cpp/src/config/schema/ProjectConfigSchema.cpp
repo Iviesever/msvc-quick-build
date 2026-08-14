@@ -202,6 +202,31 @@ using JsonValue = json::Value;
     return std::nullopt;
 }
 
+[[nodiscard]] std::expected<PrecompiledHeaderPolicy, Error> decode_pch(
+    const fs::path& file,
+    const fs::path& root,
+    const JsonValue& value) {
+    if (value.kind == json::Kind::boolean) {
+        if (value.boolean) {
+            return std::unexpected(schema_error(
+                file,
+                value,
+                "build.pch boolean form only accepts false; enable PCH with a header path string"));
+        }
+        return PrecompiledHeaderPolicy{.enabled = false};
+    }
+    if (value.kind != json::Kind::string || value.scalar.empty()) {
+        return std::unexpected(schema_error(
+            file,
+            value,
+            "build.pch must be a non-empty header path string or false"));
+    }
+    return PrecompiledHeaderPolicy{
+        .enabled = true,
+        .header = resolve_path(root, value.scalar),
+    };
+}
+
 [[nodiscard]] std::expected<void, Error> decode_build(
     const fs::path& file,
     const fs::path& root,
@@ -215,7 +240,7 @@ using JsonValue = json::Value;
         **object,
         {
             "configuration", "architecture", "standard", "runtime", "ltcg",
-            "subsystem", "type", "entry", "output", "defines", "include_dirs",
+            "subsystem", "type", "entry", "pch", "output", "defines", "include_dirs",
             "library_dirs", "libraries", "compiler_args", "linker_args",
         },
         "build");
@@ -309,6 +334,12 @@ using JsonValue = json::Value;
         auto text = require_string(file, it->second, "build.entry");
         if (!text) return std::unexpected(text.error());
         out.entry = resolve_path(root, *text);
+    }
+
+    if (auto it = (**object).find("pch"); it != (**object).end()) {
+        auto policy = decode_pch(file, root, it->second);
+        if (!policy) return std::unexpected(policy.error());
+        out.precompiled_header = std::move(*policy);
     }
 
     if (auto it = (**object).find("output"); it != (**object).end()) {

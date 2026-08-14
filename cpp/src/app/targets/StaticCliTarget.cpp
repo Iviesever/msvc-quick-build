@@ -28,8 +28,11 @@ int run_static_target(
                   << "  project: " << diagnostics::path_text(request.project_root) << '\n'
                   << "  type:    static\n"
                   << "  cl:      " << diagnostics::path_text(toolchain.identity.compiler) << '\n'
-                  << "  lib:     " << diagnostics::path_text(toolchain.librarian) << '\n'
-                  << "  output:  " << diagnostics::path_text(request.target.executable) << '\n'
+                  << "  lib:     " << diagnostics::path_text(toolchain.librarian) << '\n';
+        for (const auto& object : request.additional_objects) {
+            std::cout << "  object:  " << diagnostics::path_text(object) << " (MQB-owned)\n";
+        }
+        std::cout << "  output:  " << diagnostics::path_text(request.target.executable) << '\n'
                   << "  cache:   " << diagnostics::path_text(request.target.link_cache) << '\n';
     }
 
@@ -43,10 +46,12 @@ int run_static_target(
 
     auto result = target_coordinator.run(orchestration::IncrementalStaticTargetRequest{
         .sources = std::move(request.sources),
+        .additional_objects = std::move(request.additional_objects),
         .target = request.target,
         .compiler_options = std::move(request.compiler_options),
         .working_directory = request.project_root,
         .max_parallel_compiles = request.max_parallel_jobs,
+        .force_downstream_rebuild = request.force_downstream_rebuild,
     });
     if (!result) {
         diagnostics::print_static_target_failure(result.error());

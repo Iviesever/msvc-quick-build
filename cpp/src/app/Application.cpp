@@ -1,6 +1,7 @@
 #include "Application.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -19,12 +20,14 @@
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/LinkOptions.hpp"
 #include "mqb/core/ProjectArtifactLayout.hpp"
+#include "mqb/core/TranslationUnitClassifier.hpp"
 #include "mqb/discovery/SourceDiscovery.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
+#include "mqb/orchestration/MsvcIncrementalPchCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 #include "mqb/process/Process.hpp"
@@ -79,6 +82,28 @@ void add_portable_root_if_missing(
         message += diagnostics::path_text(path);
     }
     return message;
+}
+
+void print_pch_failure(const mqb::orchestration::IncrementalPchError& error) {
+    diagnostics::print_error(error.message);
+    if (!error.compile_error) return;
+    const auto& compile_error = *error.compile_error;
+    if (!compile_error.message.empty()) {
+        diagnostics::print_error("PCH compile: " + compile_error.message);
+    }
+    if (!compile_error.compile_error) return;
+    const auto& executor_error = *compile_error.compile_error;
+    if (!executor_error.message.empty()) {
+        diagnostics::print_error("PCH executor: " + executor_error.message);
+    }
+    if (!executor_error.compiler_error) return;
+    const auto& compiler_error = *executor_error.compiler_error;
+    if (!compiler_error.message.empty()) {
+        diagnostics::print_error("PCH compiler: " + compiler_error.message);
+    }
+    if (compiler_error.process_result) {
+        diagnostics::print_process_output(*compiler_error.process_result);
+    }
 }
 
 } // namespace
@@ -263,6 +288,83 @@ int Application::run(const std::span<const std::string_view> arguments) {
                 return mqb::cli::is_module_interface_source(source.source);
             });
 
+    mqb::msvc::MsvcCompileExecutor compile_executor{*toolchain, runner};
+    mqb::orchestration::MsvcIncrementalCompileCoordinator compile_coordinator{
+        *toolchain,
+        compile_executor};
+
+    std::optional<mqb::PrecompiledHeaderArtifacts> pch_artifacts;
+    bool pch_compiled = false;
+    if (effective.precompiled_header) {
+        if (module_target) {
+            diagnostics::print_error(
+                "first-class PCH is not yet supported with the Modules/Header Unit pipeline");
+            return 2;
+        }
+        const auto c_source = std::find_if(
+            target_sources.begin(),
+            target_sources.end(),
+            [](const mqb::orchestration::TargetSourceRequest& source) {
+                return mqb::is_c_translation_unit_path(source.source);
+            });
+        if (c_source != target_sources.end()) {
+            diagnostics::print_error(
+                "first-class PCH currently requires an ordinary C++ source set; C translation unit found: "
+                + diagnostics::path_text(display_source(project_root, c_source->source)));
+            return 2;
+        }
+
+        auto allocated = layout->for_precompiled_header(
+            target_name,
+            options.build.configuration,
+            options.build.architecture);
+        if (!allocated) {
+            diagnostics::print_error(allocated.error().message);
+            return 2;
+        }
+        pch_artifacts = std::move(*allocated);
+
+        mqb::orchestration::MsvcIncrementalPchCoordinator pch_coordinator{compile_coordinator};
+        const auto pch_started = performance::Clock::now();
+        auto pch = pch_coordinator.run(mqb::orchestration::IncrementalPchRequest{
+            .header = *effective.precompiled_header,
+            .artifacts = *pch_artifacts,
+            .compiler_options = compiler_options,
+            .working_directory = project_root,
+        });
+        mqb::orchestration::TargetTimings pch_timings;
+        pch_timings.compile = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            performance::Clock::now() - pch_started);
+        timing_session.add_target(pch_timings);
+        if (!pch) {
+            print_pch_failure(pch.error());
+            return 4;
+        }
+
+        pch_compiled = pch->compile.compiled;
+        timing_session.record_compile(pch_compiled);
+        diagnostics::print_compile_warnings(pch->compile);
+        if (pch_compiled) {
+            std::cout << "[pch] "
+                      << diagnostics::path_text(display_source(project_root, *effective.precompiled_header));
+            diagnostics::print_reasons(pch->compile.validation.reasons);
+            std::cout << '\n';
+            if (pch->compile.process) {
+                diagnostics::print_process_output(*pch->compile.process);
+            }
+        } else {
+            std::cout << "[up-to-date] pch "
+                      << diagnostics::path_text(display_source(project_root, *effective.precompiled_header))
+                      << '\n';
+        }
+
+        compiler_options.precompiled_header = mqb::PrecompiledHeaderBinding{
+            .header = effective.precompiled_header->lexically_normal(),
+            .artifact = pch_artifacts->precompiled_header.lexically_normal(),
+            .role = mqb::PrecompiledHeaderRole::use,
+        };
+    }
+
     if (options.build.target_kind == mqb::TargetKind::static_library) {
         if (module_target) {
             diagnostics::print_error(
@@ -281,12 +383,16 @@ int Application::run(const std::span<const std::string_view> arguments) {
         return mqb::cli::run_static_target(
             mqb::cli::StaticCliTargetRequest{
                 .sources = std::move(target_sources),
+                .additional_objects = pch_artifacts
+                    ? std::vector<fs::path>{pch_artifacts->object}
+                    : std::vector<fs::path>{},
                 .target = std::move(*target_artifacts),
                 .compiler_options = std::move(compiler_options),
                 .project_root = project_root,
                 .target_name = target_name,
                 .max_parallel_jobs = compile_jobs,
                 .timings = &timing_session,
+                .force_downstream_rebuild = pch_compiled,
                 .verbose = options.verbose,
             },
             *toolchain,
@@ -340,6 +446,12 @@ int Application::run(const std::span<const std::string_view> arguments) {
                   << (options.jobs ? "" : " (auto)") << '\n'
                   << "  cl:      " << diagnostics::path_text(toolchain->identity.compiler) << '\n'
                   << "  link:    " << diagnostics::path_text(toolchain->linker) << '\n';
+        if (pch_artifacts && effective.precompiled_header) {
+            std::cout << "  pch:     " << diagnostics::path_text(*effective.precompiled_header) << '\n'
+                      << "    file:  " << diagnostics::path_text(pch_artifacts->precompiled_header) << '\n'
+                      << "    obj:   " << diagnostics::path_text(pch_artifacts->object) << '\n'
+                      << "    cache: " << diagnostics::path_text(pch_artifacts->compile_cache) << '\n';
+        }
         for (const auto& source : target_sources) {
             std::cout << "  source:  " << diagnostics::path_text(display_source(project_root, source.source)) << '\n'
                       << "    obj:   " << diagnostics::path_text(source.artifacts.object) << '\n'
@@ -362,10 +474,6 @@ int Application::run(const std::span<const std::string_view> arguments) {
                   << "  cache:   " << diagnostics::path_text(target_artifacts->link_cache) << '\n';
     }
 
-    mqb::msvc::MsvcCompileExecutor compile_executor{*toolchain, runner};
-    mqb::orchestration::MsvcIncrementalCompileCoordinator compile_coordinator{
-        *toolchain,
-        compile_executor};
     mqb::msvc::MsvcLinker linker{*toolchain, runner};
     mqb::orchestration::MsvcIncrementalLinkCoordinator link_coordinator{*toolchain, linker};
     mqb::orchestration::MsvcIncrementalTargetCoordinator target_coordinator{
@@ -374,11 +482,15 @@ int Application::run(const std::span<const std::string_view> arguments) {
 
     const mqb::orchestration::IncrementalTargetRequest request{
         .sources = std::move(target_sources),
+        .additional_objects = pch_artifacts
+            ? std::vector<fs::path>{pch_artifacts->object}
+            : std::vector<fs::path>{},
         .target = std::move(*target_artifacts),
         .compiler_options = std::move(compiler_options),
         .link_options = std::move(link_options),
         .working_directory = project_root,
         .max_parallel_compiles = compile_jobs,
+        .force_downstream_rebuild = pch_compiled,
     };
 
     auto result = target_coordinator.run(request);

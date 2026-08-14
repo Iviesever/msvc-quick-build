@@ -34,6 +34,7 @@ struct Options {
     std::optional<RuntimeLibrary> runtime_override;
     std::optional<bool> ltcg_override;
     std::optional<LinkSubsystem> subsystem_override;
+    std::optional<PrecompiledHeaderPolicy> pch_override;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;
     std::vector<std::filesystem::path> library_directories;

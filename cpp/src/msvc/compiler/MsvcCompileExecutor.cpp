@@ -100,8 +100,18 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
         request.unit,
         ArtifactKind::module_interface,
         interface_count);
+    std::size_t pch_count = 0;
+    const Artifact* pch_output = find_single_artifact(
+        request.unit,
+        ArtifactKind::precompiled_header,
+        pch_count);
 
     const bool header_unit_producer = request.unit.header_unit.has_value();
+    const bool pch_creator = request.options.precompiled_header
+        && request.options.precompiled_header->role == PrecompiledHeaderRole::create;
+    const bool pch_consumer = request.options.precompiled_header
+        && request.options.precompiled_header->role == PrecompiledHeaderRole::use;
+
     if (header_unit_producer) {
         if (request.unit.kind != TranslationUnitKind::source) {
             return std::unexpected(invalid_request(
@@ -111,9 +121,9 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
             return std::unexpected(invalid_request(
                 "header-unit producer identity must have a non-empty header name"));
         }
-        if (object_count != 0) {
+        if (object_count != 0 || pch_count != 0) {
             return std::unexpected(invalid_request(
-                "incremental header-unit producer must be IFC-only and must not expose an object artifact"));
+                "incremental header-unit producer must be IFC-only"));
         }
         if (module_interface == nullptr
             || interface_count != 1
@@ -137,6 +147,10 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
             return std::unexpected(invalid_request(
                 "module interface translation unit must expose exactly one non-empty IFC artifact"));
         }
+        if (pch_count != 0) {
+            return std::unexpected(invalid_request(
+                "module interface translation unit must not expose a precompiled-header artifact"));
+        }
     } else {
         if (object == nullptr || object_count != 1 || object->path.empty()) {
             return std::unexpected(invalid_request(
@@ -146,11 +160,30 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
             return std::unexpected(invalid_request(
                 "ordinary source translation unit must not expose an IFC output artifact"));
         }
+        if (pch_creator) {
+            if (pch_output == nullptr || pch_count != 1 || pch_output->path.empty()) {
+                return std::unexpected(invalid_request(
+                    "PCH creator must expose exactly one non-empty precompiled-header artifact"));
+            }
+            if (pch_output->path.lexically_normal()
+                != request.options.precompiled_header->artifact.lexically_normal()) {
+                return std::unexpected(invalid_request(
+                    "PCH creator output must match the typed precompiled-header artifact path"));
+            }
+        } else if (pch_count != 0) {
+            return std::unexpected(invalid_request(
+                "only a typed PCH creator may expose a precompiled-header artifact"));
+        }
+        if (pch_consumer && !regular_file(request.options.precompiled_header->artifact)) {
+            return std::unexpected(invalid_request(
+                "PCH consumer requires an existing MQB-owned precompiled-header artifact"));
+        }
     }
 
     for (const auto& output : request.unit.outputs) {
         if (output.kind != ArtifactKind::object
-            && output.kind != ArtifactKind::module_interface) {
+            && output.kind != ArtifactKind::module_interface
+            && output.kind != ArtifactKind::precompiled_header) {
             return std::unexpected(invalid_request(
                 "compile translation unit contains a non-compile output artifact"));
         }
@@ -223,6 +256,9 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
     }
     for (const auto& reference : request.unit.header_unit_references) {
         add_interface_dependency(cache_dependencies, reference.interface_file);
+    }
+    if (pch_consumer) {
+        add_interface_dependency(cache_dependencies, request.options.precompiled_header->artifact);
     }
 
     CompileCacheEntry cache_entry{

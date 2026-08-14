@@ -23,11 +23,16 @@ struct TargetSourceRequest {
 
 struct IncrementalTargetRequest {
     std::vector<TargetSourceRequest> sources;
+    // MQB-owned objects created outside the ordinary source scheduler (for
+    // example the object paired with a first-class PCH creator). They enter the
+    // final link signature/order but are never compiled as consumer sources.
+    std::vector<std::filesystem::path> additional_objects;
     TargetArtifacts target;
     CompilerOptions compiler_options;
     LinkOptions link_options;
     std::filesystem::path working_directory;
     std::size_t max_parallel_compiles{1};
+    bool force_downstream_rebuild{false};
 };
 
 struct TargetCompileResult {

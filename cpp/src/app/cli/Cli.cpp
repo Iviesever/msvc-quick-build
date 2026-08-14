@@ -207,6 +207,15 @@ select_profile(Options& options, const std::string_view value) {
     return {};
 }
 
+[[nodiscard]] std::expected<void, Error>
+select_pch(Options& options, PrecompiledHeaderPolicy policy) {
+    if (options.pch_override) {
+        return std::unexpected(error("--pch/--no-pch may be specified only once"));
+    }
+    options.pch_override = std::move(policy);
+    return {};
+}
+
 } // namespace
 
 std::expected<Options, Error>
@@ -291,6 +300,31 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto value = long_equals_value(argument, "--profile=");
             if (!value) return std::unexpected(value.error());
             auto selected = select_profile(options, *value);
+            if (!selected) return std::unexpected(selected.error());
+            continue;
+        }
+        if (argument == "--pch") {
+            auto value = require_value(arguments, index, argument);
+            if (!value) return std::unexpected(value.error());
+            auto selected = select_pch(options, PrecompiledHeaderPolicy{
+                .enabled = true,
+                .header = std::filesystem::u8path(*value),
+            });
+            if (!selected) return std::unexpected(selected.error());
+            continue;
+        }
+        if (argument.starts_with("--pch=")) {
+            auto value = long_equals_value(argument, "--pch=");
+            if (!value) return std::unexpected(value.error());
+            auto selected = select_pch(options, PrecompiledHeaderPolicy{
+                .enabled = true,
+                .header = std::filesystem::u8path(*value),
+            });
+            if (!selected) return std::unexpected(selected.error());
+            continue;
+        }
+        if (argument == "--no-pch") {
+            auto selected = select_pch(options, PrecompiledHeaderPolicy{.enabled = false});
             if (!selected) return std::unexpected(selected.error());
             continue;
         }
@@ -618,6 +652,7 @@ Project configuration:
   Config/profile paths are relative to mqb.json; CLI paths are relative to the invocation directory.
   Explicit positional sources always take precedence over build.entry.
   Profiles are selected explicitly with --profile and may not override build.entry.
+  PCH policy is scalar: --pch/--no-pch overrides selected profile and base config.
   External named-module IFCs may be declared under modules.external as logical-name -> IFC path.
 
 Source selection:
@@ -640,6 +675,8 @@ missing toolchain capability fails closed with a dedicated diagnostic.
 
 Options:
   --profile <name>         Select one named profile from mqb.json
+  --pch <header>           Enable MQB-owned PCH for an ordinary C++ target
+  --no-pch                 Disable PCH inherited from mqb.json/profile
   --debug                  Explicitly select Debug compile/link preset
   --release                Explicitly select Release compile/link preset
   --config <debug|release> Select compile/link preset
@@ -677,6 +714,11 @@ Options:
   -h, --help              Show this help and the embedded build version
   --                      Pass all remaining argv elements to an executable program
 
+First-class PCH is currently limited to ordinary C++ source sets. It fails closed for C
+translation units and targets that require the Modules/Header Unit pipeline. MQB owns the
+synthetic creator TU, .pch path, paired creator object, /FI, /Yc|/Yu, and /Fp arguments; raw
+PCH structural switches remain in the parameter engine's MQB-owned/unsupported domain.
+
 Native MSVC compiler switches may use '/' or a single '-' prefix. MQB '--long' options remain
 in the MQB namespace. `/link` (or `-link`) is a one-way compiler-to-linker boundary for build
 arguments; MQB options must appear before it. The outer `--` delimiter still ends build parsing
@@ -694,8 +736,8 @@ targets. Typed LTCG remains valid for static targets and couples /GL compilation
 
 Raw compiler/linker arguments are one argv element per option occurrence; MQB does not split a
 quoted string into multiple switches. Project config entries are applied first, selected profile
-entries append/override next, and CLI entries apply last. Typed runtime/LTCG and structured
-artifact routing are emitted after raw arguments so the BuildPlan remains authoritative.
+entries append/override next, and CLI entries apply last. Typed runtime/LTCG/PCH policy and
+structured artifact routing are emitted after raw arguments so the BuildPlan remains authoritative.
 
 MQB v5 intentionally does not accept the PowerShell-era single-dash command aliases. Use the
 native options shown above; unknown legacy spellings fail instead of silently entering a
@@ -707,11 +749,12 @@ Discovery is source selection only. Incremental header freshness uses MSVC
 /sourceDependencies metadata; /scanDependencies is module topology only.
 
 Generated state:
-  .mqb/obj/    collision-free object files (including generated std/std.compat providers)
+  .mqb/obj/    collision-free ordinary object files
+  .mqb/pch/    MQB-owned synthetic PCH creator source/object/.pch state
   .mqb/deps/   compiler dependency metadata
   .mqb/scan/   module dependency scan metadata
   .mqb/ifc/    module/header-unit interface artifacts
-  .mqb/cache/  compile, link, and archive cache metadata
+  .mqb/cache/  compile, PCH, link, and archive cache metadata
   .mqb/bin/    executable, DLL/import-library, or static-library target artifacts
 )";
 }

@@ -90,6 +90,29 @@ mqb run --profile dev -- input.txt
 
 The first profile version is a **single explicit overlay**: one profile per invocation, no inheritance, no multi-profile stacking, and no implicit default profile. Precedence is `CLI > selected profile > base mqb.json > built-in`; list inputs append in base → profile → CLI order. Profiles cannot set `build.entry`, so selecting build policy never silently changes project entry identity.
 
+### First-class PCH
+
+Ordinary C++ targets can hand MSVC precompiled headers to MQB as first-class build artifacts:
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/main.cpp",
+    "pch": "include/pch.hpp"
+  }
+}
+```
+
+The CLI can enable/override or disable inherited PCH policy:
+
+```powershell
+mqb build --pch include/pch.hpp
+mqb build --profile dev --no-pch
+```
+
+PCH is scalar policy with `CLI > selected profile > base mqb.json > disabled default` precedence. MQB owns the synthetic creator, `.pch`, paired creator `.obj`, `/FI`, `/Yc` / `/Yu`, and `/Fp`, and records the `.pch` as a consumer cache dependency. Raw PCH structural switches do not compete with this model. First-class PCH currently supports ordinary C++ `exe` / `dll` / `static` targets; C translation units and targets that require the Modules/Header Unit pipeline fail closed. See [`docs/PRECOMPILED_HEADERS_EN.md`](docs/PRECOMPILED_HEADERS_EN.md).
+
 ### Source-first compatibility form
 
 The existing direct form remains supported:
@@ -123,6 +146,7 @@ Supported target kinds are `exe`, `dll`, and `static`. `mqb run` applies only to
 
 - `mqb build` / `mqb run` project commands with fail-closed default-entry resolution.
 - Named `mqb.json` profiles with layered base < profile < CLI resolution.
+- First-class MSVC PCH for ordinary C++ targets, with dedicated PCH cache and automatic consumer invalidation.
 - Native MSVC builds for `.c` / `.cpp` / `.cc` / `.cxx`.
 - Visual Studio and portable MSVC toolchain discovery.
 - Header freshness and incremental compilation from `/sourceDependencies`.
@@ -138,7 +162,7 @@ Supported target kinds are `exe`, `dll`, and `static`. `mqb run` applies only to
 - Windows Unicode-safe artifact/path identity.
 - All writable build state kept under project `.mqb/`.
 
-> Current boundary: `static` targets that require the Modules/Header Units pipeline are still rejected explicitly. Ordinary static-library builds are unaffected.
+> Current boundary: first-class PCH does not yet mix with C translation units or the Modules/Header Unit pipeline; `static` targets that require the Modules/Header Unit pipeline are still rejected explicitly. Ordinary C++ PCH and ordinary static-library builds are unaffected.
 
 ## `mqb.json`
 
@@ -162,6 +186,7 @@ A common configuration:
     "configuration": "release",
     "standard": "latest",
     "type": "exe",
+    "pch": "include/pch.hpp",
     "output": "app",
     "include_dirs": ["include"]
   }
@@ -169,6 +194,8 @@ A common configuration:
 ```
 
 `build.entry` is resolved relative to `mqb.json` and is used only when `mqb build` / `mqb run` has no explicit positional source. Without it, MQB checks only conventional `main.{c,cpp,cc,cxx}` files in the project root and `src/`; exactly one candidate must exist or MQB fails with a diagnostic.
+
+`build.pch` may be a non-empty header path or `false`. PCH paths from config/profiles resolve relative to `mqb.json`; CLI `--pch` paths resolve relative to the invocation directory. A profile may replace base PCH or disable it with `pch: false`, and CLI `--pch` / `--no-pch` overrides the selected profile.
 
 Named profiles live in the same configuration file and are selected explicitly with `--profile <name>`. Profile paths are also resolved relative to `mqb.json`, and native compiler/linker arguments still pass through the shared MSVC Parameter Engine. The profile name itself is not an extra cache dimension; final effective build semantics determine cache identity.
 
@@ -185,7 +212,7 @@ External/prebuilt module IFCs can also be declared in configuration:
 }
 ```
 
-See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for the complete schema, profiles, path bases, CLI/config precedence, and module-provider rules.
+See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for the complete schema, profiles, path bases, CLI/config precedence, and module-provider rules. See [`docs/PRECOMPILED_HEADERS_EN.md`](docs/PRECOMPILED_HEADERS_EN.md) for PCH ownership, artifacts, and invalidation behavior.
 
 ## Common CLI
 
@@ -198,6 +225,7 @@ mqb <source...> [options]
 | Option | Purpose |
 |---|---|
 | `--profile <name>` | Select one named profile from `mqb.json` |
+| `--pch <header>` / `--no-pch` | Enable/override first-class PCH or disable inherited PCH policy |
 | `--debug` / `--release` | Build configuration |
 | `--std <14|17|20|23|latest>` | C++ standard |
 | `--type <exe|dll|static>` | Target kind |
@@ -230,6 +258,7 @@ Use the current binary's `mqb --help` as the complete CLI reference.
 | Topic | Document |
 |---|---|
 | `mqb.json` configuration, profiles, and precedence | [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) |
+| First-class PCH ownership, cache, and invalidation | [`docs/PRECOMPILED_HEADERS_EN.md`](docs/PRECOMPILED_HEADERS_EN.md) |
 | Installation, PATH, and uninstall | [`docs/INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) |
 | Architecture and Modules/cache model | [`docs/ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) |
 | Developing MQB | [`docs/DEVELOPMENT_EN.md`](docs/DEVELOPMENT_EN.md) |

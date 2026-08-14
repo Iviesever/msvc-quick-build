@@ -19,12 +19,14 @@ namespace mqb::cli {
 
 struct StaticCliTargetRequest {
     std::vector<orchestration::TargetSourceRequest> sources;
+    std::vector<std::filesystem::path> additional_objects;
     TargetArtifacts target;
     CompilerOptions compiler_options;
     std::filesystem::path project_root;
     std::string target_name;
     std::size_t max_parallel_jobs{1};
     app::performance::Session* timings{};
+    bool force_downstream_rebuild{false};
     bool verbose{false};
 };
 
