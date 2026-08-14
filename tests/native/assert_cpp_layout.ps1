@@ -37,6 +37,15 @@ function Assert-NoDirectFiles {
     }
 }
 
+function Assert-NoDirectDirectories {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $directories = @(Get-ChildItem -LiteralPath $Root -Directory | Select-Object -ExpandProperty Name)
+    if ($directories.Count -ne 0) {
+        throw "Responsibility leaf '$Root' must not contain subdirectories: $($directories -join ', ')"
+    }
+}
+
 function Assert-ExactFiles {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -159,7 +168,7 @@ foreach ($leaf in $discoveryLeafFiles.Keys) {
     Assert-ExactFiles -Root $leafRoot -Expected $discoveryLeafFiles[$leaf]
 }
 $discoveryTestsRoot = Join-Path $testsRoot 'discovery'
-Assert-DirectDirectories -Root $discoveryTestsRoot -Allowed @()
+Assert-NoDirectDirectories -Root $discoveryTestsRoot
 Assert-ExactFiles -Root $discoveryTestsRoot -Expected @(
     'c_source_discovery_tests.cpp',
     'module_source_discovery_tests.cpp',
