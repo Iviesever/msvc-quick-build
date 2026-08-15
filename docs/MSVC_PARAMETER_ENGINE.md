@@ -8,12 +8,14 @@ MQB does not try to rename every MSVC switch into a second property system. Inst
 |---|---|---|---|
 | A — MQB-owned structural | Changes target/TU shape, primary artifacts, dependency metadata, or graph topology owned by MQB | `/Fo`, `/OUT`, `/ifcOutput`, `/sourceDependencies`, `/scanDependencies` | Reject user/raw ownership escape with an explanation |
 | B — Semantic typed | Already represented by the MQB build model | `/std:`, `/MD`/`/MT`, `/GL`, `/MACHINE`, `/SUBSYSTEM`, `/LTCG` | Normalize into typed policy before project-option resolution |
-| C — Safe/conditional passthrough | Does not invalidate MQB structural ownership and can remain an ordinary MSVC argv element | `/W4`, `/WX`, `/fp:fast`, `/arch:AVX2`, `/favor:AMD64`, `/STACK`, version-conditional `/DEBUG:FASTLINK` | Preserve spelling/order verbatim; existing signatures/cache identity include it, then apply toolchain lifecycle admission where required |
+| C — Safe/conditional passthrough | Does not invalidate MQB structural ownership and can remain an ordinary MSVC argv element | `/W4`, `/WX`, `/fp:fast`, `/arch:AVX2`, `/favor:AMD64`, `/I`, `/D`, `/STACK`, version-conditional `/DEBUG:FASTLINK` | Preserve native argv ownership/order; existing signatures/cache identity include it, then apply toolchain lifecycle admission where required |
 | D — Unsupported / conflicting | Changes an unmodeled pipeline, hides inputs, is unconditionally obsolete, or conflicts with another semantic value | `/MP`, raw PCH `/Y*`, `@response` | Fail closed before invoking MSVC |
 
 `unsupported` is not the same as `unregistered`. A current official option may intentionally be unsupported, but it still has an explicit registry entry and rationale. `unregistered` means the registry has no classification and is a coverage failure for the current reference snapshot.
 
 Ownership and availability are deliberately separate. An option can be structurally safe for MQB to pass through while only existing on part of the supported MSVC toolset range. Those options survive semantic routing and are admitted after MQB discovers the actual toolchain.
+
+Class C passthrough does not mean MQB must remain blind to every effect of an option. MQB may extract **non-owning semantic evidence** when another subsystem requires it, while keeping the original compiler argv authoritative. Native `/I` is the first such case: its include root is exposed to smart discovery, but the `/I` argument remains in raw compiler argv and therefore retains its ordering relative to other native compiler options. Native `/D` is parsed as preprocessor metadata for the same reason but is likewise kept raw. When a native `/I` path is relative, MQB resolves its payload against the supplying layer's path base (project root for config/profile, invocation directory for CLI) without moving the token in argv.
 
 ## Toolchain lifecycle admission
 
@@ -39,7 +41,7 @@ Native parameters are normalized inside the layer that supplied them:
 5. The project resolver then applies `built-ins < base mqb.json < selected profile < CLI`.
 6. After MSVC discovery, remaining raw arguments pass toolchain lifecycle admission.
 
-This prevents argv ordering from becoming a second precedence system. A CLI semantic option can still override a project semantic option, while contradictory values inside the same source are diagnosed instead of relying on MSVC's last-option-wins behavior.
+This prevents argv ordering from becoming a second precedence system for typed semantic policy. Native passthrough options keep their own argv order rather than being silently converted into a reordered property list.
 
 ## Tool semantics
 
@@ -77,4 +79,4 @@ The engine intentionally fails closed where MQB cannot preserve semantics yet:
 - PGO and other file-producing/file-consuming modes: rejected until their artifacts participate in freshness/cache identity;
 - response files: rejected until MQB can expand and classify their contents safely.
 
-The parameter engine therefore has two independent correctness questions for every native argument: **who owns the semantics?** and, where necessary, **does this exact toolset still provide the option?**
+The parameter engine therefore has three independent correctness questions for native arguments: **who owns the semantics?**, **does MQB need non-owning evidence for another subsystem?**, and, where necessary, **does this exact toolset still provide the option?**
