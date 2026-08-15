@@ -82,8 +82,11 @@ void collect_existing_side_output(
     std::vector<fs::path>& outputs,
     std::vector<IncrementalLinkWarning>& warnings) {
     std::error_code error_code;
-    const bool exists = fs::is_regular_file(path, error_code);
+    const fs::file_status status = fs::status(path, error_code);
     if (error_code) {
+        if (error_code == std::errc::no_such_file_or_directory) {
+            return;
+        }
         warnings.push_back(IncrementalLinkWarning{
             .code = IncrementalLinkWarningCode::file_snapshot_failed,
             .path = path,
@@ -91,7 +94,7 @@ void collect_existing_side_output(
         });
         return;
     }
-    if (exists) {
+    if (fs::is_regular_file(status)) {
         outputs.push_back(path);
     }
 }
