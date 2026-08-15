@@ -8,7 +8,7 @@ MQB does not try to rename every MSVC switch into a second property system. Inst
 |---|---|---|---|
 | A — MQB-owned structural | Changes target/TU shape, primary artifacts, dependency metadata, or graph topology owned by MQB | `/Fo`, `/OUT`, `/ifcOutput`, `/ifcMap`, `/sourceDependencies`, `/scanDependencies` | Reject user/raw ownership escape with an explanation |
 | B — Semantic typed | Already represented by the MQB build model | `/std:`, `/MD`/`/MT`, `/GL`, `/MACHINE`, `/SUBSYSTEM`, `/LTCG` | Normalize into typed policy before project-option resolution |
-| C — Safe/conditional passthrough | Does not invalidate MQB structural ownership and can remain an ordinary MSVC argv element | `/W4`, `/WX`, `/fp:fast`, `/arch:AVX2`, `/favor:AMD64`, `/I`, `/D`, `/U`, `/external:I`, `/FI`, `/DEF`, `/ORDER`, `/STACK`, version-conditional `/DEBUG:FASTLINK` | Preserve native argv ownership/order; existing signatures/cache identity include it, expose non-owning graph/execution evidence where required, then apply toolchain lifecycle admission where required |
+| C — Safe/conditional passthrough | Does not invalidate MQB structural ownership and can remain an ordinary MSVC argv element | `/W4`, `/WX`, `/fp:fast`, `/arch:AVX2`, `/favor:AMD64`, `/I`, `/D`, `/U`, `/external:I`, `/FI`, `/DEF`, `/ORDER`, `/STUB`, `/STACK`, version-conditional `/DEBUG:FASTLINK` | Preserve native argv ownership/order; existing signatures/cache identity include it, expose non-owning graph/execution evidence where required, then apply toolchain lifecycle admission where required |
 | D — Unsupported / conflicting | Changes an unmodeled pipeline, hides inputs, introduces untracked files/artifacts, is unconditionally obsolete, or conflicts with another semantic value | `/MP`, raw PCH `/Y*`, `/FU`, `/analyze`, `/experimental:log`, `@response` | Fail closed before invoking MSVC |
 
 `unsupported` is not the same as `unregistered`. A current official option may intentionally be unsupported, but it still has an explicit registry entry and rationale. `unregistered` means the registry has no classification and is a coverage failure for the current reference snapshot.
@@ -20,6 +20,8 @@ Class C passthrough does not mean MQB must remain blind to every effect of an op
 Native linker `/DEF:<file>` follows the same evidence-without-ownership model. The raw LINK argument remains authoritative, but MQB resolves a relative definition-file payload inside the layer that supplied it and records the resolved file as a generic linker freshness input. Config/profile paths are based at project root; CLI paths are based at the invocation directory. The argument keeps its original argv position. Because LINK accepts one module-definition file for an invocation, a second effective `/DEF` is rejected before `link.exe` rather than relying on argv ordering.
 
 Native linker `/ORDER:@<file>` is also graph-aware, with an additional execution constraint. Every raw `/ORDER` stays in argv, while MQB tracks only the **last** order file as the effective freshness input because LINK applies the last `/ORDER` option. Config/profile/CLI-relative order-file paths are normalized inside the supplying layer. An unchanged warm build may still skip LINK completely; however, whenever an actual link is required while an effective `/ORDER` exists, MQB forces the final linker recipe to `/INCREMENTAL:NO` because `/ORDER` is incompatible with incremental linking. A later raw `/INCREMENTAL` cannot override that safety policy because MQB emits its authoritative full-link switch after raw linker arguments.
+
+Native linker `/STUB:<file>` uses the generic freshness model without an always-full-link rule. Every raw `/STUB` remains in argv, while MQB tracks only the **last** effective MS-DOS executable as freshness evidence. Relative stub paths are normalized inside the supplying config/profile/CLI layer. An unchanged effective stub reuses the ordinary warm link cache; changing, removing, or re-resolving the effective stub invalidates generic linker-file freshness. Earlier overridden stub files are deliberately not tracked as effective freshness inputs, so changing one does not create a false relink.
 
 ## Native argv token shape
 
@@ -58,7 +60,7 @@ Native parameters are normalized inside the layer that supplied them:
 1. `mqb.json` typed fields and `compiler_args` / `linker_args` are normalized together.
 2. A selected profile is normalized as its own overlay.
 3. CLI typed options and native/raw arguments are normalized together.
-4. Conflicting typed/native values inside one layer are errors; tracked file inputs obey their LINK semantics across effective layers (`/DEF` is single-instance, `/ORDER` is last-wins).
+4. Conflicting typed/native values inside one layer are errors; tracked file inputs obey their LINK semantics across effective layers (`/DEF` is single-instance, `/ORDER` and `/STUB` are last-wins).
 5. The project resolver then applies `built-ins < base mqb.json < selected profile < CLI`.
 6. After MSVC discovery, remaining raw arguments pass toolchain lifecycle admission.
 
@@ -82,7 +84,9 @@ MSVC code-analysis execution is also fail-closed for now. `/analyze` can create 
 
 `/ORDER:@<file>` reuses the generic linker-file freshness path but has stronger execution semantics. MQB preserves all raw `/ORDER` arguments because LINK owns their order-sensitive last-wins behavior, while the cache tracks only the last effective order file. Missing/changed effective order files invalidate reuse through ordinary `file_inputs` evidence. In addition, the presence of an effective `/ORDER` sets execution-only `requires_full_link` evidence. The warm no-op path still returns before invoking LINK, but any real Debug link—whether caused by an object change, explicit rebuild, linker-option change, or order-file freshness—ends with MQB's authoritative `/INCREMENTAL:NO`. This avoids relying on LINK to diagnose and override an incompatible raw `/INCREMENTAL` request.
 
-Other file-bearing linker modes that introduce graph inputs or secondary outputs remain fail closed until their corresponding semantics are modeled. `/NATVIS`, `/SOURCELINK`, manifest/signing inputs, PGO inputs/outputs, and similar options are **not** implicitly admitted just because generic `file_inputs` exists; options that affect PDB/manifest/signing artifacts may need additional output modeling before promotion. `/WHOLEARCHIVE:<library>` remains a narrow separate exception: it may pass through when the same library is also declared through MQB's structured library inputs, which keeps freshness tracking authoritative.
+`/STUB:<file>` also reuses LinkCache v4 `file_inputs`, but it does not permanently force non-incremental linking. MQB preserves every raw `/STUB` argument while tracking only the last effective MS-DOS executable input. Unchanged input state keeps the zero-LINK warm path intact. A missing, changed, or re-resolved effective stub produces ordinary `file_inputs_changed` evidence; the existing Debug one-shot full-link safety for linker-file changes then prevents stale incremental state from surviving a stub-only mutation without turning every future `/STUB` link into a full link. Because only the last effective stub is tracked, mutating an earlier overridden stub does not create a false freshness invalidation.
+
+Other file-bearing linker modes beyond promoted `/DEF`, `/ORDER`, and `/STUB` that introduce graph inputs or secondary outputs remain fail closed until their corresponding semantics are modeled. `/NATVIS`, `/SOURCELINK`, manifest/signing inputs, PGO inputs/outputs, and similar options are **not** implicitly admitted just because generic `file_inputs` exists; options that affect PDB/manifest/signing artifacts may need additional output modeling before promotion. `/WHOLEARCHIVE:<library>` remains a narrow separate exception: it may pass through when the same library is also declared through MQB's structured library inputs, which keeps freshness tracking authoritative.
 
 ## Coverage gates
 
@@ -93,6 +97,8 @@ Other file-bearing linker modes that introduce graph inputs or secondary outputs
 `cpp/tests/orchestration/incremental/incremental_link_coordinator_tests.cpp` locks `/ORDER` execution semantics: repeated order options preserve raw argv but track only the last effective file, malformed `/ORDER` fails before LINK, warm no-op skips LINK, effective order-file mutation invalidates freshness, and every actual `/ORDER` link appends authoritative `/INCREMENTAL:NO` after raw linker arguments.
 
 `cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp` proves the real `/DEF` pipeline on Windows/MSVC: a cold DLL exposes the first `.def` export, an unchanged build is a link-cache hit, a definition-file-only mutation leaves the TU up-to-date but relinks the DLL, and the resulting export table removes the old symbol and exposes the replacement. The fixture also verifies project-root-relative `mqb.json` `/DEF` normalization from a child invocation directory and rejects a second CLI `/DEF` before LINK.
+
+`cpp/tests/e2e/mqb_stub_linker_e2e_tests.cpp` proves the real `/STUB` pipeline on Windows/MSVC. The fixture creates valid DOS MZ executables itself, passes two raw `/STUB` arguments, and verifies that the final PE contains the DOS program from the last effective stub rather than the overridden one. It then proves an unchanged build is a zero-LINK cache hit, mutating only the overridden stub does not cause a false relink, mutating only the effective stub leaves the source TU up-to-date but relinks the executable and replaces the embedded DOS program, and empty `/STUB:` fails before LINK.
 
 `cpp/tests/app/cli/mqb_native_msvc_cli_e2e_tests.cpp` independently verifies the CLI boundary and native execution path: fixed operands stay in ordered compiler argv, attached forms do not consume the next source, and graph-aware native options such as `/FI` retain their split operand and rebuild behavior under the real candidate MQB/MSVC pipeline.
 
@@ -117,7 +123,7 @@ The engine intentionally fails closed where MQB cannot preserve semantics yet:
 - CLR/Windows Runtime/kernel/driver/ARM64EC target modes: no first-class MQB target model yet;
 - raw forced metadata `/FU`: rejected until its dependency input participates in freshness identity;
 - code-analysis and diagnostic-log artifact modes (`/analyze`, `/experimental:log`): rejected until their inputs/outputs participate in artifact/freshness identity; `/analyze-` remains a safe disable switch;
-- file-bearing LINK options other than promoted `/DEF`, promoted `/ORDER`, and separately constrained `/WHOLEARCHIVE`: rejected until their inputs/outputs can be represented without weakening cache or artifact correctness;
+- file-bearing LINK options other than promoted `/DEF`, promoted `/ORDER`, promoted `/STUB`, and separately constrained `/WHOLEARCHIVE`: rejected until their inputs/outputs can be represented without weakening cache or artifact correctness;
 - PGO and other file-producing/file-consuming modes: rejected until their artifacts participate in freshness/cache identity;
 - response files: rejected until MQB can expand and classify their contents safely.
 
