@@ -26,23 +26,38 @@ mqb build main.cpp --jobs=8
 
 `auto` 不会在 `Application.cpp` 里提前换算成一个整数。typed `ParallelismPolicy` 会一路保留到真正的 scheduler dispatch。
 
-每次 scheduler 面对一个 ready batch 时，worker 数按以下规则解析：
+每次 scheduler 面对一个 ready batch 时，先读取一个 `ParallelismResourceSnapshot`：
+
+- `std::thread::hardware_concurrency()` 提供 CPU 并发宽度；
+- Windows `LowMemoryResourceNotification` 提供操作系统判定的低内存状态；
+- 若平台观测失败，则 memory pressure 为 `unknown`，保持历史 CPU-only 行为。
+
+正常/未知内存状态：
 
 ```text
-hardware budget = OS / std::thread::hardware_concurrency()
+hardware budget = hardware_concurrency
 if hardware budget == 0: hardware budget = 1
 workers = min(hardware budget, ready work items)
 ```
+
+Windows 报告系统处于 low-memory resource condition 时：
+
+```text
+workers = 1
+```
+
+当前 automatic workload 显式区分 `compilation` 与 `dependency_scan`；两者都会启动 `cl.exe` 进程，因此都受 low-memory guard 约束。MQB 不发明“内存使用率 80%/90%”之类阈值，而是使用 Windows 自身的 low-memory resource notification。恢复到 normal 状态后的下一次 ready-batch dispatch 会重新获得正常 CPU/ready-width 并行度。
 
 因此：
 
 - 单 TU / 单 ready node 不会创建多余 worker；
 - ordinary target 会按当前 source batch 解析；
-- module scan 会按当前 scan batch 解析；
+- module scan 以 `dependency_scan` workload 按当前 scan batch 解析；
 - named-module compile 会**逐 dependency level**按该层 ready width 重新解析；
-- header unit / toolchain-owned module provider 进入对应 ready level 后使用同一策略。
+- header unit / toolchain-owned module provider 进入对应 ready level 后使用同一策略；
+- 系统进入 Windows low-memory condition 时，新 automatic compile/scan batch 不再继续乘增 `cl.exe` 进程。
 
-MQB 不加入诸如“只用 75% 核心”之类经验常数。内存压力、机器瞬时负载和 TU 成本预测只有在能够形成稳定、可验证的资源模型时才应进入 scheduler，而不会依据 hosted-runner 偶然数据硬编码。
+资源观测与 resolver 完全分离：`ParallelismResourceObserver` 只负责获取平台 snapshot，`ParallelismResolver` 是纯决策逻辑，因此测试可以直接注入 normal / low / unknown memory state，而不需要在 CI 上真的制造内存压力。
 
 ### `fixed(N)`
 
@@ -52,7 +67,7 @@ MQB 不加入诸如“只用 75% 核心”之类经验常数。内存压力、�
 workers = min(N, ready work items)
 ```
 
-硬件线程数不会把用户明确指定的 `N` 再改写成另一策略。最终是否适合该机器由用户负责选择。
+硬件线程数或 low-memory notification 都不会把用户明确指定的 `N` 再改写成另一策略。最终是否适合该机器由用户负责选择。因此 `-j N` 同时也是对自动资源适配的显式覆盖。
 
 ## Caller-participating scheduler
 
@@ -65,7 +80,7 @@ background threads created = worker_count - 1
 
 这不会改变并发上限、任务索引分配、stop/exception 语义或 public `worker_count`，但会确定性消除每次 parallel dispatch 的一个线程创建/销毁。对 named-module graph 来说，每个 dependency level 都能获得这项收益。
 
-单 worker 仍使用原有 inline fast path，不创建后台线程。
+单 worker 仍使用原有 inline fast path，不创建后台线程。因此 low-memory automatic batch 也自然走 caller-only fast path。
 
 ## Warm P1689 scan reuse
 
@@ -112,7 +127,7 @@ MQB workers × cl.exe /MP workers
 - compile/link/archive cache key；
 - dependency freshness 证据。
 
-只要源码、依赖、工具链和构建配方不变，改变 jobs policy 后仍应保持 warm cache hit。
+resource snapshot、memory pressure、resolved worker count 同样只属于执行策略，不进入 build/cache identity。只要源码、依赖、工具链和构建配方不变，改变 jobs policy 或机器压力状态后仍应保持 warm cache hit。
 
 P1689 scan signature 是独立的 topology recipe identity，只包含会影响 scan 的输入；runtime library 与 LTCG 等不进入 scan identity。
 
@@ -135,15 +150,20 @@ P1689 scan signature 是独立的 topology recipe identity，只包含会影响 
 .max_parallel_compiles = ParallelismPolicy::fixed(8)
 ```
 
+平台资源观测通过 `ParallelismResourceSnapshot` 与 `ParallelismResourceObserver` 暴露给 scheduler；普通调用者无需自己采集系统状态。
+
 ## 测试契约
 
 结构性正确性测试不使用 hosted-runner 毫秒阈值：
 
-- resolver 可注入 hardware concurrency，验证 unknown / hardware-limited / work-limited / fixed ceiling；
+- resolver 可注入 hardware concurrency + normal / low / unknown memory pressure；
+- low-memory automatic compilation/dependency-scan 必须解析为单 worker；
+- fixed `-j N` 在 low-memory snapshot 下仍保持显式用户上限；
+- unknown memory observation 必须保持历史 CPU/ready-width 行为；
 - multi-worker barrier test 验证 caller 实际参与，同时 observed concurrency 仍严格等于 logical worker 上限；
 - scan signature test 锁定 topology-affecting 与非 scan 输入边界；
 - scan evidence test 锁定 source/header/P1689 artifact 任一 snapshot 变化必失效；
 - compile-cache v3 round-trip 与 v2 compatibility 被直接验证；
 - module coordinator 验证 cold scan、warm zero-scan、单 source mutation 精确 rescan、成功 rebuild 后重新 seal；
-- ordinary 与 `import std` E2E 继续验证 jobs policy 不污染 compile/link cache；
+- ordinary 与 `import std` E2E 继续验证 jobs/resource policy 不污染 compile/link cache；
 - Debug/Release self-host、完整 native test graph 和 Release package validation 仍是最终合并门。

@@ -36,9 +36,12 @@ void update_max(std::atomic<int>& maximum, const int value) {
 int main() {
     using mqb::orchestration::BoundedWorkErrorCode;
     using mqb::orchestration::BoundedWorkScheduler;
+    using mqb::orchestration::MemoryPressure;
     using mqb::orchestration::ParallelismMode;
     using mqb::orchestration::ParallelismPolicy;
+    using mqb::orchestration::ParallelismResourceSnapshot;
     using mqb::orchestration::ParallelismResolver;
+    using mqb::orchestration::ParallelismWorkload;
 
     {
         const ParallelismPolicy automatic;
@@ -87,6 +90,74 @@ int main() {
             ParallelismPolicy::automatic(), 0, 16);
         expect(no_work.workers == 0,
                "zero ready work should resolve to zero workers");
+    }
+
+    {
+        const ParallelismResourceSnapshot normal{
+            .hardware_threads = 8,
+            .memory_pressure = MemoryPressure::normal,
+        };
+        const ParallelismResourceSnapshot low{
+            .hardware_threads = 8,
+            .memory_pressure = MemoryPressure::low,
+        };
+        const ParallelismResourceSnapshot unknown{
+            .hardware_threads = 8,
+            .memory_pressure = MemoryPressure::unknown,
+        };
+
+        const auto normal_compile = ParallelismResolver::resolve(
+            ParallelismPolicy::automatic(),
+            12,
+            normal,
+            ParallelismWorkload::compilation);
+        expect(normal_compile.workers == 8 && !normal_compile.memory_limited,
+               "normal-memory auto compilation should preserve the CPU/ready-width budget");
+
+        const auto low_compile = ParallelismResolver::resolve(
+            ParallelismPolicy::automatic(),
+            12,
+            low,
+            ParallelismWorkload::compilation);
+        expect(low_compile.workers == 1
+                   && low_compile.memory_limited
+                   && low_compile.memory_pressure == MemoryPressure::low,
+               "OS low-memory notification should serialize a new automatic compile batch");
+
+        const auto low_scan = ParallelismResolver::resolve(
+            ParallelismPolicy::automatic(),
+            6,
+            low,
+            ParallelismWorkload::dependency_scan);
+        expect(low_scan.workers == 1
+                   && low_scan.workload == ParallelismWorkload::dependency_scan,
+               "OS low-memory notification should also serialize dependency-scan cl.exe batches");
+
+        const auto unknown_memory = ParallelismResolver::resolve(
+            ParallelismPolicy::automatic(),
+            3,
+            unknown,
+            ParallelismWorkload::compilation);
+        expect(unknown_memory.workers == 3 && !unknown_memory.memory_limited,
+               "unavailable memory-pressure observation should preserve historical auto behavior");
+
+        const auto explicit_override = ParallelismResolver::resolve(
+            ParallelismPolicy::fixed(4),
+            12,
+            low,
+            ParallelismWorkload::compilation);
+        expect(explicit_override.workers == 4
+                   && explicit_override.mode == ParallelismMode::fixed
+                   && !explicit_override.memory_limited,
+               "explicit -j N must bypass automatic memory-pressure adaptation");
+
+        const auto already_serial = ParallelismResolver::resolve(
+            ParallelismPolicy::automatic(),
+            1,
+            low,
+            ParallelismWorkload::compilation);
+        expect(already_serial.workers == 1 && !already_serial.memory_limited,
+               "one-item batches should not claim memory reduced already-serial work");
     }
 
     {

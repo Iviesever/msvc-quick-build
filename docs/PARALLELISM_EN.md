@@ -26,23 +26,38 @@ Supported auto spellings:
 
 `auto` is not converted to an integer early in `Application.cpp`. The typed `ParallelismPolicy` is preserved until the scheduler sees the actual ready work batch.
 
-For each scheduler dispatch:
+For each scheduler dispatch MQB observes a `ParallelismResourceSnapshot`:
+
+- `std::thread::hardware_concurrency()` supplies the CPU-width budget;
+- Windows `LowMemoryResourceNotification` supplies the operating-system low-memory condition;
+- if platform observation is unavailable, memory pressure is `unknown` and the historical CPU-only rule is preserved.
+
+With normal or unknown memory state:
 
 ```text
-hardware budget = OS / std::thread::hardware_concurrency()
+hardware budget = hardware_concurrency
 if hardware budget == 0: hardware budget = 1
 workers = min(hardware budget, ready work items)
 ```
+
+When Windows reports the system low-memory resource condition:
+
+```text
+workers = 1
+```
+
+The current automatic model explicitly distinguishes `compilation` and `dependency_scan` workloads. Both launch `cl.exe` processes, so both respect the low-memory guard. MQB does not invent an 80%/90% memory-usage threshold; it consumes the operating system's own low-memory resource notification. A later ready-batch dispatch automatically returns to the normal CPU/ready-width rule once the OS no longer reports low memory.
 
 Consequently:
 
 - a single TU or single ready node does not create unnecessary workers;
 - ordinary targets resolve against the current source batch;
-- module scanning resolves against the current scan batch;
+- module scanning is marked as `dependency_scan` and resolves against the current scan batch;
 - named-module compilation resolves **per dependency level** against that level's ready width;
-- header units and toolchain-owned module providers use the same policy when they enter a ready level.
+- header units and toolchain-owned module providers use the same policy when they enter a ready level;
+- under the Windows low-memory condition, new automatic compile/scan batches stop multiplying `cl.exe` processes.
 
-MQB does not hard-code arbitrary heuristics such as “use 75% of cores”. Memory pressure, instantaneous machine load, and TU-cost prediction should enter the scheduler only when they can be represented by a stable, testable resource model rather than hosted-runner accident.
+Resource observation and policy resolution are deliberately separate. `ParallelismResourceObserver` only captures the platform snapshot; `ParallelismResolver` is pure decision logic, so tests inject normal / low / unknown states without trying to manufacture real memory pressure on a CI host.
 
 ### `fixed(N)`
 
@@ -52,7 +67,7 @@ Explicit `-j N` is a hard user ceiling:
 workers = min(N, ready work items)
 ```
 
-Hardware concurrency does not silently rewrite an explicitly selected fixed policy. The user owns the decision to choose an appropriate explicit ceiling for the machine.
+Neither hardware concurrency nor a low-memory notification silently rewrites an explicitly selected fixed policy. The user owns the decision to choose an appropriate explicit ceiling for the machine. `-j N` is therefore also the explicit override for automatic resource adaptation.
 
 ## Caller-participating scheduler
 
@@ -65,7 +80,7 @@ background threads created = worker_count - 1
 
 This does not change the concurrency ceiling, item assignment, stop/exception behavior, or public `worker_count`. It deterministically removes one thread creation/destruction from every parallel dispatch, including every dependency level in a named-module graph.
 
-The one-worker path remains the existing inline fast path and creates no background thread.
+The one-worker path remains the existing inline fast path and creates no background thread, so a low-memory automatic batch naturally becomes caller-only execution.
 
 ## Warm P1689 scan reuse
 
@@ -112,7 +127,7 @@ Switching from `-j 1` to `-j auto`, or from `-j 4` to `-j 2`, does not change:
 - compile/link/archive cache keys;
 - dependency freshness evidence.
 
-If source, dependencies, toolchain, and build recipe are unchanged, changing only the jobs policy must remain a warm cache hit.
+The resource snapshot, memory pressure, and resolved worker count are likewise execution-only and never enter build/cache identity. If source, dependencies, toolchain, and build recipe are unchanged, changing only jobs policy or machine pressure must remain a warm cache hit.
 
 The P1689 scan signature is a separate topology-recipe identity and contains only inputs that can affect scanning; runtime-library and LTCG policy do not participate in scan identity.
 
@@ -135,15 +150,20 @@ New code may be explicit:
 .max_parallel_compiles = ParallelismPolicy::fixed(8)
 ```
 
+Platform state reaches the scheduler through `ParallelismResourceSnapshot` / `ParallelismResourceObserver`; ordinary callers do not need to collect system resource state themselves.
+
 ## Validation contract
 
 Structural correctness tests do not use hosted-runner millisecond thresholds:
 
-- the resolver accepts injected hardware concurrency and tests unknown, hardware-limited, work-limited, and fixed-ceiling cases;
+- the resolver accepts injected hardware concurrency plus normal / low / unknown memory pressure;
+- low-memory automatic compilation and dependency-scan decisions must resolve to one worker;
+- fixed `-j N` must remain the explicit user ceiling even with a low-memory snapshot;
+- unknown memory observation must preserve the historical CPU/ready-width behavior;
 - a multi-worker barrier test proves the caller participates while observed concurrency still equals the logical worker ceiling;
 - scan-signature tests lock topology-affecting inputs and intentionally excluded non-scan inputs;
 - scan-evidence tests require any source/header/P1689 artifact snapshot change to invalidate reuse;
 - compile-cache v3 round-trip and v2 compatibility are directly tested;
 - the module coordinator verifies cold scans, warm zero-scan reuse, precise rescan after one source mutation, and resealing after a successful rebuild;
-- ordinary and `import std` E2E continue proving jobs policy does not contaminate compile/link cache identity;
+- ordinary and `import std` E2E continue proving jobs/resource policy does not contaminate compile/link cache identity;
 - Debug/Release self-host, the complete native test graph, and Release package validation remain the final merge gates.
