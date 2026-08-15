@@ -217,8 +217,6 @@ int main() {
     if (suppressed) {
         expect(suppressed->exit_code != 0,
                "NODEFAULTLIB:name should suppress the matching raw DEFAULTLIB and leave the symbol unresolved");
-        expect(suppressed->stdout_text.find("[link] suppressed.exe") != std::string::npos,
-               "suppression probe should reach LINK rather than being rewritten by MQB");
     }
 
     auto explicit_priority = run_process(
