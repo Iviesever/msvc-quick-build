@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -109,6 +110,8 @@ int main() {
     expect(warm.reusable(), "matching object and library inputs should be reusable");
     expect(!warm.library_inputs_changed,
            "warm link should not report changed library execution evidence");
+    expect(!warm.file_inputs_changed,
+           "ordinary warm link should not synthesize generic file-input evidence");
 
     auto unordered_object_snapshots = object_snapshots;
     std::reverse(unordered_object_snapshots.begin(), unordered_object_snapshots.end());
@@ -173,6 +176,8 @@ int main() {
            "object newer than executable should invalidate link cache");
     expect(!object_changed.library_inputs_changed,
            "object-only changes must preserve ordinary Debug incremental linking");
+    expect(!object_changed.file_inputs_changed,
+           "object-only changes must not be mislabeled as linker file-input changes");
 
     auto newer_libraries = library_snapshots;
     newer_libraries[0].modified = base_time + std::chrono::seconds{1};
@@ -190,6 +195,8 @@ int main() {
            "resolved library newer than executable should invalidate link cache");
     expect(library_changed.library_inputs_changed,
            "newer resolved library must force a full Debug relink");
+    expect(!library_changed.file_inputs_changed,
+           "library mutation should not be mislabeled as generic file-input change");
 
     const auto library_missing = mqb::LinkCacheValidator::validate(
         objects,
@@ -240,6 +247,8 @@ int main() {
            "fresh compile result must be able to force relink independent of timestamps");
     expect(!forced.library_inputs_changed,
            "generic explicit relink must not be mislabeled as a library mutation");
+    expect(!forced.file_inputs_changed,
+           "generic explicit relink must not be mislabeled as a linker file mutation");
 
     auto other_linker = linker;
     other_linker.binary_stamp = "link-stamp-b";
@@ -257,6 +266,8 @@ int main() {
            "linker identity change should invalidate link cache");
     expect(!linker_changed.library_inputs_changed,
            "toolchain-only changes should not be classified as library changes");
+    expect(!linker_changed.file_inputs_changed,
+           "toolchain-only changes should not be classified as linker file changes");
 
     const auto options_changed = mqb::LinkCacheValidator::validate(
         objects,
@@ -272,6 +283,8 @@ int main() {
            "link option change should invalidate link cache");
     expect(!options_changed.library_inputs_changed,
            "linker-option changes should not be classified as library changes");
+    expect(!options_changed.file_inputs_changed,
+           "ordinary linker-option changes should not be classified as file-input changes");
 
     const mqb::LinkPlanItem plan_item{
         .objects = objects,
@@ -302,6 +315,114 @@ int main() {
     const auto empty_plan = mqb::BuildPlanner::plan_link(reusable_item);
     expect(empty_plan.has_value() && empty_plan->empty(),
            "reusable link cache should produce an empty plan");
+
+    const std::vector<fs::path> file_inputs{"exports/app.def"};
+    mqb::LinkOptions def_options = options;
+    def_options.additional_arguments = {"/DEF:exports/app.def"};
+    const mqb::LinkCacheEntry def_cached{
+        .linker = linker,
+        .signature = mqb::BuildSignature::for_link(
+            objects, libraries, output, linker, def_options),
+        .objects = objects,
+        .output = output,
+        .libraries = libraries,
+        .file_inputs = file_inputs,
+    };
+    const std::vector<mqb::FileSnapshot> file_input_snapshots{
+        {.path = file_inputs[0], .exists = true, .modified = base_time - std::chrono::seconds{1}},
+    };
+
+    const auto def_warm = mqb::LinkCacheValidator::validate(
+        objects,
+        libraries,
+        file_inputs,
+        output,
+        linker,
+        def_options,
+        def_cached,
+        output_snapshot,
+        object_snapshots,
+        library_snapshots,
+        file_input_snapshots,
+        std::span<const mqb::FileSnapshot>{});
+    expect(def_warm.reusable(), "unchanged /DEF-like file input should remain reusable");
+    expect(!def_warm.file_inputs_changed,
+           "unchanged generic linker file input should not force full link");
+
+    auto newer_file_inputs = file_input_snapshots;
+    newer_file_inputs[0].modified = base_time + std::chrono::seconds{1};
+    const auto def_changed = mqb::LinkCacheValidator::validate(
+        objects,
+        libraries,
+        file_inputs,
+        output,
+        linker,
+        def_options,
+        def_cached,
+        output_snapshot,
+        object_snapshots,
+        library_snapshots,
+        newer_file_inputs,
+        std::span<const mqb::FileSnapshot>{});
+    expect(has_reason(def_changed, mqb::BuildReason::link_inputs_changed),
+           "newer generic linker file input should invalidate link cache");
+    expect(def_changed.file_inputs_changed,
+           "newer generic linker file input must force a full Debug relink");
+    expect(!def_changed.library_inputs_changed,
+           "generic linker file mutation must not be mislabeled as library change");
+
+    const auto def_missing = mqb::LinkCacheValidator::validate(
+        objects,
+        libraries,
+        file_inputs,
+        output,
+        linker,
+        def_options,
+        def_cached,
+        output_snapshot,
+        object_snapshots,
+        library_snapshots,
+        std::vector<mqb::FileSnapshot>{
+            {.path = file_inputs[0], .exists = false},
+        },
+        std::span<const mqb::FileSnapshot>{});
+    expect(def_missing.file_inputs_changed,
+           "missing generic linker file input must invalidate incremental-link state");
+
+    const std::vector<fs::path> other_file_inputs{"exports/other.def"};
+    const auto def_path_changed = mqb::LinkCacheValidator::validate(
+        objects,
+        libraries,
+        other_file_inputs,
+        output,
+        linker,
+        def_options,
+        def_cached,
+        output_snapshot,
+        object_snapshots,
+        library_snapshots,
+        std::vector<mqb::FileSnapshot>{
+            {.path = other_file_inputs[0], .exists = true, .modified = base_time},
+        },
+        std::span<const mqb::FileSnapshot>{});
+    expect(def_path_changed.file_inputs_changed,
+           "changed generic linker file path must force a full Debug relink");
+
+    const auto def_lost_metadata = mqb::LinkCacheValidator::validate(
+        objects,
+        libraries,
+        file_inputs,
+        output,
+        linker,
+        def_options,
+        std::nullopt,
+        output_snapshot,
+        object_snapshots,
+        library_snapshots,
+        file_input_snapshots,
+        std::span<const mqb::FileSnapshot>{});
+    expect(def_lost_metadata.file_inputs_changed,
+           "existing output with missing cache metadata must distrust linker file-input state");
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

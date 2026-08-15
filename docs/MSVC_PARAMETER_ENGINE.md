@@ -8,14 +8,16 @@ MQB does not try to rename every MSVC switch into a second property system. Inst
 |---|---|---|---|
 | A — MQB-owned structural | Changes target/TU shape, primary artifacts, dependency metadata, or graph topology owned by MQB | `/Fo`, `/OUT`, `/ifcOutput`, `/ifcMap`, `/sourceDependencies`, `/scanDependencies` | Reject user/raw ownership escape with an explanation |
 | B — Semantic typed | Already represented by the MQB build model | `/std:`, `/MD`/`/MT`, `/GL`, `/MACHINE`, `/SUBSYSTEM`, `/LTCG` | Normalize into typed policy before project-option resolution |
-| C — Safe/conditional passthrough | Does not invalidate MQB structural ownership and can remain an ordinary MSVC argv element | `/W4`, `/WX`, `/fp:fast`, `/arch:AVX2`, `/favor:AMD64`, `/I`, `/D`, `/U`, `/external:I`, `/FI`, `/STACK`, version-conditional `/DEBUG:FASTLINK` | Preserve native argv ownership/order; existing signatures/cache identity include it, expose non-owning graph evidence where required, then apply toolchain lifecycle admission where required |
+| C — Safe/conditional passthrough | Does not invalidate MQB structural ownership and can remain an ordinary MSVC argv element | `/W4`, `/WX`, `/fp:fast`, `/arch:AVX2`, `/favor:AMD64`, `/I`, `/D`, `/U`, `/external:I`, `/FI`, `/DEF`, `/STACK`, version-conditional `/DEBUG:FASTLINK` | Preserve native argv ownership/order; existing signatures/cache identity include it, expose non-owning graph evidence where required, then apply toolchain lifecycle admission where required |
 | D — Unsupported / conflicting | Changes an unmodeled pipeline, hides inputs, introduces untracked files/artifacts, is unconditionally obsolete, or conflicts with another semantic value | `/MP`, raw PCH `/Y*`, `/FU`, `/analyze`, `/experimental:log`, `@response` | Fail closed before invoking MSVC |
 
 `unsupported` is not the same as `unregistered`. A current official option may intentionally be unsupported, but it still has an explicit registry entry and rationale. `unregistered` means the registry has no classification and is a coverage failure for the current reference snapshot.
 
 Ownership and availability are deliberately separate. An option can be structurally safe for MQB to pass through while only existing on part of the supported MSVC toolset range. Those options survive semantic routing and are admitted after MQB discovers the actual toolchain.
 
-Class C passthrough does not mean MQB must remain blind to every effect of an option. MQB may extract **non-owning semantic evidence** when another subsystem requires it, while keeping the original compiler argv authoritative. Native `/I` and `/external:I` expose their include roots to smart discovery, but remain raw compiler argv and therefore retain their ordering relative to other native compiler options. Native `/D` is parsed as preprocessor metadata for the same reason but is likewise kept raw. Native `/FI` remains raw compiler argv/compile identity while its ordered forced-header operands are observed by smart discovery. `/FI` operands are not rewritten relative to a config/profile/CLI path base because MSVC gives them quoted-include semantics: discovery resolves them from the selected entry source directory and then the effective include search roots. When a native `/I` or `/external:I` path is relative, MQB resolves its payload against the supplying layer's path base (project root for config/profile, invocation directory for CLI) without moving the token in argv.
+Class C passthrough does not mean MQB must remain blind to every effect of an option. MQB may extract **non-owning semantic evidence** when another subsystem requires it, while keeping the original compiler/linker argv authoritative. Native `/I` and `/external:I` expose their include roots to smart discovery, but remain raw compiler argv and therefore retain their ordering relative to other native compiler options. Native `/D` is parsed as preprocessor metadata for the same reason but is likewise kept raw. Native `/FI` remains raw compiler argv/compile identity while its ordered forced-header operands are observed by smart discovery. `/FI` operands are not rewritten relative to a config/profile/CLI path base because MSVC gives them quoted-include semantics: discovery resolves them from the selected entry source directory and then the effective include search roots. When a native `/I` or `/external:I` path is relative, MQB resolves its payload against the supplying layer's path base (project root for config/profile, invocation directory for CLI) without moving the token in argv.
+
+Native linker `/DEF:<file>` follows the same evidence-without-ownership model. The raw LINK argument remains authoritative, but MQB resolves a relative definition-file payload inside the layer that supplied it and records the resolved file as a generic linker freshness input. Config/profile paths are based at project root; CLI paths are based at the invocation directory. The argument keeps its original argv position. Because LINK accepts one module-definition file for an invocation, a second effective `/DEF` is rejected before `link.exe` rather than relying on argv ordering.
 
 ## Native argv token shape
 
@@ -54,9 +56,11 @@ Native parameters are normalized inside the layer that supplied them:
 1. `mqb.json` typed fields and `compiler_args` / `linker_args` are normalized together.
 2. A selected profile is normalized as its own overlay.
 3. CLI typed options and native/raw arguments are normalized together.
-4. Conflicting typed/native values inside one layer are errors.
+4. Conflicting typed/native values inside one layer are errors; tracked file inputs with a single-instance LINK contract are also checked across the effective layers.
 5. The project resolver then applies `built-ins < base mqb.json < selected profile < CLI`.
 6. After MSVC discovery, remaining raw arguments pass toolchain lifecycle admission.
+
+Relative path-bearing evidence is resolved before layers are merged: project configuration/profile values use project root, while CLI values use invocation directory. This prevents cwd-dependent cache identity and keeps the rewritten raw argv stable when the same project is invoked from a child directory.
 
 This prevents argv ordering from becoming a second precedence system for typed semantic policy. Native passthrough options keep their own argv order rather than being silently converted into a reordered property list.
 
@@ -72,11 +76,17 @@ Raw forced include `/FI` is graph-aware. With smart discovery enabled, MQB obser
 
 MSVC code-analysis execution is also fail-closed for now. `/analyze` can create analysis logs and `/analyze:*` forms may introduce plugin/ruleset inputs or explicit log outputs; those artifacts are not yet represented by MQB's graph. `/analyze-` is the narrow safe exception because it disables the analysis pipeline. `/experimental:log` is rejected for the same artifact-ownership reason even though its filename/directory operand is grouped correctly by the token-shape layer.
 
-File-bearing linker modes that introduce untracked graph inputs or secondary outputs fail closed until the corresponding artifacts are modeled. `/WHOLEARCHIVE:<library>` is a narrow exception: it may pass through when the same library is also declared through MQB's structured library inputs, which keeps freshness tracking authoritative.
+`/DEF:<file>` is the first raw LINK file-bearing option promoted onto MQB's generic linker-file freshness path. Link cache v4 stores the resolved file-input list separately from ordinary object/library inputs and side outputs. Missing file inputs, changed paths, newer timestamps, or lost cache metadata invalidate reuse. `file_inputs_changed` is execution-only evidence: in Debug it forces a one-shot full link so an existing `.ilk` cannot retain an obsolete export table; object-only changes still use normal incremental linking. The raw `/DEF` argument remains in the link signature and final LINK argv, so a pure option change and a file-content freshness change remain distinguishable.
+
+Other file-bearing linker modes that introduce graph inputs or secondary outputs remain fail closed until their corresponding semantics are modeled. `/NATVIS`, `/SOURCELINK`, `/ORDER`, manifest/signing inputs, PGO inputs/outputs, and similar options are **not** implicitly admitted just because generic `file_inputs` exists; options that affect PDB/manifest/signing artifacts may need additional output modeling before promotion. `/WHOLEARCHIVE:<library>` remains a narrow separate exception: it may pass through when the same library is also declared through MQB's structured library inputs, which keeps freshness tracking authoritative.
 
 ## Coverage gates
 
-`cpp/tests/msvc/parameters/msvc_parameter_engine_tests.cpp` is the executable ownership and token-shape coverage matrix. It contains representative argv for every option family in the current Microsoft references used by the registry and requires each family to resolve to A, B, C, or D rather than `unregistered`. It also locks split-vs-attached forms so a future registry expansion cannot silently consume a positional source.
+`cpp/tests/msvc/parameters/msvc_parameter_engine_tests.cpp` is the executable ownership and token-shape coverage matrix. It contains representative argv for every option family in the current Microsoft references used by the registry and requires each family to resolve to A, B, C, or D rather than `unregistered`. It also locks split-vs-attached compiler forms so a future registry expansion cannot silently consume a positional source.
+
+`cpp/tests/core/cache/link_state_tests.cpp` locks the generic linker file-input execution evidence independently from object/library freshness: warm inputs reuse, while newer/missing/re-resolved inputs or lost metadata invalidate reuse and mark `file_inputs_changed` without contaminating `library_inputs_changed`.
+
+`cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp` proves the real `/DEF` pipeline on Windows/MSVC: a cold DLL exposes the first `.def` export, an unchanged build is a link-cache hit, a definition-file-only mutation leaves the TU up-to-date but relinks the DLL, and the resulting export table removes the old symbol and exposes the replacement. The fixture also verifies project-root-relative `mqb.json` `/DEF` normalization from a child invocation directory and rejects a second CLI `/DEF` before LINK.
 
 `cpp/tests/app/cli/mqb_native_msvc_cli_e2e_tests.cpp` independently verifies the CLI boundary and native execution path: fixed operands stay in ordered compiler argv, attached forms do not consume the next source, and graph-aware native options such as `/FI` retain their split operand and rebuild behavior under the real candidate MQB/MSVC pipeline.
 
@@ -101,6 +111,7 @@ The engine intentionally fails closed where MQB cannot preserve semantics yet:
 - CLR/Windows Runtime/kernel/driver/ARM64EC target modes: no first-class MQB target model yet;
 - raw forced metadata `/FU`: rejected until its dependency input participates in freshness identity;
 - code-analysis and diagnostic-log artifact modes (`/analyze`, `/experimental:log`): rejected until their inputs/outputs participate in artifact/freshness identity; `/analyze-` remains a safe disable switch;
+- file-bearing LINK options other than promoted `/DEF` and separately constrained `/WHOLEARCHIVE`: rejected until their inputs/outputs can be represented without weakening cache or artifact correctness;
 - PGO and other file-producing/file-consuming modes: rejected until their artifacts participate in freshness/cache identity;
 - response files: rejected until MQB can expand and classify their contents safely.
 

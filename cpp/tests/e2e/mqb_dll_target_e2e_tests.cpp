@@ -75,22 +75,40 @@ struct TempTree {
     return std::move(*result);
 }
 
-[[nodiscard]] std::expected<int, std::string> call_answer(const fs::path& dll) {
+[[nodiscard]] std::expected<int, std::string> call_export(
+    const fs::path& dll,
+    const char* symbol_name) {
     const HMODULE module = LoadLibraryW(dll.c_str());
     if (module == nullptr) {
         return std::unexpected("LoadLibraryW failed: " + std::to_string(GetLastError()));
     }
-    const FARPROC symbol = GetProcAddress(module, "mqb_answer");
+    const FARPROC symbol = GetProcAddress(module, symbol_name);
     if (symbol == nullptr) {
         const DWORD error = GetLastError();
         FreeLibrary(module);
-        return std::unexpected("GetProcAddress failed: " + std::to_string(error));
+        return std::unexpected(
+            "GetProcAddress failed for '" + std::string{symbol_name}
+            + "': " + std::to_string(error));
     }
-    using AnswerFunction = int (*)();
-    const auto answer = reinterpret_cast<AnswerFunction>(symbol);
-    const int value = answer();
+    using ExportFunction = int (*)();
+    const auto function = reinterpret_cast<ExportFunction>(symbol);
+    const int value = function();
     FreeLibrary(module);
     return value;
+}
+
+[[nodiscard]] std::expected<int, std::string> call_answer(const fs::path& dll) {
+    return call_export(dll, "mqb_answer");
+}
+
+[[nodiscard]] bool make_input_newer_than_output(
+    const fs::path& input,
+    const fs::path& output) {
+    std::error_code error_code;
+    const auto output_time = fs::last_write_time(output, error_code);
+    if (error_code) return false;
+    fs::last_write_time(input, output_time + std::chrono::seconds{2}, error_code);
+    return !error_code;
 }
 
 } // namespace
@@ -198,6 +216,129 @@ int main(int argc, char* argv[]) {
     auto mutated_answer = call_answer(dll);
     expect(mutated_answer.has_value() && *mutated_answer == 43,
            "relinked DLL should expose mutated exported behavior");
+
+    // Native /DEF is a linker file input: the raw linker argv remains
+    // authoritative, while MQB must separately track the definition file's
+    // freshness and invalidate stale incremental-link state when it changes.
+    const fs::path def_root = tree.root / "def-input";
+    const fs::path def_source = def_root / "plugin.cpp";
+    const fs::path def_file = def_root / "exports.def";
+    const fs::path def_dll = def_root / ".mqb" / "bin" / "def_plugin.dll";
+    write_text(def_source, R"cpp(extern "C" int def_one() { return 101; }
+extern "C" int def_two() { return 202; }
+)cpp");
+    write_text(def_file, "EXPORTS\n    def_one\n");
+
+    const std::vector<std::string> def_arguments{
+        "plugin.cpp", "--no-discover", "--env", "vs", "--type", "dll",
+        "--runtime", "MT", "-o", "def_plugin", "/link", "/DEF:exports.def"};
+    auto def_cold = run_mqb(
+        runner,
+        mqb_executable,
+        def_root,
+        def_arguments);
+    expect(def_cold.has_value(), "cold /DEF DLL invocation should launch");
+    if (def_cold) {
+        if (def_cold->exit_code != 0) dump_failure(*def_cold);
+        expect(def_cold->exit_code == 0, "cold /DEF DLL should build successfully");
+        expect(def_cold->stdout_text.find("[compile] plugin.cpp") != std::string::npos,
+               "cold /DEF DLL should compile its TU");
+        expect(def_cold->stdout_text.find("[link] def_plugin.dll") != std::string::npos,
+               "cold /DEF DLL should link");
+    }
+    auto def_one = call_export(def_dll, "def_one");
+    expect(def_one.has_value() && *def_one == 101,
+           "initial module-definition file should export def_one");
+    expect(!call_export(def_dll, "def_two").has_value(),
+           "initial module-definition file should not export def_two");
+
+    auto def_warm = run_mqb(
+        runner,
+        mqb_executable,
+        def_root,
+        def_arguments);
+    expect(def_warm.has_value(), "warm /DEF DLL invocation should launch");
+    if (def_warm) {
+        if (def_warm->exit_code != 0) dump_failure(*def_warm);
+        expect(def_warm->exit_code == 0, "warm /DEF DLL should succeed");
+        expect(contains_line(def_warm->stdout_text, "[up-to-date] plugin.cpp"),
+               "unchanged /DEF DLL TU should reuse compile cache");
+        expect(contains_line(def_warm->stdout_text, "[up-to-date] def_plugin.dll"),
+               "unchanged /DEF input should reuse link cache");
+        expect(def_warm->stdout_text.find("[link] def_plugin.dll") == std::string::npos,
+               "unchanged /DEF input must not trigger an unnecessary relink");
+    }
+
+    write_text(def_file, "EXPORTS\n    def_two\n");
+    expect(make_input_newer_than_output(def_file, def_dll),
+           "test should make mutated definition file newer than DLL output");
+    auto def_mutated = run_mqb(
+        runner,
+        mqb_executable,
+        def_root,
+        def_arguments);
+    expect(def_mutated.has_value(), "mutated /DEF DLL invocation should launch");
+    if (def_mutated) {
+        if (def_mutated->exit_code != 0) dump_failure(*def_mutated);
+        expect(def_mutated->exit_code == 0, "mutated /DEF DLL should relink successfully");
+        expect(contains_line(def_mutated->stdout_text, "[up-to-date] plugin.cpp"),
+               "/DEF-only mutation must not recompile the source TU");
+        expect(def_mutated->stdout_text.find("[link] def_plugin.dll") != std::string::npos,
+               "/DEF-only mutation should invalidate link freshness");
+    }
+    expect(!call_export(def_dll, "def_one").has_value(),
+           "full relink after /DEF mutation should remove the obsolete export");
+    auto def_two = call_export(def_dll, "def_two");
+    expect(def_two.has_value() && *def_two == 202,
+           "full relink after /DEF mutation should publish the replacement export");
+
+    // Config/profile native path-bearing arguments are resolved relative to
+    // project root, not the child invocation directory.
+    const fs::path config_root = tree.root / "def-config";
+    const fs::path config_child = config_root / "child";
+    fs::create_directories(config_child);
+    write_text(config_root / "plugin.cpp", R"cpp(extern "C" int config_def() { return 303; }
+)cpp");
+    write_text(config_root / "exports.def", "EXPORTS\n    config_def\n");
+    write_text(
+        config_root / "mqb.json",
+        R"json({
+  "version": 1,
+  "build": {
+    "linker_args": ["/DEF:exports.def"]
+  }
+})json");
+
+    auto config_def_build = run_mqb(
+        runner,
+        mqb_executable,
+        config_child,
+        {"../plugin.cpp", "--no-discover", "--env", "vs", "--type", "dll",
+         "--runtime", "MT", "-o", "config_def"});
+    expect(config_def_build.has_value(), "config-relative /DEF build should launch");
+    if (config_def_build) {
+        if (config_def_build->exit_code != 0) dump_failure(*config_def_build);
+        expect(config_def_build->exit_code == 0,
+               "mqb.json /DEF should resolve relative to project root from a child invocation directory");
+    }
+    const fs::path config_dll = config_root / ".mqb" / "bin" / "config_def.dll";
+    auto config_export = call_export(config_dll, "config_def");
+    expect(config_export.has_value() && *config_export == 303,
+           "config-relative /DEF should control the real DLL export table");
+
+    auto duplicate_def = run_mqb(
+        runner,
+        mqb_executable,
+        config_child,
+        {"../plugin.cpp", "--no-discover", "--env", "vs", "--type", "dll",
+         "--runtime", "MT", "-o", "duplicate_def", "/link", "/DEF:other.def"});
+    expect(duplicate_def.has_value(), "duplicate config/CLI /DEF validation should launch");
+    if (duplicate_def) {
+        expect(duplicate_def->exit_code == 2,
+               "a second /DEF introduced by CLI should fail before LINK.exe");
+        expect(duplicate_def->stderr_text.find("second native MSVC /DEF") != std::string::npos,
+               "duplicate /DEF failure should explain the single-definition-file contract");
+    }
 
     auto invalid_run = run_mqb(
         runner,

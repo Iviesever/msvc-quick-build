@@ -78,6 +78,20 @@ struct LinkerParameterRouting {
     std::optional<bool> link_time_code_generation;
 };
 
+enum class LinkerFileInputKind {
+    module_definition,
+};
+
+struct LinkerFileInput {
+    LinkerFileInputKind kind{LinkerFileInputKind::module_definition};
+    std::filesystem::path path;
+};
+
+struct LinkerFileInputRouting {
+    std::vector<std::string> passthrough;
+    std::vector<LinkerFileInput> inputs;
+};
+
 struct LibrarianParameterRouting {
     std::vector<std::string> passthrough;
     std::optional<Architecture> architecture;
@@ -151,6 +165,89 @@ public:
 
     [[nodiscard]] static std::expected<LinkerParameterRouting, ParameterError>
     route_linker(std::span<const std::string> arguments);
+
+    // Preserve raw linker argv ownership while resolving file-bearing options
+    // inside the layer that supplied them. The rewritten passthrough keeps the
+    // option at the same argv position; `inputs` is non-owning freshness evidence.
+    [[nodiscard]] static std::expected<LinkerFileInputRouting, ParameterError>
+    linker_file_inputs(
+        const std::span<const std::string> arguments,
+        const std::optional<std::filesystem::path> path_base = std::nullopt) {
+        auto validated = route_linker(arguments);
+        if (!validated) {
+            return std::unexpected(validated.error());
+        }
+
+        const auto starts_with_ascii_ci = [](
+            const std::string_view value,
+            const std::string_view prefix) {
+            if (value.size() < prefix.size()) return false;
+            for (std::size_t index = 0; index < prefix.size(); ++index) {
+                char left = value[index];
+                char right = prefix[index];
+                if (left >= 'a' && left <= 'z') left = static_cast<char>(left - 'a' + 'A');
+                if (right >= 'a' && right <= 'z') right = static_cast<char>(right - 'a' + 'A');
+                if (left != right) return false;
+            }
+            return true;
+        };
+        const auto path_from_utf8 = [](const std::string_view value) {
+            std::u8string bytes;
+            bytes.assign(
+                reinterpret_cast<const char8_t*>(value.data()),
+                reinterpret_cast<const char8_t*>(value.data() + value.size()));
+            return std::filesystem::path{bytes};
+        };
+        const auto path_text = [](const std::filesystem::path& path) {
+            const auto bytes = path.generic_u8string();
+            return std::string{
+                reinterpret_cast<const char*>(bytes.data()),
+                bytes.size()};
+        };
+
+        LinkerFileInputRouting result;
+        result.passthrough.reserve(validated->passthrough.size());
+        for (const auto& argument : validated->passthrough) {
+            const std::string_view body = argument.size() >= 2
+                    && (argument.front() == '/' || argument.front() == '-')
+                ? std::string_view{argument}.substr(1)
+                : std::string_view{};
+            if (!starts_with_ascii_ci(body, "DEF:")) {
+                result.passthrough.push_back(argument);
+                continue;
+            }
+
+            if (body.size() == 4) {
+                return std::unexpected(ParameterError{
+                    .code = ParameterErrorCode::invalid_value,
+                    .tool = ParameterTool::linker,
+                    .argument = argument,
+                    .message = "MSVC linker /DEF requires a module-definition file path",
+                });
+            }
+            if (!result.inputs.empty()) {
+                return std::unexpected(ParameterError{
+                    .code = ParameterErrorCode::conflicting_semantic_option,
+                    .tool = ParameterTool::linker,
+                    .argument = argument,
+                    .message = "MSVC LINK accepts only one /DEF module-definition file",
+                });
+            }
+
+            std::filesystem::path path = path_from_utf8(body.substr(4));
+            if (path_base && path.is_relative()) {
+                path = *path_base / path;
+            }
+            path = path.lexically_normal();
+            result.inputs.push_back(LinkerFileInput{
+                .kind = LinkerFileInputKind::module_definition,
+                .path = path,
+            });
+            result.passthrough.push_back(
+                path_base ? argument.substr(0, 5) + path_text(path) : argument);
+        }
+        return result;
+    }
 
     [[nodiscard]] static std::expected<LibrarianParameterRouting, ParameterError>
     route_librarian(std::span<const std::string> arguments);

@@ -169,7 +169,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     if (contains_exact(std::string_view{body}, deprecated_exact) || starts_with_any(std::string_view{body}, deprecated_prefix)) return linker_unsupported(body, "option is deprecated, obsolete, or removed in current MSVC toolchains");
 
     static constexpr std::array graph_input_prefix{
-        "ASSEMBLYLINKRESOURCE:"sv, "ASSEMBLYMODULE:"sv, "ASSEMBLYRESOURCE:"sv, "DEF:"sv, "DEFAULTLIB:"sv, "KEYFILE:"sv, "MANIFESTINPUT:"sv,
+        "ASSEMBLYLINKRESOURCE:"sv, "ASSEMBLYMODULE:"sv, "ASSEMBLYRESOURCE:"sv, "DEFAULTLIB:"sv, "KEYFILE:"sv, "MANIFESTINPUT:"sv,
         "NATVIS:"sv, "ORDER:"sv, "SOURCELINK:"sv, "SPD:"sv, "SPDEMBED:"sv, "SPDIN:"sv, "STUB:"sv, "WINMDKEYFILE:"sv,
     };
     static constexpr std::array graph_output_prefix{"IDLOUT:"sv, "MANIFESTFILE:"sv, "PDBSTRIPPED:"sv, "PGD:"sv, "TLBOUT:"sv, "WINMDFILE:"sv};
@@ -192,7 +192,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     };
     static constexpr std::array passthrough_prefix{
         "ALIGN:"sv, "ALLOWBIND:"sv, "ALLOWISOLATION:"sv, "APPCONTAINER:"sv, "ARM64XFUNCTIONPADMINX64:"sv, "ASSEMBLYDEBUG:"sv, "BASE:"sv,
-        "CETCOMPAT:"sv, "CGTHREADS:"sv, "CLRIMAGETYPE:"sv, "COMMENT:"sv, "DEBUGTYPE:"sv, "DELAY:"sv, "DELAYSIGN:"sv, "DELAYLOAD:"sv,
+        "CETCOMPAT:"sv, "CGTHREADS:"sv, "CLRIMAGETYPE:"sv, "COMMENT:"sv, "DEBUGTYPE:"sv, "DEF:"sv, "DELAY:"sv, "DELAYSIGN:"sv, "DELAYLOAD:"sv,
         "DEPENDENTLOADFLAG:"sv, "DYNAMICBASE:"sv, "ENTRY:"sv, "EXPORT:"sv, "FILEALIGN:"sv, "FIXED:"sv, "FORCE:"sv, "GUARD:"sv,
         "HEAP:"sv, "HIGHENTROPYVA:"sv, "IGNORE:"sv, "INCLUDE:"sv, "LARGEADDRESSAWARE:"sv, "LINKREPRO:"sv, "LINKREPROFULLPATHRSP:"sv,
         "LINKREPROTARGET:"sv, "MANIFEST:"sv, "MANIFESTDEPENDENCY:"sv, "MANIFESTUAC:"sv, "MAP:"sv, "MAPINFO:"sv, "MERGE:"sv,
@@ -201,7 +201,11 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     };
     if (contains_exact(std::string_view{body}, passthrough_exact) || starts_with_any(std::string_view{body}, passthrough_prefix)) {
         return classified(ParameterTool::linker, ParameterOwnership::passthrough, "/" + body,
-            body.starts_with("WHOLEARCHIVE:") ? "path-bearing /WHOLEARCHIVE is preserved in link identity; declare the same library through structured --lib input so freshness is tracked" : "validated linker option is preserved verbatim in link identity");
+            body.starts_with("WHOLEARCHIVE:")
+                ? "path-bearing /WHOLEARCHIVE is preserved in link identity; declare the same library through structured --lib input so freshness is tracked"
+                : body.starts_with("DEF:")
+                    ? "module-definition input is preserved in linker argv and tracked through MQB's generic link file-input freshness graph"
+                    : "validated linker option is preserved verbatim in link identity");
     }
     return unregistered(ParameterTool::linker, body);
 }

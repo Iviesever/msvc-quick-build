@@ -50,11 +50,28 @@ template <typename T>
     return message;
 }
 
+[[nodiscard]] std::expected<void, std::string> append_linker_file_input(
+    std::vector<mqb::msvc::LinkerFileInput>& inputs,
+    mqb::msvc::LinkerFileInput input,
+    const std::string_view layer) {
+    for (const auto& existing : inputs) {
+        if (existing.kind == input.kind) {
+            return std::unexpected(
+                std::string{layer}
+                + " introduces a second native MSVC /DEF module-definition file; "
+                  "the effective LINK invocation may contain only one /DEF input");
+        }
+    }
+    inputs.push_back(std::move(input));
+    return {};
+}
+
 [[nodiscard]] std::expected<void, std::string> normalize_native_parameters(
     mqb::config::BuildOverrides& build,
     const std::string_view layer,
     const fs::path& path_base,
-    std::vector<fs::path>& native_include_directories) {
+    std::vector<fs::path>& native_include_directories,
+    std::vector<mqb::msvc::LinkerFileInput>& native_linker_file_inputs) {
     auto compiler = mqb::msvc::MsvcParameterEngine::route_compiler(
         std::span<const std::string>{build.compiler_arguments},
         path_base);
@@ -66,6 +83,20 @@ template <typename T>
         std::span<const std::string>{build.linker_arguments});
     if (!linker) {
         return std::unexpected(parameter_error_message(layer, linker.error()));
+    }
+    auto linker_files = mqb::msvc::MsvcParameterEngine::linker_file_inputs(
+        std::span<const std::string>{linker->passthrough},
+        path_base);
+    if (!linker_files) {
+        return std::unexpected(parameter_error_message(layer, linker_files.error()));
+    }
+    for (auto& input : linker_files->inputs) {
+        if (auto appended = append_linker_file_input(
+                native_linker_file_inputs,
+                std::move(input),
+                layer); !appended) {
+            return std::unexpected(appended.error());
+        }
     }
 
     native_include_directories.insert(
@@ -105,7 +136,7 @@ template <typename T>
     }
 
     build.compiler_arguments = std::move(compiler->passthrough);
-    build.linker_arguments = std::move(linker->passthrough);
+    build.linker_arguments = std::move(linker_files->passthrough);
     return {};
 }
 
@@ -211,12 +242,18 @@ prepare_project(
     cli_overrides.modules.external_providers = options.external_module_providers;
 
     std::vector<fs::path> native_include_directories;
+    // This app-layer vector exists only while resolving config/profile/CLI so
+    // duplicate /DEF inputs can fail before option overlays are finalized.
+    // Runtime freshness evidence is re-observed from final linker argv by the
+    // incremental linker and is not persisted in ProjectSetup.
+    std::vector<mqb::msvc::LinkerFileInput> native_linker_file_inputs;
     if (project_config) {
         auto normalized = normalize_native_parameters(
             project_config->build,
             "mqb.json",
             project_root,
-            native_include_directories);
+            native_include_directories,
+            native_linker_file_inputs);
         if (!normalized) {
             return std::unexpected(ProjectSetupError{
                 .message = normalized.error(),
@@ -230,7 +267,8 @@ prepare_project(
             selected_profile->build,
             layer,
             project_root,
-            native_include_directories);
+            native_include_directories,
+            native_linker_file_inputs);
         if (!normalized) {
             return std::unexpected(ProjectSetupError{
                 .message = normalized.error(),
@@ -242,7 +280,8 @@ prepare_project(
             cli_overrides.build,
             "CLI",
             invocation_directory,
-            native_include_directories); !normalized) {
+            native_include_directories,
+            native_linker_file_inputs); !normalized) {
         return std::unexpected(ProjectSetupError{
             .message = normalized.error(),
             .config_error = std::nullopt,

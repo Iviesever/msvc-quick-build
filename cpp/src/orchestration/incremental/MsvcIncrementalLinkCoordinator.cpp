@@ -16,6 +16,7 @@
 #include "mqb/core/LinkCacheFile.hpp"
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
+#include "mqb/msvc/MsvcParameterEngine.hpp"
 
 #include "IncrementalFileSnapshot.hpp"
 
@@ -100,6 +101,23 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             linker_identity.error()));
     }
 
+    auto linker_file_routing = msvc::MsvcParameterEngine::linker_file_inputs(
+        request.options.additional_arguments,
+        request.working_directory);
+    if (!linker_file_routing) {
+        return std::unexpected(IncrementalLinkError{
+            .code = IncrementalLinkErrorCode::linker_parameter_invalid,
+            .message = "invalid tracked MSVC linker file input: "
+                + linker_file_routing.error().message,
+            .parameter_error = linker_file_routing.error(),
+        });
+    }
+    std::vector<fs::path> linker_file_inputs;
+    linker_file_inputs.reserve(linker_file_routing->inputs.size());
+    for (const auto& input : linker_file_routing->inputs) {
+        linker_file_inputs.push_back(input.path);
+    }
+
     auto resolved_libraries = msvc::MsvcLibraryResolver::resolve(
         toolchain_,
         request.options,
@@ -142,6 +160,9 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     std::vector<FileSnapshot> library_snapshots;
     snapshot_inputs(resolved_libraries->files, library_snapshots, result.warnings);
 
+    std::vector<FileSnapshot> file_input_snapshots;
+    snapshot_inputs(linker_file_inputs, file_input_snapshots, result.warnings);
+
     std::vector<FileSnapshot> side_output_snapshots;
     if (cached_entry) {
         snapshot_inputs(cached_entry->side_outputs, side_output_snapshots, result.warnings);
@@ -150,6 +171,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     result.validation = LinkCacheValidator::validate(
         request.objects,
         resolved_libraries->files,
+        linker_file_inputs,
         request.output,
         *linker_identity,
         request.options,
@@ -157,6 +179,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         output_snapshot,
         object_snapshots,
         library_snapshots,
+        file_input_snapshots,
         side_output_snapshots,
         request.force_relink);
 
@@ -207,7 +230,8 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         .libraries = action->libraries,
         .options = request.options,
         .working_directory = request.working_directory.value_or(fs::path{}),
-        .force_full_link = result.validation.library_inputs_changed,
+        .force_full_link = result.validation.library_inputs_changed
+            || result.validation.file_inputs_changed,
     };
     auto linked = linker_.link(invocation);
     if (!linked) {
@@ -243,6 +267,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         .objects = action->objects,
         .output = action->output,
         .libraries = action->libraries,
+        .file_inputs = linker_file_inputs,
         .side_outputs = std::move(side_outputs),
     };
     auto saved = LinkCacheFile::save(request.cache_file, new_entry);
