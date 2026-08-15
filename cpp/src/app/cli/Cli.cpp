@@ -11,6 +11,8 @@
 #include <system_error>
 #include <utility>
 
+#include "mqb/msvc/MsvcParameterEngine.hpp"
+
 #ifndef MQB_VERSION
 #define MQB_VERSION "0.0.0-dev"
 #endif
@@ -217,6 +219,26 @@ select_pch(Options& options, PrecompiledHeaderPolicy policy) {
         return std::unexpected(error("--pch/--no-pch may be specified only once"));
     }
     options.pch_override = std::move(policy);
+    return {};
+}
+
+[[nodiscard]] std::expected<void, Error>
+append_native_compiler_argument(
+    const std::span<const std::string_view> arguments,
+    std::size_t& index,
+    const std::string_view argument,
+    Options& options) {
+    options.compiler_arguments.emplace_back(argument);
+    const auto shape = msvc::MsvcParameterEngine::token_shape(
+        msvc::ParameterTool::compiler,
+        argument);
+    if (shape.operand != msvc::ParameterOperandShape::single) {
+        return {};
+    }
+
+    auto value = require_value(arguments, index, argument);
+    if (!value) return std::unexpected(value.error());
+    options.compiler_arguments.emplace_back(*value);
     return {};
 }
 
@@ -556,18 +578,6 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.libraries.emplace_back(*value);
             continue;
         }
-        if (argument == "/I") {
-            auto value = require_value(arguments, index, argument);
-            if (!value) return std::unexpected(value.error());
-            options.include_directories.emplace_back(std::string{*value});
-            continue;
-        }
-        if (argument == "/D") {
-            auto value = require_value(arguments, index, argument);
-            if (!value) return std::unexpected(value.error());
-            options.defines.emplace_back(std::string{*value});
-            continue;
-        }
         if (argument == "-I" || argument.starts_with("-I")) {
             auto value = attached_or_next(arguments, index, argument, "-I");
             if (!value) return std::unexpected(value.error());
@@ -601,11 +611,13 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             continue;
         }
         if (!argument.empty() && argument.front() == '/') {
-            options.compiler_arguments.emplace_back(argument);
+            auto appended = append_native_compiler_argument(arguments, index, argument, options);
+            if (!appended) return std::unexpected(appended.error());
             continue;
         }
         if (argument.size() > 1 && argument.front() == '-' && argument[1] != '-') {
-            options.compiler_arguments.emplace_back(argument);
+            auto appended = append_native_compiler_argument(arguments, index, argument, options);
+            if (!appended) return std::unexpected(appended.error());
             continue;
         }
         if (!argument.empty() && argument.front() == '-') {
@@ -707,7 +719,6 @@ Options:
   -l <name>, -l<name>     Link a library ('.lib' is optional)
   --lib <name>            Link a library
   /option, -option        Route a native MSVC compiler switch through the parameter engine
-  /I <dir> | /D <value>  Native spaced include/define forms map to MQB structured inputs
   /link <link-options...> Route the remaining build argv to native linker options
   --compiler-arg <arg>    Append one raw cl.exe argument
   --linker-arg <arg>      Append one raw link.exe argument
@@ -729,17 +740,18 @@ arguments; MQB options must appear before it. The outer `--` delimiter still end
 and starts executable argv. `mqb run ... /link ... -- child-args` and the legacy source-first
 `--run` form remain supported. Native switches and @response syntax are not semantically
 reimplemented by the CLI: they flow through the same ownership, normalization, conflict, and
-cache-identity rules as --compiler-arg/--linker-arg. Bare `/I` and `/D` are the only native
-compiler forms that consume a following argv element in the CLI; attached forms remain opaque
-native tokens.
+cache-identity rules as --compiler-arg/--linker-arg. For direct native syntax the CLI asks the
+parameter engine for each option's token shape before treating a following bare token as a
+source. Exact split forms such as `/I dir`, `/D NAME`, `/U NAME`, and `/external:I dir` keep
+their option and operand as ordered raw compiler argv; attached spellings consume no extra token.
 
 Static libraries are produced by MSVC lib.exe from the compiled object set. Linker-only policy
 (libraries, library search paths, subsystem, and raw linker arguments) is rejected for static
 targets. Typed LTCG remains valid for static targets and couples /GL compilation with lib.exe
 /LTCG archive policy.
 
-Raw compiler/linker arguments are one argv element per option occurrence; MQB does not split a
-quoted string into multiple switches. Project config entries are applied first, selected profile
+Raw compiler/linker arguments preserve argv element boundaries; MQB does not split a quoted
+string into multiple switches. Project config entries are applied first, selected profile
 entries append/override next, and CLI entries apply last. Typed runtime/LTCG/PCH policy and
 structured artifact routing are emitted after raw arguments so the BuildPlan remains authoritative.
 
