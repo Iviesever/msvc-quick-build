@@ -2,7 +2,7 @@ name: Performance Evidence
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
 
 concurrency:
@@ -12,7 +12,7 @@ concurrency:
 jobs:
   compare:
     name: Compare base and candidate
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.pull_request.title, 'perf:')
+    if: github.event_name == 'workflow_dispatch' || (startsWith(github.event.pull_request.title, 'perf:') && (github.event.action != 'edited' || github.event.changes.title.from != null))
     runs-on: windows-latest
     timeout-minutes: 30
     permissions:
