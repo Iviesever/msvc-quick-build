@@ -120,7 +120,7 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (contains_exact(body, pipeline_exact)) return compiler_unsupported(body, "option replaces normal object compilation or changes the output kind outside MQB's target pipeline");
 
     static constexpr std::array passthrough_exact{
-        "?"sv, "HELP"sv, "bigobj"sv, "Brepro"sv, "Bt+"sv, "C"sv, "dynamicdeopt"sv, "fastfail"sv,
+        "?"sv, "HELP"sv, "analyze-"sv, "bigobj"sv, "Brepro"sv, "Bt+"sv, "C"sv, "dynamicdeopt"sv, "fastfail"sv,
         "FC"sv, "FS"sv, "GA"sv, "GF"sv, "GH"sv, "Gh"sv, "GT"sv, "Gv"sv, "Gz"sv, "homeparams"sv, "hotpatch"sv,
         "J"sv, "JMC"sv, "jumptablerdata"sv, "nologo"sv, "O1"sv, "O2"sv, "Od"sv, "options:strict"sv, "Os"sv, "Ot"sv, "Ox"sv, "Oy"sv,
         "PD"sv, "permissive"sv, "permissive-"sv, "PH"sv, "presetPadding"sv, "Qfast_transcendentals"sv, "Qimprecise_fwaits"sv,
@@ -130,7 +130,7 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
         "Z7"sv, "Za"sv, "Zf"sv, "ZI"sv, "Zi"sv, "Zl"sv,
     };
     static constexpr std::array passthrough_prefix{
-        "AI"sv, "analyze"sv, "arch"sv, "await"sv, "cgthreads"sv, "constexpr:"sv, "D"sv, "diagnostics"sv, "EH"sv,
+        "AI"sv, "arch"sv, "await"sv, "cgthreads"sv, "constexpr:"sv, "D"sv, "diagnostics"sv, "EH"sv,
         "execution-charset"sv, "external:"sv, "favor:"sv, "feature"sv, "forceInterlockedFunctions"sv,
         "fp:"sv, "fpcvt:"sv, "fsanitize"sv, "Gd"sv, "Gr"sv, "GR"sv, "GS"sv, "Gs"sv, "Gu"sv, "guard:"sv, "Gw"sv, "Gy"sv,
         "I"sv, "Ob"sv, "Oi"sv, "openmp"sv, "Qpar"sv, "Qpar-report:"sv, "Qspectre"sv, "Qvec-report:"sv, "RTC"sv,
