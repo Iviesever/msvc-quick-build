@@ -104,10 +104,11 @@ void mask_span(
     return std::isalnum(value) != 0 || ch == '_';
 }
 
-void collect_local_include(
+void collect_include(
     const std::string_view source,
     const std::size_t hash,
-    std::vector<std::string>& includes) {
+    std::vector<std::string>& quoted_includes,
+    std::vector<std::string>& angle_includes) {
     std::size_t cursor = hash + 1;
     while (cursor < source.size()
            && source[cursor] != '\n'
@@ -130,25 +131,38 @@ void collect_local_include(
            && std::isspace(static_cast<unsigned char>(source[cursor])) != 0) {
         ++cursor;
     }
-    if (cursor >= source.size() || source[cursor] != '"') {
+    if (cursor >= source.size()) {
+        return;
+    }
+
+    const char opener = source[cursor];
+    const char closer = opener == '"' ? '"' : opener == '<' ? '>' : '\0';
+    if (closer == '\0') {
+        // Macro-expanded include operands are intentionally outside the lexical
+        // discovery model; P1689/compiler dependency evidence remains the
+        // authority once the TU is selected.
         return;
     }
 
     const std::size_t begin = ++cursor;
     while (cursor < source.size()
-           && source[cursor] != '"'
+           && source[cursor] != closer
            && source[cursor] != '\n'
            && source[cursor] != '\r') {
         ++cursor;
     }
-    if (cursor > begin && cursor < source.size() && source[cursor] == '"') {
-        includes.emplace_back(source.substr(begin, cursor - begin));
+    if (cursor <= begin || cursor >= source.size() || source[cursor] != closer) {
+        return;
     }
+
+    auto& destination = opener == '"' ? quoted_includes : angle_includes;
+    destination.emplace_back(source.substr(begin, cursor - begin));
 }
 
 struct LexicalScan {
     std::string code;
-    std::vector<std::string> local_includes;
+    std::vector<std::string> quoted_includes;
+    std::vector<std::string> angle_includes;
 };
 
 [[nodiscard]] std::size_t directive_end(
@@ -183,7 +197,8 @@ struct LexicalScan {
 [[nodiscard]] LexicalScan scan_source(const std::string_view source) {
     LexicalScan scan{
         .code = std::string{source},
-        .local_includes = {},
+        .quoted_includes = {},
+        .angle_includes = {},
     };
     bool line_has_code = false;
 
@@ -202,7 +217,11 @@ struct LexicalScan {
         }
 
         if (!line_has_code && ch == '#') {
-            collect_local_include(source, index, scan.local_includes);
+            collect_include(
+                source,
+                index,
+                scan.quoted_includes,
+                scan.angle_includes);
             index = directive_end(source, scan.code, index);
             line_has_code = false;
             continue;
@@ -271,7 +290,8 @@ SourceTextAnalysis analyze_source_text(
     const bool parse_module_syntax) {
     LexicalScan scan = scan_source(source_text);
     return SourceTextAnalysis{
-        .local_includes = std::move(scan.local_includes),
+        .quoted_includes = std::move(scan.quoted_includes),
+        .angle_includes = std::move(scan.angle_includes),
         .module_syntax = parse_module_syntax
             ? ModuleSyntaxParser::parse(source_text)
             : NamedModuleSyntax{},

@@ -1,17 +1,54 @@
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "Cli.hpp"
+#include "../../../src/app/project/ProjectSetup.hpp"
+#include "mqb/discovery/SourceDiscovery.hpp"
 
 namespace {
+namespace fs = std::filesystem;
 int failures = 0;
+
 void expect(bool condition, std::string_view message) {
     if (!condition) {
         ++failures;
         std::cerr << "FAIL: " << message << '\n';
     }
 }
+
+void write_text(const fs::path& path, const std::string_view text) {
+    fs::create_directories(path.parent_path());
+    std::ofstream stream{path, std::ios::binary | std::ios::trunc};
+    stream << text;
+}
+
+[[nodiscard]] bool contains_source(
+    const std::vector<fs::path>& sources,
+    const fs::path& source) {
+    const auto normalized = source.lexically_normal();
+    for (const auto& candidate : sources) {
+        if (candidate.lexically_normal() == normalized) return true;
+    }
+    return false;
+}
+
+[[nodiscard]] std::string path_text(const fs::path& path) {
+    const auto bytes = path.generic_u8string();
+    return std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
+struct TempTree {
+    fs::path root;
+    ~TempTree() {
+        std::error_code ignored;
+        fs::remove_all(root, ignored);
+    }
+};
 } // namespace
 
 int main() {
@@ -138,6 +175,70 @@ int main() {
         const std::vector arguments{"main.cpp"sv, "--linker-arg="sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(!parsed, "empty raw linker argument should be rejected");
+    }
+
+    {
+        const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+        TempTree tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_native_include_policy_" + std::to_string(unique)),
+        };
+        const fs::path main_source = tree.root / "main.cpp";
+        const fs::path include_root = tree.root / "include";
+        const fs::path widget_source = include_root / "widget.cpp";
+        write_text(
+            main_source,
+            "#include <widget.hpp>\n"
+            "int main() { return widget(); }\n");
+        write_text(include_root / "widget.hpp", "#pragma once\nint widget();\n");
+        write_text(
+            widget_source,
+            "#include \"widget.hpp\"\n"
+            "int widget() { return 0; }\n");
+
+        const std::vector arguments{
+            "main.cpp"sv,
+            "/UATTACHED"sv,
+            "/Iinclude"sv,
+            "/DATTACHED=1"sv,
+        };
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "attached native preprocessor options should parse before project setup");
+        if (parsed) {
+            expect(parsed->include_directories.empty() && parsed->defines.empty(),
+                   "attached /I and /D should remain parameter-engine inputs at the CLI boundary");
+            expect(parsed->compiler_arguments.size() == 3,
+                   "native preprocessor options should initially remain raw compiler arguments");
+
+            auto project = mqb::app::prepare_project(*parsed, tree.root);
+            expect(project.has_value(), "project setup should expose native include semantics");
+            if (project) {
+                const std::string expected_include = "/I" + path_text(include_root.lexically_normal());
+                expect(parsed->compiler_arguments.size() == 3
+                           && parsed->compiler_arguments[0] == "/UATTACHED"
+                           && parsed->compiler_arguments[1] == expected_include
+                           && parsed->compiler_arguments[2] == "/DATTACHED=1",
+                       "native preprocessor argv order should survive semantic extraction");
+                expect(parsed->include_directories.empty() && parsed->defines.empty(),
+                       "native /I and /D metadata must not be re-emitted through structured compiler lists");
+                expect(parsed->discovery_include_directories.size() == 1
+                           && parsed->discovery_include_directories.front().lexically_normal()
+                               == include_root.lexically_normal(),
+                       "attached /I should feed an invocation-relative discovery-only include directory");
+
+                auto discovered = mqb::discovery::SourceDiscovery::discover({
+                    .project_root = tree.root,
+                    .entry = main_source,
+                    .include_directories = parsed->discovery_include_directories,
+                });
+                expect(discovered.has_value(),
+                       "smart discovery should accept semantic include directories extracted from native /I");
+                if (discovered) {
+                    expect(contains_source(discovered->sources, widget_source),
+                           "native attached /I should connect include-root-owned widget.cpp in discovery");
+                }
+            }
+        }
     }
 
     if (failures != 0) {

@@ -1,5 +1,6 @@
 #include "mqb/msvc/MsvcParameterEngine.hpp"
 
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -8,6 +9,8 @@
 
 namespace mqb::msvc {
 namespace {
+
+namespace fs = std::filesystem;
 
 [[nodiscard]] ParameterError error(
     const ParameterErrorCode code,
@@ -92,6 +95,37 @@ template <typename T>
         "MQB currently supports typed /MACHINE:X86 and /MACHINE:X64 only"));
 }
 
+[[nodiscard]] std::expected<std::string_view, ParameterError> require_compiler_operand(
+    const std::span<const std::string> arguments,
+    std::size_t& index,
+    const std::string& argument,
+    const std::string_view option_name) {
+    if (index + 1 >= arguments.size() || arguments[index + 1].empty()) {
+        return std::unexpected(error(
+            ParameterErrorCode::invalid_value,
+            ParameterTool::compiler,
+            argument,
+            "MSVC compiler option '" + std::string{option_name} + "' requires a following value"));
+    }
+    ++index;
+    return arguments[index];
+}
+
+[[nodiscard]] fs::path resolve_parameter_path(
+    const std::string_view value,
+    const std::optional<fs::path>& path_base) {
+    fs::path path = fs::u8path(value);
+    if (path_base && path.is_relative()) {
+        path = *path_base / path;
+    }
+    return path.lexically_normal();
+}
+
+[[nodiscard]] std::string path_text(const fs::path& path) {
+    const auto bytes = path.generic_u8string();
+    return std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
 } // namespace
 
 ParameterClassification MsvcParameterEngine::classify(
@@ -114,17 +148,60 @@ ParameterClassification MsvcParameterEngine::classify(
 }
 
 std::expected<CompilerParameterRouting, ParameterError>
-MsvcParameterEngine::route_compiler(const std::span<const std::string> arguments) {
+MsvcParameterEngine::route_compiler(
+    const std::span<const std::string> arguments,
+    const std::optional<std::filesystem::path> path_base) {
     CompilerParameterRouting routed;
     routed.passthrough.reserve(arguments.size());
 
-    for (const auto& argument : arguments) {
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+        const auto& argument = arguments[index];
         if (argument.empty()) {
             return std::unexpected(error(
                 ParameterErrorCode::empty_argument,
                 ParameterTool::compiler,
                 argument,
                 "empty raw compiler argument"));
+        }
+
+        const std::string_view body = detail::option_body(argument);
+        if (body == "I" || body == "D") {
+            auto operand = require_compiler_operand(
+                arguments,
+                index,
+                argument,
+                body == "I" ? "/I" : "/D");
+            if (!operand) {
+                return std::unexpected(operand.error());
+            }
+
+            routed.passthrough.push_back(argument);
+            if (body == "I") {
+                const fs::path include_directory = resolve_parameter_path(*operand, path_base);
+                routed.include_directories.push_back(include_directory);
+                routed.passthrough.push_back(
+                    path_base ? path_text(include_directory) : std::string{*operand});
+            } else {
+                routed.defines.emplace_back(*operand);
+                routed.passthrough.emplace_back(*operand);
+            }
+            continue;
+        }
+        if (body.size() > 1 && body.front() == 'I') {
+            const fs::path include_directory = resolve_parameter_path(body.substr(1), path_base);
+            routed.include_directories.push_back(include_directory);
+            if (path_base) {
+                routed.passthrough.push_back(
+                    argument.substr(0, 2) + path_text(include_directory));
+            } else {
+                routed.passthrough.push_back(argument);
+            }
+            continue;
+        }
+        if (body.size() > 1 && body.front() == 'D') {
+            routed.defines.emplace_back(body.substr(1));
+            routed.passthrough.push_back(argument);
+            continue;
         }
 
         const auto classified = detail::classify_compiler_parameter(argument);
@@ -136,7 +213,6 @@ MsvcParameterEngine::route_compiler(const std::span<const std::string> arguments
             continue;
         }
 
-        const std::string_view body = detail::option_body(argument);
         if (body == "MD") {
             if (auto assigned = assign_semantic(
                     routed.runtime_library,

@@ -44,6 +44,34 @@ void add_undirected_edge(
     return path_key(path.parent_path() / path.stem());
 }
 
+void connect_include(
+    std::vector<std::vector<std::size_t>>& adjacency,
+    const std::vector<IndexedFile>& files,
+    const std::unordered_map<std::string, std::size_t>& index_by_path,
+    const std::vector<fs::path>& include_directories,
+    const std::size_t file_index,
+    const std::string& include,
+    const bool quoted) {
+    const auto& file = files[file_index];
+    if (quoted) {
+        const fs::path local = (file.path.parent_path() / fs::u8path(include)).lexically_normal();
+        const auto found = index_by_path.find(path_key(local));
+        if (found != index_by_path.end()) {
+            add_undirected_edge(adjacency, file_index, found->second);
+            return;
+        }
+    }
+
+    for (const auto& include_directory : include_directories) {
+        const fs::path candidate = (include_directory / fs::u8path(include)).lexically_normal();
+        const auto found = index_by_path.find(path_key(candidate));
+        if (found != index_by_path.end()) {
+            add_undirected_edge(adjacency, file_index, found->second);
+            return;
+        }
+    }
+}
+
 } // namespace
 
 bool file_requires_module_pipeline(const IndexedFile& file) {
@@ -63,21 +91,25 @@ SourceSelection select_source_closure(
 
     for (std::size_t file_index = 0; file_index < files.size(); ++file_index) {
         const auto& file = files[file_index];
-        for (const auto& include : file.local_includes) {
-            std::vector<fs::path> candidates;
-            candidates.reserve(1 + include_directories.size());
-            candidates.push_back((file.path.parent_path() / include).lexically_normal());
-            for (const auto& include_directory : include_directories) {
-                candidates.push_back((include_directory / include).lexically_normal());
-            }
-
-            for (const auto& candidate : candidates) {
-                const auto found = index_by_path.find(path_key(candidate));
-                if (found != index_by_path.end()) {
-                    add_undirected_edge(adjacency, file_index, found->second);
-                    break;
-                }
-            }
+        for (const auto& include : file.quoted_includes) {
+            connect_include(
+                adjacency,
+                files,
+                index_by_path,
+                include_directories,
+                file_index,
+                include,
+                true);
+        }
+        for (const auto& include : file.angle_includes) {
+            connect_include(
+                adjacency,
+                files,
+                index_by_path,
+                include_directories,
+                file_index,
+                include,
+                false);
         }
     }
 

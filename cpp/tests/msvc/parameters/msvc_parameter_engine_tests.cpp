@@ -1,4 +1,5 @@
 #include <array>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -128,6 +129,10 @@ int main() {
            "/fp:fast should be safe compiler passthrough");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/std:c++20").ownership == ParameterOwnership::semantic,
            "/std should be semantic compiler policy");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/Iinclude").ownership == ParameterOwnership::passthrough,
+           "/I should remain safe compiler passthrough ownership");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/DVALUE=1").ownership == ParameterOwnership::passthrough,
+           "/D should remain safe compiler passthrough ownership");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/Foowned.obj").ownership == ParameterOwnership::mqb_owned,
            "/Fo should remain MQB-owned structural routing");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/MP8").ownership == ParameterOwnership::unsupported,
@@ -154,6 +159,65 @@ int main() {
             expect(routed->link_time_code_generation.has_value() && *routed->link_time_code_generation,
                    "/GL should normalize to coupled LTCG enablement");
         }
+    }
+    {
+        const std::vector<std::string> arguments{"/Iinclude", "/DVALUE=1", "/W4"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(routed.has_value(), "attached /I and /D routing should succeed");
+        if (routed) {
+            expect(routed->include_directories.size() == 1
+                       && routed->include_directories.front() == std::filesystem::u8path("include"),
+                   "attached /I should expose structured include semantics");
+            expect(routed->defines.size() == 1 && routed->defines.front() == "VALUE=1",
+                   "attached /D should expose structured define semantics");
+            expect(routed->passthrough == arguments,
+                   "attached preprocessor options must preserve exact raw argv order and spelling");
+        }
+    }
+    {
+        const std::vector<std::string> arguments{"/I", "third party", "/D", "NAME=7", "/O2"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(routed.has_value(), "split /I and /D routing should succeed");
+        if (routed) {
+            expect(routed->include_directories.size() == 1
+                       && routed->include_directories.front() == std::filesystem::u8path("third party"),
+                   "split /I operand should expose structured include semantics");
+            expect(routed->defines.size() == 1 && routed->defines.front() == "NAME=7",
+                   "split /D operand should expose structured define semantics");
+            expect(routed->passthrough == arguments,
+                   "split preprocessor options must preserve exact raw token ordering");
+        }
+    }
+    {
+        const std::vector<std::string> arguments{"/Iinclude", "/W4"};
+        const std::filesystem::path base = std::filesystem::u8path("layer-root");
+        auto routed = MsvcParameterEngine::route_compiler(arguments, base);
+        expect(routed.has_value(), "path-based native include routing should succeed");
+        if (routed) {
+            const auto expected = (base / "include").lexically_normal();
+            expect(routed->include_directories.size() == 1
+                       && routed->include_directories.front() == expected,
+                   "native /I metadata should resolve relative to the supplying layer");
+            const auto expected_bytes = expected.generic_u8string();
+            const std::string expected_text{
+                reinterpret_cast<const char*>(expected_bytes.data()), expected_bytes.size()};
+            expect(routed->passthrough.size() == 2
+                       && routed->passthrough[0] == "/I" + expected_text
+                       && routed->passthrough[1] == "/W4",
+                   "path normalization may rewrite /I payload but must preserve raw token position");
+        }
+    }
+    {
+        const std::vector<std::string> arguments{"/I"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(!routed && routed.error().code == ParameterErrorCode::invalid_value,
+               "missing /I operand should fail closed");
+    }
+    {
+        const std::vector<std::string> arguments{"/D"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(!routed && routed.error().code == ParameterErrorCode::invalid_value,
+               "missing /D operand should fail closed");
     }
     {
         const std::vector<std::string> arguments{"/GL-"};

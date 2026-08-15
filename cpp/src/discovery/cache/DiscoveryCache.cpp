@@ -26,7 +26,9 @@ static_assert(std::is_integral_v<FileTimeRep> && sizeof(FileTimeRep) <= sizeof(s
 
 constexpr std::array<std::uint8_t, 8> magic{
     'M', 'Q', 'B', 'D', 'I', 'S', 'C', '1'};
-constexpr std::uint32_t format_version = 1;
+// Version 2 invalidates v1 selections because discovery now distinguishes and
+// resolves angle-bracket includes through configured include search paths.
+constexpr std::uint32_t format_version = 2;
 constexpr std::size_t max_cache_file_size = 64u * 1024u * 1024u;
 constexpr std::uint32_t max_string_size = 4u * 1024u * 1024u;
 constexpr std::uint32_t max_path_count = 250000u;

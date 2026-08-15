@@ -9,7 +9,11 @@
 namespace mqb::discovery::detail {
 
 struct SourceTextAnalysis {
-    std::vector<std::string> local_includes;
+    // Quoted includes search the including file's directory first, then the
+    // configured include search path. Angle includes search the configured
+    // include path only. Preserve that distinction for source selection.
+    std::vector<std::string> quoted_includes;
+    std::vector<std::string> angle_includes;
     NamedModuleSyntax module_syntax;
     bool defines_main{false};
 };

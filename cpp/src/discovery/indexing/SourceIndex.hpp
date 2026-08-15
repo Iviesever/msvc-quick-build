@@ -26,7 +26,8 @@ struct IndexedFile {
     std::filesystem::path path;
     IndexedFileKind kind{IndexedFileKind::header};
     std::optional<TranslationUnitKind> translation_unit_kind;
-    std::vector<std::string> local_includes;
+    std::vector<std::string> quoted_includes;
+    std::vector<std::string> angle_includes;
     NamedModuleSyntax module_syntax;
     bool defines_main{false};
 };
