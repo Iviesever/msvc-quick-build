@@ -242,6 +242,10 @@ prepare_project(
     cli_overrides.modules.external_providers = options.external_module_providers;
 
     std::vector<fs::path> native_include_directories;
+    // This app-layer vector exists only while resolving config/profile/CLI so
+    // duplicate /DEF inputs can fail before option overlays are finalized.
+    // Runtime freshness evidence is re-observed from final linker argv by the
+    // incremental linker and is not persisted in ProjectSetup.
     std::vector<mqb::msvc::LinkerFileInput> native_linker_file_inputs;
     if (project_config) {
         auto normalized = normalize_native_parameters(
@@ -322,17 +326,10 @@ prepare_project(
         });
     }
 
-    std::vector<fs::path> linker_file_inputs;
-    linker_file_inputs.reserve(native_linker_file_inputs.size());
-    for (const auto& input : native_linker_file_inputs) {
-        linker_file_inputs.push_back(input.path);
-    }
-
     return ProjectSetup{
         .config = std::move(project_config),
         .effective = std::move(effective),
         .project_root = project_root,
-        .linker_file_inputs = std::move(linker_file_inputs),
         .subsystem_explicit = subsystem_explicit,
     };
 }
