@@ -103,6 +103,44 @@ public:
         std::span<const std::string> arguments,
         std::optional<std::filesystem::path> path_base = std::nullopt);
 
+    // Observation-only view of validated raw /FI options. /FI remains in the
+    // passthrough argv and compile identity; this extracts its quoted-include
+    // operand for discovery without rewriting it relative to a config/CLI base.
+    [[nodiscard]] static std::expected<std::vector<std::filesystem::path>, ParameterError>
+    forced_includes(const std::span<const std::string> arguments) {
+        auto validated = route_compiler(arguments);
+        if (!validated) {
+            return std::unexpected(validated.error());
+        }
+
+        std::vector<std::filesystem::path> result;
+        for (std::size_t index = 0; index < arguments.size(); ++index) {
+            const std::string& argument = arguments[index];
+            std::string_view body;
+            if (argument.size() >= 2
+                && (argument.front() == '/' || argument.front() == '-')) {
+                body = std::string_view{argument}.substr(1);
+            }
+
+            const ParameterOperandShape shape =
+                token_shape(ParameterTool::compiler, argument).operand;
+            if (body == "FI") {
+                // route_compiler() above has already proven the operand exists.
+                ++index;
+                result.push_back(std::filesystem::u8path(arguments[index]));
+                continue;
+            }
+            if (body.size() > 2 && body.starts_with("FI")) {
+                result.push_back(std::filesystem::u8path(body.substr(2)));
+                continue;
+            }
+            if (shape == ParameterOperandShape::single) {
+                ++index;
+            }
+        }
+        return result;
+    }
+
     [[nodiscard]] static std::expected<LinkerParameterRouting, ParameterError>
     route_linker(std::span<const std::string> arguments);
 
