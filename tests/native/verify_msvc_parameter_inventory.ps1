@@ -169,6 +169,9 @@ foreach ($entry in $inventory) {
 }
 $source.Add('expect(mqb::msvc::ParameterTool::linker,"/DEBUG:NONE",mqb::msvc::ParameterOwnership::passthrough);')
 $source.Add('expect(mqb::msvc::ParameterTool::compiler,"/Zc:trigraphs",mqb::msvc::ParameterOwnership::unsupported);')
+$source.Add('expect(mqb::msvc::ParameterTool::compiler,"/std:c11",mqb::msvc::ParameterOwnership::passthrough);')
+$source.Add('expect(mqb::msvc::ParameterTool::compiler,"/std:c17",mqb::msvc::ParameterOwnership::passthrough);')
+$source.Add('expect(mqb::msvc::ParameterTool::compiler,"/std:clatest",mqb::msvc::ParameterOwnership::passthrough);')
 $source.Add('if(failures){std::cerr<<failures<<" exact MSVC inventory failure(s)\n";return 1;} return 0;}')
 $source | Set-Content -LiteralPath $sourcePath -Encoding utf8
 
