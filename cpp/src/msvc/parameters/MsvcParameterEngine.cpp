@@ -92,6 +92,22 @@ template <typename T>
         "MQB currently supports typed /MACHINE:X86 and /MACHINE:X64 only"));
 }
 
+[[nodiscard]] std::expected<std::string_view, ParameterError> require_compiler_operand(
+    const std::span<const std::string> arguments,
+    std::size_t& index,
+    const std::string& argument,
+    const std::string_view option_name) {
+    if (index + 1 >= arguments.size() || arguments[index + 1].empty()) {
+        return std::unexpected(error(
+            ParameterErrorCode::invalid_value,
+            ParameterTool::compiler,
+            argument,
+            "MSVC compiler option '" + std::string{option_name} + "' requires a following value"));
+    }
+    ++index;
+    return arguments[index];
+}
+
 } // namespace
 
 ParameterClassification MsvcParameterEngine::classify(
@@ -118,13 +134,36 @@ MsvcParameterEngine::route_compiler(const std::span<const std::string> arguments
     CompilerParameterRouting routed;
     routed.passthrough.reserve(arguments.size());
 
-    for (const auto& argument : arguments) {
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+        const auto& argument = arguments[index];
         if (argument.empty()) {
             return std::unexpected(error(
                 ParameterErrorCode::empty_argument,
                 ParameterTool::compiler,
                 argument,
                 "empty raw compiler argument"));
+        }
+
+        const std::string_view body = detail::option_body(argument);
+        if (body == "I" || body == "D") {
+            auto operand = require_compiler_operand(arguments, index, argument, body == "I" ? "/I" : "/D");
+            if (!operand) {
+                return std::unexpected(operand.error());
+            }
+            if (body == "I") {
+                routed.include_directories.push_back(std::filesystem::u8path(std::string{*operand}));
+            } else {
+                routed.defines.emplace_back(*operand);
+            }
+            continue;
+        }
+        if (body.size() > 1 && body.front() == 'I') {
+            routed.include_directories.push_back(std::filesystem::u8path(std::string{body.substr(1)}));
+            continue;
+        }
+        if (body.size() > 1 && body.front() == 'D') {
+            routed.defines.emplace_back(body.substr(1));
+            continue;
         }
 
         const auto classified = detail::classify_compiler_parameter(argument);
@@ -136,7 +175,6 @@ MsvcParameterEngine::route_compiler(const std::span<const std::string> arguments
             continue;
         }
 
-        const std::string_view body = detail::option_body(argument);
         if (body == "MD") {
             if (auto assigned = assign_semantic(
                     routed.runtime_library,
