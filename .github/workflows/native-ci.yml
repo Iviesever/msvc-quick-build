@@ -75,6 +75,19 @@ jobs:
             throw "Shared Debug native-test product library missing: $library"
           }
 
+      - name: Verify exact MSVC parameter inventory
+        shell: pwsh
+        run: |
+          $mqb = Join-Path $PWD 'native-out/debug/mqb.exe'
+          $library = Join-Path $PWD 'native-out/debug/native-test-product.lib'
+          & (Join-Path $PWD 'tests/native/verify_msvc_parameter_inventory.ps1') `
+            -MqbPath $mqb `
+            -RepoRoot $PWD `
+            -Configuration Debug `
+            -SharedProductLibraryPath $library `
+            -OutputPath (Join-Path $PWD 'native-out/debug/msvc-parameter-inventory.tsv')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Upload exact Debug MQB and shared product library
         uses: actions/upload-artifact@v7
         with:
@@ -82,6 +95,7 @@ jobs:
           path: |
             native-out/debug/mqb.exe
             native-out/debug/native-test-product.lib
+            native-out/debug/msvc-parameter-inventory.tsv
           if-no-files-found: error
           retention-days: 1
 
