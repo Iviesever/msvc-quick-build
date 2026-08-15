@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
 #include "mqb/msvc/MsvcParameterEngine.hpp"
 
 namespace mqb::app {
@@ -115,6 +116,13 @@ template <typename T>
         }
     }
 
+    auto default_libraries = mqb::msvc::MsvcDefaultLibraryPolicy::route(
+        std::span<const std::string>{linker_files->passthrough},
+        path_base);
+    if (!default_libraries) {
+        return std::unexpected(parameter_error_message(layer, default_libraries.error()));
+    }
+
     native_include_directories.insert(
         native_include_directories.end(),
         compiler->include_directories.begin(),
@@ -152,7 +160,7 @@ template <typename T>
     }
 
     build.compiler_arguments = std::move(compiler->passthrough);
-    build.linker_arguments = std::move(linker_files->passthrough);
+    build.linker_arguments = std::move(default_libraries->passthrough);
     return {};
 }
 
