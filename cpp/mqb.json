@@ -40,6 +40,7 @@
       "src/msvc/compiler/MsvcCompileExecutor.cpp",
       "src/msvc/compiler/MsvcCompiler.cpp",
       "src/msvc/librarian/MsvcLibrarian.cpp",
+      "src/msvc/linker/MsvcDefaultLibraryPolicy.cpp",
       "src/msvc/linker/MsvcLibraryResolver.cpp",
       "src/msvc/linker/MsvcLinker.cpp",
       "src/msvc/modules/MsvcModuleDependencyScanner.cpp",
