@@ -24,7 +24,7 @@ namespace {
 namespace fs = std::filesystem;
 using process::EnvironmentVariable;
 
-constexpr std::string_view cache_magic = "MQB_TOOLCHAIN_CACHE_V5";
+constexpr std::string_view cache_magic = "MQB_TOOLCHAIN_CACHE_V6";
 constexpr std::uintmax_t max_cache_size = 1024u * 1024u;
 constexpr std::size_t max_cache_entries = 64u;
 constexpr std::size_t max_cache_string = 256u * 1024u;
@@ -117,8 +117,8 @@ struct ToolPaths {
 
 [[nodiscard]] bool cacheable_environment_name(const std::string_view name) {
     constexpr std::string_view names[]{
-        "INCLUDE", "LIB", "VCToolsInstallDir", "WindowsSdkDir",
-        "WindowsSDKVersion", "UniversalCRTSdkDir", "UCRTVersion",
+        "INCLUDE", "LIB", "LIBPATH", "VCToolsInstallDir", "WindowsSdkDir",
+        "WindowsSDKVersion", "UniversalCRTSdkDir", "UCRTVersion", "NETFXSDKDir",
     };
     for (const auto candidate : names) {
         if (environment_name_equal(name, candidate)) return true;
@@ -169,7 +169,7 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
     const fs::path& vc_tools_root) {
     std::vector<fs::path> roots;
     append_unique_existing_root(roots, visual_studio_root(vc_tools_root));
-    for (const auto name : {"WindowsSdkDir", "UniversalCRTSdkDir"}) {
+    for (const auto name : {"WindowsSdkDir", "UniversalCRTSdkDir", "NETFXSDKDir"}) {
         if (const auto* variable = find_environment(environment, name);
             variable != nullptr && !variable->value.empty()) {
             append_unique_existing_root(roots, detail::path_from_utf8(variable->value));
@@ -222,12 +222,16 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
     const fs::path& vc_tools_root) {
     const auto* include = find_environment(environment, "INCLUDE");
     const auto* lib = find_environment(environment, "LIB");
+    const auto* lib_path = find_environment(environment, "LIBPATH");
     const auto* tools = find_environment(environment, "VCToolsInstallDir");
-    if (include == nullptr || lib == nullptr || tools == nullptr
-        || include->value.empty() || lib->value.empty() || tools->value.empty()) return false;
+    if (include == nullptr || lib == nullptr || lib_path == nullptr || tools == nullptr
+        || include->value.empty() || lib->value.empty() || lib_path->value.empty() || tools->value.empty()) return false;
     if (normalized_path_text(detail::path_from_utf8(tools->value)) != normalized_path_text(vc_tools_root)) return false;
     const auto roots = trusted_roots(environment, vc_tools_root);
-    return !roots.empty() && trusted_directory_list(include->value, roots) && trusted_directory_list(lib->value, roots);
+    return !roots.empty()
+        && trusted_directory_list(include->value, roots)
+        && trusted_directory_list(lib->value, roots)
+        && trusted_directory_list(lib_path->value, roots);
 }
 
 [[nodiscard]] std::vector<fs::path> trusted_path_prefixes(const MsvcToolchain& toolchain) {
