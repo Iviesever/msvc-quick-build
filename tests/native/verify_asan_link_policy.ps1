@@ -56,6 +56,19 @@ function Invoke-AsanBuild {
     }
 }
 
+function Invoke-WithMinimalParentPath {
+    param([Parameter(Mandatory = $true)][scriptblock]$Action)
+
+    $previousPath = $env:PATH
+    $env:PATH = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
+    try {
+        & $Action
+    }
+    finally {
+        $env:PATH = $previousPath
+    }
+}
+
 $cold = Invoke-AsanBuild -Target 'asan_probe'
 if ($cold.ExitCode -ne 0) {
     throw "Cold AddressSanitizer build failed:`n$($cold.Text)"
@@ -100,6 +113,58 @@ if (Test-Path -LiteralPath $rawIncrementalIlk) {
     throw "Raw /INCREMENTAL overrode MQB's required AddressSanitizer /INCREMENTAL:NO policy"
 }
 
+# Prove `mqb run` does not depend on the invoking shell already containing the
+# selected compiler directory. LINK/CL use MQB's captured toolchain environment;
+# the user program receives only the selected toolchain PATH when ASan is active.
+Push-Location $fixture
+try {
+    $runOutput = @(
+        Invoke-WithMinimalParentPath {
+            & $MqbPath run main.cpp --debug --no-discover -o asan_run_probe `
+                /fsanitize=address 2>&1
+        }
+    )
+    $runExit = $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}
+if ($runExit -ne 0) {
+    throw "AddressSanitizer mqb run failed with compiler paths removed from parent PATH:`n$($runOutput -join [Environment]::NewLine)"
+}
+if (($runOutput -join [Environment]::NewLine) -notmatch '\[run\]\s+asan_run_probe\.exe') {
+    throw "AddressSanitizer ordinary run gate did not reach the user program"
+}
+
+# Exercise the same compile->link->run policy through the named-module route.
+Set-Content -LiteralPath (Join-Path $fixture 'math.ixx') -Encoding utf8 -Value @(
+    'export module math;',
+    'export int answer() { return 42; }'
+)
+Set-Content -LiteralPath (Join-Path $fixture 'module_main.cpp') -Encoding utf8 -Value @(
+    'import math;',
+    'int main() { return answer() == 42 ? 0 : 1; }'
+)
+Push-Location $fixture
+try {
+    $moduleRunOutput = @(
+        Invoke-WithMinimalParentPath {
+            & $MqbPath run module_main.cpp math.ixx --debug --no-discover `
+                -o asan_module_run /fsanitize=address 2>&1
+        }
+    )
+    $moduleRunExit = $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}
+if ($moduleRunExit -ne 0) {
+    throw "AddressSanitizer module mqb run failed with compiler paths removed from parent PATH:`n$($moduleRunOutput -join [Environment]::NewLine)"
+}
+if (($moduleRunOutput -join [Environment]::NewLine) -notmatch '\[run\]\s+asan_module_run\.exe') {
+    throw "AddressSanitizer module run gate did not reach the user program"
+}
+
 # The advanced opt-out spelling must remain a recognized native LINK option.
 # This non-sanitized target has no ASan unresolveds, so the check isolates
 # parameter routing without requiring manual sanitizer library declarations.
@@ -118,5 +183,5 @@ if ($optOutExit -ne 0) {
     throw "/INFERASANLIBS:NO was not accepted as a native linker override:`n$($optOut -join [Environment]::NewLine)"
 }
 
-Write-Host 'Real MSVC AddressSanitizer inferred-library freshness and non-incremental link checks passed.'
+Write-Host 'Real MSVC AddressSanitizer link freshness, non-incremental LINK, and mqb run runtime checks passed.'
 exit 0
