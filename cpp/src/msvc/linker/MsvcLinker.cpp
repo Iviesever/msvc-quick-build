@@ -155,8 +155,10 @@ bool MsvcLinker::program_database_enabled(const LinkOptions& options) {
 }
 
 bool MsvcLinker::external_manifest_enabled(const LinkOptions& options) {
-    // LINK's command-line default is an external manifest. Only the explicit
-    // disabled or embedded forms remove that standalone output.
+    // LINK's command-line default allows an external manifest, but whether a
+    // standalone file is emitted depends on the effective manifest content.
+    // This function only models whether external emission is allowed; the
+    // coordinator observes whether LINK actually produced the optional file.
     bool enabled = true;
     for (const auto& argument : options.additional_arguments) {
         const std::string body = linker_option_body_upper(argument);
@@ -173,12 +175,9 @@ std::vector<fs::path> MsvcLinker::required_side_output_paths(
     const fs::path& output,
     const LinkOptions& options) {
     std::vector<fs::path> paths;
-    paths.reserve(2);
+    paths.reserve(1);
     if (program_database_enabled(options)) {
         paths.push_back(program_database_path(output));
-    }
-    if (external_manifest_enabled(options)) {
-        paths.push_back(manifest_file_path(output));
     }
     return paths;
 }
