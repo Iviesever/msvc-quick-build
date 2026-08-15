@@ -6,10 +6,12 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/LinkOptions.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
+#include "mqb/msvc/MsvcParameterEngine.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
 #include "mqb/process/Process.hpp"
@@ -52,6 +54,13 @@ void write_text(const fs::path& path, const std::string_view text) {
     }
     std::ofstream file{path, std::ios::binary | std::ios::trunc};
     file.write(text.data(), static_cast<std::streamsize>(text.size()));
+}
+
+[[nodiscard]] std::string path_text(const fs::path& path) {
+    const auto bytes = path.generic_u8string();
+    return std::string{
+        reinterpret_cast<const char*>(bytes.data()),
+        bytes.size()};
 }
 
 class LinkerLikeRunner final : public mqb::process::ProcessRunner {
@@ -190,6 +199,133 @@ int main() {
                "Debug to Release should report linker options changed");
     }
     expect(runner.calls == 3, "link options transition should invoke link.exe once");
+
+    const fs::path first_order_file = fixture.path() / "order" / "first.txt";
+    const fs::path effective_order_file = fixture.path() / "order" / "effective.txt";
+    write_text(first_order_file, "first_symbol\n");
+    write_text(effective_order_file, "effective_symbol\n");
+
+    const std::vector<std::string> layered_order_arguments{
+        "/ORDER:@first.txt",
+        "/ORDER:@order/effective.txt",
+    };
+    const auto order_routing = mqb::msvc::MsvcParameterEngine::linker_file_inputs(
+        layered_order_arguments,
+        fixture.path());
+    expect(order_routing.has_value(), "valid repeated /ORDER options should route");
+    if (order_routing) {
+        expect(order_routing->requires_full_link,
+               "/ORDER routing should expose its non-incremental execution requirement");
+        expect(order_routing->inputs.size() == 1
+                   && order_routing->inputs.front().kind
+                       == mqb::msvc::LinkerFileInputKind::function_order,
+               "repeated /ORDER should expose one effective function-order file input");
+        if (order_routing->inputs.size() == 1) {
+            expect(order_routing->inputs.front().path == effective_order_file.lexically_normal(),
+                   "the last /ORDER option should own effective file freshness");
+        }
+        expect(order_routing->passthrough.size() == 2,
+               "last-wins observation must preserve both raw /ORDER argv positions");
+    }
+
+    const std::vector<std::string> malformed_order_argument{"/ORDER:order.txt"};
+    const auto malformed_order = mqb::msvc::MsvcParameterEngine::linker_file_inputs(
+        malformed_order_argument,
+        fixture.path());
+    expect(!malformed_order
+               && malformed_order.error().code == mqb::msvc::ParameterErrorCode::invalid_value,
+           "/ORDER without @filename syntax should fail before LINK.exe");
+    const std::vector<std::string> empty_order_argument{"/ORDER:@"};
+    const auto empty_order = mqb::msvc::MsvcParameterEngine::linker_file_inputs(
+        empty_order_argument,
+        fixture.path());
+    expect(!empty_order
+               && empty_order.error().code == mqb::msvc::ParameterErrorCode::invalid_value,
+           "empty /ORDER:@ should fail before LINK.exe");
+
+    const fs::path order_output = fixture.path() / "bin" / "ordered.exe";
+    const fs::path order_cache = fixture.path() / "cache" / "ordered.linkcache";
+    LinkerLikeRunner order_runner;
+    order_runner.output = order_output;
+    mqb::msvc::MsvcLinker order_linker{toolchain, order_runner};
+    mqb::orchestration::MsvcIncrementalLinkCoordinator order_coordinator{
+        toolchain, order_linker};
+
+    mqb::LinkOptions order_options = debug_options;
+    order_options.additional_arguments = {
+        "/INCREMENTAL",
+        "/ORDER:@" + path_text(effective_order_file),
+    };
+    const mqb::orchestration::IncrementalLinkRequest order_request{
+        .objects = {object},
+        .output = order_output,
+        .options = order_options,
+        .cache_file = order_cache,
+        .working_directory = fixture.path(),
+        .force_relink = false,
+    };
+
+    const auto order_cold = order_coordinator.run(order_request);
+    expect(order_cold.has_value() && order_cold->linked,
+           "cold /ORDER link should execute successfully");
+    expect(order_runner.calls == 1, "cold /ORDER link should invoke link.exe once");
+    if (order_runner.calls == 1) {
+        const auto raw_incremental = std::find(
+            order_runner.last_spec.arguments.begin(),
+            order_runner.last_spec.arguments.end(),
+            "/INCREMENTAL");
+        const auto forced_full = std::find(
+            order_runner.last_spec.arguments.begin(),
+            order_runner.last_spec.arguments.end(),
+            "/INCREMENTAL:NO");
+        expect(raw_incremental != order_runner.last_spec.arguments.end()
+                   && forced_full != order_runner.last_spec.arguments.end()
+                   && raw_incremental < forced_full,
+               "active /ORDER must append authoritative /INCREMENTAL:NO after raw /INCREMENTAL");
+    }
+
+    const auto order_warm = order_coordinator.run(order_request);
+    expect(order_warm.has_value() && !order_warm->linked,
+           "unchanged /ORDER link should still use the warm no-op fast path");
+    expect(order_runner.calls == 1,
+           "warm /ORDER cache hit should skip link.exe entirely");
+
+    auto order_forced_request = order_request;
+    order_forced_request.force_relink = true;
+    const auto order_forced = order_coordinator.run(order_forced_request);
+    expect(order_forced.has_value() && order_forced->linked,
+           "an actual relink with unchanged /ORDER input should succeed");
+    expect(order_runner.calls == 2,
+           "explicit /ORDER relink should invoke link.exe exactly once more");
+    if (order_runner.calls == 2) {
+        expect(std::find(
+                   order_runner.last_spec.arguments.begin(),
+                   order_runner.last_spec.arguments.end(),
+                   "/INCREMENTAL:NO") != order_runner.last_spec.arguments.end(),
+               "unchanged /ORDER input must still force non-incremental LINK execution");
+    }
+
+    std::error_code order_time_error;
+    const auto order_output_time = fs::last_write_time(order_output, order_time_error);
+    expect(!order_time_error, "order-file fixture should read linked output timestamp");
+    write_text(effective_order_file, "effective_symbol_changed\n");
+    order_time_error.clear();
+    fs::last_write_time(
+        effective_order_file,
+        order_output_time + std::chrono::seconds{2},
+        order_time_error);
+    expect(!order_time_error,
+           "order-file fixture should make the effective order file newer than output");
+
+    const auto order_changed = order_coordinator.run(order_request);
+    expect(order_changed.has_value() && order_changed->linked,
+           "changed effective /ORDER file should invalidate link freshness");
+    if (order_changed) {
+        expect(order_changed->validation.file_inputs_changed,
+               "changed /ORDER file should be classified as generic linker file-input change");
+    }
+    expect(order_runner.calls == 3,
+           "changed /ORDER file should cause exactly one additional link execution");
 
     write_text(cache_file, "not an MQB link cache");
     const auto corrupt = coordinator.run(request);

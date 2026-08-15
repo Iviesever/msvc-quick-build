@@ -54,13 +54,20 @@ template <typename T>
     std::vector<mqb::msvc::LinkerFileInput>& inputs,
     mqb::msvc::LinkerFileInput input,
     const std::string_view layer) {
-    for (const auto& existing : inputs) {
-        if (existing.kind == input.kind) {
-            return std::unexpected(
-                std::string{layer}
-                + " introduces a second native MSVC /DEF module-definition file; "
-                  "the effective LINK invocation may contain only one /DEF input");
+    for (auto& existing : inputs) {
+        if (existing.kind != input.kind) {
+            continue;
         }
+        if (input.kind == mqb::msvc::LinkerFileInputKind::function_order) {
+            // LINK's /ORDER contract is last-wins, including across config,
+            // profile, and CLI layers. Keep only the effective freshness input.
+            existing = std::move(input);
+            return {};
+        }
+        return std::unexpected(
+            std::string{layer}
+            + " introduces a second native MSVC /DEF module-definition file; "
+              "the effective LINK invocation may contain only one /DEF input");
     }
     inputs.push_back(std::move(input));
     return {};
@@ -243,9 +250,9 @@ prepare_project(
 
     std::vector<fs::path> native_include_directories;
     // This app-layer vector exists only while resolving config/profile/CLI so
-    // duplicate /DEF inputs can fail before option overlays are finalized.
-    // Runtime freshness evidence is re-observed from final linker argv by the
-    // incremental linker and is not persisted in ProjectSetup.
+    // duplicate /DEF inputs fail closed while last-wins file inputs such as
+    // /ORDER retain only the effective layer value. Runtime freshness evidence
+    // is re-observed from final linker argv by the incremental linker.
     std::vector<mqb::msvc::LinkerFileInput> native_linker_file_inputs;
     if (project_config) {
         auto normalized = normalize_native_parameters(
