@@ -134,8 +134,8 @@ int main() {
            "/I should remain safe compiler passthrough ownership");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/DVALUE=1").ownership == ParameterOwnership::passthrough,
            "/D should remain safe compiler passthrough ownership");
-    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/FIforced.hpp").ownership == ParameterOwnership::unsupported,
-           "raw /FI should fail closed until forced-include dependency semantics are modeled");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/FIforced.hpp").ownership == ParameterOwnership::passthrough,
+           "raw /FI should be admitted once forced-include discovery/freshness semantics are modeled");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/FUassembly.dll").ownership == ParameterOwnership::unsupported,
            "raw /FU should fail closed while its metadata input is absent from freshness identity");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/experimental:log").ownership == ParameterOwnership::unsupported,
@@ -164,7 +164,7 @@ int main() {
     expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/external:Ivendor").operand == ParameterOperandShape::none,
            "attached /external:I should not consume another argv token");
     expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/FI").operand == ParameterOperandShape::single,
-           "split /FI should advertise one following operand even though routing rejects it");
+           "split /FI should advertise one following forced-header operand");
     expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/FIforced.hpp").operand == ParameterOperandShape::none,
            "attached /FI should not consume another argv token");
     expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/experimental:log").operand == ParameterOperandShape::single,
@@ -318,10 +318,25 @@ int main() {
                "missing /external:I operand should fail closed before source parsing can drift");
     }
     {
-        const std::vector<std::string> arguments{"/FI", "forced.hpp"};
+        const std::vector<std::string> arguments{
+            "/FIattached.hpp", "/D", "VALUE=/FIshadow", "/FI", "split header.hpp", "/W4"};
         auto routed = MsvcParameterEngine::route_compiler(arguments);
-        expect(!routed && routed.error().code == ParameterErrorCode::unsupported_option,
-               "well-formed raw /FI must still fail closed until forced-include graph semantics exist");
+        expect(routed.has_value() && routed->passthrough == arguments,
+               "well-formed /FI must remain exact compiler passthrough");
+        auto forced = MsvcParameterEngine::forced_includes(arguments);
+        expect(forced.has_value(), "validated /FI observations should succeed");
+        if (forced) {
+            expect(forced->size() == 2
+                       && (*forced)[0] == std::filesystem::u8path("attached.hpp")
+                       && (*forced)[1] == std::filesystem::u8path("split header.hpp"),
+                   "forced-include observations should preserve /FI order and ignore other split operands");
+        }
+    }
+    {
+        const std::vector<std::string> arguments{"/FI"};
+        auto forced = MsvcParameterEngine::forced_includes(arguments);
+        expect(!forced && forced.error().code == ParameterErrorCode::invalid_value,
+               "missing /FI operand should fail before discovery observation");
     }
     {
         const std::vector<std::string> arguments{"/FU", "assembly.dll"};
