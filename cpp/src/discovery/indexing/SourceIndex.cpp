@@ -171,7 +171,8 @@ std::expected<SourceIndex, Error> build_source_index(
             record.kind == IndexedFileKind::translation_unit
                 && is_cpp_translation_unit_path(record.path));
         if (analysis) {
-            record.local_includes = std::move(analysis->local_includes);
+            record.quoted_includes = std::move(analysis->quoted_includes);
+            record.angle_includes = std::move(analysis->angle_includes);
             record.module_syntax = std::move(analysis->module_syntax);
             record.defines_main = record.kind == IndexedFileKind::translation_unit
                 && record.translation_unit_kind == TranslationUnitKind::source
