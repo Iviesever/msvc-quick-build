@@ -142,7 +142,7 @@ if ($countFailures.Count -ne 0) {
     throw "Official inventory count drift: $($countFailures -join '; ')"
 }
 
-function Cpp([string]$Value) { '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"' }
+function ConvertToCppString([string]$Value) { '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"' }
 $work = Join-Path $RepoRoot 'native-test-work/msvc-parameter-inventory'
 if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $work | Out-Null
@@ -167,7 +167,7 @@ $source.Add('void expect(mqb::msvc::ParameterTool t,std::string_view option,mqb:
 $source.Add('}')
 $source.Add('int main(){ std::cout<<"tool\tcanonical\tprobe\townership\n";')
 foreach ($entry in $inventory) {
-    $source.Add("verify(mqb::msvc::ParameterTool::$($entry.Tool), $(Cpp ([string]$entry.Canonical)));")
+    $source.Add("verify(mqb::msvc::ParameterTool::$($entry.Tool), $(ConvertToCppString ([string]$entry.Canonical)));")
 }
 $source.Add('expect(mqb::msvc::ParameterTool::linker,"/DEBUG:NONE",mqb::msvc::ParameterOwnership::passthrough);')
 $source.Add('expect(mqb::msvc::ParameterTool::compiler,"/Zc:trigraphs",mqb::msvc::ParameterOwnership::unsupported);')
