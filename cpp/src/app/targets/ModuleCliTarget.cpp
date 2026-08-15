@@ -9,6 +9,7 @@
 #include "PerformanceTimings.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
+#include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcModuleDependencyScanner.hpp"
@@ -214,6 +215,10 @@ int run_module_target(
     run_spec.working_directory = request.project_root;
     run_spec.capture_stdout = true;
     run_spec.capture_stderr = true;
+    if (msvc::MsvcAddressSanitizerPolicy::compiler_enabled(
+            target_request.compiler_options.additional_arguments)) {
+        msvc::MsvcAddressSanitizerPolicy::apply_runtime_path(run_spec, toolchain);
+    }
     auto run_result = runner.run(run_spec);
     if (!run_result) {
         diagnostics::print_error("failed to run executable: " + run_result.error().message);
