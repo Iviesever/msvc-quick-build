@@ -156,7 +156,7 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
     if (invocation.options.configuration == BuildConfiguration::debug) {
         arguments.emplace_back("/DEBUG");
         arguments.emplace_back(
-            invocation.options.link_time_code_generation
+            invocation.options.link_time_code_generation || invocation.force_full_link
                 ? "/INCREMENTAL:NO"
                 : "/INCREMENTAL");
     } else {
