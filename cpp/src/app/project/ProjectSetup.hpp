@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include "Cli.hpp"
 #include "mqb/config/ProjectConfig.hpp"
@@ -16,10 +15,6 @@ struct ProjectSetup {
     std::optional<mqb::config::ProjectConfig> config;
     mqb::config::EffectiveProjectOptions effective;
     std::filesystem::path project_root;
-    // Layer-normalized linker file evidence. The incremental linker currently
-    // re-observes final argv directly; retaining this private app-layer record
-    // keeps path provenance available without changing the public LinkOptions model.
-    std::vector<std::filesystem::path> linker_file_inputs;
     bool subsystem_explicit{false};
 };
 
