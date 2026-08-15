@@ -1,5 +1,6 @@
 #include "mqb/msvc/MsvcLinker.hpp"
 
+#include <cctype>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -62,6 +63,17 @@ void suppress_ambient_linker_options(
     // making the explicit MQB argv authoritative.
     environment.push_back(process::EnvironmentVariable{"LINK", {}});
     environment.push_back(process::EnvironmentVariable{"_LINK_", {}});
+}
+
+[[nodiscard]] std::string linker_option_body_upper(const std::string_view argument) {
+    if (argument.size() < 2 || (argument.front() != '/' && argument.front() != '-')) {
+        return {};
+    }
+    std::string body{argument.substr(1)};
+    for (char& character : body) {
+        character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+    }
+    return body;
 }
 
 } // namespace
@@ -127,6 +139,48 @@ fs::path MsvcLinker::manifest_file_path(const fs::path& output) {
     fs::path manifest = output;
     manifest += ".manifest";
     return manifest;
+}
+
+bool MsvcLinker::program_database_enabled(const LinkOptions& options) noexcept {
+    bool enabled = options.configuration == BuildConfiguration::debug;
+    for (const auto& argument : options.additional_arguments) {
+        const std::string body = linker_option_body_upper(argument);
+        if (body == "DEBUG" || body == "DEBUG:FULL" || body == "DEBUG:FASTLINK") {
+            enabled = true;
+        } else if (body == "DEBUG:NONE") {
+            enabled = false;
+        }
+    }
+    return enabled;
+}
+
+bool MsvcLinker::external_manifest_enabled(const LinkOptions& options) noexcept {
+    // LINK's command-line default is an external manifest. Only the explicit
+    // disabled or embedded forms remove that standalone output.
+    bool enabled = true;
+    for (const auto& argument : options.additional_arguments) {
+        const std::string body = linker_option_body_upper(argument);
+        if (body == "MANIFEST") {
+            enabled = true;
+        } else if (body == "MANIFEST:NO" || body.starts_with("MANIFEST:EMBED")) {
+            enabled = false;
+        }
+    }
+    return enabled;
+}
+
+std::vector<fs::path> MsvcLinker::required_side_output_paths(
+    const fs::path& output,
+    const LinkOptions& options) {
+    std::vector<fs::path> paths;
+    paths.reserve(2);
+    if (program_database_enabled(options)) {
+        paths.push_back(program_database_path(output));
+    }
+    if (external_manifest_enabled(options)) {
+        paths.push_back(manifest_file_path(output));
+    }
+    return paths;
 }
 
 std::expected<std::vector<std::string>, LinkerError>
@@ -222,10 +276,12 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
         arguments.emplace_back("/LTCG");
     }
 
-    // /PDB is an MQB-owned side artifact. Emit its stable location after raw
-    // flags so every effective /DEBUG mode writes to the path represented by
-    // the link cache. LINK ignores /PDB when the effective mode is /DEBUG:NONE.
-    arguments.push_back("/PDB:" + path_to_utf8(program_database_path(invocation.output)));
+    // When debug information is effective, make the linker PDB an MQB-owned
+    // deterministic side artifact. The explicit path follows raw flags so a
+    // user cannot redirect it outside the cache/artifact graph.
+    if (program_database_enabled(invocation.options)) {
+        arguments.push_back("/PDB:" + path_to_utf8(program_database_path(invocation.output)));
+    }
 
     // Structured routing is emitted after raw flags so the BuildPlan owns the
     // final target identity even if a user supplied a conflicting raw switch.
