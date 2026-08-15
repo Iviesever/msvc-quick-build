@@ -64,10 +64,10 @@ public:
     // Evaluate final LINK output semantics after MQB's configuration defaults
     // and raw user linker options are applied in command-line order.
     [[nodiscard]] static bool
-    program_database_enabled(const LinkOptions& options) noexcept;
+    program_database_enabled(const LinkOptions& options);
 
     [[nodiscard]] static bool
-    external_manifest_enabled(const LinkOptions& options) noexcept;
+    external_manifest_enabled(const LinkOptions& options);
 
     // Correctness-bearing deterministic side outputs. Missing files from this
     // set invalidate the link cache. Recoverable performance state such as .ilk
