@@ -90,8 +90,8 @@ jobs:
 
           $modules = Join-Path $fixture 'modules'
           New-Item -ItemType Directory -Path $modules -Force | Out-Null
-          Set-Content -LiteralPath (Join-Path $modules 'math.ixx') -Encoding utf8 -Value 'export module math; export int answer() { return 42; }'
-          Set-Content -LiteralPath (Join-Path $modules 'main.cpp') -Encoding utf8 -Value 'import math; int main() { return answer() == 42 ? 0 : 1; }'
+          Set-Content -LiteralPath (Join-Path $modules 'math.ixx') -Encoding utf8 -Value @('export module math;', 'export int answer() { return 42; }')
+          Set-Content -LiteralPath (Join-Path $modules 'main.cpp') -Encoding utf8 -Value @('import math;', 'int main() { return answer() == 42 ? 0 : 1; }')
           Push-Location $modules
           try {
             & $mqb run main.cpp math.ixx --no-discover
