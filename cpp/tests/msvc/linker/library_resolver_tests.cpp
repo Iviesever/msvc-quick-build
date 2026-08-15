@@ -5,8 +5,10 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #include "mqb/core/LinkOptions.hpp"
+#include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 
@@ -113,6 +115,83 @@ int main() {
     empty_options.libraries = {""};
     const auto empty = mqb::msvc::MsvcLibraryResolver::resolve(toolchain, empty_options, work);
     expect(!empty, "empty requested library should be rejected");
+
+    const std::vector<std::string> default_policy_args{
+        "/DEFAULTLIB:math",
+        "/DEFAULTLIB:codec.lib",
+        "/NODEFAULTLIB:CODEC",
+        "/DEFAULTLIB:nested/direct",
+    };
+    const auto default_policy = mqb::msvc::MsvcDefaultLibraryPolicy::route(
+        default_policy_args,
+        work);
+    expect(default_policy.has_value(), "valid DEFAULTLIB policy should route");
+    if (default_policy) {
+        expect(default_policy->passthrough.size() == default_policy_args.size(),
+               "DEFAULTLIB observation must preserve raw linker argument count/order");
+        expect(default_policy->effective_libraries.size() == 2,
+               "NODEFAULTLIB:name should suppress only the matching default library");
+        if (default_policy->effective_libraries.size() == 2) {
+            expect(default_policy->effective_libraries[0] == "math",
+                   "bare DEFAULTLIB name should remain a linker search name");
+            expect(default_policy->effective_libraries[1]
+                       == path_text((work / "nested/direct").lexically_normal()),
+                   "path-bearing DEFAULTLIB should resolve against its supplying layer base");
+        }
+        expect(default_policy->passthrough.back()
+                   == "/DEFAULTLIB:" + path_text((work / "nested/direct").lexically_normal()),
+               "path-bearing DEFAULTLIB argv should be normalized without changing its role");
+    }
+
+    const std::vector<std::string> ignore_all_args{
+        "/NODEFAULTLIB",
+        "/DEFAULTLIB:math",
+    };
+    const auto ignore_all = mqb::msvc::MsvcDefaultLibraryPolicy::route(ignore_all_args);
+    expect(ignore_all.has_value() && ignore_all->effective_libraries.empty(),
+           "global NODEFAULTLIB should suppress user-declared DEFAULTLIB freshness evidence regardless of order");
+
+    const std::vector<std::string> suppressed_path_args{
+        "/DEFAULTLIB:nested/direct.lib",
+        "/NODEFAULTLIB:DIRECT",
+    };
+    const auto suppressed_path = mqb::msvc::MsvcDefaultLibraryPolicy::route(
+        suppressed_path_args,
+        work);
+    expect(suppressed_path.has_value() && suppressed_path->effective_libraries.empty(),
+           "NODEFAULTLIB:name should match a path-bearing DEFAULTLIB by case-insensitive file name and optional .lib suffix");
+
+    const std::vector<std::string> invalid_default_args{"/DEFAULTLIB:"};
+    const auto invalid_default = mqb::msvc::MsvcDefaultLibraryPolicy::route(invalid_default_args);
+    expect(!invalid_default, "empty DEFAULTLIB declaration must fail before LINK");
+
+    const std::vector<std::string> invalid_ignore_args{"/NODEFAULTLIB:"};
+    const auto invalid_ignore = mqb::msvc::MsvcDefaultLibraryPolicy::route(invalid_ignore_args);
+    expect(!invalid_ignore, "empty NODEFAULTLIB:name declaration must fail before LINK");
+
+    const std::vector<std::string> available_requests{
+        "math",
+        "does-not-exist",
+        "nested/direct",
+    };
+    const std::vector<fs::path> available_search_dirs{explicit_dir};
+    const auto available = mqb::msvc::MsvcLibraryResolver::resolve_available(
+        toolchain,
+        available_requests,
+        available_search_dirs,
+        work);
+    expect(available.has_value(),
+           "available-only default-library evidence should not fail for an unresolved unused library");
+    if (available) {
+        expect(available->files.size() == 2,
+               "available-only resolution should retain only discoverable default-library files");
+        if (available->files.size() == 2) {
+            expect(available->files[0] == explicit_math.lexically_normal(),
+                   "default-library evidence should share explicit library-directory search precedence");
+            expect(available->files[1] == direct.lexically_normal(),
+                   "default-library evidence should resolve path-bearing requests from the link working directory");
+        }
+    }
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
