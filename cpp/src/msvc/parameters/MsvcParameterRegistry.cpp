@@ -64,8 +64,11 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (body == "MD" || body == "MDd" || body == "MT" || body == "MTd") {
         return classified(ParameterTool::compiler, ParameterOwnership::semantic, "/runtime", "normalized to RuntimeLibrary");
     }
+    if (body == "std:c11" || body == "std:c17" || body == "std:clatest") {
+        return classified(ParameterTool::compiler, ParameterOwnership::passthrough, "/" + std::string{body}, "C language standard mode is validated and preserved verbatim in compile identity");
+    }
     if (body.starts_with("std:")) {
-        return classified(ParameterTool::compiler, ParameterOwnership::semantic, "/std", "C++ language modes normalize to CppStandard; C language modes remain validated passthrough");
+        return classified(ParameterTool::compiler, ParameterOwnership::semantic, "/std", "C++ language mode normalizes to CppStandard");
     }
     if (body == "GL" || body == "GL-") {
         return classified(ParameterTool::compiler, ParameterOwnership::semantic, "/GL", "normalized to coupled LTCG policy");
