@@ -28,6 +28,11 @@ struct LinkOptions {
     // enforce the sanitizer's non-incremental link contract without rewriting
     // the user's native compiler/linker argv.
     std::optional<RuntimeLibrary> address_sanitizer_runtime_library;
+    // Present when all target translation units are compiled with
+    // /fsanitize=fuzzer. cl.exe injects the matching clang_rt.fuzzer_<CRT>
+    // default-library directive into objects; the CRT mode is carried here so
+    // MQB can seal that implicit linker file input without re-emitting it.
+    std::optional<RuntimeLibrary> fuzzer_runtime_library;
     std::vector<std::filesystem::path> library_directories;
     std::vector<std::string> libraries;
     std::vector<std::string> additional_arguments;
