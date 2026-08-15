@@ -108,6 +108,29 @@ template <typename T>
     return arguments[index];
 }
 
+[[nodiscard]] std::optional<ParameterClassification> classify_structured_preprocessor_parameter(
+    const std::string_view argument) {
+    const std::string_view body = detail::option_body(argument);
+    if (body.empty()) return std::nullopt;
+    if (body.front() == 'I') {
+        return ParameterClassification{
+            .tool = ParameterTool::compiler,
+            .ownership = ParameterOwnership::semantic,
+            .canonical_name = "/I",
+            .rationale = "normalized to structured include-directory policy",
+        };
+    }
+    if (body.front() == 'D') {
+        return ParameterClassification{
+            .tool = ParameterTool::compiler,
+            .ownership = ParameterOwnership::semantic,
+            .canonical_name = "/D",
+            .rationale = "normalized to structured preprocessor-definition policy",
+        };
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 ParameterClassification MsvcParameterEngine::classify(
@@ -115,6 +138,9 @@ ParameterClassification MsvcParameterEngine::classify(
     const std::string_view argument) {
     switch (tool) {
     case ParameterTool::compiler:
+        if (auto structured = classify_structured_preprocessor_parameter(argument)) {
+            return std::move(*structured);
+        }
         return detail::classify_compiler_parameter(argument);
     case ParameterTool::linker:
         return detail::classify_linker_parameter(argument);
