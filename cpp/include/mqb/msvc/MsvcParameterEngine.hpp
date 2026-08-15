@@ -113,6 +113,14 @@ public:
             return std::unexpected(validated.error());
         }
 
+        const auto path_from_utf8 = [](const std::string_view value) {
+            std::u8string bytes;
+            bytes.assign(
+                reinterpret_cast<const char8_t*>(value.data()),
+                reinterpret_cast<const char8_t*>(value.data() + value.size()));
+            return std::filesystem::path{bytes}.lexically_normal();
+        };
+
         std::vector<std::filesystem::path> result;
         for (std::size_t index = 0; index < arguments.size(); ++index) {
             const std::string& argument = arguments[index];
@@ -127,11 +135,11 @@ public:
             if (body == "FI") {
                 // route_compiler() above has already proven the operand exists.
                 ++index;
-                result.push_back(std::filesystem::u8path(arguments[index]));
+                result.push_back(path_from_utf8(arguments[index]));
                 continue;
             }
             if (body.size() > 2 && body.starts_with("FI")) {
-                result.push_back(std::filesystem::u8path(body.substr(2)));
+                result.push_back(path_from_utf8(body.substr(2)));
                 continue;
             }
             if (shape == ParameterOperandShape::single) {
