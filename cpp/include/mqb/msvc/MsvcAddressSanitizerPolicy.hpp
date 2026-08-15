@@ -36,6 +36,17 @@ public:
             : RuntimeLibrary::md;
     }
 
+    static void apply_link_policy(
+        const CompilerOptions& compiler_options,
+        LinkOptions& link_options) noexcept {
+        if (compiler_enabled(compiler_options.additional_arguments)) {
+            link_options.address_sanitizer_runtime_library =
+                effective_runtime_library(compiler_options);
+        } else {
+            link_options.address_sanitizer_runtime_library.reset();
+        }
+    }
+
     [[nodiscard]] static bool inferred_libraries_enabled(
         const std::span<const std::string> linker_arguments) noexcept {
         // LINK enables inferred ASan libraries by default. Preserve native
