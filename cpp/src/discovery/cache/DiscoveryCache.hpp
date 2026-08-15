@@ -13,6 +13,7 @@ struct DiscoveryRequestIdentity {
     std::filesystem::path project_root;
     std::filesystem::path entry;
     std::vector<std::filesystem::path> include_directories;
+    std::vector<std::filesystem::path> forced_includes;
     std::vector<std::filesystem::path> excluded_directories;
     std::vector<std::filesystem::path> extra_sources;
     std::vector<std::filesystem::path> excluded_sources;
