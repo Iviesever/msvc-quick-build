@@ -120,6 +120,8 @@ int main() {
                "vcvars environment should contain INCLUDE");
         expect(has_environment_variable(*result, "LIB"),
                "vcvars environment should contain LIB");
+        expect(has_environment_variable(*result, "LIBPATH"),
+               "vcvars environment should contain LIBPATH");
         expect(has_environment_variable(*result, "VCToolsInstallDir"),
                "vcvars environment should expose VCToolsInstallDir");
 
@@ -154,6 +156,12 @@ int main() {
                    "cache hit should reconstruct the same linker path");
             expect(cached->librarian == result->librarian,
                    "cache hit should reconstruct the same librarian path");
+
+            const auto* cold_lib_path = find_environment_variable(*result, "LIBPATH");
+            const auto* cached_lib_path = find_environment_variable(*cached, "LIBPATH");
+            expect(cold_lib_path != nullptr && cached_lib_path != nullptr
+                       && cached_lib_path->value == cold_lib_path->value,
+                   "cache hit should preserve vcvars LIBPATH exactly");
 
             const auto* cached_path = find_environment_variable(*cached, "PATH");
             const char* current_path = std::getenv("PATH");
