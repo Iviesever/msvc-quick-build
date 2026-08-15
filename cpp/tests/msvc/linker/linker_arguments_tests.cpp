@@ -80,14 +80,14 @@ int main() {
     expect(mqb::msvc::MsvcLinker::program_database_enabled(invocation.options),
            "Debug configuration should enable a linker PDB by default");
     expect(mqb::msvc::MsvcLinker::external_manifest_enabled(invocation.options),
-           "external manifest should be enabled by LINK's command-line default");
+           "external manifest emission should be allowed by LINK's command-line default");
     const auto debug_outputs = mqb::msvc::MsvcLinker::required_side_output_paths(
         invocation.output,
         invocation.options);
     expect(contains_path(debug_outputs, "bin/my app.pdb"),
            "Debug required side outputs should include the linker PDB");
-    expect(contains_path(debug_outputs, "bin/my app.exe.manifest"),
-           "default required side outputs should include the external manifest");
+    expect(!contains_path(debug_outputs, "bin/my app.exe.manifest"),
+           "external manifest is conditional on LINK actually producing content and must not be required blindly");
 
     auto debug_none = invocation;
     debug_none.options.additional_arguments = {"/DEBUG:NONE"};
@@ -103,14 +103,14 @@ int main() {
     auto embedded_manifest = invocation;
     embedded_manifest.options.additional_arguments = {"/MANIFEST:EMBED"};
     expect(!mqb::msvc::MsvcLinker::external_manifest_enabled(embedded_manifest.options),
-           "/MANIFEST:EMBED should remove the standalone manifest output");
+           "/MANIFEST:EMBED should disable standalone manifest observation");
     const auto embedded_outputs = mqb::msvc::MsvcLinker::required_side_output_paths(
         embedded_manifest.output,
         embedded_manifest.options);
     expect(contains_path(embedded_outputs, "bin/my app.pdb"),
            "embedded manifest mode should retain an independently enabled PDB");
     expect(!contains_path(embedded_outputs, "bin/my app.exe.manifest"),
-           "embedded manifest mode should not track a standalone manifest");
+           "external manifest should never be a deterministic required output");
 
     auto changed_library = invocation;
     changed_library.force_full_link = true;
