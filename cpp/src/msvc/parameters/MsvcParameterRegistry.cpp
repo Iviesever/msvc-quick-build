@@ -104,6 +104,9 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (body == "FA" || body.starts_with("Fa") || body.starts_with("FR") || body.starts_with("Fr") || body.starts_with("Ft") || body.starts_with("Fx") || body == "doc" || body.starts_with("doc:")) {
         return compiler_unsupported(body, "option creates a secondary output artifact that is not yet represented in MQB's cache/artifact graph");
     }
+    if (body == "Zi" || body == "ZI") {
+        return compiler_unsupported(body, "compiler Program Database debug information creates a .pdb artifact that is not yet represented in MQB's compile cache/artifact graph; use /Z7 until compiler PDB output becomes first-class");
+    }
     if (body == "arm64EC") return compiler_unsupported(body, "MQB's current Architecture model supports x86/x64 only; ARM64EC requires a first-class toolchain/ABI policy");
     if (body == "kernel") return compiler_unsupported(body, "kernel-mode compilation is coupled to linker target policy that MQB does not model yet");
     if (body == "ZW") return compiler_unsupported(body, "Windows Runtime compilation changes the target pipeline and is not modeled by MQB");
@@ -129,7 +132,7 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
         "QIntel-jcc-erratum"sv, "Qsafe_fp_loads"sv, "Qspectre-load"sv, "Qspectre-load-cf"sv, "sdl"sv, "sdl-"sv, "showIncludes"sv,
         "translateInclude"sv, "u"sv, "utf-8"sv, "validate-charset"sv, "vlen"sv, "vmb"sv, "vmg"sv, "vmm"sv, "vms"sv, "vmv"sv,
         "volatileMetadata"sv, "w"sv, "W0"sv, "W1"sv, "W2"sv, "W3"sv, "W4"sv, "Wall"sv, "WL"sv, "WX"sv, "WX-"sv, "X"sv,
-        "Z7"sv, "Za"sv, "Zf"sv, "ZI"sv, "Zi"sv, "Zl"sv,
+        "Z7"sv, "Za"sv, "Zf"sv, "Zl"sv,
     };
     static constexpr std::array passthrough_prefix{
         "AI"sv, "arch"sv, "await"sv, "cgthreads"sv, "constexpr:"sv, "D"sv, "diagnostics"sv, "EH"sv,
