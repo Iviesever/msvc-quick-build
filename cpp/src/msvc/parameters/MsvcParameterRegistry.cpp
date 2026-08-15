@@ -75,7 +75,7 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
         "c"sv, "exportHeader"sv, "interface"sv, "internalPartition"sv, "LD"sv, "LDd"sv, "link"sv, "TC"sv, "TP"sv,
     };
     static constexpr std::array owned_prefix{
-        "Fd"sv, "Fe"sv, "Fi"sv, "Fm"sv, "Fo"sv, "Fp"sv, "headerName"sv, "headerUnit"sv, "ifcOutput"sv, "ifcSearchDir"sv,
+        "Fd"sv, "Fe"sv, "Fi"sv, "Fm"sv, "Fo"sv, "Fp"sv, "headerName"sv, "headerUnit"sv, "ifcMap"sv, "ifcOutput"sv, "ifcSearchDir"sv,
         "reference"sv, "scanDependencies"sv, "sourceDependencies"sv, "stdIfcDir"sv, "Tc"sv, "Tp"sv,
     };
     if (contains_exact(body, owned_exact) || starts_with_any(body, owned_prefix)) {
@@ -85,6 +85,15 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (body == "MP" || body.starts_with("MP")) return compiler_unsupported(body, "MQB owns TU parallelism; use -j/--jobs instead of cl.exe /MP");
     if (body == "Y-" || body.starts_with("Yc") || body.starts_with("Yu") || body.starts_with("Yl")) {
         return compiler_unsupported(body, "PCH selection and artifacts are reserved for MQB's first-class PCH pipeline");
+    }
+    if (body == "FI" || body.starts_with("FI")) {
+        return compiler_unsupported(body, "forced includes change translation-unit dependency semantics; raw /FI is reserved until it is represented in MQB discovery/freshness evidence");
+    }
+    if (body == "FU" || body.starts_with("FU")) {
+        return compiler_unsupported(body, "forced metadata references introduce an external file input that is not represented in MQB's compile freshness graph");
+    }
+    if (body == "experimental:log" || body.starts_with("experimental:log")) {
+        return compiler_unsupported(body, "option creates a diagnostic log artifact that is not represented in MQB's cache/artifact graph");
     }
     if (body == "F" || (body.size() > 1 && body.front() == 'F' && std::isdigit(static_cast<unsigned char>(body[1])) != 0)) {
         return compiler_unsupported(body, "cl.exe /F controls linker stack size, but MQB compiles with /c and owns a separate link.exe invocation; use linker /STACK instead");
@@ -119,8 +128,8 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     };
     static constexpr std::array passthrough_prefix{
         "AI"sv, "analyze"sv, "arch"sv, "await"sv, "cgthreads"sv, "constexpr:"sv, "D"sv, "diagnostics"sv, "EH"sv,
-        "execution-charset"sv, "experimental:log"sv, "external:"sv, "favor:"sv, "feature"sv, "FI"sv, "forceInterlockedFunctions"sv,
-        "fp:"sv, "fpcvt:"sv, "fsanitize"sv, "FU"sv, "Gd"sv, "Gr"sv, "GR"sv, "GS"sv, "Gs"sv, "Gu"sv, "guard:"sv, "Gw"sv, "Gy"sv,
+        "execution-charset"sv, "external:"sv, "favor:"sv, "feature"sv, "forceInterlockedFunctions"sv,
+        "fp:"sv, "fpcvt:"sv, "fsanitize"sv, "Gd"sv, "Gr"sv, "GR"sv, "GS"sv, "Gs"sv, "Gu"sv, "guard:"sv, "Gw"sv, "Gy"sv,
         "I"sv, "Ob"sv, "Oi"sv, "openmp"sv, "Qpar"sv, "Qpar-report:"sv, "Qspectre"sv, "Qvec-report:"sv, "RTC"sv,
         "source-charset"sv, "U"sv, "vd"sv, "vm"sv, "volatile:"sv, "w1"sv, "w2"sv, "w3"sv, "w4"sv, "wd"sv, "we"sv, "wo"sv,
         "Wv:"sv, "Zc:"sv, "ZH:"sv, "Zm"sv, "Zo"sv, "Zp"sv,
