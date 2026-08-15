@@ -82,6 +82,7 @@ struct LinkerParameterRouting {
 enum class LinkerFileInputKind {
     module_definition,
     function_order,
+    msdos_stub,
 };
 
 struct LinkerFileInput {
@@ -216,6 +217,25 @@ public:
             }
             return path.lexically_normal();
         };
+        const auto replace_last_wins_input = [](
+            std::vector<LinkerFileInput>& inputs,
+            const LinkerFileInputKind kind,
+            std::filesystem::path path) {
+            const auto existing = std::find_if(
+                inputs.begin(),
+                inputs.end(),
+                [kind](const LinkerFileInput& input) {
+                    return input.kind == kind;
+                });
+            if (existing == inputs.end()) {
+                inputs.push_back(LinkerFileInput{
+                    .kind = kind,
+                    .path = std::move(path),
+                });
+            } else {
+                existing->path = std::move(path);
+            }
+        };
 
         LinkerFileInputRouting result;
         result.passthrough.reserve(validated->passthrough.size());
@@ -273,24 +293,38 @@ public:
 
                 const std::filesystem::path path = resolve_path(
                     body.substr(order_prefix.size()));
-                const auto existing = std::find_if(
-                    result.inputs.begin(),
-                    result.inputs.end(),
-                    [](const LinkerFileInput& input) {
-                        return input.kind == LinkerFileInputKind::function_order;
-                    });
-                if (existing == result.inputs.end()) {
-                    result.inputs.push_back(LinkerFileInput{
-                        .kind = LinkerFileInputKind::function_order,
-                        .path = path,
-                    });
-                } else {
-                    existing->path = path;
-                }
+                replace_last_wins_input(
+                    result.inputs,
+                    LinkerFileInputKind::function_order,
+                    path);
                 result.requires_full_link = true;
                 result.passthrough.push_back(
                     path_base
                         ? argument.substr(0, 1 + order_prefix.size()) + path_text(path)
+                        : argument);
+                continue;
+            }
+
+            if (starts_with_ascii_ci(body, "STUB:")) {
+                constexpr std::string_view stub_prefix = "STUB:";
+                if (body.size() == stub_prefix.size()) {
+                    return std::unexpected(ParameterError{
+                        .code = ParameterErrorCode::invalid_value,
+                        .tool = ParameterTool::linker,
+                        .argument = argument,
+                        .message = "MSVC linker /STUB requires an MS-DOS .exe file path",
+                    });
+                }
+
+                const std::filesystem::path path = resolve_path(
+                    body.substr(stub_prefix.size()));
+                replace_last_wins_input(
+                    result.inputs,
+                    LinkerFileInputKind::msdos_stub,
+                    path);
+                result.passthrough.push_back(
+                    path_base
+                        ? argument.substr(0, 1 + stub_prefix.size()) + path_text(path)
                         : argument);
                 continue;
             }
