@@ -23,12 +23,18 @@ New-Item -ItemType Directory -Path $fixture -Force | Out-Null
 int main() { return 0; }
 '@ | Set-Content -LiteralPath (Join-Path $fixture 'main.cpp') -Encoding utf8
 
-function Invoke-ProbeBuild {
-    param([string[]]$ExtraArguments = @())
+$binary = Join-Path $fixture '.mqb/bin/link_side_output_probe.exe'
+$pdb = Join-Path $fixture '.mqb/bin/link_side_output_probe.pdb'
+$manifest = Join-Path $fixture '.mqb/bin/link_side_output_probe.exe.manifest'
+$map = Join-Path $fixture 'link_side_output_probe.map'
 
+function Invoke-ProbeBuild {
     Push-Location $fixture
     try {
-        $output = @(& $MqbPath build main.cpp --debug --no-discover -o link_side_output_probe @ExtraArguments 2>&1)
+        $output = @(
+            & $MqbPath build main.cpp --debug --no-discover -o link_side_output_probe `
+                /link "/MAP:$map" 2>&1
+        )
         $exitCode = $LASTEXITCODE
     }
     finally {
@@ -41,15 +47,11 @@ function Invoke-ProbeBuild {
     }
 }
 
-$binary = Join-Path $fixture '.mqb/bin/link_side_output_probe.exe'
-$pdb = Join-Path $fixture '.mqb/bin/link_side_output_probe.pdb'
-$manifest = Join-Path $fixture '.mqb/bin/link_side_output_probe.exe.manifest'
-
 $cold = Invoke-ProbeBuild
 if ($cold.ExitCode -ne 0) {
     throw "Cold Debug side-output probe failed:`n$($cold.Text)"
 }
-foreach ($path in @($binary, $pdb, $manifest)) {
+foreach ($path in @($binary, $pdb, $manifest, $map)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Cold Debug link did not produce expected output: $path`n$($cold.Text)"
     }
@@ -87,13 +89,17 @@ if ($manifestRepair.Text -notmatch '\[link\]\s+link_side_output_probe\.exe') {
     throw "Deleted external manifest did not invalidate the warm link cache:`n$($manifestRepair.Text)"
 }
 
-$map = Invoke-ProbeBuild -ExtraArguments @('/link', '/MAP')
-if ($map.ExitCode -eq 0) {
-    throw "Untracked /MAP output was unexpectedly admitted"
+Remove-Item -LiteralPath $map -Force
+$mapRepair = Invoke-ProbeBuild
+if ($mapRepair.ExitCode -ne 0) {
+    throw "MAP repair build failed:`n$($mapRepair.Text)"
 }
-if ($map.Text -notmatch 'mapfile output is not yet represented') {
-    throw "Rejected /MAP did not explain the artifact-ownership boundary:`n$($map.Text)"
+if (-not (Test-Path -LiteralPath $map -PathType Leaf)) {
+    throw "Deleted linker mapfile was not repaired"
+}
+if ($mapRepair.Text -notmatch '\[link\]\s+link_side_output_probe\.exe') {
+    throw "Deleted mapfile did not invalidate the warm link cache:`n$($mapRepair.Text)"
 }
 
-Write-Host 'Real MSVC linker PDB/conditional-manifest repair and /MAP fail-closed checks passed.'
+Write-Host 'Real MSVC linker PDB/conditional-manifest/MAP repair checks passed.'
 exit 0
