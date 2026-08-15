@@ -29,7 +29,7 @@ $snapshots = [ordered]@{
     linker_debug = @('2025-09-08', '9716f477b5689e114a66faec7d40461fa33cfd79')
     librarian = @('2020-02-09', '56b1a94bc78d89adee574dd009efd4bf12651fb8')
 }
-$expectedCounts = [ordered]@{ compiler = 266; linker = 114; librarian = 21 }
+$expectedCounts = [ordered]@{ compiler = 309; linker = 114; librarian = 21 }
 
 function BlobText([string]$Blob) {
     if ($Blob -notmatch '^[0-9a-f]{40}$') { throw "Invalid MicrosoftDocs blob SHA: $Blob" }
@@ -82,7 +82,7 @@ function OptionExpressions([string]$Markdown) {
 function ExpandCompiler([string]$Expression) {
     if ($Expression.EndsWith('[-]')) {
         $base = $Expression.Substring(0, $Expression.Length - 3)
-        return @($base, $base + '-')
+        return @($base, ($base + '-'))
     }
     if ($Expression -match '^/favor:<(?<v>[^>]+)>$') {
         return @($matches['v'].Split('|') | ForEach-Object { '/favor:' + $_ })
@@ -105,10 +105,8 @@ AssertDate 'linker' $linkerText $snapshots.linker[0]
 AssertDate 'linker-debug' $linkerDebugText $snapshots.linker_debug[0]
 AssertDate 'librarian' $librarianText $snapshots.librarian[0]
 
-# The official tables sometimes express the same canonical spelling twice: for
-# example `/diagnostics:caret` is present directly and is also the enabled half
-# of `/diagnostics:caret[-]`. Collapse only identical canonical spellings after
-# expansion; distinct variants remain independent denominator entries.
+# Collapse only identical canonical spellings after expansion. Distinct enabled
+# and disabled spellings produced by `[-]` remain independent denominator rows.
 $inventory = [System.Collections.Generic.List[object]]::new()
 $canonicalKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 function AddCanonical([string]$Tool, [string]$Canonical) {
