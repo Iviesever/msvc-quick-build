@@ -83,6 +83,7 @@ enum class LinkerFileInputKind {
     module_definition,
     function_order,
     msdos_stub,
+    manifest_input,
 };
 
 struct LinkerFileInput {
@@ -329,9 +330,105 @@ public:
                 continue;
             }
 
+            if (starts_with_ascii_ci(body, "MANIFESTINPUT:")) {
+                constexpr std::string_view manifest_input_prefix = "MANIFESTINPUT:";
+                if (body.size() == manifest_input_prefix.size()) {
+                    return std::unexpected(ParameterError{
+                        .code = ParameterErrorCode::invalid_value,
+                        .tool = ParameterTool::linker,
+                        .argument = argument,
+                        .message = "MSVC linker /MANIFESTINPUT requires a manifest file path",
+                    });
+                }
+
+                const std::filesystem::path path = resolve_path(
+                    body.substr(manifest_input_prefix.size()));
+                // /MANIFESTINPUT is cumulative: every occurrence is merged into
+                // the embedded manifest, so every file remains effective
+                // freshness evidence rather than being replaced or deduplicated.
+                result.inputs.push_back(LinkerFileInput{
+                    .kind = LinkerFileInputKind::manifest_input,
+                    .path = path,
+                });
+                result.passthrough.push_back(
+                    path_base
+                        ? argument.substr(0, 1 + manifest_input_prefix.size()) + path_text(path)
+                        : argument);
+                continue;
+            }
+
             result.passthrough.push_back(argument);
         }
         return result;
+    }
+
+    // /MANIFESTINPUT is cumulative across all config/profile/CLI layers, but it
+    // is only valid when the final LINK invocation selects /MANIFEST:EMBED.
+    // Validate this after project-option layering so a supplying layer does not
+    // need to repeat an EMBED option owned by another effective layer.
+    [[nodiscard]] static std::expected<void, ParameterError>
+    validate_linker_file_input_requirements(
+        const std::span<const std::string> arguments) {
+        auto validated = route_linker(arguments);
+        if (!validated) {
+            return std::unexpected(validated.error());
+        }
+
+        const auto starts_with_ascii_ci = [](
+            const std::string_view value,
+            const std::string_view prefix) {
+            if (value.size() < prefix.size()) return false;
+            for (std::size_t index = 0; index < prefix.size(); ++index) {
+                char left = value[index];
+                char right = prefix[index];
+                if (left >= 'a' && left <= 'z') left = static_cast<char>(left - 'a' + 'A');
+                if (right >= 'a' && right <= 'z') right = static_cast<char>(right - 'a' + 'A');
+                if (left != right) return false;
+            }
+            return true;
+        };
+        const auto equals_ascii_ci = [&](
+            const std::string_view value,
+            const std::string_view expected) {
+            return value.size() == expected.size()
+                && starts_with_ascii_ci(value, expected);
+        };
+
+        bool has_manifest_input = false;
+        bool manifest_embed = false;
+        std::string first_manifest_input;
+        for (const auto& argument : validated->passthrough) {
+            const std::string_view body = argument.size() >= 2
+                    && (argument.front() == '/' || argument.front() == '-')
+                ? std::string_view{argument}.substr(1)
+                : std::string_view{};
+
+            if (starts_with_ascii_ci(body, "MANIFESTINPUT:")) {
+                if (!has_manifest_input) first_manifest_input = argument;
+                has_manifest_input = true;
+                continue;
+            }
+
+            if (equals_ascii_ci(body, "MANIFEST")) {
+                manifest_embed = false;
+                continue;
+            }
+            if (starts_with_ascii_ci(body, "MANIFEST:")) {
+                constexpr std::string_view embed_prefix = "MANIFEST:EMBED";
+                manifest_embed = equals_ascii_ci(body, embed_prefix)
+                    || starts_with_ascii_ci(body, "MANIFEST:EMBED,ID=");
+            }
+        }
+
+        if (has_manifest_input && !manifest_embed) {
+            return std::unexpected(ParameterError{
+                .code = ParameterErrorCode::invalid_value,
+                .tool = ParameterTool::linker,
+                .argument = std::move(first_manifest_input),
+                .message = "MSVC linker /MANIFESTINPUT requires the final linker manifest mode to be /MANIFEST:EMBED",
+            });
+        }
+        return {};
     }
 
     [[nodiscard]] static std::expected<LibrarianParameterRouting, ParameterError>
