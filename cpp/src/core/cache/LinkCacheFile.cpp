@@ -26,7 +26,8 @@ namespace fs = std::filesystem;
 constexpr std::array<std::uint8_t, 8> magic{
     'M', 'Q', 'B', 'L', 'I', 'N', 'K', 'C'};
 constexpr std::uint32_t legacy_format_version = 2;
-constexpr std::uint32_t format_version = 3;
+constexpr std::uint32_t side_output_format_version = 3;
+constexpr std::uint32_t format_version = 4;
 constexpr std::size_t max_cache_file_size = 64u * 1024u * 1024u;
 constexpr std::uint32_t max_string_size = 4u * 1024u * 1024u;
 constexpr std::uint32_t max_link_input_count = 100000u;
@@ -256,6 +257,8 @@ serialize(const fs::path& file, const LinkCacheEntry& entry) {
     if (!objects) return std::unexpected(objects.error());
     auto libraries = write_paths(writer, file, entry.libraries, "library input");
     if (!libraries) return std::unexpected(libraries.error());
+    auto file_inputs = write_paths(writer, file, entry.file_inputs, "linker file input");
+    if (!file_inputs) return std::unexpected(file_inputs.error());
     auto side_outputs = write_paths(writer, file, entry.side_outputs, "side output");
     if (!side_outputs) return std::unexpected(side_outputs.error());
 
@@ -288,7 +291,9 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     }
     auto version = reader.read_u32();
     if (!version) return std::unexpected(version.error());
-    if (*version != legacy_format_version && *version != format_version) {
+    if (*version != legacy_format_version
+        && *version != side_output_format_version
+        && *version != format_version) {
         return std::unexpected(make_error(
             LinkCacheFileErrorCode::unsupported_version,
             file,
@@ -315,8 +320,15 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     auto libraries = read_paths(reader, "library input");
     if (!libraries) return std::unexpected(libraries.error());
 
-    std::vector<fs::path> side_outputs;
+    std::vector<fs::path> file_inputs;
     if (*version == format_version) {
+        auto loaded_file_inputs = read_paths(reader, "linker file input");
+        if (!loaded_file_inputs) return std::unexpected(loaded_file_inputs.error());
+        file_inputs = std::move(*loaded_file_inputs);
+    }
+
+    std::vector<fs::path> side_outputs;
+    if (*version == side_output_format_version || *version == format_version) {
         auto loaded_side_outputs = read_paths(reader, "side output");
         if (!loaded_side_outputs) return std::unexpected(loaded_side_outputs.error());
         side_outputs = std::move(*loaded_side_outputs);
@@ -339,6 +351,7 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
         .objects = std::move(*objects),
         .output = std::move(*output),
         .libraries = std::move(*libraries),
+        .file_inputs = std::move(file_inputs),
         .side_outputs = std::move(side_outputs),
     };
 }
