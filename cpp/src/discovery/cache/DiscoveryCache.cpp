@@ -26,9 +26,9 @@ static_assert(std::is_integral_v<FileTimeRep> && sizeof(FileTimeRep) <= sizeof(s
 
 constexpr std::array<std::uint8_t, 8> magic{
     'M', 'Q', 'B', 'D', 'I', 'S', 'C', '1'};
-// Version 2 invalidates v1 selections because discovery now distinguishes and
-// resolves angle-bracket includes through configured include search paths.
-constexpr std::uint32_t format_version = 2;
+// Version 2 added angle-bracket include search-path semantics. Version 3 adds
+// ordered compiler /FI operands to discovery identity and source selection.
+constexpr std::uint32_t format_version = 3;
 constexpr std::size_t max_cache_file_size = 64u * 1024u * 1024u;
 constexpr std::uint32_t max_string_size = 4u * 1024u * 1024u;
 constexpr std::uint32_t max_path_count = 250000u;
@@ -223,6 +223,7 @@ private:
     if (!writer.write_path(record.request.project_root)
         || !writer.write_path(record.request.entry)
         || !write_paths(writer, record.request.include_directories)
+        || !write_paths(writer, record.request.forced_includes)
         || !write_paths(writer, record.request.excluded_directories)
         || !write_paths(writer, record.request.extra_sources)
         || !write_paths(writer, record.request.excluded_sources)
@@ -251,6 +252,7 @@ private:
     auto project_root = reader.read_path();
     auto entry = reader.read_path();
     auto include_directories = read_paths(reader);
+    auto forced_includes = read_paths(reader);
     auto excluded_directories = read_paths(reader);
     auto extra_sources = read_paths(reader);
     auto excluded_sources = read_paths(reader);
@@ -259,10 +261,11 @@ private:
     auto requires_module_pipeline = reader.read_u8();
     auto files = read_snapshots(reader);
     auto directories = read_snapshots(reader);
-    if (!project_root || !entry || !include_directories || !excluded_directories
-        || !extra_sources || !excluded_sources || !sources || !indexed_files
-        || !requires_module_pipeline || *requires_module_pipeline > 1u
-        || !files || !directories || !reader.at_end()) {
+    if (!project_root || !entry || !include_directories || !forced_includes
+        || !excluded_directories || !extra_sources || !excluded_sources || !sources
+        || !indexed_files || !requires_module_pipeline
+        || *requires_module_pipeline > 1u || !files || !directories
+        || !reader.at_end()) {
         return std::nullopt;
     }
     if (*indexed_files > std::numeric_limits<std::size_t>::max()) {
@@ -280,6 +283,7 @@ private:
             .project_root = std::move(*project_root),
             .entry = std::move(*entry),
             .include_directories = std::move(*include_directories),
+            .forced_includes = std::move(*forced_includes),
             .excluded_directories = std::move(*excluded_directories),
             .extra_sources = std::move(*extra_sources),
             .excluded_sources = std::move(*excluded_sources),
