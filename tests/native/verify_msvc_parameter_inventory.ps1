@@ -105,26 +105,31 @@ AssertDate 'linker' $linkerText $snapshots.linker[0]
 AssertDate 'linker-debug' $linkerDebugText $snapshots.linker_debug[0]
 AssertDate 'librarian' $librarianText $snapshots.librarian[0]
 
+# The official tables sometimes express the same canonical spelling twice: for
+# example `/diagnostics:caret` is present directly and is also the enabled half
+# of `/diagnostics:caret[-]`. Collapse only identical canonical spellings after
+# expansion; distinct variants remain independent denominator entries.
 $inventory = [System.Collections.Generic.List[object]]::new()
-foreach ($expression in (OptionExpressions $compilerText)) {
-    foreach ($canonical in (ExpandCompiler $expression)) { $inventory.Add([pscustomobject]@{ Tool='compiler'; Canonical=$canonical }) }
+$canonicalKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+function AddCanonical([string]$Tool, [string]$Canonical) {
+    $key = "$Tool`t$Canonical"
+    if ($canonicalKeys.Add($key)) {
+        $inventory.Add([pscustomobject]@{ Tool=$Tool; Canonical=$Canonical })
+    }
 }
-foreach ($canonical in (OptionExpressions $linkerText)) { $inventory.Add([pscustomobject]@{ Tool='linker'; Canonical=$canonical }) }
+
+foreach ($expression in (OptionExpressions $compilerText)) {
+    foreach ($canonical in (ExpandCompiler $expression)) { AddCanonical 'compiler' $canonical }
+}
+foreach ($canonical in (OptionExpressions $linkerText)) { AddCanonical 'linker' $canonical }
 # The alphabetical LINK table has one /DEBUG family row. Its syntax page names
 # the modes independently, including the VS-2026-removed FASTLINK lifecycle case.
-foreach ($canonical in @('/DEBUG:FULL', '/DEBUG:NONE', '/DEBUG:FASTLINK')) {
-    $inventory.Add([pscustomobject]@{ Tool='linker'; Canonical=$canonical })
-}
-foreach ($canonical in (OptionExpressions $librarianText)) { $inventory.Add([pscustomobject]@{ Tool='librarian'; Canonical=$canonical }) }
+foreach ($canonical in @('/DEBUG:FULL', '/DEBUG:NONE', '/DEBUG:FASTLINK')) { AddCanonical 'linker' $canonical }
+foreach ($canonical in (OptionExpressions $librarianText)) { AddCanonical 'librarian' $canonical }
 # Running LIB documents these outside the overview table.
-$inventory.Add([pscustomobject]@{ Tool='librarian'; Canonical='@' })
-$inventory.Add([pscustomobject]@{ Tool='librarian'; Canonical='/WX:NO' })
+AddCanonical 'librarian' '@'
+AddCanonical 'librarian' '/WX:NO'
 
-$keys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-foreach ($entry in $inventory) {
-    $key = "$($entry.Tool)`t$($entry.Canonical)"
-    if (-not $keys.Add($key)) { throw "Duplicate exact inventory entry: $key" }
-}
 foreach ($tool in $expectedCounts.Keys) {
     $actual = @($inventory | Where-Object Tool -eq $tool).Count
     if ($actual -ne [int]$expectedCounts[$tool]) { throw "Official $tool inventory count drift: expected $($expectedCounts[$tool]), got $actual" }
