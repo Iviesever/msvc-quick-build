@@ -32,15 +32,21 @@ Set-Content -LiteralPath (Join-Path $fixture 'main.cpp') -Encoding utf8 -Value @
 function Invoke-AsanBuild {
     param(
         [Parameter(Mandatory = $true)][string]$Target,
+        [string]$Runtime,
+        [string[]]$CompilerArguments = @(),
         [switch]$RawIncremental
     )
 
     Push-Location $fixture
     try {
         $arguments = @(
-            'build', 'main.cpp', '--debug', '--no-discover', '-o', $Target,
-            '/fsanitize=address'
+            'build', 'main.cpp', '--debug', '--no-discover', '-o', $Target
         )
+        if (-not [string]::IsNullOrWhiteSpace($Runtime)) {
+            $arguments += @('--runtime', $Runtime)
+        }
+        $arguments += '/fsanitize=address'
+        $arguments += $CompilerArguments
         if ($RawIncremental) {
             $arguments += @('/link', '/INCREMENTAL')
         }
@@ -54,6 +60,16 @@ function Invoke-AsanBuild {
         ExitCode = $exitCode
         Text = ($output -join [Environment]::NewLine)
     }
+}
+
+function Get-LinkCacheText {
+    param([Parameter(Mandatory = $true)][string]$Target)
+
+    $linkCache = Join-Path $fixture ".mqb/cache/link/$Target.linkcache"
+    if (-not (Test-Path -LiteralPath $linkCache -PathType Leaf)) {
+        throw "AddressSanitizer link cache missing: $linkCache"
+    }
+    return [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($linkCache))
 }
 
 function Invoke-WithMinimalParentPath {
@@ -75,21 +91,18 @@ if ($cold.ExitCode -ne 0) {
 }
 $exe = Join-Path $fixture '.mqb/bin/asan_probe.exe'
 $ilk = Join-Path $fixture '.mqb/bin/asan_probe.ilk'
-$linkCache = Join-Path $fixture '.mqb/cache/link/asan_probe.linkcache'
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     throw "AddressSanitizer build did not produce expected executable: $exe"
 }
 if (Test-Path -LiteralPath $ilk) {
     throw "AddressSanitizer Debug link produced an .ilk even though incremental linking is unsupported: $ilk"
 }
-if (-not (Test-Path -LiteralPath $linkCache -PathType Leaf)) {
-    throw "AddressSanitizer link cache missing: $linkCache"
-}
 
-$cacheText = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($linkCache))
+$cacheText = Get-LinkCacheText -Target 'asan_probe'
 foreach ($library in @(
     'clang_rt.asan_dynamic-x86_64.lib',
-    'clang_rt.asan_dynamic_runtime_thunk-x86_64.lib'
+    'clang_rt.asan_dynamic_runtime_thunk-x86_64.lib',
+    'vcasand.lib'
 )) {
     if ($cacheText -notmatch [Regex]::Escape($library)) {
         throw "AddressSanitizer link cache did not seal inferred runtime input '$library'"
@@ -102,6 +115,43 @@ if ($warm.ExitCode -ne 0) {
 }
 if ($warm.Text -notmatch '\[up-to-date\]\s+asan_probe\.exe') {
     throw "Warm AddressSanitizer build did not reuse sealed link inputs:`n$($warm.Text)"
+}
+
+# VCAsan is selected by the effective CRT independently from the clang_rt ASan
+# runtime family. Prove an explicit /MT compile seals libvcasan.lib rather than
+# reusing the default Debug /MDd vcasand.lib freshness evidence.
+$staticCrt = Invoke-AsanBuild -Target 'asan_mt_probe' -Runtime 'MT'
+if ($staticCrt.ExitCode -ne 0) {
+    throw "AddressSanitizer /MT build failed:`n$($staticCrt.Text)"
+}
+$staticCacheText = Get-LinkCacheText -Target 'asan_mt_probe'
+if ($staticCacheText -notmatch [Regex]::Escape('libvcasan.lib')) {
+    throw "AddressSanitizer /MT link cache did not seal 'libvcasan.lib'"
+}
+if ($staticCacheText -match [Regex]::Escape('vcasand.lib')) {
+    throw "AddressSanitizer /MT link cache incorrectly retained the /MDd VCAsan runtime"
+}
+
+# The official compiler-side opt-out suppresses only the VCAsan default-library
+# directive. LINK's clang_rt ASan inference remains enabled and must continue to
+# participate in freshness.
+$vcasanOptOut = Invoke-AsanBuild `
+    -Target 'asan_vcasan_optout' `
+    -CompilerArguments @('/fno-sanitize-address-vcasan-lib')
+if ($vcasanOptOut.ExitCode -ne 0) {
+    throw "AddressSanitizer VCAsan opt-out build failed:`n$($vcasanOptOut.Text)"
+}
+$optOutCacheText = Get-LinkCacheText -Target 'asan_vcasan_optout'
+foreach ($library in @(
+    'clang_rt.asan_dynamic-x86_64.lib',
+    'clang_rt.asan_dynamic_runtime_thunk-x86_64.lib'
+)) {
+    if ($optOutCacheText -notmatch [Regex]::Escape($library)) {
+        throw "VCAsan opt-out incorrectly removed ASan runtime freshness input '$library'"
+    }
+}
+if ($optOutCacheText -match [Regex]::Escape('vcasand.lib')) {
+    throw "VCAsan opt-out link cache incorrectly sealed the disabled 'vcasand.lib' input"
 }
 
 $rawIncremental = Invoke-AsanBuild -Target 'asan_raw_incremental' -RawIncremental
@@ -183,5 +233,5 @@ if ($optOutExit -ne 0) {
     throw "/INFERASANLIBS:NO was not accepted as a native linker override:`n$($optOut -join [Environment]::NewLine)"
 }
 
-Write-Host 'Real MSVC AddressSanitizer link freshness, non-incremental LINK, and mqb run runtime checks passed.'
+Write-Host 'Real MSVC AddressSanitizer runtime, VCAsan freshness/opt-out, non-incremental LINK, and mqb run checks passed.'
 exit 0
