@@ -269,6 +269,13 @@ BuildSignature BuildSignature::for_link(
         hasher.add_string("mqb.address-sanitizer.link.v1");
         hasher.add_enum(*options.address_sanitizer_runtime_library);
     }
+    if (options.fuzzer_runtime_library) {
+        // Preserve every non-fuzzer link signature exactly. LibFuzzer targets
+        // append only the compile-side CRT policy that selects the hidden
+        // clang_rt.fuzzer default library.
+        hasher.add_string("mqb.libfuzzer.link.v1");
+        hasher.add_enum(*options.fuzzer_runtime_library);
+    }
     return BuildSignature{hasher.finish()};
 }
 
