@@ -9,13 +9,6 @@
 
 namespace mqb {
 
-enum class RuntimeLibrary {
-    md,
-    mdd,
-    mt,
-    mtd,
-};
-
 struct PrecompiledHeaderPolicy {
     bool enabled{false};
     std::filesystem::path header;
