@@ -37,6 +37,11 @@ void write_text(const fs::path& path, const std::string_view text) {
     return false;
 }
 
+[[nodiscard]] std::string path_text(const fs::path& path) {
+    const auto bytes = path.generic_u8string();
+    return std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
 struct TempTree {
     fs::path root;
     ~TempTree() {
@@ -188,34 +193,43 @@ int main() {
         write_text(include_root / "widget.hpp", "#pragma once\nint widget();\n");
         write_text(widget_source, "int widget() { return 0; }\n");
 
-        const std::vector arguments{"main.cpp"sv, "/Iinclude"sv, "/DATTACHED=1"sv};
+        const std::vector arguments{
+            "main.cpp"sv,
+            "/UATTACHED"sv,
+            "/Iinclude"sv,
+            "/DATTACHED=1"sv,
+        };
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value(), "attached native preprocessor options should parse before project setup");
         if (parsed) {
             expect(parsed->include_directories.empty() && parsed->defines.empty(),
                    "attached /I and /D should remain parameter-engine inputs at the CLI boundary");
-            expect(parsed->compiler_arguments.size() == 2,
-                   "attached preprocessor options should initially remain native compiler arguments");
+            expect(parsed->compiler_arguments.size() == 3,
+                   "native preprocessor options should initially remain raw compiler arguments");
 
             auto project = mqb::app::prepare_project(*parsed, tree.root);
-            expect(project.has_value(), "project setup should normalize attached native preprocessor policy");
+            expect(project.has_value(), "project setup should expose native include semantics");
             if (project) {
-                expect(parsed->compiler_arguments.empty(),
-                       "normalized native /I and /D should leave opaque compiler passthrough");
-                expect(parsed->include_directories.size() == 1
-                           && parsed->include_directories.front().lexically_normal()
+                const std::string expected_include = "/I" + path_text(include_root.lexically_normal());
+                expect(parsed->compiler_arguments.size() == 3
+                           && parsed->compiler_arguments[0] == "/UATTACHED"
+                           && parsed->compiler_arguments[1] == expected_include
+                           && parsed->compiler_arguments[2] == "/DATTACHED=1",
+                       "native preprocessor argv order should survive semantic extraction");
+                expect(parsed->include_directories.empty() && parsed->defines.empty(),
+                       "native /I and /D metadata must not be re-emitted through structured compiler lists");
+                expect(parsed->discovery_include_directories.size() == 1
+                           && parsed->discovery_include_directories.front().lexically_normal()
                                == include_root.lexically_normal(),
-                       "attached /I should become an invocation-relative structured include directory");
-                expect(parsed->defines.size() == 1 && parsed->defines.front() == "ATTACHED=1",
-                       "attached /D should become a structured preprocessor definition");
+                       "attached /I should feed an invocation-relative discovery-only include directory");
 
                 auto discovered = mqb::discovery::SourceDiscovery::discover({
                     .project_root = tree.root,
                     .entry = main_source,
-                    .include_directories = parsed->include_directories,
+                    .include_directories = parsed->discovery_include_directories,
                 });
                 expect(discovered.has_value(),
-                       "smart discovery should accept include directories normalized from native /I");
+                       "smart discovery should accept semantic include directories extracted from native /I");
                 if (discovered) {
                     expect(contains_source(discovered->sources, widget_source),
                            "native attached /I should connect include-root-owned widget.cpp in discovery");
