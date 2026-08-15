@@ -131,6 +131,7 @@ int main() {
         const std::string cache_text{
             std::istreambuf_iterator<char>{cache_stream},
             std::istreambuf_iterator<char>{}};
+        cache_stream.close();
         expect(cache_text.find(secret_name) == std::string::npos,
                "toolchain cache must not persist unrelated inherited environment names");
         expect(cache_text.find(secret_value) == std::string::npos,
