@@ -1,5 +1,6 @@
 #include "mqb/msvc/MsvcParameterEngine.hpp"
 
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -8,6 +9,8 @@
 
 namespace mqb::msvc {
 namespace {
+
+namespace fs = std::filesystem;
 
 [[nodiscard]] ParameterError error(
     const ParameterErrorCode code,
@@ -108,6 +111,21 @@ template <typename T>
     return arguments[index];
 }
 
+[[nodiscard]] fs::path resolve_parameter_path(
+    const std::string_view value,
+    const std::optional<fs::path>& path_base) {
+    fs::path path = fs::u8path(value);
+    if (path_base && path.is_relative()) {
+        path = *path_base / path;
+    }
+    return path.lexically_normal();
+}
+
+[[nodiscard]] std::string path_text(const fs::path& path) {
+    const auto bytes = path.generic_u8string();
+    return std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
 [[nodiscard]] std::optional<ParameterClassification> classify_structured_preprocessor_parameter(
     const std::string_view argument) {
     const std::string_view body = detail::option_body(argument);
@@ -117,7 +135,7 @@ template <typename T>
             .tool = ParameterTool::compiler,
             .ownership = ParameterOwnership::semantic,
             .canonical_name = "/I",
-            .rationale = "normalized to structured include-directory policy",
+            .rationale = "exposes include-directory semantics while preserving native argv ordering",
         };
     }
     if (body.front() == 'D') {
@@ -125,7 +143,7 @@ template <typename T>
             .tool = ParameterTool::compiler,
             .ownership = ParameterOwnership::semantic,
             .canonical_name = "/D",
-            .rationale = "normalized to structured preprocessor-definition policy",
+            .rationale = "exposes preprocessor-definition semantics while preserving native argv ordering",
         };
     }
     return std::nullopt;
@@ -156,7 +174,9 @@ ParameterClassification MsvcParameterEngine::classify(
 }
 
 std::expected<CompilerParameterRouting, ParameterError>
-MsvcParameterEngine::route_compiler(const std::span<const std::string> arguments) {
+MsvcParameterEngine::route_compiler(
+    const std::span<const std::string> arguments,
+    const std::optional<std::filesystem::path> path_base) {
     CompilerParameterRouting routed;
     routed.passthrough.reserve(arguments.size());
 
@@ -172,23 +192,41 @@ MsvcParameterEngine::route_compiler(const std::span<const std::string> arguments
 
         const std::string_view body = detail::option_body(argument);
         if (body == "I" || body == "D") {
-            auto operand = require_compiler_operand(arguments, index, argument, body == "I" ? "/I" : "/D");
+            auto operand = require_compiler_operand(
+                arguments,
+                index,
+                argument,
+                body == "I" ? "/I" : "/D");
             if (!operand) {
                 return std::unexpected(operand.error());
             }
+
+            routed.passthrough.push_back(argument);
             if (body == "I") {
-                routed.include_directories.push_back(std::filesystem::u8path(std::string{*operand}));
+                const fs::path include_directory = resolve_parameter_path(*operand, path_base);
+                routed.include_directories.push_back(include_directory);
+                routed.passthrough.push_back(
+                    path_base ? path_text(include_directory) : std::string{*operand});
             } else {
                 routed.defines.emplace_back(*operand);
+                routed.passthrough.emplace_back(*operand);
             }
             continue;
         }
         if (body.size() > 1 && body.front() == 'I') {
-            routed.include_directories.push_back(std::filesystem::u8path(std::string{body.substr(1)}));
+            const fs::path include_directory = resolve_parameter_path(body.substr(1), path_base);
+            routed.include_directories.push_back(include_directory);
+            if (path_base) {
+                routed.passthrough.push_back(
+                    argument.substr(0, 2) + path_text(include_directory));
+            } else {
+                routed.passthrough.push_back(argument);
+            }
             continue;
         }
         if (body.size() > 1 && body.front() == 'D') {
             routed.defines.emplace_back(body.substr(1));
+            routed.passthrough.push_back(argument);
             continue;
         }
 
