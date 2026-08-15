@@ -26,6 +26,16 @@ enum class ParameterOwnership {
     unsupported,
 };
 
+enum class ParameterOperandShape {
+    none,
+    single,
+};
+
+struct ParameterTokenShape {
+    ParameterTool tool{ParameterTool::compiler};
+    ParameterOperandShape operand{ParameterOperandShape::none};
+};
+
 enum class ParameterErrorCode {
     empty_argument,
     unknown_option,
@@ -79,6 +89,14 @@ public:
     [[nodiscard]] static ParameterClassification classify(
         ParameterTool tool,
         std::string_view argument);
+
+    // Describe how many argv elements belong to a native option before the CLI
+    // decides whether a following bare token is a source file. Attached-value
+    // spellings report `none`; only an exact option that requires a separate
+    // argv element reports `single`.
+    [[nodiscard]] static ParameterTokenShape token_shape(
+        ParameterTool tool,
+        std::string_view argument) noexcept;
 
     [[nodiscard]] static std::expected<CompilerParameterRouting, ParameterError>
     route_compiler(

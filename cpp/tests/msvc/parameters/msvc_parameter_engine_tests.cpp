@@ -50,7 +50,7 @@ void verify_current_official_coverage() {
         "/GF", "/GH", "/Gh", "/GL", "/Gm-", "/GR-", "/Gr", "/GS-", "/Gs4096",
         "/GT", "/Gu-", "/guard:cf", "/Gv", "/Gw-", "/GX", "/Gy-", "/GZ", "/Gz",
         "/H", "/headerName:quote", "/headerUnit:quote", "/HELP", "/homeparams",
-        "/hotpatch", "/Iinclude", "/ifcOutput", "/interface", "/internalPartition",
+        "/hotpatch", "/Iinclude", "/ifcMap", "/ifcOutput", "/interface", "/internalPartition",
         "/J", "/jumptablerdata", "/JMC", "/kernel", "/LD", "/LDd", "/link", "/LN",
         "/MD", "/MDd", "/MP8", "/MT", "/MTd", "/nologo", "/O1", "/O2", "/Ob2",
         "/Od", "/Og", "/Oi-", "/openmp", "/openmp:experimental", "/openmp:llvm",
@@ -118,6 +118,7 @@ void verify_current_official_coverage() {
 int main() {
     using mqb::msvc::MsvcParameterEngine;
     using mqb::msvc::ParameterErrorCode;
+    using mqb::msvc::ParameterOperandShape;
     using mqb::msvc::ParameterOwnership;
     using mqb::msvc::ParameterTool;
 
@@ -133,6 +134,18 @@ int main() {
            "/I should remain safe compiler passthrough ownership");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/DVALUE=1").ownership == ParameterOwnership::passthrough,
            "/D should remain safe compiler passthrough ownership");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/FIforced.hpp").ownership == ParameterOwnership::unsupported,
+           "raw /FI should fail closed until forced-include dependency semantics are modeled");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/FUassembly.dll").ownership == ParameterOwnership::unsupported,
+           "raw /FU should fail closed while its metadata input is absent from freshness identity");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/experimental:log").ownership == ParameterOwnership::unsupported,
+           "compiler diagnostic-log artifacts should fail closed until represented in the artifact graph");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/analyze").ownership == ParameterOwnership::unsupported,
+           "MSVC code analysis should fail closed while its log/plugin/ruleset graph is unmodeled");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/analyze-").ownership == ParameterOwnership::passthrough,
+           "explicit /analyze- should remain safe because it disables the analysis pipeline");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/ifcMap").ownership == ParameterOwnership::mqb_owned,
+           "/ifcMap should belong to MQB-owned module topology");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/Foowned.obj").ownership == ParameterOwnership::mqb_owned,
            "/Fo should remain MQB-owned structural routing");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/MP8").ownership == ParameterOwnership::unsupported,
@@ -145,6 +158,41 @@ int main() {
            "compiler prefix routing must not confuse /EHsc with preprocess-only /E");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/NoSuchMsvcOption").rationale.find(unregistered_marker) != std::string::npos,
            "truly unknown compiler options should remain distinguishable from explicitly unsupported options");
+
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/external:I").operand == ParameterOperandShape::single,
+           "split /external:I should advertise one following compiler operand");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/external:Ivendor").operand == ParameterOperandShape::none,
+           "attached /external:I should not consume another argv token");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/FI").operand == ParameterOperandShape::single,
+           "split /FI should advertise one following operand even though routing rejects it");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/FIforced.hpp").operand == ParameterOperandShape::none,
+           "attached /FI should not consume another argv token");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/experimental:log").operand == ParameterOperandShape::single,
+           "/experimental:log should retain its filename/directory operand before fail-closed routing");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/analyze:plugin").operand == ParameterOperandShape::single,
+           "/analyze:plugin should retain its plugin DLL operand before fail-closed routing");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/ifcOutput").operand == ParameterOperandShape::single,
+           "MQB-owned split /ifcOutput should retain its operand for precise ownership diagnostics");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/headerName:angle").operand == ParameterOperandShape::single,
+           "split /headerName:angle should consume exactly one header operand");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/Tc").operand == ParameterOperandShape::single
+               && MsvcParameterEngine::token_shape(ParameterTool::compiler, "/Tp").operand == ParameterOperandShape::single,
+           "/Tc and /Tp should each retain one source filename operand");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/Fd").operand == ParameterOperandShape::none
+               && MsvcParameterEngine::token_shape(ParameterTool::compiler, "/Fi").operand == ParameterOperandShape::none
+               && MsvcParameterEngine::token_shape(ParameterTool::compiler, "/Fm").operand == ParameterOperandShape::none
+               && MsvcParameterEngine::token_shape(ParameterTool::compiler, "/Fp").operand == ParameterOperandShape::none,
+           "attached-only /Fd /Fi /Fm /Fp forms must never steal the following positional token");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/Fo").operand == ParameterOperandShape::none
+               && MsvcParameterEngine::token_shape(ParameterTool::compiler, "/Fo:").operand == ParameterOperandShape::single,
+           "/Fo consumes a separate pathname only in the documented /Fo: split form");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/Fe").operand == ParameterOperandShape::none
+               && MsvcParameterEngine::token_shape(ParameterTool::compiler, "/Fe:").operand == ParameterOperandShape::single,
+           "/Fe consumes a separate pathname only in the documented /Fe: split form");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::compiler, "/W4").operand == ParameterOperandShape::none,
+           "ordinary flag options should not consume positional argv");
+    expect(MsvcParameterEngine::token_shape(ParameterTool::linker, "/STACK:4096").operand == ParameterOperandShape::none,
+           "compiler token-shape metadata must not leak into linker routing");
 
     {
         const std::vector<std::string> arguments{"/W4", "/arch:AVX2", "/fp:fast", "/std:c++20", "/MT", "/GL"};
@@ -189,6 +237,31 @@ int main() {
         }
     }
     {
+        const std::vector<std::string> arguments{
+            "/external:I", "external headers", "/U", "DEBUG", "/W4"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(routed.has_value(), "safe split native compiler operands should route as one ordered stream");
+        if (routed) {
+            expect(routed->include_directories.size() == 1
+                       && routed->include_directories.front() == std::filesystem::u8path("external headers"),
+                   "/external:I should expose its search root to discovery metadata");
+            expect(routed->passthrough == arguments,
+                   "split /external:I and /U operands should remain in exact compiler argv order");
+        }
+    }
+    {
+        const std::vector<std::string> arguments{"/external:Ivendor", "/W4"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(routed.has_value(), "attached /external:I routing should succeed");
+        if (routed) {
+            expect(routed->include_directories.size() == 1
+                       && routed->include_directories.front() == std::filesystem::u8path("vendor"),
+                   "attached /external:I should expose the same discovery search semantics");
+            expect(routed->passthrough == arguments,
+                   "attached /external:I should preserve raw compiler spelling without a path base");
+        }
+    }
+    {
         const std::vector<std::string> arguments{"/Iinclude", "/W4"};
         const std::filesystem::path base = std::filesystem::u8path("layer-root");
         auto routed = MsvcParameterEngine::route_compiler(arguments, base);
@@ -208,6 +281,25 @@ int main() {
         }
     }
     {
+        const std::vector<std::string> arguments{"/external:I", "vendor"};
+        const std::filesystem::path base = std::filesystem::u8path("layer-root");
+        auto routed = MsvcParameterEngine::route_compiler(arguments, base);
+        expect(routed.has_value(), "path-based split /external:I routing should succeed");
+        if (routed) {
+            const auto expected = (base / "vendor").lexically_normal();
+            const auto expected_bytes = expected.generic_u8string();
+            const std::string expected_text{
+                reinterpret_cast<const char*>(expected_bytes.data()), expected_bytes.size()};
+            expect(routed->include_directories.size() == 1
+                       && routed->include_directories.front() == expected,
+                   "split /external:I metadata should resolve relative to its supplying layer");
+            expect(routed->passthrough.size() == 2
+                       && routed->passthrough[0] == "/external:I"
+                       && routed->passthrough[1] == expected_text,
+                   "split /external:I path normalization must preserve option/operand token shape");
+        }
+    }
+    {
         const std::vector<std::string> arguments{"/I"};
         auto routed = MsvcParameterEngine::route_compiler(arguments);
         expect(!routed && routed.error().code == ParameterErrorCode::invalid_value,
@@ -218,6 +310,42 @@ int main() {
         auto routed = MsvcParameterEngine::route_compiler(arguments);
         expect(!routed && routed.error().code == ParameterErrorCode::invalid_value,
                "missing /D operand should fail closed");
+    }
+    {
+        const std::vector<std::string> arguments{"/external:I"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(!routed && routed.error().code == ParameterErrorCode::invalid_value,
+               "missing /external:I operand should fail closed before source parsing can drift");
+    }
+    {
+        const std::vector<std::string> arguments{"/FI", "forced.hpp"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(!routed && routed.error().code == ParameterErrorCode::unsupported_option,
+               "well-formed raw /FI must still fail closed until forced-include graph semantics exist");
+    }
+    {
+        const std::vector<std::string> arguments{"/FU", "assembly.dll"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(!routed && routed.error().code == ParameterErrorCode::unsupported_option,
+               "well-formed raw /FU must fail closed rather than introducing an untracked file input");
+    }
+    {
+        const std::vector<std::string> arguments{"/experimental:log", "analysis"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(!routed && routed.error().code == ParameterErrorCode::unsupported_option,
+               "well-formed /experimental:log must retain its output operand and then fail closed");
+    }
+    {
+        const std::vector<std::string> arguments{"/analyze:plugin", "checker.dll"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(!routed && routed.error().code == ParameterErrorCode::unsupported_option,
+               "well-formed /analyze:plugin must retain its plugin input and then fail closed");
+    }
+    {
+        const std::vector<std::string> arguments{"/ifcOutput", "ifc-dir"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(!routed && routed.error().code == ParameterErrorCode::owned_option,
+               "split MQB-owned module routing should reject the option rather than misclassify its operand");
     }
     {
         const std::vector<std::string> arguments{"/GL-"};

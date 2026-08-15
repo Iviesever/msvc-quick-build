@@ -98,14 +98,13 @@ template <typename T>
 [[nodiscard]] std::expected<std::string_view, ParameterError> require_compiler_operand(
     const std::span<const std::string> arguments,
     std::size_t& index,
-    const std::string& argument,
-    const std::string_view option_name) {
+    const std::string& argument) {
     if (index + 1 >= arguments.size() || arguments[index + 1].empty()) {
         return std::unexpected(error(
             ParameterErrorCode::invalid_value,
             ParameterTool::compiler,
             argument,
-            "MSVC compiler option '" + std::string{option_name} + "' requires a following value"));
+            "MSVC compiler option '" + argument + "' requires a following value"));
     }
     ++index;
     return arguments[index];
@@ -124,6 +123,42 @@ template <typename T>
 [[nodiscard]] std::string path_text(const fs::path& path) {
     const auto bytes = path.generic_u8string();
     return std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
+[[nodiscard]] bool compiler_single_operand_option(const std::string_view body) noexcept {
+    return body == "I"
+        || body == "D"
+        || body == "U"
+        || body == "FI"
+        || body == "FU"
+        || body == "external:I"
+        || body == "experimental:log"
+        || body == "analyze:max_paths"
+        || body == "analyze:stacksize"
+        || body == "analyze:plugin"
+        || body == "analyze:external:ruleset"
+        || body == "analyze:autolog:ext"
+        || body == "analyze:log"
+        || body == "analyze:projectdirectory"
+        || body == "analyze:rulesetdirectory"
+        || body == "analyze:ruleset"
+        || body == "Fe:"
+        || body == "Fo:"
+        || body == "headerName:quote"
+        || body == "headerName:angle"
+        || body == "headerUnit"
+        || body == "headerUnit:quote"
+        || body == "headerUnit:angle"
+        || body == "ifcMap"
+        || body == "ifcOutput"
+        || body == "ifcSearchDir"
+        || body == "reference"
+        || body == "scanDependencies"
+        || body == "sourceDependencies"
+        || body == "sourceDependencies:directives"
+        || body == "stdIfcDir"
+        || body == "Tc"
+        || body == "Tp";
 }
 
 } // namespace
@@ -147,6 +182,21 @@ ParameterClassification MsvcParameterEngine::classify(
     };
 }
 
+ParameterTokenShape MsvcParameterEngine::token_shape(
+    const ParameterTool tool,
+    const std::string_view argument) noexcept {
+    if (tool != ParameterTool::compiler) {
+        return ParameterTokenShape{.tool = tool};
+    }
+    const std::string_view body = detail::option_body(argument);
+    return ParameterTokenShape{
+        .tool = tool,
+        .operand = compiler_single_operand_option(body)
+            ? ParameterOperandShape::single
+            : ParameterOperandShape::none,
+    };
+}
+
 std::expected<CompilerParameterRouting, ParameterError>
 MsvcParameterEngine::route_compiler(
     const std::span<const std::string> arguments,
@@ -165,16 +215,17 @@ MsvcParameterEngine::route_compiler(
         }
 
         const std::string_view body = detail::option_body(argument);
-        if (body == "I" || body == "D") {
-            auto operand = require_compiler_operand(
-                arguments,
-                index,
-                argument,
-                body == "I" ? "/I" : "/D");
-            if (!operand) {
-                return std::unexpected(operand.error());
+        std::optional<std::string_view> operand;
+        if (token_shape(ParameterTool::compiler, argument).operand
+            == ParameterOperandShape::single) {
+            auto required = require_compiler_operand(arguments, index, argument);
+            if (!required) {
+                return std::unexpected(required.error());
             }
+            operand = *required;
+        }
 
+        if (body == "I" || body == "D") {
             routed.passthrough.push_back(argument);
             if (body == "I") {
                 const fs::path include_directory = resolve_parameter_path(*operand, path_base);
@@ -185,6 +236,14 @@ MsvcParameterEngine::route_compiler(
                 routed.defines.emplace_back(*operand);
                 routed.passthrough.emplace_back(*operand);
             }
+            continue;
+        }
+        if (body == "external:I") {
+            const fs::path include_directory = resolve_parameter_path(*operand, path_base);
+            routed.include_directories.push_back(include_directory);
+            routed.passthrough.push_back(argument);
+            routed.passthrough.push_back(
+                path_base ? path_text(include_directory) : std::string{*operand});
             continue;
         }
         if (body.size() > 1 && body.front() == 'I') {
@@ -203,6 +262,22 @@ MsvcParameterEngine::route_compiler(
             routed.passthrough.push_back(argument);
             continue;
         }
+        constexpr std::string_view external_include_prefix = "external:I";
+        if (body.starts_with(external_include_prefix)
+            && body.size() > external_include_prefix.size()) {
+            const fs::path include_directory = resolve_parameter_path(
+                body.substr(external_include_prefix.size()),
+                path_base);
+            routed.include_directories.push_back(include_directory);
+            if (path_base) {
+                routed.passthrough.push_back(
+                    argument.substr(0, 1 + external_include_prefix.size())
+                    + path_text(include_directory));
+            } else {
+                routed.passthrough.push_back(argument);
+            }
+            continue;
+        }
 
         const auto classified = detail::classify_compiler_parameter(argument);
         if (auto accepted = reject_classification(classified, argument); !accepted) {
@@ -210,6 +285,9 @@ MsvcParameterEngine::route_compiler(
         }
         if (classified.ownership == ParameterOwnership::passthrough) {
             routed.passthrough.push_back(argument);
+            if (operand) {
+                routed.passthrough.emplace_back(*operand);
+            }
             continue;
         }
 
