@@ -50,6 +50,9 @@ struct ParameterError {
 };
 
 struct CompilerParameterRouting {
+    // Native preprocessor inputs remain in passthrough so their ordering with
+    // other raw compiler arguments is preserved. The structured fields expose
+    // their semantics to MQB subsystems such as source discovery.
     std::vector<std::string> passthrough;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;
@@ -78,7 +81,9 @@ public:
         std::string_view argument);
 
     [[nodiscard]] static std::expected<CompilerParameterRouting, ParameterError>
-    route_compiler(std::span<const std::string> arguments);
+    route_compiler(
+        std::span<const std::string> arguments,
+        std::optional<std::filesystem::path> path_base = std::nullopt);
 
     [[nodiscard]] static std::expected<LinkerParameterRouting, ParameterError>
     route_linker(std::span<const std::string> arguments);
