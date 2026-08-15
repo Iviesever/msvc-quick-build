@@ -1,6 +1,7 @@
 #pragma once
 
 #include <expected>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -50,6 +51,8 @@ struct ParameterError {
 
 struct CompilerParameterRouting {
     std::vector<std::string> passthrough;
+    std::vector<std::string> defines;
+    std::vector<std::filesystem::path> include_directories;
     std::optional<CppStandard> standard;
     std::optional<RuntimeLibrary> runtime_library;
     std::optional<bool> link_time_code_generation;
