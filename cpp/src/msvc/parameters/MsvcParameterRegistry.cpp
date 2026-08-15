@@ -169,7 +169,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     if (contains_exact(std::string_view{body}, deprecated_exact) || starts_with_any(std::string_view{body}, deprecated_prefix)) return linker_unsupported(body, "option is deprecated, obsolete, or removed in current MSVC toolchains");
 
     static constexpr std::array graph_input_prefix{
-        "ASSEMBLYLINKRESOURCE:"sv, "ASSEMBLYMODULE:"sv, "ASSEMBLYRESOURCE:"sv, "DEFAULTLIB:"sv, "KEYFILE:"sv, "MANIFESTINPUT:"sv,
+        "ASSEMBLYLINKRESOURCE:"sv, "ASSEMBLYMODULE:"sv, "ASSEMBLYRESOURCE:"sv, "DEFAULTLIB:"sv, "KEYFILE:"sv,
         "NATVIS:"sv, "SOURCELINK:"sv, "SPD:"sv, "SPDEMBED:"sv, "SPDIN:"sv, "WINMDKEYFILE:"sv,
     };
     static constexpr std::array graph_output_prefix{"IDLOUT:"sv, "MANIFESTFILE:"sv, "PDBSTRIPPED:"sv, "PGD:"sv, "TLBOUT:"sv, "WINMDFILE:"sv};
@@ -195,7 +195,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
         "CETCOMPAT:"sv, "CGTHREADS:"sv, "CLRIMAGETYPE:"sv, "COMMENT:"sv, "DEBUGTYPE:"sv, "DEF:"sv, "DELAY:"sv, "DELAYSIGN:"sv, "DELAYLOAD:"sv,
         "DEPENDENTLOADFLAG:"sv, "DYNAMICBASE:"sv, "ENTRY:"sv, "EXPORT:"sv, "FILEALIGN:"sv, "FIXED:"sv, "FORCE:"sv, "GUARD:"sv,
         "HEAP:"sv, "HIGHENTROPYVA:"sv, "IGNORE:"sv, "INCLUDE:"sv, "LARGEADDRESSAWARE:"sv, "LINKREPRO:"sv, "LINKREPROFULLPATHRSP:"sv,
-        "LINKREPROTARGET:"sv, "MANIFEST:"sv, "MANIFESTDEPENDENCY:"sv, "MANIFESTUAC:"sv, "MAP:"sv, "MAPINFO:"sv, "MERGE:"sv,
+        "LINKREPROTARGET:"sv, "MANIFEST:"sv, "MANIFESTDEPENDENCY:"sv, "MANIFESTINPUT:"sv, "MANIFESTUAC:"sv, "MAP:"sv, "MAPINFO:"sv, "MERGE:"sv,
         "NODEFAULTLIB:"sv, "NXCOMPAT:"sv, "OPT:"sv, "ORDER:"sv, "PDBALTPATH:"sv, "SAFESEH:"sv, "SECTION:"sv, "STACK:"sv, "STUB:"sv, "SWAPRUN:"sv,
         "TIMESTAMP:"sv, "TLBID:"sv, "TSAWARE:"sv, "VERSION:"sv, "WHOLEARCHIVE:"sv,
     };
@@ -209,7 +209,9 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
                         ? "function-order input is preserved in linker argv, tracked through MQB's generic link file-input freshness graph, and requires non-incremental linking when LINK runs"
                         : body.starts_with("STUB:")
                             ? "MS-DOS stub executable is preserved in linker argv and tracked through MQB's generic link file-input freshness graph"
-                            : "validated linker option is preserved verbatim in link identity");
+                            : body.starts_with("MANIFESTINPUT:")
+                                ? "manifest input is preserved in linker argv and cumulatively tracked through MQB's generic link file-input freshness graph"
+                                : "validated linker option is preserved verbatim in link identity");
     }
     return unregistered(ParameterTool::linker, body);
 }
