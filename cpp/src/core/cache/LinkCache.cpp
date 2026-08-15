@@ -156,6 +156,34 @@ LinkCacheValidation LinkCacheValidator::validate(
 LinkCacheValidation LinkCacheValidator::validate(
     const std::span<const std::filesystem::path> current_objects,
     const std::span<const std::filesystem::path> current_libraries,
+    const std::filesystem::path& current_output,
+    const LinkerIdentity& current_linker,
+    const LinkOptions& current_options,
+    const std::optional<LinkCacheEntry>& cached_entry,
+    const FileSnapshot& output_snapshot,
+    const std::span<const FileSnapshot> object_snapshots,
+    const std::span<const FileSnapshot> library_snapshots,
+    const std::span<const FileSnapshot> side_output_snapshots,
+    const bool force_relink) {
+    return validate(
+        current_objects,
+        current_libraries,
+        std::span<const std::filesystem::path>{},
+        current_output,
+        current_linker,
+        current_options,
+        cached_entry,
+        output_snapshot,
+        object_snapshots,
+        library_snapshots,
+        std::span<const FileSnapshot>{},
+        side_output_snapshots,
+        force_relink);
+}
+
+LinkCacheValidation LinkCacheValidator::validate(
+    const std::span<const std::filesystem::path> current_objects,
+    const std::span<const std::filesystem::path> current_libraries,
     const std::span<const std::filesystem::path> current_file_inputs,
     const std::filesystem::path& current_output,
     const LinkerIdentity& current_linker,
