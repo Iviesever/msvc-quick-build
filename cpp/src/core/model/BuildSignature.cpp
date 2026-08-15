@@ -269,6 +269,13 @@ BuildSignature BuildSignature::for_link(
         hasher.add_string("mqb.address-sanitizer.link.v1");
         hasher.add_enum(*options.address_sanitizer_runtime_library);
     }
+    if (options.address_sanitizer_vcasan_runtime_library) {
+        // VCAsan is an independent compiler default-library directive. Keep its
+        // presence in link identity so /Zl or the official VCAsan opt-out cannot
+        // reuse a cache entry that assumed a hidden vcasan*.lib input.
+        hasher.add_string("mqb.address-sanitizer.vcasan.link.v1");
+        hasher.add_enum(*options.address_sanitizer_vcasan_runtime_library);
+    }
     if (options.fuzzer_runtime_library) {
         // Preserve every non-fuzzer link signature exactly. LibFuzzer targets
         // append only the compile-side CRT policy that selects the hidden
