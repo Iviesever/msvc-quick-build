@@ -129,6 +129,10 @@ int main() {
            "/fp:fast should be safe compiler passthrough");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/std:c++20").ownership == ParameterOwnership::semantic,
            "/std should be semantic compiler policy");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/Iinclude").ownership == ParameterOwnership::semantic,
+           "/I should expose include semantics to MQB");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/DVALUE=1").ownership == ParameterOwnership::semantic,
+           "/D should expose preprocessor-definition semantics to MQB");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/Foowned.obj").ownership == ParameterOwnership::mqb_owned,
            "/Fo should remain MQB-owned structural routing");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/MP8").ownership == ParameterOwnership::unsupported,
@@ -163,11 +167,11 @@ int main() {
         if (routed) {
             expect(routed->include_directories.size() == 1
                        && routed->include_directories.front() == std::filesystem::u8path("include"),
-                   "attached /I should become structured include policy");
+                   "attached /I should expose structured include semantics");
             expect(routed->defines.size() == 1 && routed->defines.front() == "VALUE=1",
-                   "attached /D should become structured define policy");
-            expect(routed->passthrough.size() == 1 && routed->passthrough.front() == "/W4",
-                   "structured /I and /D should be removed from opaque passthrough");
+                   "attached /D should expose structured define semantics");
+            expect(routed->passthrough == arguments,
+                   "attached preprocessor options must preserve exact raw argv order and spelling");
         }
     }
     {
@@ -177,11 +181,30 @@ int main() {
         if (routed) {
             expect(routed->include_directories.size() == 1
                        && routed->include_directories.front() == std::filesystem::u8path("third party"),
-                   "split /I operand should become structured include policy");
+                   "split /I operand should expose structured include semantics");
             expect(routed->defines.size() == 1 && routed->defines.front() == "NAME=7",
-                   "split /D operand should become structured define policy");
-            expect(routed->passthrough.size() == 1 && routed->passthrough.front() == "/O2",
-                   "split preprocessor inputs should not leak operands into passthrough");
+                   "split /D operand should expose structured define semantics");
+            expect(routed->passthrough == arguments,
+                   "split preprocessor options must preserve exact raw token ordering");
+        }
+    }
+    {
+        const std::vector<std::string> arguments{"/Iinclude", "/W4"};
+        const std::filesystem::path base = std::filesystem::u8path("layer-root");
+        auto routed = MsvcParameterEngine::route_compiler(arguments, base);
+        expect(routed.has_value(), "path-based native include routing should succeed");
+        if (routed) {
+            const auto expected = (base / "include").lexically_normal();
+            expect(routed->include_directories.size() == 1
+                       && routed->include_directories.front() == expected,
+                   "native /I metadata should resolve relative to the supplying layer");
+            const auto expected_bytes = expected.generic_u8string();
+            const std::string expected_text{
+                reinterpret_cast<const char*>(expected_bytes.data()), expected_bytes.size()};
+            expect(routed->passthrough.size() == 2
+                       && routed->passthrough[0] == "/I" + expected_text
+                       && routed->passthrough[1] == "/W4",
+                   "path normalization may rewrite /I payload but must preserve raw token position");
         }
     }
     {
