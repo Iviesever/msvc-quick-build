@@ -95,6 +95,9 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (body == "external:env" || body.starts_with("external:env:")) {
         return compiler_unsupported(body, "environment-backed external include directories can change header search without entering MQB's compile identity or discovery model; use explicit /external:I or -I paths instead");
     }
+    if (body == "fsanitize=kernel-address") {
+        return compiler_unsupported(body, "Kernel AddressSanitizer is a WDK kernel-driver pipeline that requires x64 kernel target policy and a target-OS-matched Windows SDK/KASan compatibility library; MQB currently models only native exe/dll/static targets");
+    }
     if (body == "experimental:log" || body.starts_with("experimental:log")) {
         return compiler_unsupported(body, "option creates a diagnostic log artifact that is not represented in MQB's cache/artifact graph");
     }
