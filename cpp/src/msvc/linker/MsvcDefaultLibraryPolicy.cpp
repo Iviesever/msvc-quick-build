@@ -89,8 +89,6 @@ MsvcDefaultLibraryPolicy::route(
     result.passthrough.reserve(validated->passthrough.size());
 
     std::vector<std::string> declared_libraries;
-    std::vector<std::string> ignored_libraries;
-    bool ignore_all = false;
 
     for (const auto& argument : validated->passthrough) {
         const std::string_view body = argument.size() >= 2
@@ -129,7 +127,7 @@ MsvcDefaultLibraryPolicy::route(
         }
 
         if (equals_ascii_ci(body, "NODEFAULTLIB")) {
-            ignore_all = true;
+            result.suppress_all_default_libraries = true;
             result.passthrough.push_back(argument);
             continue;
         }
@@ -144,7 +142,8 @@ MsvcDefaultLibraryPolicy::route(
                     .message = "MSVC linker /NODEFAULTLIB requires a library name after ':'",
                 });
             }
-            ignored_libraries.push_back(library_key(body.substr(prefix.size())));
+            result.suppressed_library_keys.push_back(
+                library_key(body.substr(prefix.size())));
             result.passthrough.push_back(argument);
             continue;
         }
@@ -152,20 +151,32 @@ MsvcDefaultLibraryPolicy::route(
         result.passthrough.push_back(argument);
     }
 
-    if (ignore_all) {
+    if (result.suppress_all_default_libraries) {
         return result;
     }
 
     result.effective_libraries.reserve(declared_libraries.size());
     for (auto& library : declared_libraries) {
-        const std::string key = library_key(library);
-        if (std::find(ignored_libraries.begin(), ignored_libraries.end(), key)
-            != ignored_libraries.end()) {
+        if (!allows_implicit_library(result, library)) {
             continue;
         }
         result.effective_libraries.push_back(std::move(library));
     }
     return result;
+}
+
+bool MsvcDefaultLibraryPolicy::allows_implicit_library(
+    const DefaultLibraryRouting& routing,
+    const std::string_view library) {
+    if (routing.suppress_all_default_libraries) {
+        return false;
+    }
+    const std::string key = library_key(library);
+    return std::find(
+               routing.suppressed_library_keys.begin(),
+               routing.suppressed_library_keys.end(),
+               key)
+        == routing.suppressed_library_keys.end();
 }
 
 } // namespace mqb::msvc

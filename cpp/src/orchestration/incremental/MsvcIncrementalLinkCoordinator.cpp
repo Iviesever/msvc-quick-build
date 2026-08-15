@@ -17,6 +17,7 @@
 #include "mqb/core/LinkCacheFile.hpp"
 #include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
+#include "mqb/msvc/MsvcFuzzerPolicy.hpp"
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcParameterEngine.hpp"
@@ -271,6 +272,36 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             linker_file_inputs.end(),
             resolved_asan_libraries->files.begin(),
             resolved_asan_libraries->files.end());
+    }
+
+    if (request.options.fuzzer_runtime_library) {
+        const std::string fuzzer_library =
+            msvc::MsvcFuzzerPolicy::inferred_library_name(
+                *request.options.fuzzer_runtime_library,
+                request.options.architecture);
+        if (msvc::MsvcDefaultLibraryPolicy::allows_implicit_library(
+                *default_library_routing,
+                fuzzer_library)) {
+            LinkOptions fuzzer_options = request.options;
+            fuzzer_options.libraries = {fuzzer_library};
+            auto resolved_fuzzer_library = msvc::MsvcLibraryResolver::resolve(
+                toolchain_,
+                fuzzer_options,
+                working_directory);
+            if (!resolved_fuzzer_library) {
+                IncrementalLinkError error{
+                    .code = IncrementalLinkErrorCode::library_resolution_failed,
+                    .message = "failed to resolve inferred MSVC LibFuzzer runtime library: "
+                        + resolved_fuzzer_library.error().message,
+                    .library_resolution_error = resolved_fuzzer_library.error(),
+                };
+                return std::unexpected(std::move(error));
+            }
+            linker_file_inputs.insert(
+                linker_file_inputs.end(),
+                resolved_fuzzer_library->files.begin(),
+                resolved_fuzzer_library->files.end());
+        }
     }
 
     const std::optional<fs::path> requested_map_output =
