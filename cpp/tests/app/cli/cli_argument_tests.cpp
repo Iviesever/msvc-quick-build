@@ -361,6 +361,102 @@ int main() {
     }
 
     {
+        const std::vector arguments{
+            "main.cpp"sv, "/external:I"sv, "third party"sv, "/U"sv, "DEBUG"sv, "/W4"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "split native compiler options should retain their operands");
+        if (parsed) {
+            expect(parsed->build.sources.size() == 1 && parsed->build.sources.front() == "main.cpp",
+                   "native compiler operands must not be misclassified as positional sources");
+            expect(parsed->compiler_arguments.size() == 5
+                       && parsed->compiler_arguments[0] == "/external:I"
+                       && parsed->compiler_arguments[1] == "third party"
+                       && parsed->compiler_arguments[2] == "/U"
+                       && parsed->compiler_arguments[3] == "DEBUG"
+                       && parsed->compiler_arguments[4] == "/W4",
+                   "split native option/operand tokens should preserve exact CLI order");
+        }
+    }
+
+    {
+        const std::vector arguments{
+            "main.cpp"sv, "/I"sv, "include dir"sv, "/D"sv, "NAME=1"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "native slash /I and /D forms should parse as raw MSVC argv");
+        if (parsed) {
+            expect(parsed->include_directories.empty() && parsed->defines.empty(),
+                   "native slash /I and /D must not bypass Parameter Engine ownership via structured CLI lists");
+            expect(parsed->compiler_arguments.size() == 4
+                       && parsed->compiler_arguments[0] == "/I"
+                       && parsed->compiler_arguments[1] == "include dir"
+                       && parsed->compiler_arguments[2] == "/D"
+                       && parsed->compiler_arguments[3] == "NAME=1",
+                   "native slash /I and /D should preserve option/operand token shape");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "/ifcOutput"sv, "ifc-dir"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "CLI should group MQB-owned native operands before ownership routing");
+        if (parsed) {
+            expect(parsed->build.sources.size() == 1 && parsed->compiler_arguments.size() == 2
+                       && parsed->compiler_arguments[0] == "/ifcOutput"
+                       && parsed->compiler_arguments[1] == "ifc-dir",
+                   "MQB-owned option operands must not become accidental source files");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "/headerName:angle"sv, "vector"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "headerName native syntax should consume one header operand");
+        if (parsed) {
+            expect(parsed->build.sources.size() == 1 && parsed->compiler_arguments.size() == 2
+                       && parsed->compiler_arguments[1] == "vector",
+                   "/headerName:angle operand must stay in compiler argv rather than source argv");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "/FI"sv, "forced.hpp"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "CLI token grouping should be syntax-aware even for later unsupported options");
+        if (parsed) {
+            expect(parsed->build.sources.size() == 1 && parsed->compiler_arguments.size() == 2
+                       && parsed->compiler_arguments[1] == "forced.hpp",
+                   "unsupported /FI operand should reach Parameter Engine instead of masquerading as a source");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "/external:I"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "missing direct /external:I operand should fail at the CLI token boundary");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "/FI"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(!parsed, "missing /FI operand should fail before unsupported-option routing");
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "/external:Ivendor"sv, "helper.cpp"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "attached native operands should not consume the next positional token");
+        if (parsed) {
+            expect(parsed->build.sources.size() == 2
+                       && parsed->build.sources[0] == "main.cpp"
+                       && parsed->build.sources[1] == "helper.cpp",
+                   "attached /external:I must leave the following source token positional");
+            expect(parsed->compiler_arguments.size() == 1
+                       && parsed->compiler_arguments.front() == "/external:Ivendor",
+                   "attached native option should remain one raw compiler argv element");
+        }
+    }
+
+    {
         const std::vector arguments{"--help"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value() && parsed->show_help,
