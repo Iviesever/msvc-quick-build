@@ -107,6 +107,8 @@ int main() {
         object_snapshots,
         library_snapshots);
     expect(warm.reusable(), "matching object and library inputs should be reusable");
+    expect(!warm.library_inputs_changed,
+           "warm link should not report changed library execution evidence");
 
     auto unordered_object_snapshots = object_snapshots;
     std::reverse(unordered_object_snapshots.begin(), unordered_object_snapshots.end());
@@ -122,6 +124,8 @@ int main() {
         library_snapshots);
     expect(unordered_warm.reusable(),
            "unordered snapshot callers should retain path-based fallback compatibility");
+    expect(!unordered_warm.library_inputs_changed,
+           "unordered warm snapshots should not synthesize library-change evidence");
 
     const auto cold = mqb::LinkCacheValidator::validate(
         objects,
@@ -137,6 +141,21 @@ int main() {
            "cold link should report missing cache entry");
     expect(has_reason(cold, mqb::BuildReason::missing_output),
            "cold link should report missing output");
+    expect(!cold.library_inputs_changed,
+           "brand-new output has no incremental-link state that needs invalidating");
+
+    const auto lost_metadata = mqb::LinkCacheValidator::validate(
+        objects,
+        libraries,
+        output,
+        linker,
+        options,
+        std::nullopt,
+        output_snapshot,
+        object_snapshots,
+        library_snapshots);
+    expect(lost_metadata.library_inputs_changed,
+           "existing output with missing link metadata must distrust incremental library state");
 
     auto newer_objects = object_snapshots;
     newer_objects[1].modified = base_time + std::chrono::seconds{1};
@@ -152,6 +171,8 @@ int main() {
         library_snapshots);
     expect(has_reason(object_changed, mqb::BuildReason::link_inputs_changed),
            "object newer than executable should invalidate link cache");
+    expect(!object_changed.library_inputs_changed,
+           "object-only changes must preserve ordinary Debug incremental linking");
 
     auto newer_libraries = library_snapshots;
     newer_libraries[0].modified = base_time + std::chrono::seconds{1};
@@ -167,6 +188,8 @@ int main() {
         newer_libraries);
     expect(has_reason(library_changed, mqb::BuildReason::link_inputs_changed),
            "resolved library newer than executable should invalidate link cache");
+    expect(library_changed.library_inputs_changed,
+           "newer resolved library must force a full Debug relink");
 
     const auto library_missing = mqb::LinkCacheValidator::validate(
         objects,
@@ -182,6 +205,8 @@ int main() {
         });
     expect(has_reason(library_missing, mqb::BuildReason::link_inputs_changed),
            "missing resolved library should invalidate link cache");
+    expect(library_missing.library_inputs_changed,
+           "missing resolved library must invalidate incremental-link library state");
 
     const auto library_resolution_changed = mqb::LinkCacheValidator::validate(
         objects,
@@ -197,6 +222,8 @@ int main() {
         });
     expect(has_reason(library_resolution_changed, mqb::BuildReason::link_inputs_changed),
            "changed resolved library path should invalidate link cache");
+    expect(library_resolution_changed.library_inputs_changed,
+           "changed resolved library path must force a full Debug relink");
 
     const auto forced = mqb::LinkCacheValidator::validate(
         objects,
@@ -211,6 +238,8 @@ int main() {
         true);
     expect(has_reason(forced, mqb::BuildReason::explicit_rebuild),
            "fresh compile result must be able to force relink independent of timestamps");
+    expect(!forced.library_inputs_changed,
+           "generic explicit relink must not be mislabeled as a library mutation");
 
     auto other_linker = linker;
     other_linker.binary_stamp = "link-stamp-b";
@@ -226,6 +255,8 @@ int main() {
         library_snapshots);
     expect(has_reason(linker_changed, mqb::BuildReason::toolchain_changed),
            "linker identity change should invalidate link cache");
+    expect(!linker_changed.library_inputs_changed,
+           "toolchain-only changes should not be classified as library changes");
 
     const auto options_changed = mqb::LinkCacheValidator::validate(
         objects,
@@ -239,6 +270,8 @@ int main() {
         library_snapshots);
     expect(has_reason(options_changed, mqb::BuildReason::linker_options_changed),
            "link option change should invalidate link cache");
+    expect(!options_changed.library_inputs_changed,
+           "linker-option changes should not be classified as library changes");
 
     const mqb::LinkPlanItem plan_item{
         .objects = objects,

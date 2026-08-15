@@ -24,6 +24,10 @@ struct LinkCacheEntry {
 
 struct LinkCacheValidation {
     std::vector<BuildReason> reasons;
+    // Runtime execution evidence only; this does not participate in cache
+    // identity. MSVC incremental linking can otherwise reuse stale archive
+    // members when a .lib is rebuilt inside the linker timestamp granularity.
+    bool library_inputs_changed{false};
 
     [[nodiscard]] bool reusable() const noexcept {
         return reasons.empty();

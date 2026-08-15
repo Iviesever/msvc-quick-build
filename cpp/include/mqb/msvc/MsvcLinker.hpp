@@ -19,6 +19,10 @@ struct LinkInvocation {
     std::vector<std::filesystem::path> libraries;
     LinkOptions options;
     std::filesystem::path working_directory;
+    // Use a non-incremental linker pass when resolved library inputs changed.
+    // This avoids stale archive-member reuse inside MSVC's .ilk state while
+    // preserving ordinary Debug incremental linking for object-only changes.
+    bool force_full_link{false};
 };
 
 enum class LinkerErrorCode {
