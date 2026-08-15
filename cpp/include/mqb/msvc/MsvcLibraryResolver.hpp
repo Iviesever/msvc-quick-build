@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,18 @@ public:
     resolve(
         const MsvcToolchain& toolchain,
         const LinkOptions& options,
+        const std::filesystem::path& working_directory = {});
+
+    // Resolve only default-library declarations that are currently discoverable
+    // through MQB's existing library search order. Missing default libraries are
+    // deliberately skipped: raw LINK owns whether an unused default library is
+    // required. Returned paths are freshness evidence only and must never be
+    // re-emitted as explicit library argv.
+    [[nodiscard]] static std::expected<ResolvedLibraries, LibraryResolutionError>
+    resolve_available(
+        const MsvcToolchain& toolchain,
+        std::span<const std::string> libraries,
+        std::span<const std::filesystem::path> library_directories,
         const std::filesystem::path& working_directory = {});
 };
 

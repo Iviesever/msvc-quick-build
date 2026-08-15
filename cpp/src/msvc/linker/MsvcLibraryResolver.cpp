@@ -4,6 +4,7 @@
 #include <cctype>
 #include <expected>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -145,21 +146,21 @@ void add_search_directory(
     return library;
 }
 
-} // namespace
-
-std::expected<ResolvedLibraries, LibraryResolutionError>
-MsvcLibraryResolver::resolve(
+[[nodiscard]] std::expected<ResolvedLibraries, LibraryResolutionError>
+resolve_requests(
     const MsvcToolchain& toolchain,
-    const LinkOptions& options,
-    const fs::path& requested_working_directory) {
+    const std::span<const std::string> libraries,
+    const std::span<const fs::path> library_directories,
+    const fs::path& requested_working_directory,
+    const bool require_all) {
     auto working_directory = resolve_working_directory(requested_working_directory);
     if (!working_directory) {
         return std::unexpected(working_directory.error());
     }
 
     std::vector<fs::path> search_directories;
-    search_directories.reserve(options.library_directories.size() + 8);
-    for (const auto& directory : options.library_directories) {
+    search_directories.reserve(library_directories.size() + 8);
+    for (const auto& directory : library_directories) {
         add_search_directory(search_directories, *working_directory, directory);
     }
     add_search_directory(search_directories, *working_directory, *working_directory);
@@ -168,8 +169,8 @@ MsvcLibraryResolver::resolve(
     }
 
     ResolvedLibraries result;
-    result.files.reserve(options.libraries.size());
-    for (const auto& requested : options.libraries) {
+    result.files.reserve(libraries.size());
+    for (const auto& requested : libraries) {
         if (requested.empty()) {
             return std::unexpected(failure(
                 LibraryResolutionErrorCode::invalid_request,
@@ -182,6 +183,9 @@ MsvcLibraryResolver::resolve(
         if (library.has_root_path() || library.has_parent_path()) {
             const fs::path candidate = make_absolute(*working_directory, library);
             if (!regular_file(candidate)) {
+                if (!require_all) {
+                    continue;
+                }
                 return std::unexpected(failure(
                     LibraryResolutionErrorCode::library_not_found,
                     requested,
@@ -202,7 +206,7 @@ MsvcLibraryResolver::resolve(
             found = true;
             break;
         }
-        if (!found) {
+        if (!found && require_all) {
             return std::unexpected(failure(
                 LibraryResolutionErrorCode::library_not_found,
                 requested,
@@ -212,6 +216,35 @@ MsvcLibraryResolver::resolve(
     }
 
     return result;
+}
+
+} // namespace
+
+std::expected<ResolvedLibraries, LibraryResolutionError>
+MsvcLibraryResolver::resolve(
+    const MsvcToolchain& toolchain,
+    const LinkOptions& options,
+    const fs::path& requested_working_directory) {
+    return resolve_requests(
+        toolchain,
+        options.libraries,
+        options.library_directories,
+        requested_working_directory,
+        true);
+}
+
+std::expected<ResolvedLibraries, LibraryResolutionError>
+MsvcLibraryResolver::resolve_available(
+    const MsvcToolchain& toolchain,
+    const std::span<const std::string> libraries,
+    const std::span<const fs::path> library_directories,
+    const fs::path& requested_working_directory) {
+    return resolve_requests(
+        toolchain,
+        libraries,
+        library_directories,
+        requested_working_directory,
+        false);
 }
 
 } // namespace mqb::msvc
