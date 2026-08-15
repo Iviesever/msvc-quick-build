@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -80,6 +81,7 @@ struct LinkerParameterRouting {
 
 enum class LinkerFileInputKind {
     module_definition,
+    function_order,
 };
 
 struct LinkerFileInput {
@@ -90,6 +92,9 @@ struct LinkerFileInput {
 struct LinkerFileInputRouting {
     std::vector<std::string> passthrough;
     std::vector<LinkerFileInput> inputs;
+    // Some file-bearing linker modes have execution semantics beyond freshness.
+    // /ORDER disables MSVC incremental linking whenever an actual link runs.
+    bool requires_full_link{false};
 };
 
 struct LibrarianParameterRouting {
@@ -204,6 +209,13 @@ public:
                 reinterpret_cast<const char*>(bytes.data()),
                 bytes.size()};
         };
+        const auto resolve_path = [&](const std::string_view value) {
+            std::filesystem::path path = path_from_utf8(value);
+            if (path_base && path.is_relative()) {
+                path = *path_base / path;
+            }
+            return path.lexically_normal();
+        };
 
         LinkerFileInputRouting result;
         result.passthrough.reserve(validated->passthrough.size());
@@ -212,39 +224,78 @@ public:
                     && (argument.front() == '/' || argument.front() == '-')
                 ? std::string_view{argument}.substr(1)
                 : std::string_view{};
-            if (!starts_with_ascii_ci(body, "DEF:")) {
-                result.passthrough.push_back(argument);
+
+            if (starts_with_ascii_ci(body, "DEF:")) {
+                if (body.size() == 4) {
+                    return std::unexpected(ParameterError{
+                        .code = ParameterErrorCode::invalid_value,
+                        .tool = ParameterTool::linker,
+                        .argument = argument,
+                        .message = "MSVC linker /DEF requires a module-definition file path",
+                    });
+                }
+                const bool duplicate = std::any_of(
+                    result.inputs.begin(),
+                    result.inputs.end(),
+                    [](const LinkerFileInput& input) {
+                        return input.kind == LinkerFileInputKind::module_definition;
+                    });
+                if (duplicate) {
+                    return std::unexpected(ParameterError{
+                        .code = ParameterErrorCode::conflicting_semantic_option,
+                        .tool = ParameterTool::linker,
+                        .argument = argument,
+                        .message = "MSVC LINK accepts only one /DEF module-definition file",
+                    });
+                }
+
+                const std::filesystem::path path = resolve_path(body.substr(4));
+                result.inputs.push_back(LinkerFileInput{
+                    .kind = LinkerFileInputKind::module_definition,
+                    .path = path,
+                });
+                result.passthrough.push_back(
+                    path_base ? argument.substr(0, 5) + path_text(path) : argument);
                 continue;
             }
 
-            if (body.size() == 4) {
-                return std::unexpected(ParameterError{
-                    .code = ParameterErrorCode::invalid_value,
-                    .tool = ParameterTool::linker,
-                    .argument = argument,
-                    .message = "MSVC linker /DEF requires a module-definition file path",
-                });
-            }
-            if (!result.inputs.empty()) {
-                return std::unexpected(ParameterError{
-                    .code = ParameterErrorCode::conflicting_semantic_option,
-                    .tool = ParameterTool::linker,
-                    .argument = argument,
-                    .message = "MSVC LINK accepts only one /DEF module-definition file",
-                });
+            if (starts_with_ascii_ci(body, "ORDER:")) {
+                constexpr std::string_view order_prefix = "ORDER:@";
+                if (!starts_with_ascii_ci(body, order_prefix)
+                    || body.size() == order_prefix.size()) {
+                    return std::unexpected(ParameterError{
+                        .code = ParameterErrorCode::invalid_value,
+                        .tool = ParameterTool::linker,
+                        .argument = argument,
+                        .message = "MSVC linker /ORDER requires /ORDER:@<filename>",
+                    });
+                }
+
+                const std::filesystem::path path = resolve_path(
+                    body.substr(order_prefix.size()));
+                const auto existing = std::find_if(
+                    result.inputs.begin(),
+                    result.inputs.end(),
+                    [](const LinkerFileInput& input) {
+                        return input.kind == LinkerFileInputKind::function_order;
+                    });
+                if (existing == result.inputs.end()) {
+                    result.inputs.push_back(LinkerFileInput{
+                        .kind = LinkerFileInputKind::function_order,
+                        .path = path,
+                    });
+                } else {
+                    existing->path = path;
+                }
+                result.requires_full_link = true;
+                result.passthrough.push_back(
+                    path_base
+                        ? argument.substr(0, 1 + order_prefix.size()) + path_text(path)
+                        : argument);
+                continue;
             }
 
-            std::filesystem::path path = path_from_utf8(body.substr(4));
-            if (path_base && path.is_relative()) {
-                path = *path_base / path;
-            }
-            path = path.lexically_normal();
-            result.inputs.push_back(LinkerFileInput{
-                .kind = LinkerFileInputKind::module_definition,
-                .path = path,
-            });
-            result.passthrough.push_back(
-                path_base ? argument.substr(0, 5) + path_text(path) : argument);
+            result.passthrough.push_back(argument);
         }
         return result;
     }
