@@ -35,6 +35,14 @@ void remove_if_present(const fs::path& path) noexcept {
     fs::remove(path, ignored);
 }
 
+void suppress_ambient_librarian_repro(
+    std::vector<process::EnvironmentVariable>& environment) {
+    // LINK/LIB honor the link_repro environment variable independently of the
+    // explicit argv. Repro packages are diagnostic artifact trees outside the
+    // archive cache identity, so ambient state must not enable them implicitly.
+    environment.push_back(process::EnvironmentVariable{"link_repro", {}});
+}
+
 } // namespace
 
 std::expected<LibrarianIdentity, LibrarianError>
@@ -122,6 +130,7 @@ MsvcLibrarian::archive(const ArchiveInvocation& invocation) const {
     spec.arguments = std::move(*arguments);
     spec.working_directory = invocation.working_directory;
     spec.environment = toolchain_.environment;
+    suppress_ambient_librarian_repro(spec.environment);
     spec.inherit_environment = true;
     spec.capture_stdout = true;
     spec.capture_stderr = true;
