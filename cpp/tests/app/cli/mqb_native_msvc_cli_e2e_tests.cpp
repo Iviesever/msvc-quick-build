@@ -183,14 +183,18 @@ void verify_parser_contract() {
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(parsed.has_value(), "spaced native /I and /D forms should parse");
         if (parsed) {
-            expect(parsed->include_directories.size() == 1
-                       && parsed->include_directories.front() == "include dir",
-                   "spaced /I should use the structured include path");
-            expect(parsed->defines.size() == 1 && parsed->defines.front() == "FEATURE=1",
-                   "spaced /D should use the structured define path");
-            expect(parsed->compiler_arguments.size() == 1
-                       && parsed->compiler_arguments.front() == "/W4",
-                   "spaced /I and /D values must not leak into raw compiler argv");
+            expect(parsed->include_directories.empty() && parsed->defines.empty(),
+                   "spaced native /I and /D should remain raw at the CLI boundary");
+            expect(parsed->compiler_arguments.size() == 5
+                       && parsed->compiler_arguments[0] == "/I"
+                       && parsed->compiler_arguments[1] == "include dir"
+                       && parsed->compiler_arguments[2] == "/D"
+                       && parsed->compiler_arguments[3] == "FEATURE=1"
+                       && parsed->compiler_arguments[4] == "/W4",
+                   "spaced native /I and /D should preserve option/operand ordering for parameter routing");
+            expect(parsed->build.sources.size() == 1
+                       && parsed->build.sources.front() == "main.cpp",
+                   "native /I and /D operands must not become positional sources");
         }
     }
 
