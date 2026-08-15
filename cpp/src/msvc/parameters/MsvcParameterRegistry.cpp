@@ -95,6 +95,9 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (body == "experimental:log" || body.starts_with("experimental:log")) {
         return compiler_unsupported(body, "option creates a diagnostic log artifact that is not represented in MQB's cache/artifact graph");
     }
+    if (body == "analyze" || body.starts_with("analyze:")) {
+        return compiler_unsupported(body, "code analysis creates diagnostic artifacts and may introduce plugin/ruleset file inputs that are not represented in MQB's compile freshness/artifact graph; /analyze- remains admissible as an explicit disable switch");
+    }
     if (body == "F" || (body.size() > 1 && body.front() == 'F' && std::isdigit(static_cast<unsigned char>(body[1])) != 0)) {
         return compiler_unsupported(body, "cl.exe /F controls linker stack size, but MQB compiles with /c and owns a separate link.exe invocation; use linker /STACK instead");
     }
@@ -181,7 +184,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     if (contains_exact(std::string_view{body}, unsupported_managed_exact) || starts_with_any(std::string_view{body}, unsupported_managed_prefix)) return linker_unsupported(body, "managed/metadata/signing policy is outside MQB's current native target model");
 
     static constexpr std::array unsupported_pgo_exact{"FASTGENPROFILE"sv, "GENPROFILE"sv, "SPGO"sv, "USEPROFILE"sv};
-    if (contains_exact(std::string_view{body}, unsupported_pgo_exact)) return linker_unsupported(body, "profile-guided optimization artifacts are not yet represented in MQB's build graph");
+    if (contains_exact(std::string_view{body}, unsupported_pgo_exact) || starts_with_any(std::string_view{body}, unsupported_pgo_prefix)) return linker_unsupported(body, "profile-guided optimization artifacts are not yet represented in MQB's build graph");
 
     static constexpr std::array passthrough_exact{
         "?"sv, "ALLOWBIND"sv, "ALLOWISOLATION"sv, "APPCONTAINER"sv, "ASSEMBLYDEBUG"sv, "CETCOMPAT"sv, "DEBUG"sv, "DEBUG:FULL"sv,
