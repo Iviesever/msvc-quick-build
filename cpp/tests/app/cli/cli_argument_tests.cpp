@@ -430,6 +430,57 @@ int main() {
     }
 
     {
+        const std::vector arguments{"main.cpp"sv, "/analyze:plugin"sv, "checker.dll"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "code-analysis plugin syntax should group its file operand before rejection");
+        if (parsed) {
+            expect(parsed->build.sources.size() == 1 && parsed->compiler_arguments.size() == 2
+                       && parsed->compiler_arguments[1] == "checker.dll",
+                   "analysis plugin input must not become an accidental source file");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "/experimental:log"sv, "sarif-out"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "experimental diagnostic-log syntax should group its output operand before rejection");
+        if (parsed) {
+            expect(parsed->build.sources.size() == 1 && parsed->compiler_arguments.size() == 2
+                       && parsed->compiler_arguments[1] == "sarif-out",
+                   "diagnostic-log output must not become an accidental source file");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "/Fp"sv, "helper.cpp"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "attached-only /Fp must not steal the next source token");
+        if (parsed) {
+            expect(parsed->compiler_arguments.size() == 1 && parsed->compiler_arguments.front() == "/Fp",
+                   "bare /Fp should remain one compiler option token");
+            expect(parsed->build.sources.size() == 2
+                       && parsed->build.sources[0] == "main.cpp"
+                       && parsed->build.sources[1] == "helper.cpp",
+                   "source following attached-only /Fp must remain positional");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "/Fo:"sv, "obj dir"sv, "helper.cpp"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "documented /Fo: split form should consume exactly one pathname");
+        if (parsed) {
+            expect(parsed->compiler_arguments.size() == 2
+                       && parsed->compiler_arguments[0] == "/Fo:"
+                       && parsed->compiler_arguments[1] == "obj dir",
+                   "/Fo: option and pathname should remain ordered compiler argv");
+            expect(parsed->build.sources.size() == 2
+                       && parsed->build.sources[1] == "helper.cpp",
+                   "/Fo: must consume its pathname but leave the following source positional");
+        }
+    }
+
+    {
         const std::vector arguments{"main.cpp"sv, "/external:I"sv};
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(!parsed, "missing direct /external:I operand should fail at the CLI token boundary");
