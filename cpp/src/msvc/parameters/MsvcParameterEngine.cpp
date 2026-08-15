@@ -411,6 +411,7 @@ MsvcParameterEngine::route_linker(const std::span<const std::string> arguments) 
                 if (auto assigned = assign_semantic(
                         routed.subsystem,
                         LinkSubsystem::windows,
+                        ParameterTool::linker,
                         argument,
                         "subsystem"); !assigned) {
                     return std::unexpected(assigned.error());
