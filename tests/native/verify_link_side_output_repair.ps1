@@ -96,3 +96,4 @@ if ($map.Text -notmatch 'mapfile output is not yet represented') {
 }
 
 Write-Host 'Real MSVC linker PDB/conditional-manifest repair and /MAP fail-closed checks passed.'
+exit 0
