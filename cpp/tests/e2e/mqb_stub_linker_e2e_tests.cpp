@@ -236,6 +236,137 @@ int main(int argc, char* argv[]) {
     expect(contains_stub_marker(output, 0x43),
            "relinked executable should contain the mutated effective DOS stub");
 
+    // Prove layer-relative normalization and LINK's general last-option-wins
+    // behavior across project configuration and CLI overlays.
+    const fs::path project = tree.root / "layered-project";
+    const fs::path child = project / "child";
+    fs::create_directories(child);
+    write_text(project / "main.cpp", "int main() { return 0; }\n");
+    write_dos_stub(project / "config-stub.exe", 0x51);
+    write_dos_stub(child / "cli-stub.exe", 0x52);
+    write_text(project / "mqb.json", R"json({
+  "version": 1,
+  "build": {
+    "entry": "main.cpp",
+    "type": "exe",
+    "runtime": "MT",
+    "output": "layered",
+    "linker_args": ["/STUB:config-stub.exe"]
+  },
+  "discovery": {
+    "enabled": false
+  }
+}
+)json");
+
+    const fs::path layered_output = project / ".mqb" / "bin" / "layered.exe";
+    auto config_build = run_mqb(
+        runner,
+        mqb_executable,
+        child,
+        {"build", "--env", "vs"});
+    expect(config_build.has_value(), "config-relative /STUB build should launch from child directory");
+    if (config_build) {
+        if (config_build->exit_code != 0) dump_failure(*config_build);
+        expect(config_build->exit_code == 0,
+               "mqb.json /STUB should resolve relative to project root");
+    }
+    expect(contains_stub_marker(layered_output, 0x51),
+           "project-root-relative config /STUB should be attached to output");
+
+    const std::vector<std::string> layered_cli_arguments{
+        "build",
+        "--env", "vs",
+        "/link",
+        "/STUB:cli-stub.exe",
+    };
+    auto cli_override = run_mqb(
+        runner,
+        mqb_executable,
+        child,
+        layered_cli_arguments);
+    expect(cli_override.has_value(), "CLI /STUB overlay should launch from child directory");
+    if (cli_override) {
+        if (cli_override->exit_code != 0) dump_failure(*cli_override);
+        expect(cli_override->exit_code == 0,
+               "CLI /STUB should override config /STUB according to LINK last-option semantics");
+        expect(cli_override->stdout_text.find("[link] layered.exe") != std::string::npos,
+               "changing the effective /STUB option across layers should relink");
+    }
+    expect(!contains_stub_marker(layered_output, 0x51),
+           "config /STUB should be overridden by later CLI /STUB");
+    expect(contains_stub_marker(layered_output, 0x52),
+           "CLI-relative /STUB should resolve from invocation directory and reach output");
+
+    auto layered_warm = run_mqb(
+        runner,
+        mqb_executable,
+        child,
+        layered_cli_arguments);
+    expect(layered_warm.has_value(), "layered warm /STUB invocation should launch");
+    if (layered_warm) {
+        if (layered_warm->exit_code != 0) dump_failure(*layered_warm);
+        expect(layered_warm->exit_code == 0, "layered warm /STUB build should succeed");
+        expect(contains_line(layered_warm->stdout_text, "[up-to-date] layered.exe"),
+               "unchanged effective CLI /STUB should reuse link cache");
+        expect(layered_warm->stdout_text.find("[link] layered.exe") == std::string::npos,
+               "unchanged layered /STUB build should remain zero-LINK");
+    }
+
+    time_error.clear();
+    const auto layered_output_time = fs::last_write_time(layered_output, time_error);
+    expect(!time_error, "layered stub fixture should read output timestamp");
+    write_dos_stub(project / "config-stub.exe", 0x53);
+    if (!time_error) {
+        fs::last_write_time(
+            project / "config-stub.exe",
+            layered_output_time + std::chrono::seconds{2},
+            time_error);
+    }
+    expect(!time_error, "layered fixture should advance overridden config stub timestamp");
+    auto shadowed_config_changed = run_mqb(
+        runner,
+        mqb_executable,
+        child,
+        layered_cli_arguments);
+    expect(shadowed_config_changed.has_value(), "shadowed config-stub mutation should launch");
+    if (shadowed_config_changed) {
+        if (shadowed_config_changed->exit_code != 0) dump_failure(*shadowed_config_changed);
+        expect(shadowed_config_changed->exit_code == 0,
+               "changing overridden config /STUB should remain successful");
+        expect(contains_line(shadowed_config_changed->stdout_text, "[up-to-date] layered.exe"),
+               "overridden config /STUB content must not enter effective freshness");
+        expect(shadowed_config_changed->stdout_text.find("[link] layered.exe") == std::string::npos,
+               "overridden config /STUB mutation must not create false relink");
+    }
+
+    write_dos_stub(child / "cli-stub.exe", 0x54);
+    time_error.clear();
+    fs::last_write_time(
+        child / "cli-stub.exe",
+        layered_output_time + std::chrono::seconds{3},
+        time_error);
+    expect(!time_error, "layered fixture should advance effective CLI stub timestamp");
+    auto effective_cli_changed = run_mqb(
+        runner,
+        mqb_executable,
+        child,
+        layered_cli_arguments);
+    expect(effective_cli_changed.has_value(), "effective CLI-stub mutation should launch");
+    if (effective_cli_changed) {
+        if (effective_cli_changed->exit_code != 0) dump_failure(*effective_cli_changed);
+        expect(effective_cli_changed->exit_code == 0,
+               "changing effective CLI /STUB should relink successfully");
+        expect(contains_line(effective_cli_changed->stdout_text, "[up-to-date] main.cpp"),
+               "layered stub-only mutation must not recompile source TU");
+        expect(effective_cli_changed->stdout_text.find("[link] layered.exe") != std::string::npos,
+               "effective CLI /STUB mutation must invalidate link freshness");
+    }
+    expect(!contains_stub_marker(layered_output, 0x52),
+           "layered relink should remove previous effective CLI stub marker");
+    expect(contains_stub_marker(layered_output, 0x54),
+           "layered relink should contain mutated effective CLI stub marker");
+
     auto invalid = run_mqb(
         runner,
         mqb_executable,
