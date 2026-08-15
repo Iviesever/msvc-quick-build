@@ -1,5 +1,6 @@
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
 
+#include <algorithm>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -58,6 +59,24 @@ void snapshot_inputs(
     }
 }
 
+[[nodiscard]] bool same_path(const fs::path& left, const fs::path& right) {
+    return left == right || left.lexically_normal() == right.lexically_normal();
+}
+
+[[nodiscard]] bool contains_path(
+    const std::vector<fs::path>& paths,
+    const fs::path& expected) {
+    return std::any_of(paths.begin(), paths.end(), [&](const fs::path& path) {
+        return same_path(path, expected);
+    });
+}
+
+void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
+    if (std::find(reasons.begin(), reasons.end(), reason) == reasons.end()) {
+        reasons.push_back(reason);
+    }
+}
+
 void collect_existing_side_output(
     const fs::path& path,
     std::vector<fs::path>& outputs,
@@ -86,6 +105,27 @@ void collect_existing_side_output(
         .message = std::move(message),
         .linker_error = std::move(linker_error),
     };
+}
+
+[[nodiscard]] std::expected<void, IncrementalLinkError> require_side_output(
+    const fs::path& path,
+    std::vector<fs::path>& outputs) {
+    std::error_code error_code;
+    const bool regular = fs::is_regular_file(path, error_code);
+    if (error_code) {
+        return std::unexpected(link_failure(
+            IncrementalLinkErrorCode::link_failed,
+            "failed to validate required linker side output '"
+                + path.generic_string() + "': " + error_code.message()));
+    }
+    if (!regular) {
+        return std::unexpected(link_failure(
+            IncrementalLinkErrorCode::link_failed,
+            "MSVC linker succeeded without producing required side output '"
+                + path.generic_string() + "'"));
+    }
+    outputs.push_back(path);
+    return {};
 }
 
 } // namespace
@@ -165,6 +205,11 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         resolved_default_libraries->files.begin(),
         resolved_default_libraries->files.end());
 
+    const std::vector<fs::path> required_side_outputs =
+        msvc::MsvcLinker::required_side_output_paths(
+            request.output,
+            request.options);
+
     std::optional<LinkCacheEntry> cached_entry;
     auto loaded = LinkCacheFile::load(request.cache_file);
     if (loaded) {
@@ -215,6 +260,18 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         file_input_snapshots,
         side_output_snapshots,
         request.force_relink);
+
+    if (cached_entry) {
+        // Older cache entries may predate first-class tracking for deterministic
+        // PDB/manifest outputs. Force one safe relink to reseal the entry even
+        // when those files happen to exist on disk already.
+        for (const auto& required : required_side_outputs) {
+            if (!contains_path(cached_entry->side_outputs, required)) {
+                add_reason(result.validation.reasons, BuildReason::missing_output);
+                break;
+            }
+        }
+    }
 
     // A reusable link validation is already the final no-op decision. Avoid
     // materializing a generic LinkPlanItem/BuildPlan on the hot path; misses
@@ -279,6 +336,16 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     result.process = std::move(*linked);
 
     std::vector<fs::path> side_outputs;
+    side_outputs.reserve(
+        required_side_outputs.size()
+        + (request.options.target_kind == TargetKind::dynamic_library ? 2u : 0u));
+    for (const auto& required : required_side_outputs) {
+        auto recorded = require_side_output(required, side_outputs);
+        if (!recorded) {
+            return std::unexpected(recorded.error());
+        }
+    }
+
     if (request.options.target_kind == TargetKind::dynamic_library) {
         collect_existing_side_output(
             msvc::MsvcLinker::import_library_path(action->output),
