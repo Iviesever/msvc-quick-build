@@ -1,4 +1,6 @@
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -32,6 +34,20 @@ void force_newer_timestamp(const fs::path& path) {
     if (!error_code) {
         fs::last_write_time(path, current + std::chrono::seconds{2}, error_code);
     }
+}
+
+void force_cache_format_version(const fs::path& cache_file, const std::uint32_t version) {
+    std::fstream stream{cache_file, std::ios::binary | std::ios::in | std::ios::out};
+    if (!stream) return;
+    const std::array<char, 4> bytes{
+        static_cast<char>(version & 0xffu),
+        static_cast<char>((version >> 8u) & 0xffu),
+        static_cast<char>((version >> 16u) & 0xffu),
+        static_cast<char>((version >> 24u) & 0xffu),
+    };
+    stream.seekp(8, std::ios::beg);
+    stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    stream.flush();
 }
 
 [[nodiscard]] bool contains_source(
@@ -102,6 +118,19 @@ int main() {
         expect(warm->indexed_files == cold->indexed_files,
                "persistent discovery reuse must preserve indexed-file accounting");
     }
+
+    force_cache_format_version(default_cache, 1u);
+    const auto stale_format = mqb::discovery::SourceDiscovery::discover(request);
+    expect(stale_format.has_value(), "stale-format discovery cache should fall back safely");
+    if (stale_format) {
+        expect(!stale_format->reused,
+               "previous discovery-semantics cache versions must not be reused");
+        expect(contains_source(stale_format->sources, implementation),
+               "format-version fallback must preserve fresh discovery correctness");
+    }
+    const auto resealed_format = mqb::discovery::SourceDiscovery::discover(request);
+    expect(resealed_format.has_value() && resealed_format->reused,
+           "stale-format fallback should reseal evidence using the current format");
 
     write_text(header, "#pragma once\nint value();\n// changed\n");
     force_newer_timestamp(header);
