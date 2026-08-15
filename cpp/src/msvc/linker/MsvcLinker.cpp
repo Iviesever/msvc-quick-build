@@ -271,7 +271,7 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        17
+        18
         + invocation.objects.size()
         + invocation.options.library_directories.size()
         + invocation.libraries.size()
@@ -312,10 +312,16 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
         arguments.push_back(argument);
     }
 
-    // A library-change full link is MQB execution policy rather than a user
-    // linker preference. Emit it after raw flags so stale .ilk state cannot be
-    // re-enabled by a passthrough /INCREMENTAL argument.
-    if (invocation.force_full_link) {
+    // Library/file-input changes already require a full link to avoid stale
+    // .ilk state. A requested mapfile also needs a full LINK pass whenever a
+    // link action runs: LINK can otherwise report success for an unchanged
+    // incremental image without recreating a deleted .map file. Emit the final
+    // execution policy after raw flags so user /INCREMENTAL cannot override it.
+    if (invocation.force_full_link
+        || map_file_path(
+            invocation.output,
+            invocation.options,
+            invocation.working_directory)) {
         arguments.emplace_back("/INCREMENTAL:NO");
     }
 
