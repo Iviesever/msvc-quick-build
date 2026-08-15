@@ -133,7 +133,7 @@ template <typename T>
         return std::unexpected(merged.error());
     }
     if (auto merged = merge_semantic_value(
-            build.subsystem, linker->subsystem, layer, "subsystem"); !merged) {
+            build.subsystem, linker->subsystem, layer, "target subsystem"); !merged) {
         return std::unexpected(merged.error());
     }
 
