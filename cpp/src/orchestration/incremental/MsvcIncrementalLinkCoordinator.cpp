@@ -208,15 +208,28 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         resolved_default_libraries->files.begin(),
         resolved_default_libraries->files.end());
 
-    const std::vector<fs::path> required_side_outputs =
-        msvc::MsvcLinker::required_side_output_paths(
+    const std::optional<fs::path> requested_map_output =
+        msvc::MsvcLinker::map_file_path(
             request.output,
-            request.options);
-    std::vector<fs::path> existing_optional_side_outputs;
+            request.options,
+            working_directory);
+
+    // PDB and external-manifest files are conditionally emitted by real LINK
+    // configurations. Observe them when present, seal them into the cache, and
+    // repair them once sealed; do not require fake/custom linker runners to
+    // synthesize outputs they never produced. /MAP is different: requesting it
+    // explicitly promises a concrete mapfile, so that output is strict.
+    std::vector<fs::path> existing_observed_side_outputs;
+    if (msvc::MsvcLinker::program_database_enabled(request.options)) {
+        collect_existing_side_output(
+            msvc::MsvcLinker::program_database_path(request.output),
+            existing_observed_side_outputs,
+            result.warnings);
+    }
     if (msvc::MsvcLinker::external_manifest_enabled(request.options)) {
         collect_existing_side_output(
             msvc::MsvcLinker::manifest_file_path(request.output),
-            existing_optional_side_outputs,
+            existing_observed_side_outputs,
             result.warnings);
     }
 
@@ -272,17 +285,16 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         request.force_relink);
 
     if (cached_entry) {
-        // Older cache entries may predate first-class tracking for deterministic
-        // PDB output or for a conditional external manifest that already exists.
-        // Force one safe relink to reseal that evidence.
-        for (const auto& required : required_side_outputs) {
-            if (!contains_path(cached_entry->side_outputs, required)) {
-                add_reason(result.validation.reasons, BuildReason::missing_output);
-                break;
-            }
+        // /MAP is a requested deliverable, so an older cache must be resealed
+        // even when that output has already disappeared. PDB/manifest evidence
+        // is migration-sealed only when the current filesystem proves LINK had
+        // produced it under the same link identity.
+        if (requested_map_output
+            && !contains_path(cached_entry->side_outputs, *requested_map_output)) {
+            add_reason(result.validation.reasons, BuildReason::missing_output);
         }
-        for (const auto& optional : existing_optional_side_outputs) {
-            if (!contains_path(cached_entry->side_outputs, optional)) {
+        for (const auto& observed : existing_observed_side_outputs) {
+            if (!contains_path(cached_entry->side_outputs, observed)) {
                 add_reason(result.validation.reasons, BuildReason::missing_output);
                 break;
             }
@@ -353,14 +365,22 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
 
     std::vector<fs::path> side_outputs;
     side_outputs.reserve(
-        required_side_outputs.size()
+        (requested_map_output ? 1u : 0u)
+        + (msvc::MsvcLinker::program_database_enabled(request.options) ? 1u : 0u)
         + (msvc::MsvcLinker::external_manifest_enabled(request.options) ? 1u : 0u)
         + (request.options.target_kind == TargetKind::dynamic_library ? 2u : 0u));
-    for (const auto& required : required_side_outputs) {
-        auto recorded = require_side_output(required, side_outputs);
+
+    if (requested_map_output) {
+        auto recorded = require_side_output(*requested_map_output, side_outputs);
         if (!recorded) {
             return std::unexpected(recorded.error());
         }
+    }
+    if (msvc::MsvcLinker::program_database_enabled(request.options)) {
+        collect_existing_side_output(
+            msvc::MsvcLinker::program_database_path(action->output),
+            side_outputs,
+            result.warnings);
     }
     if (msvc::MsvcLinker::external_manifest_enabled(request.options)) {
         collect_existing_side_output(
