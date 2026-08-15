@@ -126,29 +126,6 @@ template <typename T>
     return std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
 }
 
-[[nodiscard]] std::optional<ParameterClassification> classify_structured_preprocessor_parameter(
-    const std::string_view argument) {
-    const std::string_view body = detail::option_body(argument);
-    if (body.empty()) return std::nullopt;
-    if (body.front() == 'I') {
-        return ParameterClassification{
-            .tool = ParameterTool::compiler,
-            .ownership = ParameterOwnership::semantic,
-            .canonical_name = "/I",
-            .rationale = "exposes include-directory semantics while preserving native argv ordering",
-        };
-    }
-    if (body.front() == 'D') {
-        return ParameterClassification{
-            .tool = ParameterTool::compiler,
-            .ownership = ParameterOwnership::semantic,
-            .canonical_name = "/D",
-            .rationale = "exposes preprocessor-definition semantics while preserving native argv ordering",
-        };
-    }
-    return std::nullopt;
-}
-
 } // namespace
 
 ParameterClassification MsvcParameterEngine::classify(
@@ -156,9 +133,6 @@ ParameterClassification MsvcParameterEngine::classify(
     const std::string_view argument) {
     switch (tool) {
     case ParameterTool::compiler:
-        if (auto structured = classify_structured_preprocessor_parameter(argument)) {
-            return std::move(*structured);
-        }
         return detail::classify_compiler_parameter(argument);
     case ParameterTool::linker:
         return detail::classify_linker_parameter(argument);
