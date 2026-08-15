@@ -171,6 +171,9 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     if (body == "LTCG:INCREMENTAL" || body == "LTCG:NOSTATUS" || body == "LTCG:STATUS") return linker_unsupported(body, "current MQB LTCG policy is boolean and cannot preserve this /LTCG mode yet");
     if (body == "DRIVER" || body.starts_with("DRIVER:")) return linker_unsupported(body, "kernel-driver target shape requires a first-class MQB target policy");
     if (body == "KERNEL") return linker_unsupported(body, "kernel-mode linking is coupled to compiler policy that MQB does not model yet");
+    if (body.starts_with("LINKREPRO:") || body.starts_with("LINKREPROFULLPATHRSP:") || body.starts_with("LINKREPROTARGET:")) {
+        return linker_unsupported(body, "link repro generation creates diagnostic artifact files/directories outside MQB's link artifact graph");
+    }
 
     static constexpr std::array deprecated_exact{"POGOSAFEMODE"sv};
     static constexpr std::array deprecated_prefix{"ERRORREPORT"sv};
@@ -202,8 +205,8 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
         "ALIGN:"sv, "ALLOWBIND:"sv, "ALLOWISOLATION:"sv, "APPCONTAINER:"sv, "ARM64XFUNCTIONPADMINX64:"sv, "ASSEMBLYDEBUG:"sv, "BASE:"sv,
         "CETCOMPAT:"sv, "CGTHREADS:"sv, "CLRIMAGETYPE:"sv, "COMMENT:"sv, "DEBUGTYPE:"sv, "DEF:"sv, "DEFAULTLIB:"sv, "DELAY:"sv, "DELAYSIGN:"sv, "DELAYLOAD:"sv,
         "DEPENDENTLOADFLAG:"sv, "DYNAMICBASE:"sv, "ENTRY:"sv, "EXPORT:"sv, "FILEALIGN:"sv, "FIXED:"sv, "FORCE:"sv, "GUARD:"sv,
-        "HEAP:"sv, "HIGHENTROPYVA:"sv, "IGNORE:"sv, "INCLUDE:"sv, "LARGEADDRESSAWARE:"sv, "LINKREPRO:"sv, "LINKREPROFULLPATHRSP:"sv,
-        "LINKREPROTARGET:"sv, "MANIFEST:"sv, "MANIFESTDEPENDENCY:"sv, "MANIFESTINPUT:"sv, "MANIFESTUAC:"sv, "MAP:"sv, "MAPINFO:"sv, "MERGE:"sv,
+        "HEAP:"sv, "HIGHENTROPYVA:"sv, "IGNORE:"sv, "INCLUDE:"sv, "LARGEADDRESSAWARE:"sv,
+        "MANIFEST:"sv, "MANIFESTDEPENDENCY:"sv, "MANIFESTINPUT:"sv, "MANIFESTUAC:"sv, "MAP:"sv, "MAPINFO:"sv, "MERGE:"sv,
         "NODEFAULTLIB:"sv, "NXCOMPAT:"sv, "OPT:"sv, "ORDER:"sv, "PDBALTPATH:"sv, "SAFESEH:"sv, "SECTION:"sv, "STACK:"sv, "STUB:"sv, "SWAPRUN:"sv,
         "TIMESTAMP:"sv, "TLBID:"sv, "TSAWARE:"sv, "VERSION:"sv, "WHOLEARCHIVE:"sv,
     };
@@ -239,9 +242,12 @@ ParameterClassification classify_librarian_parameter(const std::string_view argu
     if (body.starts_with("OUT:")) return classified(ParameterTool::librarian, ParameterOwnership::mqb_owned, "/OUT", "MQB owns archive output identity and atomic replacement");
     if (body == "LIST" || body.starts_with("DEF:") || body.starts_with("EXTRACT:") || body.starts_with("NAME:") || body.starts_with("REMOVE:")) return librarian_unsupported(body, "option changes lib.exe operating mode or archive membership outside MQB's build graph");
     if (body.starts_with("ERRORREPORT")) return librarian_unsupported(body, "option is deprecated in current MSVC toolchains");
+    if (body.starts_with("LINKREPRO:") || body.starts_with("LINKREPROTARGET:")) {
+        return librarian_unsupported(body, "library repro generation creates diagnostic artifact files/directories outside MQB's archive artifact graph");
+    }
 
     static constexpr std::array passthrough_exact{"?"sv, "NODEFAULTLIB"sv, "NOLOGO"sv, "VERBOSE"sv, "WX"sv, "WX:NO"sv};
-    static constexpr std::array passthrough_prefix{"EXPORT:"sv, "INCLUDE:"sv, "LIBPATH:"sv, "LINKREPRO:"sv, "LINKREPROTARGET:"sv, "NODEFAULTLIB:"sv, "SUBSYSTEM:"sv};
+    static constexpr std::array passthrough_prefix{"EXPORT:"sv, "INCLUDE:"sv, "LIBPATH:"sv, "NODEFAULTLIB:"sv, "SUBSYSTEM:"sv};
     if (contains_exact(std::string_view{body}, passthrough_exact) || starts_with_any(std::string_view{body}, passthrough_prefix)) {
         return classified(ParameterTool::librarian, ParameterOwnership::passthrough, "/" + body, "validated librarian option is preserved verbatim in archive identity");
     }
