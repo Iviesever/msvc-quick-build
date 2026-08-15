@@ -102,6 +102,14 @@ jobs:
             Pop-Location
           }
 
+      - name: Verify external environment include ownership
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/verify_external_env_ownership.ps1') `
+            -MqbPath (Join-Path $PWD 'native-out/debug/mqb.exe') `
+            -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify linker side-output repair
         shell: pwsh
         run: |
