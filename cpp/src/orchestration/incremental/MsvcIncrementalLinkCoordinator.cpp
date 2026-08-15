@@ -82,7 +82,7 @@ void collect_existing_side_output(
     std::vector<fs::path>& outputs,
     std::vector<IncrementalLinkWarning>& warnings) {
     std::error_code error_code;
-    const bool exists = fs::exists(path, error_code);
+    const bool exists = fs::is_regular_file(path, error_code);
     if (error_code) {
         warnings.push_back(IncrementalLinkWarning{
             .code = IncrementalLinkWarningCode::file_snapshot_failed,
@@ -209,6 +209,13 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         msvc::MsvcLinker::required_side_output_paths(
             request.output,
             request.options);
+    std::vector<fs::path> existing_optional_side_outputs;
+    if (msvc::MsvcLinker::external_manifest_enabled(request.options)) {
+        collect_existing_side_output(
+            msvc::MsvcLinker::manifest_file_path(request.output),
+            existing_optional_side_outputs,
+            result.warnings);
+    }
 
     std::optional<LinkCacheEntry> cached_entry;
     auto loaded = LinkCacheFile::load(request.cache_file);
@@ -263,10 +270,16 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
 
     if (cached_entry) {
         // Older cache entries may predate first-class tracking for deterministic
-        // PDB/manifest outputs. Force one safe relink to reseal the entry even
-        // when those files happen to exist on disk already.
+        // PDB output or for a conditional external manifest that already exists.
+        // Force one safe relink to reseal that evidence.
         for (const auto& required : required_side_outputs) {
             if (!contains_path(cached_entry->side_outputs, required)) {
+                add_reason(result.validation.reasons, BuildReason::missing_output);
+                break;
+            }
+        }
+        for (const auto& optional : existing_optional_side_outputs) {
+            if (!contains_path(cached_entry->side_outputs, optional)) {
                 add_reason(result.validation.reasons, BuildReason::missing_output);
                 break;
             }
@@ -338,12 +351,19 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     std::vector<fs::path> side_outputs;
     side_outputs.reserve(
         required_side_outputs.size()
+        + (msvc::MsvcLinker::external_manifest_enabled(request.options) ? 1u : 0u)
         + (request.options.target_kind == TargetKind::dynamic_library ? 2u : 0u));
     for (const auto& required : required_side_outputs) {
         auto recorded = require_side_output(required, side_outputs);
         if (!recorded) {
             return std::unexpected(recorded.error());
         }
+    }
+    if (msvc::MsvcLinker::external_manifest_enabled(request.options)) {
+        collect_existing_side_output(
+            msvc::MsvcLinker::manifest_file_path(action->output),
+            side_outputs,
+            result.warnings);
     }
 
     if (request.options.target_kind == TargetKind::dynamic_library) {
