@@ -30,6 +30,14 @@ namespace fs = std::filesystem;
         bytes.size()};
 }
 
+[[nodiscard]] fs::path path_from_utf8(const std::string_view value) {
+    std::u8string bytes;
+    bytes.assign(
+        reinterpret_cast<const char8_t*>(value.data()),
+        reinterpret_cast<const char8_t*>(value.data() + value.size()));
+    return fs::path{bytes};
+}
+
 [[nodiscard]] std::string architecture_argument(const Architecture architecture) {
     return architecture == Architecture::x86 ? "/MACHINE:X86" : "/MACHINE:X64";
 }
@@ -141,6 +149,44 @@ fs::path MsvcLinker::manifest_file_path(const fs::path& output) {
     return manifest;
 }
 
+std::optional<fs::path> MsvcLinker::map_file_path(
+    const fs::path& output,
+    const LinkOptions& options,
+    const fs::path& working_directory) {
+    std::optional<fs::path> map_file;
+    for (const auto& argument : options.additional_arguments) {
+        if (argument.size() < 2 || (argument.front() != '/' && argument.front() != '-')) {
+            continue;
+        }
+        const std::string_view raw_body{argument.data() + 1, argument.size() - 1};
+        const std::string body = linker_option_body_upper(argument);
+        if (body == "MAP") {
+            fs::path default_map = output;
+            default_map.replace_extension(".map");
+            map_file = std::move(default_map);
+            continue;
+        }
+        if (!body.starts_with("MAP:")) {
+            continue;
+        }
+
+        const std::string_view value = raw_body.substr(std::string_view{"MAP:"}.size());
+        if (value.empty()) {
+            fs::path default_map = output;
+            default_map.replace_extension(".map");
+            map_file = std::move(default_map);
+            continue;
+        }
+
+        fs::path explicit_map = path_from_utf8(value);
+        if (explicit_map.is_relative() && !working_directory.empty()) {
+            explicit_map = working_directory / explicit_map;
+        }
+        map_file = explicit_map.lexically_normal();
+    }
+    return map_file;
+}
+
 bool MsvcLinker::program_database_enabled(const LinkOptions& options) {
     bool enabled = options.configuration == BuildConfiguration::debug;
     for (const auto& argument : options.additional_arguments) {
@@ -173,11 +219,15 @@ bool MsvcLinker::external_manifest_enabled(const LinkOptions& options) {
 
 std::vector<fs::path> MsvcLinker::required_side_output_paths(
     const fs::path& output,
-    const LinkOptions& options) {
+    const LinkOptions& options,
+    const fs::path& working_directory) {
     std::vector<fs::path> paths;
-    paths.reserve(1);
+    paths.reserve(2);
     if (program_database_enabled(options)) {
         paths.push_back(program_database_path(output));
+    }
+    if (auto map_file = map_file_path(output, options, working_directory)) {
+        paths.push_back(std::move(*map_file));
     }
     return paths;
 }
