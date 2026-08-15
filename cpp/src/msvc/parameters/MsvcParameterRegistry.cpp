@@ -190,11 +190,14 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
 
     static constexpr std::array unsupported_pgo_exact{"FASTGENPROFILE"sv, "GENPROFILE"sv, "SPGO"sv, "USEPROFILE"sv};
     if (contains_exact(std::string_view{body}, unsupported_pgo_exact)) return linker_unsupported(body, "profile-guided optimization artifacts are not yet represented in MQB's build graph");
+    if (body == "MAP" || body.starts_with("MAP:")) {
+        return linker_unsupported(body, "mapfile output is not yet represented in MQB's link cache/artifact graph");
+    }
 
     static constexpr std::array passthrough_exact{
         "?"sv, "ALLOWBIND"sv, "ALLOWISOLATION"sv, "APPCONTAINER"sv, "ASSEMBLYDEBUG"sv, "CETCOMPAT"sv, "DEBUG"sv, "DEBUG:FULL"sv, "DEBUG:NONE"sv,
         "DELAYSIGN"sv, "DYNAMICBASE"sv, "DYNAMICDEOPT"sv, "FIXED"sv, "FORCE"sv, "FUNCTIONPADMIN"sv, "HIGHENTROPYVA"sv, "IGNOREIDL"sv,
-        "INCREMENTAL"sv, "INCREMENTAL:NO"sv, "INFERASANLIBS"sv, "INTEGRITYCHECK"sv, "LARGEADDRESSAWARE"sv, "MAP"sv, "MANIFEST"sv,
+        "INCREMENTAL"sv, "INCREMENTAL:NO"sv, "INFERASANLIBS"sv, "INTEGRITYCHECK"sv, "LARGEADDRESSAWARE"sv, "MANIFEST"sv,
         "MANIFEST:NO"sv, "NOASSEMBLY"sv, "NODEFAULTLIB"sv, "NOENTRY"sv, "NOFUNCTIONPADSECTION"sv, "NOLOGO"sv, "NXCOMPAT"sv,
         "PROFILE"sv, "RELEASE"sv, "SAFESEH"sv, "TIME"sv, "TSAWARE"sv, "VERBOSE"sv, "WHOLEARCHIVE"sv, "WX"sv, "WX:NO"sv,
     };
@@ -203,7 +206,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
         "CETCOMPAT:"sv, "CGTHREADS:"sv, "CLRIMAGETYPE:"sv, "COMMENT:"sv, "DEBUGTYPE:"sv, "DEF:"sv, "DEFAULTLIB:"sv, "DELAY:"sv, "DELAYSIGN:"sv, "DELAYLOAD:"sv,
         "DEPENDENTLOADFLAG:"sv, "DYNAMICBASE:"sv, "ENTRY:"sv, "EXPORT:"sv, "FILEALIGN:"sv, "FIXED:"sv, "FORCE:"sv, "GUARD:"sv,
         "HEAP:"sv, "HIGHENTROPYVA:"sv, "IGNORE:"sv, "INCLUDE:"sv, "LARGEADDRESSAWARE:"sv, "LINKREPRO:"sv, "LINKREPROFULLPATHRSP:"sv,
-        "LINKREPROTARGET:"sv, "MANIFEST:"sv, "MANIFESTDEPENDENCY:"sv, "MANIFESTINPUT:"sv, "MANIFESTUAC:"sv, "MAP:"sv, "MAPINFO:"sv, "MERGE:"sv,
+        "LINKREPROTARGET:"sv, "MANIFEST:"sv, "MANIFESTDEPENDENCY:"sv, "MANIFESTINPUT:"sv, "MANIFESTUAC:"sv, "MAPINFO:"sv, "MERGE:"sv,
         "NODEFAULTLIB:"sv, "NXCOMPAT:"sv, "OPT:"sv, "ORDER:"sv, "PDBALTPATH:"sv, "SAFESEH:"sv, "SECTION:"sv, "STACK:"sv, "STUB:"sv, "SWAPRUN:"sv,
         "TIMESTAMP:"sv, "TLBID:"sv, "TSAWARE:"sv, "VERSION:"sv, "WHOLEARCHIVE:"sv,
     };
