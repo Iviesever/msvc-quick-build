@@ -191,7 +191,10 @@ int main() {
             "#include <widget.hpp>\n"
             "int main() { return widget(); }\n");
         write_text(include_root / "widget.hpp", "#pragma once\nint widget();\n");
-        write_text(widget_source, "int widget() { return 0; }\n");
+        write_text(
+            widget_source,
+            "#include \"widget.hpp\"\n"
+            "int widget() { return 0; }\n");
 
         const std::vector arguments{
             "main.cpp"sv,
