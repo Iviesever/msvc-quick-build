@@ -12,6 +12,7 @@
 
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/TranslationUnit.hpp"
+#include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/orchestration/BoundedWorkScheduler.hpp"
 
 namespace mqb::orchestration {
@@ -196,10 +197,15 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
         objects.push_back(request.sources[index].artifacts.object);
     }
 
+    LinkOptions effective_link_options = request.link_options;
+    msvc::MsvcAddressSanitizerPolicy::apply_link_policy(
+        request.compiler_options,
+        effective_link_options);
+
     IncrementalLinkRequest link_request{
         .objects = std::move(objects),
         .output = request.target.executable,
-        .options = request.link_options,
+        .options = std::move(effective_link_options),
         .cache_file = request.target.link_cache,
         .working_directory = request.working_directory,
         .force_relink = request.force_downstream_rebuild || result.any_compiled,
