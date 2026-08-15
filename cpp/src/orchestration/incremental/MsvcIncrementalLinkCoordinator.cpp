@@ -19,6 +19,7 @@
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcParameterEngine.hpp"
+#include "mqb/msvc/MsvcWholeArchivePolicy.hpp"
 
 #include "IncrementalFileSnapshot.hpp"
 
@@ -173,6 +174,18 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         });
     }
 
+    auto whole_archive_routing = msvc::MsvcWholeArchivePolicy::route(
+        request.options.additional_arguments,
+        request.working_directory);
+    if (!whole_archive_routing) {
+        return std::unexpected(IncrementalLinkError{
+            .code = IncrementalLinkErrorCode::linker_parameter_invalid,
+            .message = "invalid native MSVC WHOLEARCHIVE policy: "
+                + whole_archive_routing.error().message,
+            .parameter_error = whole_archive_routing.error(),
+        });
+    }
+
     const fs::path working_directory =
         request.working_directory.value_or(fs::path{});
     auto resolved_libraries = msvc::MsvcLibraryResolver::resolve(
@@ -207,6 +220,28 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         linker_file_inputs.end(),
         resolved_default_libraries->files.begin(),
         resolved_default_libraries->files.end());
+
+    if (!whole_archive_routing->libraries.empty()) {
+        LinkOptions whole_archive_options = request.options;
+        whole_archive_options.libraries = whole_archive_routing->libraries;
+        auto resolved_whole_archive_libraries = msvc::MsvcLibraryResolver::resolve(
+            toolchain_,
+            whole_archive_options,
+            working_directory);
+        if (!resolved_whole_archive_libraries) {
+            IncrementalLinkError error{
+                .code = IncrementalLinkErrorCode::library_resolution_failed,
+                .message = "failed to resolve MSVC /WHOLEARCHIVE library input: "
+                    + resolved_whole_archive_libraries.error().message,
+                .library_resolution_error = resolved_whole_archive_libraries.error(),
+            };
+            return std::unexpected(std::move(error));
+        }
+        linker_file_inputs.insert(
+            linker_file_inputs.end(),
+            resolved_whole_archive_libraries->files.begin(),
+            resolved_whole_archive_libraries->files.end());
+    }
 
     const std::optional<fs::path> requested_map_output =
         msvc::MsvcLinker::map_file_path(
