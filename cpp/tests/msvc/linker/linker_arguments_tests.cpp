@@ -45,6 +45,8 @@ int main() {
         expect(contains(*result, "/NOLOGO"), "link should suppress banner");
         expect(contains(*result, "/DEBUG"), "debug link should emit /DEBUG");
         expect(contains(*result, "/INCREMENTAL"), "debug link should be incremental");
+        expect(!contains(*result, "/INCREMENTAL:NO"),
+               "ordinary debug link should not disable incremental linking");
         expect(!contains(*result, "/LTCG"), "default link recipe should preserve non-LTCG behavior");
         expect(contains(*result, "/LIBPATH:vendor libs"), "library path should stay one argv element");
         expect(contains(*result, "C:/sdk libs/user32.lib"),
@@ -59,6 +61,20 @@ int main() {
         const auto planned_out = std::find(result->begin(), result->end(), "/OUT:bin/my app.exe");
         expect(raw_out != result->end() && planned_out != result->end() && raw_out < planned_out,
                "planned output must override a conflicting raw /OUT");
+    }
+
+    auto changed_library = invocation;
+    changed_library.force_full_link = true;
+    const auto changed_library_result = mqb::msvc::MsvcLinker::build_arguments(changed_library);
+    expect(changed_library_result.has_value(),
+           "library-change full-link invocation should produce argv");
+    if (changed_library_result) {
+        expect(contains(*changed_library_result, "/DEBUG"),
+               "full library relink should retain Debug information");
+        expect(contains(*changed_library_result, "/INCREMENTAL:NO"),
+               "changed library inputs must disable MSVC incremental linking");
+        expect(!contains(*changed_library_result, "/INCREMENTAL"),
+               "changed library inputs must not retain incremental .ilk reuse");
     }
 
     auto ltcg = invocation;
