@@ -142,12 +142,8 @@ template <typename T>
         || body == "analyze:projectdirectory"
         || body == "analyze:rulesetdirectory"
         || body == "analyze:ruleset"
-        || body == "Fd"
-        || body == "Fe"
-        || body == "Fi"
-        || body == "Fm"
-        || body == "Fo"
-        || body == "Fp"
+        || body == "Fe:"
+        || body == "Fo:"
         || body == "headerName:quote"
         || body == "headerName:angle"
         || body == "headerUnit"
@@ -415,7 +411,6 @@ MsvcParameterEngine::route_linker(const std::span<const std::string> arguments) 
                 if (auto assigned = assign_semantic(
                         routed.subsystem,
                         LinkSubsystem::windows,
-                        ParameterTool::linker,
                         argument,
                         "subsystem"); !assigned) {
                     return std::unexpected(assigned.error());
