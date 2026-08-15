@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include "Cli.hpp"
 #include "mqb/config/ProjectConfig.hpp"
@@ -16,9 +15,6 @@ struct ProjectSetup {
     std::optional<mqb::config::ProjectConfig> config;
     mqb::config::EffectiveProjectOptions effective;
     std::filesystem::path project_root;
-    // Non-owning file inputs extracted from validated native linker arguments
-    // after each config/profile/CLI layer has resolved its own path base.
-    std::vector<std::filesystem::path> linker_file_inputs;
     bool subsystem_explicit{false};
 };
 
