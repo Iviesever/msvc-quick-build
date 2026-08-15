@@ -64,22 +64,26 @@ void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
     return find_snapshot(snapshots, path);
 }
 
-void validate_freshness(
+[[nodiscard]] bool validate_freshness(
     const std::span<const std::filesystem::path> inputs,
     const std::span<const FileSnapshot> snapshots,
     const FileSnapshot& output_snapshot,
     std::vector<BuildReason>& reasons) {
+    bool changed = false;
     for (std::size_t index = 0; index < inputs.size(); ++index) {
         const auto& input = inputs[index];
         const auto* snapshot = aligned_snapshot_or_find(snapshots, input, index);
         if (snapshot == nullptr || !snapshot->exists) {
             add_reason(reasons, BuildReason::link_inputs_changed);
+            changed = true;
             continue;
         }
         if (output_snapshot.exists && snapshot->modified > output_snapshot.modified) {
             add_reason(reasons, BuildReason::link_inputs_changed);
+            changed = true;
         }
     }
+    return changed;
 }
 
 void validate_side_outputs(
@@ -167,6 +171,10 @@ LinkCacheValidation LinkCacheValidator::validate(
         add_reason(result.reasons, BuildReason::missing_cache_entry);
         if (!output_snapshot.exists) {
             add_reason(result.reasons, BuildReason::missing_output);
+        } else if (!current_libraries.empty()) {
+            // Existing incremental-link state cannot be proven to match the
+            // currently resolved libraries when link metadata is missing.
+            result.library_inputs_changed = true;
         }
         return result;
     }
@@ -182,6 +190,9 @@ LinkCacheValidation LinkCacheValidator::validate(
     const bool inputs_match = object_inputs_match && library_inputs_match;
     if (!inputs_match) {
         add_reason(result.reasons, BuildReason::link_inputs_changed);
+    }
+    if (!library_inputs_match) {
+        result.library_inputs_changed = true;
     }
 
     const auto current_signature = BuildSignature::for_link(
@@ -203,8 +214,18 @@ LinkCacheValidation LinkCacheValidator::validate(
     }
     validate_side_outputs(cached.side_outputs, side_output_snapshots, result.reasons);
 
-    validate_freshness(current_objects, object_snapshots, output_snapshot, result.reasons);
-    validate_freshness(current_libraries, library_snapshots, output_snapshot, result.reasons);
+    (void)validate_freshness(
+        current_objects,
+        object_snapshots,
+        output_snapshot,
+        result.reasons);
+    if (validate_freshness(
+            current_libraries,
+            library_snapshots,
+            output_snapshot,
+            result.reasons)) {
+        result.library_inputs_changed = true;
+    }
 
     return result;
 }
