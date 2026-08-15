@@ -18,7 +18,10 @@ if (Test-Path -LiteralPath $fixture) {
     Remove-Item -LiteralPath $fixture -Recurse -Force
 }
 New-Item -ItemType Directory -Path $fixture -Force | Out-Null
-Set-Content -LiteralPath (Join-Path $fixture 'main.cpp') -Encoding utf8 -Value 'int main() { return 0; }'
+@'
+#pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+int main() { return 0; }
+'@ | Set-Content -LiteralPath (Join-Path $fixture 'main.cpp') -Encoding utf8
 
 function Invoke-ProbeBuild {
     param([string[]]$ExtraArguments = @())
@@ -48,7 +51,7 @@ if ($cold.ExitCode -ne 0) {
 }
 foreach ($path in @($binary, $pdb, $manifest)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "Cold Debug link did not produce required output: $path`n$($cold.Text)"
+        throw "Cold Debug link did not produce expected output: $path`n$($cold.Text)"
     }
 }
 
@@ -92,4 +95,4 @@ if ($map.Text -notmatch 'mapfile output is not yet represented') {
     throw "Rejected /MAP did not explain the artifact-ownership boundary:`n$($map.Text)"
 }
 
-Write-Host 'Real MSVC linker PDB/manifest repair and /MAP fail-closed checks passed.'
+Write-Host 'Real MSVC linker PDB/conditional-manifest repair and /MAP fail-closed checks passed.'
