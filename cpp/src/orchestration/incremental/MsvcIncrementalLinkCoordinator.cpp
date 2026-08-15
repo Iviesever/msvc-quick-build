@@ -207,6 +207,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         .libraries = action->libraries,
         .options = request.options,
         .working_directory = request.working_directory.value_or(fs::path{}),
+        .force_full_link = result.validation.library_inputs_changed,
     };
     auto linked = linker_.link(invocation);
     if (!linked) {
