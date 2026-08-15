@@ -11,6 +11,7 @@
 #include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
+#include "mqb/msvc/MsvcWholeArchivePolicy.hpp"
 
 namespace {
 
@@ -168,6 +169,51 @@ int main() {
     const std::vector<std::string> invalid_ignore_args{"/NODEFAULTLIB:"};
     const auto invalid_ignore = mqb::msvc::MsvcDefaultLibraryPolicy::route(invalid_ignore_args);
     expect(!invalid_ignore, "empty NODEFAULTLIB:name declaration must fail before LINK");
+
+    const std::vector<std::string> whole_archive_args{
+        "/WHOLEARCHIVE",
+        "/WHOLEARCHIVE:math",
+        "/WHOLEARCHIVE:nested/direct",
+    };
+    const auto whole_archive = mqb::msvc::MsvcWholeArchivePolicy::route(
+        whole_archive_args,
+        work);
+    expect(whole_archive.has_value(), "valid WHOLEARCHIVE policy should route");
+    if (whole_archive) {
+        expect(whole_archive->passthrough.size() == whole_archive_args.size(),
+               "WHOLEARCHIVE observation must preserve raw linker argument count/order");
+        expect(whole_archive->libraries.size() == 2,
+               "bare WHOLEARCHIVE must not invent an input while path-bearing forms must be tracked");
+        if (whole_archive->libraries.size() == 2) {
+            expect(whole_archive->libraries[0] == "math",
+                   "bare WHOLEARCHIVE library name should preserve linker search semantics");
+            expect(whole_archive->libraries[1]
+                       == path_text((work / "nested/direct").lexically_normal()),
+                   "path-bearing WHOLEARCHIVE should resolve against its supplying layer base");
+
+            mqb::LinkOptions whole_archive_options;
+            whole_archive_options.library_directories = {explicit_dir};
+            whole_archive_options.libraries = whole_archive->libraries;
+            const auto whole_archive_files = mqb::msvc::MsvcLibraryResolver::resolve(
+                toolchain,
+                whole_archive_options,
+                work);
+            expect(whole_archive_files.has_value(),
+                   "WHOLEARCHIVE libraries should resolve as required LINK inputs");
+            if (whole_archive_files && whole_archive_files->files.size() == 2) {
+                expect(whole_archive_files->files[0] == explicit_math.lexically_normal(),
+                       "WHOLEARCHIVE bare names should share structured -L search precedence");
+                expect(whole_archive_files->files[1] == direct.lexically_normal(),
+                       "WHOLEARCHIVE path inputs should resolve to exact freshness files");
+            }
+        }
+    }
+
+    const auto invalid_whole_archive = mqb::msvc::MsvcWholeArchivePolicy::route(
+        std::vector<std::string>{"/WHOLEARCHIVE:"},
+        work);
+    expect(!invalid_whole_archive,
+           "empty WHOLEARCHIVE library declaration must fail before LINK");
 
     const std::vector<std::string> available_requests{
         "math",
