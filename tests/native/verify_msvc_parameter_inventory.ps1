@@ -168,6 +168,7 @@ foreach ($entry in $inventory) {
     $source.Add("verify(mqb::msvc::ParameterTool::$($entry.Tool), $(ConvertToCppString ([string]$entry.Canonical)));")
 }
 $source.Add('expect(mqb::msvc::ParameterTool::linker,"/DEBUG:NONE",mqb::msvc::ParameterOwnership::passthrough);')
+$source.Add('expect(mqb::msvc::ParameterTool::linker,"/MAP",mqb::msvc::ParameterOwnership::passthrough);')
 $source.Add('expect(mqb::msvc::ParameterTool::compiler,"/Zc:trigraphs",mqb::msvc::ParameterOwnership::unsupported);')
 $source.Add('expect(mqb::msvc::ParameterTool::compiler,"/std:c11",mqb::msvc::ParameterOwnership::passthrough);')
 $source.Add('expect(mqb::msvc::ParameterTool::compiler,"/std:c17",mqb::msvc::ParameterOwnership::passthrough);')

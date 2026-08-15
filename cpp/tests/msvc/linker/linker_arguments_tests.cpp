@@ -25,6 +25,12 @@ void expect(const bool condition, const std::string_view message) {
     return std::find(arguments.begin(), arguments.end(), expected) != arguments.end();
 }
 
+[[nodiscard]] bool contains_path(
+    const std::vector<std::filesystem::path>& paths,
+    const std::filesystem::path& expected) {
+    return std::find(paths.begin(), paths.end(), expected) != paths.end();
+}
+
 } // namespace
 
 int main() {
@@ -37,7 +43,7 @@ int main() {
     invocation.options.subsystem = mqb::LinkSubsystem::console;
     invocation.options.library_directories = {"vendor libs"};
     invocation.options.libraries = {"user32.lib"};
-    invocation.options.additional_arguments = {"/MAP", "/OUT:ignored.exe"};
+    invocation.options.additional_arguments = {"/VERBOSE", "/OUT:ignored.exe"};
 
     const auto result = mqb::msvc::MsvcLinker::build_arguments(invocation);
     expect(result.has_value(), "valid link invocation should produce argv");
@@ -53,6 +59,8 @@ int main() {
                "linker should consume exact resolved library path");
         expect(!contains(*result, "user32.lib"),
                "unresolved library token must not be emitted alongside resolved file");
+        expect(contains(*result, "/PDB:bin/my app.pdb"),
+               "effective debug mode should route the linker PDB to an MQB-owned path");
         expect(contains(*result, "/MACHINE:X64"), "x64 should map to /MACHINE:X64");
         expect(contains(*result, "/SUBSYSTEM:CONSOLE"), "console subsystem should map correctly");
         expect(contains(*result, "/OUT:bin/my app.exe"), "structured output should be emitted");
@@ -62,6 +70,47 @@ int main() {
         expect(raw_out != result->end() && planned_out != result->end() && raw_out < planned_out,
                "planned output must override a conflicting raw /OUT");
     }
+
+    expect(mqb::msvc::MsvcLinker::program_database_path(invocation.output)
+               == std::filesystem::path{"bin/my app.pdb"},
+           "program database side-output path should be deterministic");
+    expect(mqb::msvc::MsvcLinker::manifest_file_path(invocation.output)
+               == std::filesystem::path{"bin/my app.exe.manifest"},
+           "external manifest side-output path should retain the binary extension");
+    expect(mqb::msvc::MsvcLinker::program_database_enabled(invocation.options),
+           "Debug configuration should enable a linker PDB by default");
+    expect(mqb::msvc::MsvcLinker::external_manifest_enabled(invocation.options),
+           "external manifest emission should be allowed by LINK's command-line default");
+    const auto debug_outputs = mqb::msvc::MsvcLinker::required_side_output_paths(
+        invocation.output,
+        invocation.options);
+    expect(contains_path(debug_outputs, "bin/my app.pdb"),
+           "Debug required side outputs should include the linker PDB");
+    expect(!contains_path(debug_outputs, "bin/my app.exe.manifest"),
+           "external manifest is conditional on LINK actually producing content and must not be required blindly");
+
+    auto debug_none = invocation;
+    debug_none.options.additional_arguments = {"/DEBUG:NONE"};
+    const auto debug_none_result = mqb::msvc::MsvcLinker::build_arguments(debug_none);
+    expect(debug_none_result.has_value(), "/DEBUG:NONE link invocation should produce argv");
+    if (debug_none_result) {
+        expect(!contains(*debug_none_result, "/PDB:bin/my app.pdb"),
+               "/DEBUG:NONE should not emit an owned PDB path");
+    }
+    expect(!mqb::msvc::MsvcLinker::program_database_enabled(debug_none.options),
+           "raw /DEBUG:NONE should override Debug configuration for PDB output semantics");
+
+    auto embedded_manifest = invocation;
+    embedded_manifest.options.additional_arguments = {"/MANIFEST:EMBED"};
+    expect(!mqb::msvc::MsvcLinker::external_manifest_enabled(embedded_manifest.options),
+           "/MANIFEST:EMBED should disable standalone manifest observation");
+    const auto embedded_outputs = mqb::msvc::MsvcLinker::required_side_output_paths(
+        embedded_manifest.output,
+        embedded_manifest.options);
+    expect(contains_path(embedded_outputs, "bin/my app.pdb"),
+           "embedded manifest mode should retain an independently enabled PDB");
+    expect(!contains_path(embedded_outputs, "bin/my app.exe.manifest"),
+           "external manifest should never be a deterministic required output");
 
     auto changed_library = invocation;
     changed_library.force_full_link = true;
@@ -110,6 +159,8 @@ int main() {
     expect(dll_result.has_value(), "typed DLL link invocation should produce argv");
     if (dll_result) {
         expect(contains(*dll_result, "/DLL"), "DLL target should emit /DLL");
+        expect(contains(*dll_result, "/PDB:bin/plugin.pdb"),
+               "Debug DLL should own a deterministic linker PDB path");
         expect(contains(*dll_result, "/IMPLIB:bin/plugin.lib"),
                "DLL target should own deterministic import-library path");
         expect(contains(*dll_result, "/OUT:bin/plugin.dll"),
@@ -139,8 +190,21 @@ int main() {
         expect(contains(*release_result, "/INCREMENTAL:NO"), "release link should disable incremental linking");
         expect(contains(*release_result, "/OPT:REF"), "release link should enable reference elimination");
         expect(contains(*release_result, "/OPT:ICF"), "release link should enable COMDAT folding");
+        expect(!contains(*release_result, "/PDB:bin/my app.pdb"),
+               "Release without explicit /DEBUG should not request a linker PDB");
         expect(contains(*release_result, "/MACHINE:X86"), "x86 should map correctly");
         expect(contains(*release_result, "/SUBSYSTEM:WINDOWS"), "windows subsystem should map correctly");
+    }
+    expect(!mqb::msvc::MsvcLinker::program_database_enabled(release.options),
+           "Release without /DEBUG should not require a linker PDB");
+
+    auto release_debug = release;
+    release_debug.options.additional_arguments = {"/DEBUG:FULL"};
+    const auto release_debug_result = mqb::msvc::MsvcLinker::build_arguments(release_debug);
+    expect(release_debug_result.has_value(), "Release /DEBUG:FULL invocation should produce argv");
+    if (release_debug_result) {
+        expect(contains(*release_debug_result, "/PDB:bin/my app.pdb"),
+               "Release /DEBUG:FULL should request the owned linker PDB");
     }
 
     auto unresolved = invocation;

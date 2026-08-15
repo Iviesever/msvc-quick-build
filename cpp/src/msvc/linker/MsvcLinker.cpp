@@ -1,5 +1,6 @@
 #include "mqb/msvc/MsvcLinker.hpp"
 
+#include <cctype>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -27,6 +28,14 @@ namespace fs = std::filesystem;
     return std::string{
         reinterpret_cast<const char*>(bytes.data()),
         bytes.size()};
+}
+
+[[nodiscard]] fs::path path_from_utf8(const std::string_view value) {
+    std::u8string bytes;
+    bytes.assign(
+        reinterpret_cast<const char8_t*>(value.data()),
+        reinterpret_cast<const char8_t*>(value.data() + value.size()));
+    return fs::path{bytes};
 }
 
 [[nodiscard]] std::string architecture_argument(const Architecture architecture) {
@@ -62,6 +71,17 @@ void suppress_ambient_linker_options(
     // making the explicit MQB argv authoritative.
     environment.push_back(process::EnvironmentVariable{"LINK", {}});
     environment.push_back(process::EnvironmentVariable{"_LINK_", {}});
+}
+
+[[nodiscard]] std::string linker_option_body_upper(const std::string_view argument) {
+    if (argument.size() < 2 || (argument.front() != '/' && argument.front() != '-')) {
+        return {};
+    }
+    std::string body{argument.substr(1)};
+    for (char& character : body) {
+        character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+    }
+    return body;
 }
 
 } // namespace
@@ -117,6 +137,101 @@ fs::path MsvcLinker::export_file_path(const fs::path& output) {
     return export_file;
 }
 
+fs::path MsvcLinker::program_database_path(const fs::path& output) {
+    fs::path program_database = output;
+    program_database.replace_extension(".pdb");
+    return program_database;
+}
+
+fs::path MsvcLinker::manifest_file_path(const fs::path& output) {
+    fs::path manifest = output;
+    manifest += ".manifest";
+    return manifest;
+}
+
+std::optional<fs::path> MsvcLinker::map_file_path(
+    const fs::path& output,
+    const LinkOptions& options,
+    const fs::path& working_directory) {
+    std::optional<fs::path> map_file;
+    for (const auto& argument : options.additional_arguments) {
+        if (argument.size() < 2 || (argument.front() != '/' && argument.front() != '-')) {
+            continue;
+        }
+        const std::string_view raw_body{argument.data() + 1, argument.size() - 1};
+        const std::string body = linker_option_body_upper(argument);
+        if (body == "MAP") {
+            fs::path default_map = output;
+            default_map.replace_extension(".map");
+            map_file = std::move(default_map);
+            continue;
+        }
+        if (!body.starts_with("MAP:")) {
+            continue;
+        }
+
+        const std::string_view value = raw_body.substr(std::string_view{"MAP:"}.size());
+        if (value.empty()) {
+            fs::path default_map = output;
+            default_map.replace_extension(".map");
+            map_file = std::move(default_map);
+            continue;
+        }
+
+        fs::path explicit_map = path_from_utf8(value);
+        if (explicit_map.is_relative() && !working_directory.empty()) {
+            explicit_map = working_directory / explicit_map;
+        }
+        map_file = explicit_map.lexically_normal();
+    }
+    return map_file;
+}
+
+bool MsvcLinker::program_database_enabled(const LinkOptions& options) {
+    bool enabled = options.configuration == BuildConfiguration::debug;
+    for (const auto& argument : options.additional_arguments) {
+        const std::string body = linker_option_body_upper(argument);
+        if (body == "DEBUG" || body == "DEBUG:FULL" || body == "DEBUG:FASTLINK") {
+            enabled = true;
+        } else if (body == "DEBUG:NONE") {
+            enabled = false;
+        }
+    }
+    return enabled;
+}
+
+bool MsvcLinker::external_manifest_enabled(const LinkOptions& options) {
+    // LINK's command-line default allows an external manifest, but whether a
+    // standalone file is emitted depends on the effective manifest content.
+    // This function only models whether external emission is allowed; the
+    // coordinator observes whether LINK actually produced the optional file.
+    bool enabled = true;
+    for (const auto& argument : options.additional_arguments) {
+        const std::string body = linker_option_body_upper(argument);
+        if (body == "MANIFEST") {
+            enabled = true;
+        } else if (body == "MANIFEST:NO" || body.starts_with("MANIFEST:EMBED")) {
+            enabled = false;
+        }
+    }
+    return enabled;
+}
+
+std::vector<fs::path> MsvcLinker::required_side_output_paths(
+    const fs::path& output,
+    const LinkOptions& options,
+    const fs::path& working_directory) {
+    std::vector<fs::path> paths;
+    paths.reserve(2);
+    if (program_database_enabled(options)) {
+        paths.push_back(program_database_path(output));
+    }
+    if (auto map_file = map_file_path(output, options, working_directory)) {
+        paths.push_back(std::move(*map_file));
+    }
+    return paths;
+}
+
 std::expected<std::vector<std::string>, LinkerError>
 MsvcLinker::build_arguments(const LinkInvocation& invocation) {
     if (invocation.options.target_kind == TargetKind::static_library) {
@@ -156,7 +271,7 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        16
+        18
         + invocation.objects.size()
         + invocation.options.library_directories.size()
         + invocation.libraries.size()
@@ -197,10 +312,16 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
         arguments.push_back(argument);
     }
 
-    // A library-change full link is MQB execution policy rather than a user
-    // linker preference. Emit it after raw flags so stale .ilk state cannot be
-    // re-enabled by a passthrough /INCREMENTAL argument.
-    if (invocation.force_full_link) {
+    // Library/file-input changes already require a full link to avoid stale
+    // .ilk state. A requested mapfile also needs a full LINK pass whenever a
+    // link action runs: LINK can otherwise report success for an unchanged
+    // incremental image without recreating a deleted .map file. Emit the final
+    // execution policy after raw flags so user /INCREMENTAL cannot override it.
+    if (invocation.force_full_link
+        || map_file_path(
+            invocation.output,
+            invocation.options,
+            invocation.working_directory)) {
         arguments.emplace_back("/INCREMENTAL:NO");
     }
 
@@ -208,6 +329,13 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
     // linker arguments. This keeps the coupled /GL + /LTCG contract authoritative.
     if (invocation.options.link_time_code_generation) {
         arguments.emplace_back("/LTCG");
+    }
+
+    // When debug information is effective, make the linker PDB an MQB-owned
+    // deterministic side artifact. The explicit path follows raw flags so a
+    // user cannot redirect it outside the cache/artifact graph.
+    if (program_database_enabled(invocation.options)) {
+        arguments.push_back("/PDB:" + path_to_utf8(program_database_path(invocation.output)));
     }
 
     // Structured routing is emitted after raw flags so the BuildPlan owns the

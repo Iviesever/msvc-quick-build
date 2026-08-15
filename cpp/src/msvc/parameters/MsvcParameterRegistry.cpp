@@ -194,7 +194,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     static constexpr std::array passthrough_exact{
         "?"sv, "ALLOWBIND"sv, "ALLOWISOLATION"sv, "APPCONTAINER"sv, "ASSEMBLYDEBUG"sv, "CETCOMPAT"sv, "DEBUG"sv, "DEBUG:FULL"sv, "DEBUG:NONE"sv,
         "DELAYSIGN"sv, "DYNAMICBASE"sv, "DYNAMICDEOPT"sv, "FIXED"sv, "FORCE"sv, "FUNCTIONPADMIN"sv, "HIGHENTROPYVA"sv, "IGNOREIDL"sv,
-        "INCREMENTAL"sv, "INCREMENTAL:NO"sv, "INFERASANLIBS"sv, "INTEGRITYCHECK"sv, "LARGEADDRESSAWARE"sv, "MAP"sv, "MANIFEST"sv,
+        "INCREMENTAL"sv, "INCREMENTAL:NO"sv, "INFERASANLIBS"sv, "INTEGRITYCHECK"sv, "LARGEADDRESSAWARE"sv, "MANIFEST"sv, "MAP"sv,
         "MANIFEST:NO"sv, "NOASSEMBLY"sv, "NODEFAULTLIB"sv, "NOENTRY"sv, "NOFUNCTIONPADSECTION"sv, "NOLOGO"sv, "NXCOMPAT"sv,
         "PROFILE"sv, "RELEASE"sv, "SAFESEH"sv, "TIME"sv, "TSAWARE"sv, "VERBOSE"sv, "WHOLEARCHIVE"sv, "WX"sv, "WX:NO"sv,
     };
@@ -221,7 +221,9 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
                                 ? "MS-DOS stub executable is preserved in linker argv and tracked through MQB's generic link file-input freshness graph"
                                 : body.starts_with("MANIFESTINPUT:")
                                     ? "manifest input is preserved in linker argv and cumulatively tracked through MQB's generic link file-input freshness graph"
-                                    : "validated linker option is preserved verbatim in link identity");
+                                    : body == "MAP" || body.starts_with("MAP:")
+                                        ? "mapfile output is preserved in linker argv and tracked through MQB's link side-output repair graph"
+                                        : "validated linker option is preserved verbatim in link identity");
     }
     return unregistered(ParameterTool::linker, body);
 }
