@@ -21,6 +21,7 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
 #include "mqb/discovery/SourceDiscovery.hpp"
+#include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcParameterCapabilities.hpp"
@@ -603,6 +604,10 @@ int Application::run(const std::span<const std::string_view> arguments) {
     run_spec.working_directory = project_root;
     run_spec.capture_stdout = true;
     run_spec.capture_stderr = true;
+    if (mqb::msvc::MsvcAddressSanitizerPolicy::compiler_enabled(
+            request.compiler_options.additional_arguments)) {
+        mqb::msvc::MsvcAddressSanitizerPolicy::apply_runtime_path(run_spec, *toolchain);
+    }
 
     auto run_result = runner.run(run_spec);
     if (!run_result) {
