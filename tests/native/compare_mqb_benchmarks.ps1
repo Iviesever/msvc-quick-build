@@ -9,6 +9,20 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
+$RequiredScenarios = @(
+    'cold',
+    'no-op',
+    'single-tu',
+    'public-header',
+    'build-run',
+    'link-only',
+    'discovery-cold',
+    'discovery-no-op',
+    'discovery-header',
+    'modules-cold',
+    'modules-no-op'
+)
+
 function Get-FullPath {
     param([Parameter(Mandatory = $true)][string]$Path)
     return [System.IO.Path]::GetFullPath($Path)
@@ -21,6 +35,65 @@ function Get-DeltaPercent {
     )
     if ($Baseline -eq 0.0) { return $null }
     return (($Candidate - $Baseline) / $Baseline) * 100.0
+}
+
+function Assert-BenchmarkContract {
+    param(
+        [Parameter(Mandatory = $true)][string]$Label,
+        [Parameter(Mandatory = $true)]$Report,
+        [Parameter(Mandatory = $true)][int]$ExpectedIterations
+    )
+
+    if ([int]$Report.schema_version -lt 2) {
+        throw "$Label benchmark schema is too old: expected schema_version >= 2, got $($Report.schema_version)"
+    }
+    if ([int]$Report.iterations -ne $ExpectedIterations) {
+        throw "$Label benchmark iteration contract mismatch: expected $ExpectedIterations, got $($Report.iterations)"
+    }
+
+    $summaryRows = @($Report.summary)
+    $sampleRows = @($Report.samples)
+    if ($summaryRows.Count -eq 0) {
+        throw "$Label benchmark produced no summary rows"
+    }
+
+    $summaryByScenario = @{}
+    foreach ($row in $summaryRows) {
+        $scenario = [string]$row.scenario
+        if ([string]::IsNullOrWhiteSpace($scenario)) {
+            throw "$Label benchmark contains a summary row with an empty scenario name"
+        }
+        if ($summaryByScenario.ContainsKey($scenario)) {
+            throw "$Label benchmark contains duplicate summary scenario '$scenario'"
+        }
+        $summaryByScenario[$scenario] = $row
+    }
+
+    foreach ($scenario in $RequiredScenarios) {
+        if (-not $summaryByScenario.ContainsKey($scenario)) {
+            throw "$Label benchmark is missing required scenario '$scenario'"
+        }
+
+        $summarySamples = [int]$summaryByScenario[$scenario].samples
+        if ($summarySamples -ne $ExpectedIterations) {
+            throw "$Label benchmark scenario '$scenario' summary has $summarySamples samples; expected $ExpectedIterations"
+        }
+
+        $rawSamples = @($sampleRows | Where-Object { [string]$_.scenario -eq $scenario })
+        if ($rawSamples.Count -ne $ExpectedIterations) {
+            throw "$Label benchmark scenario '$scenario' has $($rawSamples.Count) raw samples; expected $ExpectedIterations"
+        }
+
+        $iterationsSeen = @($rawSamples | ForEach-Object { [int]$_.iteration } | Sort-Object -Unique)
+        if ($iterationsSeen.Count -ne $ExpectedIterations) {
+            throw "$Label benchmark scenario '$scenario' does not contain one distinct sample for every iteration"
+        }
+        for ($iteration = 1; $iteration -le $ExpectedIterations; ++$iteration) {
+            if ($iteration -notin $iterationsSeen) {
+                throw "$Label benchmark scenario '$scenario' is missing iteration $iteration"
+            }
+        }
+    }
 }
 
 $BaselineMqbPath = Get-FullPath $BaselineMqbPath
@@ -59,6 +132,9 @@ try {
 
     $baseline = Get-Content -LiteralPath $baselineJson -Raw | ConvertFrom-Json
     $candidate = Get-Content -LiteralPath $candidateJson -Raw | ConvertFrom-Json
+
+    Assert-BenchmarkContract -Label 'Baseline' -Report $baseline -ExpectedIterations $Iterations
+    Assert-BenchmarkContract -Label 'Candidate' -Report $candidate -ExpectedIterations $Iterations
 
     $candidateByScenario = @{}
     foreach ($row in @($candidate.summary)) {
@@ -115,6 +191,7 @@ try {
             schema_version = 2
             generated_utc = [DateTime]::UtcNow.ToString('o')
             iterations = $Iterations
+            required_scenarios = $RequiredScenarios
             baseline_mqb = $BaselineMqbPath
             candidate_mqb = $CandidateMqbPath
             comparison = @($comparison | Sort-Object scenario)
