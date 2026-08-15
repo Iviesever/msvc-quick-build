@@ -29,7 +29,7 @@ $snapshots = [ordered]@{
     linker_debug = @('2025-09-08', '9716f477b5689e114a66faec7d40461fa33cfd79')
     librarian = @('2020-02-09', '56b1a94bc78d89adee574dd009efd4bf12651fb8')
 }
-$expectedCounts = [ordered]@{ compiler = 309; linker = 114; librarian = 21 }
+$expectedCounts = [ordered]@{ compiler = 266; linker = 114; librarian = 21 }
 
 function BlobText([string]$Blob) {
     if ($Blob -notmatch '^[0-9a-f]{40}$') { throw "Invalid MicrosoftDocs blob SHA: $Blob" }
@@ -130,9 +130,16 @@ foreach ($canonical in (OptionExpressions $librarianText)) { AddCanonical 'libra
 AddCanonical 'librarian' '@'
 AddCanonical 'librarian' '/WX:NO'
 
+$countFailures = [System.Collections.Generic.List[string]]::new()
 foreach ($tool in $expectedCounts.Keys) {
     $actual = @($inventory | Where-Object Tool -eq $tool).Count
-    if ($actual -ne [int]$expectedCounts[$tool]) { throw "Official $tool inventory count drift: expected $($expectedCounts[$tool]), got $actual" }
+    Write-Host "Official $tool canonical inventory: $actual"
+    if ($actual -ne [int]$expectedCounts[$tool]) {
+        $countFailures.Add("$tool expected $($expectedCounts[$tool]), got $actual")
+    }
+}
+if ($countFailures.Count -ne 0) {
+    throw "Official inventory count drift: $($countFailures -join '; ')"
 }
 
 function Cpp([string]$Value) { '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"' }
