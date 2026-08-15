@@ -61,6 +61,12 @@ public:
     [[nodiscard]] static std::filesystem::path
     manifest_file_path(const std::filesystem::path& output);
 
+    [[nodiscard]] static std::optional<std::filesystem::path>
+    map_file_path(
+        const std::filesystem::path& output,
+        const LinkOptions& options,
+        const std::filesystem::path& working_directory = {});
+
     // Evaluate final LINK output semantics after MQB's configuration defaults
     // and raw user linker options are applied in command-line order.
     [[nodiscard]] static bool
@@ -69,13 +75,14 @@ public:
     [[nodiscard]] static bool
     external_manifest_enabled(const LinkOptions& options);
 
-    // Correctness-bearing deterministic side outputs. Missing files from this
-    // set invalidate the link cache. Recoverable performance state such as .ilk
-    // is deliberately excluded.
+    // Deterministic LINK side outputs derivable from configuration/raw policy.
+    // The coordinator distinguishes explicitly requested outputs (for example
+    // /MAP) from conditionally emitted outputs such as PDB/manifest files.
     [[nodiscard]] static std::vector<std::filesystem::path>
     required_side_output_paths(
         const std::filesystem::path& output,
-        const LinkOptions& options);
+        const LinkOptions& options,
+        const std::filesystem::path& working_directory = {});
 
     [[nodiscard]] static std::expected<std::vector<std::string>, LinkerError>
     build_arguments(const LinkInvocation& invocation);
