@@ -14,6 +14,7 @@
 #include "mqb/core/FileSnapshot.hpp"
 #include "mqb/core/LinkCache.hpp"
 #include "mqb/core/LinkCacheFile.hpp"
+#include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcParameterEngine.hpp"
@@ -118,10 +119,23 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         linker_file_inputs.push_back(input.path);
     }
 
+    auto default_library_routing = msvc::MsvcDefaultLibraryPolicy::route(
+        request.options.additional_arguments);
+    if (!default_library_routing) {
+        return std::unexpected(IncrementalLinkError{
+            .code = IncrementalLinkErrorCode::linker_parameter_invalid,
+            .message = "invalid native MSVC default-library policy: "
+                + default_library_routing.error().message,
+            .parameter_error = default_library_routing.error(),
+        });
+    }
+
+    const fs::path working_directory =
+        request.working_directory.value_or(fs::path{});
     auto resolved_libraries = msvc::MsvcLibraryResolver::resolve(
         toolchain_,
         request.options,
-        request.working_directory.value_or(fs::path{}));
+        working_directory);
     if (!resolved_libraries) {
         IncrementalLinkError error{
             .code = IncrementalLinkErrorCode::library_resolution_failed,
@@ -131,6 +145,25 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         };
         return std::unexpected(std::move(error));
     }
+
+    auto resolved_default_libraries = msvc::MsvcLibraryResolver::resolve_available(
+        toolchain_,
+        default_library_routing->effective_libraries,
+        request.options.library_directories,
+        working_directory);
+    if (!resolved_default_libraries) {
+        IncrementalLinkError error{
+            .code = IncrementalLinkErrorCode::library_resolution_failed,
+            .message = "failed to resolve MSVC default-library freshness evidence: "
+                + resolved_default_libraries.error().message,
+            .library_resolution_error = resolved_default_libraries.error(),
+        };
+        return std::unexpected(std::move(error));
+    }
+    linker_file_inputs.insert(
+        linker_file_inputs.end(),
+        resolved_default_libraries->files.begin(),
+        resolved_default_libraries->files.end());
 
     std::optional<LinkCacheEntry> cached_entry;
     auto loaded = LinkCacheFile::load(request.cache_file);
@@ -229,7 +262,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         .output = action->output,
         .libraries = action->libraries,
         .options = request.options,
-        .working_directory = request.working_directory.value_or(fs::path{}),
+        .working_directory = working_directory,
         .force_full_link = result.validation.library_inputs_changed
             || result.validation.file_inputs_changed
             || linker_file_routing->requires_full_link,
