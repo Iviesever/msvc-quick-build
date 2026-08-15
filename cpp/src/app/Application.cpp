@@ -24,6 +24,7 @@
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcParameterCapabilities.hpp"
+#include "mqb/msvc/MsvcParameterEngine.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
@@ -214,6 +215,13 @@ int Application::run(const std::span<const std::string_view> arguments) {
     if (options.discover_sources
         && requested_sources.size() == 1
         && !mqb::cli::is_module_interface_source(requested_sources.front())) {
+        auto forced_includes = mqb::msvc::MsvcParameterEngine::forced_includes(
+            options.compiler_arguments);
+        if (!forced_includes) {
+            diagnostics::print_error(forced_includes.error().message);
+            return 2;
+        }
+
         const fs::path& entry = requested_sources.front();
         const bool project_scoped = inside_project(project_root, entry);
         const fs::path discovery_root = project_scoped
@@ -223,6 +231,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
             .project_root = discovery_root,
             .entry = entry,
             .include_directories = options.discovery_include_directories,
+            .forced_includes = std::move(*forced_includes),
         };
         if (project_scoped) {
             discovery_request.excluded_directories = effective.discovery_exclude_directories;
@@ -257,7 +266,6 @@ int Application::run(const std::span<const std::string_view> arguments) {
 
     const mqb::orchestration::ParallelismPolicy parallelism = options.jobs.value_or(
         mqb::orchestration::ParallelismPolicy::automatic());
-
     auto layout = mqb::ProjectArtifactLayout::create(project_root);
     if (!layout) {
         diagnostics::print_error(layout.error().message);

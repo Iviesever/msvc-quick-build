@@ -243,6 +243,64 @@ int main() {
         }
     }
 
+    {
+        TempTree forced_tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_source_discovery_forced_" + std::to_string(unique)),
+        };
+        const fs::path forced_entry = forced_tree.root / "main.cpp";
+        const fs::path forced_include_dir = forced_tree.root / "include";
+        const fs::path forced_header = forced_include_dir / "forced.hpp";
+        const fs::path forced_source = forced_include_dir / "forced.cpp";
+        const fs::path forced_unrelated = forced_tree.root / "unrelated.cpp";
+        write_text(forced_entry, "int main() { return forced_value(); }\n");
+        write_text(forced_header, "#pragma once\nint forced_value();\n");
+        write_text(forced_source, "int forced_value() { return 0; }\n");
+        write_text(forced_unrelated, "int unrelated_forced_fixture() { return 1; }\n");
+
+        const auto forced = mqb::discovery::SourceDiscovery::discover({
+            .project_root = forced_tree.root,
+            .entry = forced_entry,
+            .include_directories = {forced_include_dir},
+            .forced_includes = {"forced.hpp"},
+            .persistent_cache = false,
+        });
+        expect(forced.has_value(),
+               "indexed /FI header should participate in smart source discovery");
+        if (forced) {
+            expect(contains_source(forced->sources, forced_source),
+                   "forced header ownership should connect its same-stem implementation source");
+            expect(!contains_source(forced->sources, forced_unrelated),
+                   "forced header must not become a global hub that selects unrelated sources");
+            expect(forced->sources.size() == 2,
+                   "forced-include fixture should select only entry plus forced-header owner source");
+        }
+
+        const auto missing_forced = mqb::discovery::SourceDiscovery::discover({
+            .project_root = forced_tree.root,
+            .entry = forced_entry,
+            .include_directories = {forced_include_dir},
+            .forced_includes = {"missing.hpp"},
+            .persistent_cache = false,
+        });
+        expect(!missing_forced
+                   && missing_forced.error().code
+                       == mqb::discovery::ErrorCode::unresolved_forced_include,
+               "unresolved /FI should fail closed under smart discovery");
+
+        const auto non_header_forced = mqb::discovery::SourceDiscovery::discover({
+            .project_root = forced_tree.root,
+            .entry = forced_entry,
+            .include_directories = {forced_include_dir},
+            .forced_includes = {"forced.cpp"},
+            .persistent_cache = false,
+        });
+        expect(!non_header_forced
+                   && non_header_forced.error().code
+                       == mqb::discovery::ErrorCode::unresolved_forced_include,
+               "first forced-include promotion should reject indexed non-header targets");
+    }
+
     const auto invalid_root = mqb::discovery::SourceDiscovery::discover({
         .project_root = tree.root / "missing-root",
         .entry = main_source,

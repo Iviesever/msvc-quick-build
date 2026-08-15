@@ -211,6 +211,7 @@ SourceDiscovery::discover(const Request& request) {
         .project_root = root,
         .entry = entry,
         .include_directories = include_directories,
+        .forced_includes = request.forced_includes,
         .excluded_directories = excluded_directories,
         .extra_sources = extra_sources,
         .excluded_sources = excluded_sources,
@@ -266,8 +267,16 @@ SourceDiscovery::discover(const Request& request) {
         indexed->files,
         indexed->index_by_path,
         include_directories,
+        request.forced_includes,
         excluded_source_keys,
         entry_it->second);
+    if (!selection.unresolved_forced_includes.empty()) {
+        return std::unexpected(failure(
+            ErrorCode::unresolved_forced_include,
+            selection.unresolved_forced_includes.front(),
+            "compiler /FI forced include must resolve to an indexed project header under smart discovery; use --no-discover only when source selection is explicitly managed"));
+    }
+
     result.sources.reserve(selection.selected_indices.size() + extra_sources.size());
     for (const std::size_t index : selection.selected_indices) {
         result.sources.push_back(indexed->files[index].path);

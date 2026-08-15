@@ -23,6 +23,7 @@ enum class ErrorCode {
     invalid_project_root,
     invalid_entry,
     invalid_correction,
+    unresolved_forced_include,
     enumeration_failed,
 };
 
@@ -36,6 +37,12 @@ struct Request {
     std::filesystem::path project_root;
     std::filesystem::path entry;
     std::vector<std::filesystem::path> include_directories;
+    // Raw /FI operands in compiler order. Each is resolved with quoted-include
+    // semantics from the entry source plus the effective include search path.
+    // The current promotion deliberately requires the target to exist in the
+    // indexed discovery graph instead of silently accepting an external forced
+    // header that smart discovery cannot inspect.
+    std::vector<std::filesystem::path> forced_includes;
     std::vector<std::filesystem::path> excluded_directories;
     std::vector<std::filesystem::path> extra_sources;
     std::vector<std::filesystem::path> excluded_sources;

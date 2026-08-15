@@ -119,7 +119,7 @@ int main() {
                "persistent discovery reuse must preserve indexed-file accounting");
     }
 
-    force_cache_format_version(default_cache, 1u);
+    force_cache_format_version(default_cache, 2u);
     const auto stale_format = mqb::discovery::SourceDiscovery::discover(request);
     expect(stale_format.has_value(), "stale-format discovery cache should fall back safely");
     if (stale_format) {
@@ -180,6 +180,20 @@ int main() {
         expect(!request_changed->reused,
                "include search order changes must invalidate discovery request identity");
     }
+
+    mqb::discovery::Request forced_request = request;
+    forced_request.forced_includes.push_back("src/value.hpp");
+    const auto forced_changed = mqb::discovery::SourceDiscovery::discover(forced_request);
+    expect(forced_changed.has_value(), "discovery with forced include identity should succeed");
+    if (forced_changed) {
+        expect(!forced_changed->reused,
+               "adding ordered /FI semantics must invalidate prior discovery evidence");
+        expect(contains_source(forced_changed->sources, implementation),
+               "forced-include identity change must preserve correct source closure");
+    }
+    const auto forced_warm = mqb::discovery::SourceDiscovery::discover(forced_request);
+    expect(forced_warm.has_value() && forced_warm->reused,
+           "unchanged forced-include request should reuse v3 discovery evidence");
 
     write_text(default_cache, "not a valid MQB discovery cache");
     const auto corrupt_cache = mqb::discovery::SourceDiscovery::discover(request);

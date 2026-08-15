@@ -86,9 +86,6 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (body == "Y-" || body.starts_with("Yc") || body.starts_with("Yu") || body.starts_with("Yl")) {
         return compiler_unsupported(body, "PCH selection and artifacts are reserved for MQB's first-class PCH pipeline");
     }
-    if (body == "FI" || body.starts_with("FI")) {
-        return compiler_unsupported(body, "forced includes change translation-unit dependency semantics; raw /FI is reserved until it is represented in MQB discovery/freshness evidence");
-    }
     if (body == "FU" || body.starts_with("FU")) {
         return compiler_unsupported(body, "forced metadata references introduce an external file input that is not represented in MQB's compile freshness graph");
     }
@@ -131,7 +128,7 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     };
     static constexpr std::array passthrough_prefix{
         "AI"sv, "arch"sv, "await"sv, "cgthreads"sv, "constexpr:"sv, "D"sv, "diagnostics"sv, "EH"sv,
-        "execution-charset"sv, "external:"sv, "favor:"sv, "feature"sv, "forceInterlockedFunctions"sv,
+        "execution-charset"sv, "external:"sv, "favor:"sv, "feature"sv, "FI"sv, "forceInterlockedFunctions"sv,
         "fp:"sv, "fpcvt:"sv, "fsanitize"sv, "Gd"sv, "Gr"sv, "GR"sv, "GS"sv, "Gs"sv, "Gu"sv, "guard:"sv, "Gw"sv, "Gy"sv,
         "I"sv, "Ob"sv, "Oi"sv, "openmp"sv, "Qpar"sv, "Qpar-report:"sv, "Qspectre"sv, "Qvec-report:"sv, "RTC"sv,
         "source-charset"sv, "U"sv, "vd"sv, "vm"sv, "volatile:"sv, "w1"sv, "w2"sv, "w3"sv, "w4"sv, "wd"sv, "we"sv, "wo"sv,

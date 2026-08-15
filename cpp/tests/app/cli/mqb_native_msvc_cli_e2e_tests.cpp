@@ -36,6 +36,14 @@ void write_text(const fs::path& path, const std::string_view text) {
     stream << text;
 }
 
+void force_newer_timestamp(const fs::path& path) {
+    std::error_code error_code;
+    const auto current = fs::last_write_time(path, error_code);
+    if (!error_code) {
+        fs::last_write_time(path, current + std::chrono::seconds{2}, error_code);
+    }
+}
+
 void dump_failure(const mqb::process::ProcessResult& result) {
     std::cerr << "exit: " << result.exit_code << '\n'
               << "stdout:\n" << result.stdout_text << '\n'
@@ -209,6 +217,22 @@ void verify_parser_contract() {
                        && parsed->compiler_arguments[0] == "/Iinclude"
                        && parsed->compiler_arguments[1] == "/DATTACHED=1",
                    "attached /I and /D should remain opaque native tokens for parameter routing");
+        }
+    }
+
+    {
+        const std::vector arguments{"main.cpp"sv, "/FI"sv, "forced header.hpp"sv, "/W4"sv};
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "split native /FI form should parse");
+        if (parsed) {
+            expect(parsed->compiler_arguments.size() == 3
+                       && parsed->compiler_arguments[0] == "/FI"
+                       && parsed->compiler_arguments[1] == "forced header.hpp"
+                       && parsed->compiler_arguments[2] == "/W4",
+                   "split /FI must preserve option/operand ordering for parameter/discovery routing");
+            expect(parsed->build.sources.size() == 1
+                       && parsed->build.sources.front() == "main.cpp",
+                   "native /FI operand must not become a positional source");
         }
     }
 
@@ -413,6 +437,56 @@ void verify_native_candidate_e2e(const fs::path& mqb_executable) {
         expect(response->exit_code == 2, "direct @response should fail closed before cl.exe");
         expect(response->stderr_text.find("response files") != std::string::npos,
                "direct @response should retain parameter-engine safety diagnostics");
+    }
+
+    const fs::path forced_root = tree.root / "forced-include";
+    const fs::path forced_header = forced_root / "forced.hpp";
+    const fs::path forced_source = forced_root / "main.cpp";
+    write_text(forced_header, "#pragma once\n#define FORCED_EXIT_CODE 17\n");
+    write_text(forced_source, "int main() { return FORCED_EXIT_CODE; }\n");
+
+    const std::vector<std::string> forced_build_args{
+        "main.cpp", "--env", "vs", "-o", "forced_include", "/FI", "forced.hpp"};
+    auto forced_build = run_process(
+        runner,
+        mqb_executable,
+        forced_root,
+        forced_build_args);
+    expect(forced_build.has_value(), "native /FI smart-discovery build should launch");
+    if (forced_build) {
+        if (forced_build->exit_code != 0) dump_failure(*forced_build);
+        expect(forced_build->exit_code == 0,
+               "indexed native /FI should compile successfully with smart discovery enabled");
+    }
+
+    const fs::path forced_executable =
+        forced_root / ".mqb" / "bin" / "forced_include.exe";
+    auto forced_run = run_process(runner, forced_executable, forced_root);
+    expect(forced_run.has_value(), "native /FI executable should launch");
+    if (forced_run) {
+        expect(forced_run->exit_code == 17,
+               "initial forced header should affect compiled executable behavior");
+    }
+
+    write_text(forced_header, "#pragma once\n#define FORCED_EXIT_CODE 23\n");
+    force_newer_timestamp(forced_header);
+    auto forced_rebuild = run_process(
+        runner,
+        mqb_executable,
+        forced_root,
+        forced_build_args);
+    expect(forced_rebuild.has_value(), "native /FI rebuild after header mutation should launch");
+    if (forced_rebuild) {
+        if (forced_rebuild->exit_code != 0) dump_failure(*forced_rebuild);
+        expect(forced_rebuild->exit_code == 0,
+               "forced-header mutation should remain a successful incremental build");
+    }
+
+    auto forced_rerun = run_process(runner, forced_executable, forced_root);
+    expect(forced_rerun.has_value(), "rebuilt native /FI executable should launch");
+    if (forced_rerun) {
+        expect(forced_rerun->exit_code == 23,
+               "forced header must participate in compile freshness instead of reusing stale object state");
     }
 }
 
