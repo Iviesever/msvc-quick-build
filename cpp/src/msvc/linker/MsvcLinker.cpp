@@ -146,7 +146,7 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        15
+        16
         + invocation.objects.size()
         + invocation.options.library_directories.size()
         + invocation.libraries.size()
@@ -155,10 +155,12 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
     arguments.emplace_back("/NOLOGO");
     if (invocation.options.configuration == BuildConfiguration::debug) {
         arguments.emplace_back("/DEBUG");
-        arguments.emplace_back(
-            invocation.options.link_time_code_generation || invocation.force_full_link
-                ? "/INCREMENTAL:NO"
-                : "/INCREMENTAL");
+        if (!invocation.force_full_link) {
+            arguments.emplace_back(
+                invocation.options.link_time_code_generation
+                    ? "/INCREMENTAL:NO"
+                    : "/INCREMENTAL");
+        }
     } else {
         arguments.emplace_back("/INCREMENTAL:NO");
         arguments.emplace_back("/OPT:REF");
@@ -183,6 +185,13 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
                 "additional linker argument must not be empty"));
         }
         arguments.push_back(argument);
+    }
+
+    // A library-change full link is MQB execution policy rather than a user
+    // linker preference. Emit it after raw flags so stale .ilk state cannot be
+    // re-enabled by a passthrough /INCREMENTAL argument.
+    if (invocation.force_full_link) {
+        arguments.emplace_back("/INCREMENTAL:NO");
     }
 
     // Typed LTCG is downstream structured policy and therefore follows raw
