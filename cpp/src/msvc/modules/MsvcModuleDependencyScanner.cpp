@@ -62,6 +62,15 @@ void append_configuration_macro(
     }
 }
 
+void suppress_ambient_compiler_options(
+    std::vector<process::EnvironmentVariable>& environment) {
+    // P1689 scans are compiler invocations too. They must observe the same
+    // explicit option surface as real compiles or hidden CL/_CL_ arguments can
+    // change topology without changing MQB's module-scan identity.
+    environment.push_back(process::EnvironmentVariable{"CL", {}});
+    environment.push_back(process::EnvironmentVariable{"_CL_", {}});
+}
+
 [[nodiscard]] std::expected<void, ModuleScanError> prepare_output(
     const fs::path& output) {
     const fs::path parent = output.parent_path();
@@ -202,6 +211,7 @@ MsvcModuleDependencyScanner::scan(const ModuleScanInvocation& invocation) const 
     spec.arguments = std::move(*arguments);
     spec.working_directory = invocation.working_directory;
     spec.environment = toolchain_.environment;
+    suppress_ambient_compiler_options(spec.environment);
     spec.inherit_environment = true;
     spec.capture_stdout = true;
     spec.capture_stderr = true;
