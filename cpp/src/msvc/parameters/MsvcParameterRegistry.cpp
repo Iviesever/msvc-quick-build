@@ -92,6 +92,9 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (body == "FU" || body.starts_with("FU")) {
         return compiler_unsupported(body, "forced metadata references introduce an external file input that is not represented in MQB's compile freshness graph");
     }
+    if (body == "external:env" || body.starts_with("external:env:")) {
+        return compiler_unsupported(body, "environment-backed external include directories can change header search without entering MQB's compile identity or discovery model; use explicit /external:I or -I paths instead");
+    }
     if (body == "experimental:log" || body.starts_with("experimental:log")) {
         return compiler_unsupported(body, "option creates a diagnostic log artifact that is not represented in MQB's cache/artifact graph");
     }
@@ -213,7 +216,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     if (contains_exact(std::string_view{body}, passthrough_exact) || starts_with_any(std::string_view{body}, passthrough_prefix)) {
         return classified(ParameterTool::linker, ParameterOwnership::passthrough, "/" + body,
             body.starts_with("WHOLEARCHIVE:")
-                ? "path-bearing /WHOLEARCHIVE is preserved in link identity; declare the same library through structured --lib input so freshness is tracked"
+                ? "path-bearing /WHOLEARCHIVE is preserved in linker argv and its resolved library is tracked through MQB's generic link file-input freshness graph"
                 : body.starts_with("DEFAULTLIB:")
                     ? "user-declared default library remains in raw LINK argv while MQB resolves the effective declaration separately for freshness without changing library search priority"
                     : body.starts_with("DEF:")
