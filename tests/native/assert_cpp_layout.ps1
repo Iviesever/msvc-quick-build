@@ -231,6 +231,7 @@ $msvcLeafFiles = [ordered]@{
         'PortableToolchainDiscovery.cpp', 'PortableToolchainDiscovery.hpp',
         'ToolchainDiscoveryPrimitives.cpp', 'ToolchainDiscoveryPrimitives.hpp',
         'VisualStudioEnvironment.cpp', 'VisualStudioEnvironment.hpp',
+        'VisualStudioToolchainCache.cpp', 'VisualStudioToolchainCache.hpp',
         'VisualStudioToolchainDiscovery.cpp', 'VisualStudioToolchainDiscovery.hpp'
     )
 }

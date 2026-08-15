@@ -48,6 +48,7 @@
       "src/msvc/parameters/MsvcParameterEngine.cpp",
       "src/msvc/parameters/MsvcParameterRegistry.cpp",
       "src/msvc/toolchain/MsvcToolchainLocator.cpp",
+      "src/msvc/toolchain/VisualStudioToolchainCache.cpp",
       "src/msvc/toolchain/PortableToolchainDiscovery.cpp",
       "src/msvc/toolchain/ToolchainDiscoveryPrimitives.cpp",
       "src/msvc/toolchain/VisualStudioEnvironment.cpp",
