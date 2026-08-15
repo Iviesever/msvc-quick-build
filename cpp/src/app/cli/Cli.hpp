@@ -38,6 +38,7 @@ struct Options {
     std::optional<PrecompiledHeaderPolicy> pch_override;
     std::vector<std::string> defines;
     std::vector<std::filesystem::path> include_directories;
+    std::vector<std::filesystem::path> discovery_include_directories;
     std::vector<std::filesystem::path> library_directories;
     std::vector<std::string> libraries;
     std::vector<std::string> compiler_arguments;
