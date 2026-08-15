@@ -23,6 +23,16 @@ namespace fs = std::filesystem;
     });
 }
 
+void suppress_ambient_compiler_options(
+    std::vector<process::EnvironmentVariable>& environment) {
+    // cl.exe prepends CL and appends _CL_ to its explicit argv. Those hidden
+    // arguments would bypass MQB's Parameter Engine, structured ownership, and
+    // compile identity. Empty overrides preserve the inherited vcvars environment
+    // while making the explicit MQB argv the complete compiler option surface.
+    environment.push_back(process::EnvironmentVariable{"CL", {}});
+    environment.push_back(process::EnvironmentVariable{"_CL_", {}});
+}
+
 [[nodiscard]] std::expected<process::ProcessResult, CompilerError> run_compiler(
     const MsvcToolchain& toolchain,
     process::ProcessRunner& runner,
@@ -37,6 +47,7 @@ namespace fs = std::filesystem;
         .capture_stdout = true,
         .capture_stderr = true,
     };
+    suppress_ambient_compiler_options(spec.environment);
     auto result = runner.run(spec);
     if (!result) {
         return std::unexpected(CompilerError{

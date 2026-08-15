@@ -54,6 +54,16 @@ namespace fs = std::filesystem;
     return {};
 }
 
+void suppress_ambient_linker_options(
+    std::vector<process::EnvironmentVariable>& environment) {
+    // link.exe prepends LINK and appends _LINK_ to its explicit argv. Hidden
+    // arguments could otherwise bypass MQB-owned /OUT, target policy, tracked
+    // linker inputs, and link identity. Preserve LIB/PATH/vcvars state while
+    // making the explicit MQB argv authoritative.
+    environment.push_back(process::EnvironmentVariable{"LINK", {}});
+    environment.push_back(process::EnvironmentVariable{"_LINK_", {}});
+}
+
 } // namespace
 
 std::expected<LinkerIdentity, LinkerError>
@@ -232,6 +242,7 @@ MsvcLinker::link(const LinkInvocation& invocation) const {
     spec.arguments = std::move(*arguments);
     spec.working_directory = invocation.working_directory;
     spec.environment = toolchain_.environment;
+    suppress_ambient_linker_options(spec.environment);
     spec.inherit_environment = true;
     spec.capture_stdout = true;
     spec.capture_stderr = true;
