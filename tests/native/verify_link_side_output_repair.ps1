@@ -179,5 +179,93 @@ if (@(Get-ChildItem -LiteralPath $explicitRepro -Force).Count -ne 0) {
     throw "Rejected /LINKREPRO still produced diagnostic artifacts"
 }
 
-Write-Host 'Real MSVC PDB/manifest/MAP repair plus LINK/LIB link_repro isolation checks passed.'
+# Raw /WHOLEARCHIVE:<library> is itself a required LINK input. It must not need
+# a duplicate structured --lib declaration merely to participate in freshness.
+$wholeArchiveRoot = Join-Path $fixture 'wholearchive'
+New-Item -ItemType Directory -Path $wholeArchiveRoot -Force | Out-Null
+$wholeLibrarySource = Join-Path $wholeArchiveRoot 'library.cpp'
+$wholeMainSource = Join-Path $wholeArchiveRoot 'consumer.cpp'
+Set-Content -LiteralPath $wholeLibrarySource -Encoding utf8 -Value 'int whole_value() { return 100; }'
+Set-Content -LiteralPath $wholeMainSource -Encoding utf8 -Value @(
+    'int whole_value();',
+    'int main() { return whole_value() == 100 ? 0 : 1; }'
+)
+
+function Invoke-WholeArchiveLibraryBuild {
+    Push-Location $wholeArchiveRoot
+    try {
+        $output = @(& $MqbPath build library.cpp --debug --no-discover --type static -o whole_input 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
+    [PSCustomObject]@{ ExitCode = $exitCode; Text = ($output -join [Environment]::NewLine) }
+}
+
+function Invoke-WholeArchiveConsumerBuild {
+    Push-Location $wholeArchiveRoot
+    try {
+        $output = @(
+            & $MqbPath build consumer.cpp --debug --no-discover -o whole_consumer `
+                -L '.mqb/bin' /link '/WHOLEARCHIVE:whole_input.lib' 2>&1
+        )
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
+    [PSCustomObject]@{ ExitCode = $exitCode; Text = ($output -join [Environment]::NewLine) }
+}
+
+$wholeLibrary = Join-Path $wholeArchiveRoot '.mqb/bin/whole_input.lib'
+$wholeExecutable = Join-Path $wholeArchiveRoot '.mqb/bin/whole_consumer.exe'
+$wholeColdLibrary = Invoke-WholeArchiveLibraryBuild
+if ($wholeColdLibrary.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $wholeLibrary -PathType Leaf)) {
+    throw "WHOLEARCHIVE fixture library cold build failed:`n$($wholeColdLibrary.Text)"
+}
+$wholeCold = Invoke-WholeArchiveConsumerBuild
+if ($wholeCold.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $wholeExecutable -PathType Leaf)) {
+    throw "Raw WHOLEARCHIVE cold consumer build failed:`n$($wholeCold.Text)"
+}
+& $wholeExecutable
+if ($LASTEXITCODE -ne 0) {
+    throw "Raw WHOLEARCHIVE cold executable did not consume the library"
+}
+
+$wholeWarm = Invoke-WholeArchiveConsumerBuild
+if ($wholeWarm.ExitCode -ne 0) {
+    throw "Raw WHOLEARCHIVE warm consumer build failed:`n$($wholeWarm.Text)"
+}
+if ($wholeWarm.Text -notmatch '\[up-to-date\]\s+whole_consumer\.exe') {
+    throw "Raw WHOLEARCHIVE warm build did not reuse link cache:`n$($wholeWarm.Text)"
+}
+
+$wholeExecutableTime = (Get-Item -LiteralPath $wholeExecutable).LastWriteTimeUtc
+Set-Content -LiteralPath $wholeLibrarySource -Encoding utf8 -Value 'int whole_value() { return 101; }'
+$wholeChangedLibrary = Invoke-WholeArchiveLibraryBuild
+if ($wholeChangedLibrary.ExitCode -ne 0) {
+    throw "WHOLEARCHIVE fixture library rebuild failed:`n$($wholeChangedLibrary.Text)"
+}
+(Get-Item -LiteralPath $wholeLibrary).LastWriteTimeUtc = $wholeExecutableTime.AddSeconds(2)
+
+$wholeChanged = Invoke-WholeArchiveConsumerBuild
+if ($wholeChanged.ExitCode -ne 0) {
+    throw "Raw WHOLEARCHIVE changed-library build failed:`n$($wholeChanged.Text)"
+}
+if ($wholeChanged.Text -notmatch '\[up-to-date\]\s+consumer\.cpp') {
+    throw "WHOLEARCHIVE library-only change unexpectedly recompiled consumer.cpp:`n$($wholeChanged.Text)"
+}
+if ($wholeChanged.Text -notmatch '\[link\]\s+whole_consumer\.exe') {
+    throw "Changed raw WHOLEARCHIVE library did not trigger relink:`n$($wholeChanged.Text)"
+}
+if ($wholeChanged.Text -notmatch 'link inputs changed') {
+    throw "WHOLEARCHIVE library-driven relink was not explained as link inputs changed:`n$($wholeChanged.Text)"
+}
+& $wholeExecutable
+if ($LASTEXITCODE -eq 0) {
+    throw "Relinked WHOLEARCHIVE executable still contains stale library behavior"
+}
+
+Write-Host 'Real MSVC linker side-output/repro isolation plus raw WHOLEARCHIVE freshness checks passed.'
 exit 0
