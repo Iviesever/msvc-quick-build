@@ -251,6 +251,37 @@ int main() {
                "a NODEFAULTLIB-suppressed missing DEFAULTLIB must not make MQB stricter than LINK");
     }
 
+    // Config/profile native linker paths are project-root relative even when MQB
+    // is launched from a nested directory. Exercise the real ProjectSetup path
+    // instead of relying only on the policy unit test.
+    write_text(tree.root / "mqb.json", R"json({
+  "version": 1,
+  "build": {
+    "runtime": "MT",
+    "linker_args": ["/DEFAULTLIB:.mqb/bin/defaultlib.lib"]
+  },
+  "discovery": {
+    "enabled": false
+  }
+})json");
+    const fs::path nested = tree.root / "nested";
+    fs::create_directories(nested);
+    auto config_relative = run_process(
+        runner,
+        mqb_executable,
+        nested,
+        {"../consumer.cpp", "--env", "vs", "--no-discover", "-o", "config_default"});
+    expect(config_relative.has_value(), "config-relative DEFAULTLIB build should launch");
+    if (config_relative) {
+        if (config_relative->exit_code != 0) dump_failure(*config_relative);
+        expect(config_relative->exit_code == 0,
+               "mqb.json path-bearing DEFAULTLIB should resolve from project root when invoked from a nested directory");
+    }
+    const fs::path config_default = tree.root / ".mqb" / "bin" / "config_default.exe";
+    auto config_run = run_process(runner, config_default, tree.root);
+    expect(config_run.has_value() && config_run->exit_code == 42,
+           "config-root-relative DEFAULTLIB should provide the mutated provider to the consumer");
+
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;
