@@ -44,6 +44,7 @@ int main() {
 
     const std::vector<fs::path> objects{"obj/main.cpp.obj", "obj/math.cpp.obj"};
     const std::vector<fs::path> libraries{"vendor/math.lib", "vendor/codec.lib"};
+    const std::vector<fs::path> file_inputs{"exports/plugin.def"};
     const fs::path output{"bin/plugin.dll"};
     const std::vector<fs::path> side_outputs{"bin/plugin.lib", "bin/plugin.exp"};
     const mqb::LinkerIdentity linker{
@@ -55,6 +56,7 @@ int main() {
     options.target_kind = mqb::TargetKind::dynamic_library;
     options.library_directories = {"vendor"};
     options.libraries = {"math.lib", "codec.lib"};
+    options.additional_arguments = {"/DEF:exports/plugin.def"};
     const auto signature = mqb::BuildSignature::for_link(
         objects, libraries, output, linker, options);
     const mqb::LinkCacheEntry entry{
@@ -63,6 +65,7 @@ int main() {
         .objects = objects,
         .output = output,
         .libraries = libraries,
+        .file_inputs = file_inputs,
         .side_outputs = side_outputs,
     };
 
@@ -82,9 +85,11 @@ int main() {
         expect((*loaded)->signature == signature, "link signature should round-trip");
         expect((*loaded)->objects == objects, "object inputs should round-trip");
         expect((*loaded)->libraries == libraries, "resolved library inputs should round-trip");
+        expect((*loaded)->file_inputs == file_inputs,
+               "generic linker file inputs should round-trip in cache v4");
         expect((*loaded)->output == output, "link output should round-trip");
         expect((*loaded)->side_outputs == side_outputs,
-               "observed linker side outputs should round-trip in cache v3");
+               "observed linker side outputs should round-trip in cache v4");
     }
 
     {
