@@ -218,7 +218,7 @@ $msvcLeafFiles = [ordered]@{
         'MsvcCompileExecutor.cpp', 'MsvcCompiler.cpp', 'MsvcSourceDependenciesReader.cpp'
     )
     'librarian' = @('MsvcLibrarian.cpp')
-    'linker' = @('MsvcLibraryResolver.cpp', 'MsvcLinker.cpp')
+    'linker' = @('MsvcDefaultLibraryPolicy.cpp', 'MsvcLibraryResolver.cpp', 'MsvcLinker.cpp')
     'modules' = @('MsvcModuleDependencyScanner.cpp')
     'parameters' = @(
         'MsvcParameterCapabilities.cpp',
