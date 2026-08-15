@@ -1,6 +1,7 @@
 #include "ProjectSetup.hpp"
 
 #include <expected>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -10,6 +11,8 @@
 
 namespace mqb::app {
 namespace {
+
+namespace fs = std::filesystem;
 
 template <typename T>
 [[nodiscard]] std::expected<void, std::string> merge_semantic_value(
@@ -46,9 +49,16 @@ template <typename T>
     return message;
 }
 
+[[nodiscard]] fs::path resolve_native_path(
+    const fs::path& base,
+    const fs::path& value) {
+    return (value.is_absolute() ? value : base / value).lexically_normal();
+}
+
 [[nodiscard]] std::expected<void, std::string> normalize_native_parameters(
     mqb::config::BuildOverrides& build,
-    const std::string_view layer) {
+    const std::string_view layer,
+    const fs::path& path_base) {
     auto compiler = mqb::msvc::MsvcParameterEngine::route_compiler(
         std::span<const std::string>{build.compiler_arguments});
     if (!compiler) {
@@ -59,6 +69,14 @@ template <typename T>
         std::span<const std::string>{build.linker_arguments});
     if (!linker) {
         return std::unexpected(parameter_error_message(layer, linker.error()));
+    }
+
+    build.defines.insert(
+        build.defines.end(),
+        compiler->defines.begin(),
+        compiler->defines.end());
+    for (const auto& include_directory : compiler->include_directories) {
+        build.include_directories.push_back(resolve_native_path(path_base, include_directory));
     }
 
     if (auto merged = merge_semantic_value(
@@ -201,7 +219,8 @@ prepare_project(
     if (project_config) {
         auto normalized = normalize_native_parameters(
             project_config->build,
-            "mqb.json");
+            "mqb.json",
+            project_root);
         if (!normalized) {
             return std::unexpected(ProjectSetupError{
                 .message = normalized.error(),
@@ -211,7 +230,10 @@ prepare_project(
     }
     if (selected_profile) {
         const std::string layer = "profile '" + *options.profile + "'";
-        auto normalized = normalize_native_parameters(selected_profile->build, layer);
+        auto normalized = normalize_native_parameters(
+            selected_profile->build,
+            layer,
+            project_root);
         if (!normalized) {
             return std::unexpected(ProjectSetupError{
                 .message = normalized.error(),
@@ -221,7 +243,8 @@ prepare_project(
     }
     if (auto normalized = normalize_native_parameters(
             cli_overrides.build,
-            "CLI"); !normalized) {
+            "CLI",
+            invocation_directory); !normalized) {
         return std::unexpected(ProjectSetupError{
             .message = normalized.error(),
             .config_error = std::nullopt,
