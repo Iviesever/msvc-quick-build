@@ -15,6 +15,7 @@
 #include "mqb/core/FileSnapshot.hpp"
 #include "mqb/core/LinkCache.hpp"
 #include "mqb/core/LinkCacheFile.hpp"
+#include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
@@ -243,6 +244,35 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             resolved_whole_archive_libraries->files.end());
     }
 
+    if (request.options.address_sanitizer_runtime_library
+        && msvc::MsvcAddressSanitizerPolicy::inferred_libraries_enabled(
+            request.options.additional_arguments)) {
+        LinkOptions asan_options = request.options;
+        asan_options.libraries =
+            msvc::MsvcAddressSanitizerPolicy::inferred_library_names(
+                *request.options.address_sanitizer_runtime_library,
+                request.options.architecture,
+                request.options.target_kind,
+                toolchain_.identity.version);
+        auto resolved_asan_libraries = msvc::MsvcLibraryResolver::resolve(
+            toolchain_,
+            asan_options,
+            working_directory);
+        if (!resolved_asan_libraries) {
+            IncrementalLinkError error{
+                .code = IncrementalLinkErrorCode::library_resolution_failed,
+                .message = "failed to resolve inferred MSVC AddressSanitizer runtime library: "
+                    + resolved_asan_libraries.error().message,
+                .library_resolution_error = resolved_asan_libraries.error(),
+            };
+            return std::unexpected(std::move(error));
+        }
+        linker_file_inputs.insert(
+            linker_file_inputs.end(),
+            resolved_asan_libraries->files.begin(),
+            resolved_asan_libraries->files.end());
+    }
+
     const std::optional<fs::path> requested_map_output =
         msvc::MsvcLinker::map_file_path(
             request.output,
@@ -385,7 +415,8 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         .working_directory = working_directory,
         .force_full_link = result.validation.library_inputs_changed
             || result.validation.file_inputs_changed
-            || linker_file_routing->requires_full_link,
+            || linker_file_routing->requires_full_link
+            || request.options.address_sanitizer_runtime_library.has_value(),
     };
     auto linked = linker_.link(invocation);
     if (!linked) {

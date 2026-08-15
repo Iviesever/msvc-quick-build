@@ -200,7 +200,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     static constexpr std::array passthrough_exact{
         "?"sv, "ALLOWBIND"sv, "ALLOWISOLATION"sv, "APPCONTAINER"sv, "ASSEMBLYDEBUG"sv, "CETCOMPAT"sv, "DEBUG"sv, "DEBUG:FULL"sv, "DEBUG:NONE"sv,
         "DELAYSIGN"sv, "DYNAMICBASE"sv, "DYNAMICDEOPT"sv, "FIXED"sv, "FORCE"sv, "FUNCTIONPADMIN"sv, "HIGHENTROPYVA"sv, "IGNOREIDL"sv,
-        "INCREMENTAL"sv, "INCREMENTAL:NO"sv, "INFERASANLIBS"sv, "INTEGRITYCHECK"sv, "LARGEADDRESSAWARE"sv, "MANIFEST"sv, "MAP"sv,
+        "INCREMENTAL"sv, "INCREMENTAL:NO"sv, "INFERASANLIBS"sv, "INFERASANLIBS:NO"sv, "INTEGRITYCHECK"sv, "LARGEADDRESSAWARE"sv, "MANIFEST"sv, "MAP"sv,
         "MANIFEST:NO"sv, "NOASSEMBLY"sv, "NODEFAULTLIB"sv, "NOENTRY"sv, "NOFUNCTIONPADSECTION"sv, "NOLOGO"sv, "NXCOMPAT"sv,
         "PROFILE"sv, "RELEASE"sv, "SAFESEH"sv, "TIME"sv, "TSAWARE"sv, "VERBOSE"sv, "WHOLEARCHIVE"sv, "WX"sv, "WX:NO"sv,
     };
@@ -217,19 +217,21 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
         return classified(ParameterTool::linker, ParameterOwnership::passthrough, "/" + body,
             body.starts_with("WHOLEARCHIVE:")
                 ? "path-bearing /WHOLEARCHIVE is preserved in linker argv and its resolved library is tracked through MQB's generic link file-input freshness graph"
-                : body.starts_with("DEFAULTLIB:")
-                    ? "user-declared default library remains in raw LINK argv while MQB resolves the effective declaration separately for freshness without changing library search priority"
-                    : body.starts_with("DEF:")
-                        ? "module-definition input is preserved in linker argv and tracked through MQB's generic link file-input freshness graph"
-                        : body.starts_with("ORDER:")
-                            ? "function-order input is preserved in linker argv, tracked through MQB's generic link file-input freshness graph, and requires non-incremental linking when LINK runs"
-                            : body.starts_with("STUB:")
-                                ? "MS-DOS stub executable is preserved in linker argv and tracked through MQB's generic link file-input freshness graph"
-                                : body.starts_with("MANIFESTINPUT:")
-                                    ? "manifest input is preserved in linker argv and cumulatively tracked through MQB's generic link file-input freshness graph"
-                                    : body == "MAP" || body.starts_with("MAP:")
-                                        ? "mapfile output is preserved in linker argv and tracked through MQB's link side-output repair graph"
-                                        : "validated linker option is preserved verbatim in link identity");
+                : body == "INFERASANLIBS" || body == "INFERASANLIBS:NO"
+                    ? "AddressSanitizer runtime inference mode is preserved in linker argv; when inference is enabled MQB tracks the resolved runtime libraries as link freshness inputs"
+                    : body.starts_with("DEFAULTLIB:")
+                        ? "user-declared default library remains in raw LINK argv while MQB resolves the effective declaration separately for freshness without changing library search priority"
+                        : body.starts_with("DEF:")
+                            ? "module-definition input is preserved in linker argv and tracked through MQB's generic link file-input freshness graph"
+                            : body.starts_with("ORDER:")
+                                ? "function-order input is preserved in linker argv, tracked through MQB's generic link file-input freshness graph, and requires non-incremental linking when LINK runs"
+                                : body.starts_with("STUB:")
+                                    ? "MS-DOS stub executable is preserved in linker argv and tracked through MQB's generic link file-input freshness graph"
+                                    : body.starts_with("MANIFESTINPUT:")
+                                        ? "manifest input is preserved in linker argv and cumulatively tracked through MQB's generic link file-input freshness graph"
+                                        : body == "MAP" || body.starts_with("MAP:")
+                                            ? "mapfile output is preserved in linker argv and tracked through MQB's link side-output repair graph"
+                                            : "validated linker option is preserved verbatim in link identity");
     }
     return unregistered(ParameterTool::linker, body);
 }

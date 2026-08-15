@@ -5,6 +5,8 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
+
 namespace mqb::orchestration::detail {
 
 namespace fs = std::filesystem;
@@ -19,10 +21,15 @@ IncrementalLinkRequest make_module_target_link_request(
         objects.push_back(source.artifacts.object);
     }
 
+    LinkOptions effective_link_options = request.link_options;
+    msvc::MsvcAddressSanitizerPolicy::apply_link_policy(
+        request.compiler_options,
+        effective_link_options);
+
     return IncrementalLinkRequest{
         .objects = std::move(objects),
         .output = request.target.executable,
-        .options = request.link_options,
+        .options = std::move(effective_link_options),
         .cache_file = request.target.link_cache,
         .working_directory = request.working_directory.empty()
             ? std::nullopt

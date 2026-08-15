@@ -24,6 +24,13 @@ enum class CppStandard {
     cpp17 = 4,
 };
 
+enum class RuntimeLibrary {
+    md,
+    mdd,
+    mt,
+    mtd,
+};
+
 enum class TargetKind {
     executable,
     dynamic_library,

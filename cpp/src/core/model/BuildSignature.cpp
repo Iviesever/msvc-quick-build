@@ -263,6 +263,12 @@ BuildSignature BuildSignature::for_link(
         // Preserve historical executable/DLL link identities when LTCG is off.
         hasher.add_string("mqb.ltcg.link.v1");
     }
+    if (options.address_sanitizer_runtime_library) {
+        // Preserve the historical link signature byte stream for every
+        // non-ASan target. ASan links append only their cross-stage CRT policy.
+        hasher.add_string("mqb.address-sanitizer.link.v1");
+        hasher.add_enum(*options.address_sanitizer_runtime_library);
+    }
     return BuildSignature{hasher.finish()};
 }
 
