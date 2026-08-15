@@ -110,6 +110,14 @@ jobs:
             -RepoRoot $PWD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify Kernel AddressSanitizer ownership
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/verify_kasan_ownership.ps1') `
+            -MqbPath (Join-Path $PWD 'native-out/debug/mqb.exe') `
+            -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify AddressSanitizer link policy
         shell: pwsh
         run: |
