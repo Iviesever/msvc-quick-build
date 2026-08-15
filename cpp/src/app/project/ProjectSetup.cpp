@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "mqb/msvc/MsvcParameterEngine.hpp"
 
@@ -49,18 +50,14 @@ template <typename T>
     return message;
 }
 
-[[nodiscard]] fs::path resolve_native_path(
-    const fs::path& base,
-    const fs::path& value) {
-    return (value.is_absolute() ? value : base / value).lexically_normal();
-}
-
 [[nodiscard]] std::expected<void, std::string> normalize_native_parameters(
     mqb::config::BuildOverrides& build,
     const std::string_view layer,
-    const fs::path& path_base) {
+    const fs::path& path_base,
+    std::vector<fs::path>& native_include_directories) {
     auto compiler = mqb::msvc::MsvcParameterEngine::route_compiler(
-        std::span<const std::string>{build.compiler_arguments});
+        std::span<const std::string>{build.compiler_arguments},
+        path_base);
     if (!compiler) {
         return std::unexpected(parameter_error_message(layer, compiler.error()));
     }
@@ -71,13 +68,10 @@ template <typename T>
         return std::unexpected(parameter_error_message(layer, linker.error()));
     }
 
-    build.defines.insert(
-        build.defines.end(),
-        compiler->defines.begin(),
-        compiler->defines.end());
-    for (const auto& include_directory : compiler->include_directories) {
-        build.include_directories.push_back(resolve_native_path(path_base, include_directory));
-    }
+    native_include_directories.insert(
+        native_include_directories.end(),
+        compiler->include_directories.begin(),
+        compiler->include_directories.end());
 
     if (auto merged = merge_semantic_value(
             build.standard, compiler->standard, layer, "C++ standard"); !merged) {
@@ -216,11 +210,13 @@ prepare_project(
     cli_overrides.discovery.enabled = options.discovery_override;
     cli_overrides.modules.external_providers = options.external_module_providers;
 
+    std::vector<fs::path> native_include_directories;
     if (project_config) {
         auto normalized = normalize_native_parameters(
             project_config->build,
             "mqb.json",
-            project_root);
+            project_root,
+            native_include_directories);
         if (!normalized) {
             return std::unexpected(ProjectSetupError{
                 .message = normalized.error(),
@@ -233,7 +229,8 @@ prepare_project(
         auto normalized = normalize_native_parameters(
             selected_profile->build,
             layer,
-            project_root);
+            project_root,
+            native_include_directories);
         if (!normalized) {
             return std::unexpected(ProjectSetupError{
                 .message = normalized.error(),
@@ -244,7 +241,8 @@ prepare_project(
     if (auto normalized = normalize_native_parameters(
             cli_overrides.build,
             "CLI",
-            invocation_directory); !normalized) {
+            invocation_directory,
+            native_include_directories); !normalized) {
         return std::unexpected(ProjectSetupError{
             .message = normalized.error(),
             .config_error = std::nullopt,
@@ -270,6 +268,11 @@ prepare_project(
     options.discover_sources = effective.discovery_enabled;
     options.defines = effective.defines;
     options.include_directories = effective.include_directories;
+    options.discovery_include_directories = options.include_directories;
+    options.discovery_include_directories.insert(
+        options.discovery_include_directories.end(),
+        native_include_directories.begin(),
+        native_include_directories.end());
     options.library_directories = effective.library_directories;
     options.libraries = effective.libraries;
     options.compiler_arguments = effective.compiler_arguments;
