@@ -54,6 +54,13 @@ template <typename T>
     std::vector<mqb::msvc::LinkerFileInput>& inputs,
     mqb::msvc::LinkerFileInput input,
     const std::string_view layer) {
+    if (input.kind == mqb::msvc::LinkerFileInputKind::manifest_input) {
+        // LINK merges every /MANIFESTINPUT occurrence. Preserve all effective
+        // files across config/profile/CLI layers as cumulative freshness evidence.
+        inputs.push_back(std::move(input));
+        return {};
+    }
+
     for (auto& existing : inputs) {
         if (existing.kind != input.kind) {
             continue;
@@ -126,7 +133,7 @@ template <typename T>
         return std::unexpected(merged.error());
     }
     if (auto merged = merge_semantic_value(
-            build.subsystem, linker->subsystem, layer, "link subsystem"); !merged) {
+            build.subsystem, linker->subsystem, layer, "subsystem"); !merged) {
         return std::unexpected(merged.error());
     }
 
@@ -252,9 +259,9 @@ prepare_project(
 
     std::vector<fs::path> native_include_directories;
     // This app-layer vector exists only while resolving config/profile/CLI so
-    // duplicate /DEF inputs fail closed while last-wins file inputs such as
-    // /ORDER and /STUB retain only the effective layer value. Runtime freshness
-    // evidence is re-observed from final linker argv by the incremental linker.
+    // /DEF remains single-instance, /ORDER and /STUB retain their last-wins
+    // effective input, and cumulative /MANIFESTINPUT files all survive layering.
+    // Runtime freshness evidence is re-observed from final linker argv.
     std::vector<mqb::msvc::LinkerFileInput> native_linker_file_inputs;
     if (project_config) {
         auto normalized = normalize_native_parameters(
@@ -326,6 +333,16 @@ prepare_project(
     options.compiler_arguments = effective.compiler_arguments;
     options.linker_arguments = effective.linker_arguments;
     options.external_module_providers = effective.external_module_providers;
+
+    if (auto linker_requirements =
+            mqb::msvc::MsvcParameterEngine::validate_linker_file_input_requirements(
+                std::span<const std::string>{options.linker_arguments});
+        !linker_requirements) {
+        return std::unexpected(ProjectSetupError{
+            .message = parameter_error_message("effective", linker_requirements.error()),
+            .config_error = std::nullopt,
+        });
+    }
 
     if (options.build.run_after_build
         && options.build.target_kind != mqb::TargetKind::executable) {
