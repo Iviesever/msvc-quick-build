@@ -28,6 +28,11 @@ struct LinkOptions {
     // enforce the sanitizer's non-incremental link contract without rewriting
     // the user's native compiler/linker argv.
     std::optional<RuntimeLibrary> address_sanitizer_runtime_library;
+    // Present when /fsanitize=address also leaves MSVC's VCAsan default-library
+    // directive enabled. This is separate from /INFERASANLIBS: the compiler
+    // injects vcasan*.lib through ordinary default-library metadata, and /Zl or
+    // /fno-sanitize-address-vcasan-lib can suppress that compiler-side input.
+    std::optional<RuntimeLibrary> address_sanitizer_vcasan_runtime_library;
     // Present when all target translation units are compiled with
     // /fsanitize=fuzzer. cl.exe injects the matching clang_rt.fuzzer_<CRT>
     // default-library directive into objects; the CRT mode is carried here so
