@@ -55,6 +55,12 @@ public:
     [[nodiscard]] static std::filesystem::path
     export_file_path(const std::filesystem::path& output);
 
+    [[nodiscard]] static std::filesystem::path
+    program_database_path(const std::filesystem::path& output);
+
+    [[nodiscard]] static std::filesystem::path
+    manifest_file_path(const std::filesystem::path& output);
+
     [[nodiscard]] static std::expected<std::vector<std::string>, LinkerError>
     build_arguments(const LinkInvocation& invocation);
 
