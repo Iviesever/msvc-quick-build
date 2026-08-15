@@ -98,6 +98,9 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (body == "fsanitize=kernel-address") {
         return compiler_unsupported(body, "Kernel AddressSanitizer is a WDK kernel-driver pipeline that requires x64 kernel target policy and a target-OS-matched Windows SDK/KASan compatibility library; MQB currently models only native exe/dll/static targets");
     }
+    if (body == "fno-sanitize-address-vcasan-lib") {
+        return classified(ParameterTool::compiler, ParameterOwnership::passthrough, "/fno-sanitize-address-vcasan-lib", "VCAsan default-library opt-out is preserved verbatim in compile identity and projected into ASan link freshness policy");
+    }
     if (body == "experimental:log" || body.starts_with("experimental:log")) {
         return compiler_unsupported(body, "option creates a diagnostic log artifact that is not represented in MQB's cache/artifact graph");
     }
