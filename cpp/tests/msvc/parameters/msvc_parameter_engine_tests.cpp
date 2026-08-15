@@ -129,10 +129,10 @@ int main() {
            "/fp:fast should be safe compiler passthrough");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/std:c++20").ownership == ParameterOwnership::semantic,
            "/std should be semantic compiler policy");
-    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/Iinclude").ownership == ParameterOwnership::semantic,
-           "/I should expose include semantics to MQB");
-    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/DVALUE=1").ownership == ParameterOwnership::semantic,
-           "/D should expose preprocessor-definition semantics to MQB");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/Iinclude").ownership == ParameterOwnership::passthrough,
+           "/I should remain safe compiler passthrough ownership");
+    expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/DVALUE=1").ownership == ParameterOwnership::passthrough,
+           "/D should remain safe compiler passthrough ownership");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/Foowned.obj").ownership == ParameterOwnership::mqb_owned,
            "/Fo should remain MQB-owned structural routing");
     expect(MsvcParameterEngine::classify(ParameterTool::compiler, "/MP8").ownership == ParameterOwnership::unsupported,
