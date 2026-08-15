@@ -141,7 +141,7 @@ fs::path MsvcLinker::manifest_file_path(const fs::path& output) {
     return manifest;
 }
 
-bool MsvcLinker::program_database_enabled(const LinkOptions& options) noexcept {
+bool MsvcLinker::program_database_enabled(const LinkOptions& options) {
     bool enabled = options.configuration == BuildConfiguration::debug;
     for (const auto& argument : options.additional_arguments) {
         const std::string body = linker_option_body_upper(argument);
@@ -154,7 +154,7 @@ bool MsvcLinker::program_database_enabled(const LinkOptions& options) noexcept {
     return enabled;
 }
 
-bool MsvcLinker::external_manifest_enabled(const LinkOptions& options) noexcept {
+bool MsvcLinker::external_manifest_enabled(const LinkOptions& options) {
     // LINK's command-line default is an external manifest. Only the explicit
     // disabled or embedded forms remove that standalone output.
     bool enabled = true;
