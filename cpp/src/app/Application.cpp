@@ -222,7 +222,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         mqb::discovery::Request discovery_request{
             .project_root = discovery_root,
             .entry = entry,
-            .include_directories = options.include_directories,
+            .include_directories = options.discovery_include_directories,
         };
         if (project_scoped) {
             discovery_request.excluded_directories = effective.discovery_exclude_directories;
