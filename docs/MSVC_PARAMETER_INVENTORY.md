@@ -19,4 +19,6 @@ The emitted `msvc-parameter-inventory.tsv` records the tool, canonical spelling,
 
 Exact inventory coverage is deliberately separate from toolchain lifecycle admission. For example, `/DEBUG:FASTLINK` remains a registered passthrough ownership result so pre-VS-2026 toolsets can admit it, while `MsvcParameterCapabilities` rejects it on the VS 2026 toolset boundary. Likewise, the inventory locks `/DEBUG:NONE` as passthrough and the obsolete compiler `/Zc:trigraphs` spelling as unsupported.
 
+The gate also locks ownership where the canonical inventory exposed a classifier/router mismatch. C language standard modes `/std:c11`, `/std:c17`, and `/std:clatest` are Class C passthrough: they are validated and preserved verbatim, but they do not populate MQB's C++-only `CppStandard` semantic policy. C++ `/std:c++*` modes remain semantic.
+
 Focused behavioral tests remain responsible for semantic normalization, conflict handling, token shape, graph-aware file inputs, cache identity, and lifecycle boundaries. The exact inventory gate answers a narrower but stronger question: **does every canonical option in the pinned official references have a deterministic MQB ownership result, with no unknown black hole?**
