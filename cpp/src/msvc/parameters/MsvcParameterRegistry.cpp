@@ -107,7 +107,9 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (body == "clr" || body.starts_with("clr:")) return compiler_unsupported(body, "CLR compilation changes the compiler/linker pipeline and is not modeled by MQB");
     if (body == "experimental:module") return compiler_unsupported(body, "MQB owns modern named-module/header-unit topology; the legacy experimental module mode is not admitted");
 
-    static constexpr std::array deprecated_exact{"Ge"sv, "GZ"sv, "H"sv, "Og"sv, "QIfist"sv, "V"sv, "Wp64"sv, "Yd"sv, "Ze"sv, "Zg"sv};
+    static constexpr std::array deprecated_exact{
+        "Ge"sv, "GZ"sv, "H"sv, "Og"sv, "QIfist"sv, "V"sv, "Wp64"sv, "Yd"sv, "Zc:trigraphs"sv, "Ze"sv, "Zg"sv,
+    };
     static constexpr std::array deprecated_prefix{"errorReport"sv, "experimental:preprocessor"sv, "Gm"sv, "GX"sv};
     if (contains_exact(body, deprecated_exact) || starts_with_any(body, deprecated_prefix)) {
         return compiler_unsupported(body, "option is deprecated, obsolete, or removed in current MSVC toolchains");
@@ -184,7 +186,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     if (contains_exact(std::string_view{body}, unsupported_pgo_exact)) return linker_unsupported(body, "profile-guided optimization artifacts are not yet represented in MQB's build graph");
 
     static constexpr std::array passthrough_exact{
-        "?"sv, "ALLOWBIND"sv, "ALLOWISOLATION"sv, "APPCONTAINER"sv, "ASSEMBLYDEBUG"sv, "CETCOMPAT"sv, "DEBUG"sv, "DEBUG:FULL"sv,
+        "?"sv, "ALLOWBIND"sv, "ALLOWISOLATION"sv, "APPCONTAINER"sv, "ASSEMBLYDEBUG"sv, "CETCOMPAT"sv, "DEBUG"sv, "DEBUG:FULL"sv, "DEBUG:NONE"sv,
         "DELAYSIGN"sv, "DYNAMICBASE"sv, "DYNAMICDEOPT"sv, "FIXED"sv, "FORCE"sv, "FUNCTIONPADMIN"sv, "HIGHENTROPYVA"sv, "IGNOREIDL"sv,
         "INCREMENTAL"sv, "INCREMENTAL:NO"sv, "INFERASANLIBS"sv, "INTEGRITYCHECK"sv, "LARGEADDRESSAWARE"sv, "MAP"sv, "MANIFEST"sv,
         "MANIFEST:NO"sv, "NOASSEMBLY"sv, "NODEFAULTLIB"sv, "NOENTRY"sv, "NOFUNCTIONPADSECTION"sv, "NOLOGO"sv, "NXCOMPAT"sv,
