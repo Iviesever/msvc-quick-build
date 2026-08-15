@@ -60,6 +60,48 @@ jobs:
             throw "Debug MQB build output missing: $mqb"
           }
 
+      - name: Verify ambient MSVC option isolation
+        shell: pwsh
+        env:
+          CL: /FI_mqb_ambient_cl_should_never_exist_.hpp
+          _CL_: /Fo_mqb_ambient_cl_should_never_exist_.obj
+          LINK: /DEF:_mqb_ambient_link_should_never_exist_.def
+          _LINK_: /OUT:_mqb_ambient_link_should_never_exist_.exe
+        run: |
+          $mqb = (Resolve-Path -LiteralPath 'native-out/debug/mqb.exe').Path
+          $fixture = Join-Path $PWD 'native-out/ambient-msvc-option-isolation'
+          if (Test-Path -LiteralPath $fixture) {
+            Remove-Item -LiteralPath $fixture -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+
+          $ordinary = Join-Path $fixture 'ordinary'
+          New-Item -ItemType Directory -Path $ordinary -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $ordinary 'main.cpp') -Encoding utf8 -Value 'int main() { return 0; }'
+          Push-Location $ordinary
+          try {
+            & $mqb run main.cpp --no-discover
+            if ($LASTEXITCODE -ne 0) {
+              throw "ordinary build/run observed ambient CL/_CL_/LINK/_LINK_ options"
+            }
+          } finally {
+            Pop-Location
+          }
+
+          $modules = Join-Path $fixture 'modules'
+          New-Item -ItemType Directory -Path $modules -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $modules 'math.ixx') -Encoding utf8 -Value 'export module math; export int answer() { return 42; }'
+          Set-Content -LiteralPath (Join-Path $modules 'main.cpp') -Encoding utf8 -Value 'import math; int main() { return answer() == 42 ? 0 : 1; }'
+          Push-Location $modules
+          try {
+            & $mqb run main.cpp math.ixx --no-discover
+            if ($LASTEXITCODE -ne 0) {
+              throw "module scan/build/run observed ambient CL/_CL_/LINK/_LINK_ options"
+            }
+          } finally {
+            Pop-Location
+          }
+
       - name: Build shared Debug native-test product library
         shell: pwsh
         run: |
