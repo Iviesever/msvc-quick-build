@@ -58,9 +58,11 @@ template <typename T>
         if (existing.kind != input.kind) {
             continue;
         }
-        if (input.kind == mqb::msvc::LinkerFileInputKind::function_order) {
-            // LINK's /ORDER contract is last-wins, including across config,
-            // profile, and CLI layers. Keep only the effective freshness input.
+        if (input.kind == mqb::msvc::LinkerFileInputKind::function_order
+            || input.kind == mqb::msvc::LinkerFileInputKind::msdos_stub) {
+            // LINK option processing is last-wins for /ORDER and /STUB,
+            // including across config, profile, and CLI layers. Keep only the
+            // effective file as non-owning freshness evidence.
             existing = std::move(input);
             return {};
         }
@@ -251,8 +253,8 @@ prepare_project(
     std::vector<fs::path> native_include_directories;
     // This app-layer vector exists only while resolving config/profile/CLI so
     // duplicate /DEF inputs fail closed while last-wins file inputs such as
-    // /ORDER retain only the effective layer value. Runtime freshness evidence
-    // is re-observed from final linker argv by the incremental linker.
+    // /ORDER and /STUB retain only the effective layer value. Runtime freshness
+    // evidence is re-observed from final linker argv by the incremental linker.
     std::vector<mqb::msvc::LinkerFileInput> native_linker_file_inputs;
     if (project_config) {
         auto normalized = normalize_native_parameters(
