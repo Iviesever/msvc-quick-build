@@ -117,6 +117,18 @@ fs::path MsvcLinker::export_file_path(const fs::path& output) {
     return export_file;
 }
 
+fs::path MsvcLinker::program_database_path(const fs::path& output) {
+    fs::path program_database = output;
+    program_database.replace_extension(".pdb");
+    return program_database;
+}
+
+fs::path MsvcLinker::manifest_file_path(const fs::path& output) {
+    fs::path manifest = output;
+    manifest += ".manifest";
+    return manifest;
+}
+
 std::expected<std::vector<std::string>, LinkerError>
 MsvcLinker::build_arguments(const LinkInvocation& invocation) {
     if (invocation.options.target_kind == TargetKind::static_library) {
@@ -156,7 +168,7 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        16
+        17
         + invocation.objects.size()
         + invocation.options.library_directories.size()
         + invocation.libraries.size()
@@ -209,6 +221,11 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
     if (invocation.options.link_time_code_generation) {
         arguments.emplace_back("/LTCG");
     }
+
+    // /PDB is an MQB-owned side artifact. Emit its stable location after raw
+    // flags so every effective /DEBUG mode writes to the path represented by
+    // the link cache. LINK ignores /PDB when the effective mode is /DEBUG:NONE.
+    arguments.push_back("/PDB:" + path_to_utf8(program_database_path(invocation.output)));
 
     // Structured routing is emitted after raw flags so the BuildPlan owns the
     // final target identity even if a user supplied a conflicting raw switch.
