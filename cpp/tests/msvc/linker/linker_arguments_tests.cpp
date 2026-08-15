@@ -65,6 +65,7 @@ int main() {
 
     auto changed_library = invocation;
     changed_library.force_full_link = true;
+    changed_library.options.additional_arguments.push_back("/INCREMENTAL");
     const auto changed_library_result = mqb::msvc::MsvcLinker::build_arguments(changed_library);
     expect(changed_library_result.has_value(),
            "library-change full-link invocation should produce argv");
@@ -73,8 +74,14 @@ int main() {
                "full library relink should retain Debug information");
         expect(contains(*changed_library_result, "/INCREMENTAL:NO"),
                "changed library inputs must disable MSVC incremental linking");
-        expect(!contains(*changed_library_result, "/INCREMENTAL"),
-               "changed library inputs must not retain incremental .ilk reuse");
+        const auto raw_incremental = std::find(
+            changed_library_result->begin(), changed_library_result->end(), "/INCREMENTAL");
+        const auto forced_full = std::find(
+            changed_library_result->begin(), changed_library_result->end(), "/INCREMENTAL:NO");
+        expect(raw_incremental != changed_library_result->end()
+                   && forced_full != changed_library_result->end()
+                   && raw_incremental < forced_full,
+               "MQB full-link safety policy must override a raw /INCREMENTAL argument");
     }
 
     auto ltcg = invocation;
