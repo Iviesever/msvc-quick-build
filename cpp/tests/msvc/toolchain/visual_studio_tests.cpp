@@ -1,7 +1,11 @@
 #include <algorithm>
+#include <chrono>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <string_view>
 
@@ -9,6 +13,8 @@
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 
 namespace {
+
+namespace fs = std::filesystem;
 
 int failures = 0;
 
@@ -30,38 +36,79 @@ void expect(const bool condition, const std::string_view message) {
     return left == right;
 }
 
-[[nodiscard]] bool has_environment_variable(
+[[nodiscard]] const mqb::process::EnvironmentVariable* find_environment_variable(
     const mqb::msvc::MsvcToolchain& toolchain,
     const std::string_view name) {
-    return std::any_of(
+    const auto found = std::find_if(
         toolchain.environment.begin(),
         toolchain.environment.end(),
         [name](const mqb::process::EnvironmentVariable& variable) {
             return equals_ignore_case(variable.name, std::string{name});
         });
+    return found == toolchain.environment.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] bool has_environment_variable(
+    const mqb::msvc::MsvcToolchain& toolchain,
+    const std::string_view name) {
+    return find_environment_variable(toolchain, name) != nullptr;
+}
+
+class RejectingRunner final : public mqb::process::ProcessRunner {
+public:
+    [[nodiscard]] std::expected<mqb::process::ProcessResult, mqb::process::ProcessError>
+    run(const mqb::process::ProcessSpec&) override {
+        ++calls;
+        return std::unexpected(mqb::process::ProcessError{
+            .code = mqb::process::ProcessErrorCode::launch_failed,
+            .message = "toolchain cache miss attempted a subprocess",
+        });
+    }
+
+    std::size_t calls{};
+};
+
+[[nodiscard]] fs::path unique_cache_file() {
+    return fs::temp_directory_path()
+        / ("mqb-vs-toolchain-cache-test-"
+           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
+           + ".mqbcache");
 }
 
 } // namespace
 
 int main() {
-    mqb::platform::windows::WindowsProcessRunner runner;
-    mqb::msvc::MsvcToolchainLocator locator{runner};
+    const fs::path cache_file = unique_cache_file();
+    std::error_code cleanup_error;
+    fs::remove(cache_file, cleanup_error);
+
+    constexpr const char* secret_name = "MQB_TOOLCHAIN_CACHE_TEST_SECRET";
+    constexpr const char* secret_value = "mqb-cache-must-not-persist-this-value";
+    const char* inherited_secret = std::getenv(secret_name);
+    const std::string original_secret = inherited_secret == nullptr ? std::string{} : std::string{inherited_secret};
+    const bool had_original_secret = inherited_secret != nullptr;
+    _putenv_s(secret_name, secret_value);
 
     mqb::msvc::DiscoveryOptions options;
     options.preference = mqb::msvc::ToolchainPreference::visual_studio;
     options.target_architecture = mqb::Architecture::x64;
     options.host_architecture = mqb::Architecture::x64;
+    options.cache_file = cache_file;
 
+    mqb::platform::windows::WindowsProcessRunner runner;
+    mqb::msvc::MsvcToolchainLocator locator{runner};
     const auto result = locator.discover(options);
     expect(result.has_value(), "Visual Studio toolchain should be discoverable on the Windows CI image");
     if (result) {
         expect(result->source == mqb::msvc::ToolchainSource::visual_studio,
                "forced VS discovery should preserve toolchain provenance");
-        expect(std::filesystem::is_regular_file(result->identity.compiler),
+        expect(!result->reused,
+               "cold Visual Studio discovery should not report persistent cache reuse");
+        expect(fs::is_regular_file(result->identity.compiler),
                "discovered cl.exe should exist");
-        expect(std::filesystem::is_regular_file(result->linker),
+        expect(fs::is_regular_file(result->linker),
                "discovered link.exe should exist");
-        expect(std::filesystem::is_regular_file(result->librarian),
+        expect(fs::is_regular_file(result->librarian),
                "discovered lib.exe should exist");
         expect(!result->identity.version.empty(),
                "discovered compiler should expose the VC tools version");
@@ -73,8 +120,68 @@ int main() {
                "vcvars environment should contain INCLUDE");
         expect(has_environment_variable(*result, "LIB"),
                "vcvars environment should contain LIB");
+        expect(has_environment_variable(*result, "LIBPATH"),
+               "vcvars environment should contain LIBPATH");
         expect(has_environment_variable(*result, "VCToolsInstallDir"),
                "vcvars environment should expose VCToolsInstallDir");
+
+        expect(fs::is_regular_file(cache_file),
+               "cold Visual Studio discovery should persist validated cache evidence");
+        std::ifstream cache_stream{cache_file, std::ios::binary};
+        const std::string cache_text{
+            std::istreambuf_iterator<char>{cache_stream},
+            std::istreambuf_iterator<char>{}};
+        cache_stream.close();
+        expect(cache_text.find(secret_name) == std::string::npos,
+               "toolchain cache must not persist unrelated inherited environment names");
+        expect(cache_text.find(secret_value) == std::string::npos,
+               "toolchain cache must not persist unrelated inherited environment values");
+
+        RejectingRunner rejecting_runner;
+        mqb::msvc::MsvcToolchainLocator cached_locator{rejecting_runner};
+        const auto cached = cached_locator.discover(options);
+        expect(cached.has_value(),
+               "validated Visual Studio cache should be reusable without subprocesses");
+        expect(rejecting_runner.calls == 0,
+               "Visual Studio cache hit must skip vswhere/cmd/vcvarsall subprocesses");
+        if (cached) {
+            expect(cached->reused,
+                   "validated Visual Studio cache hit should report reuse");
+            expect(cached->identity.compiler == result->identity.compiler,
+                   "cache hit should preserve compiler identity path");
+            expect(cached->identity.version == result->identity.version,
+                   "cache hit should preserve VC tools version");
+            expect(cached->identity.binary_stamp == result->identity.binary_stamp,
+                   "cache hit should preserve compiler binary stamp");
+            expect(cached->linker == result->linker,
+                   "cache hit should reconstruct the same linker path");
+            expect(cached->librarian == result->librarian,
+                   "cache hit should reconstruct the same librarian path");
+
+            const auto* cold_lib_path = find_environment_variable(*result, "LIBPATH");
+            const auto* cached_lib_path = find_environment_variable(*cached, "LIBPATH");
+            expect(cold_lib_path != nullptr && cached_lib_path != nullptr
+                       && cached_lib_path->value == cold_lib_path->value,
+                   "cache hit should preserve vcvars LIBPATH exactly");
+
+            const auto* cached_path = find_environment_variable(*cached, "PATH");
+            const char* current_path = std::getenv("PATH");
+            expect(cached_path != nullptr && current_path != nullptr
+                       && cached_path->value.find(current_path) != std::string::npos,
+                   "cache hit should append the current process PATH");
+        }
+
+        {
+            std::ofstream corrupt{cache_file, std::ios::binary | std::ios::trunc};
+            corrupt << "not-an-mqb-toolchain-cache\n";
+        }
+        RejectingRunner fallback_runner;
+        mqb::msvc::MsvcToolchainLocator fallback_locator{fallback_runner};
+        const auto fallback = fallback_locator.discover(options);
+        expect(!fallback.has_value(),
+               "corrupt cache evidence should fall back to ordinary discovery");
+        expect(fallback_runner.calls != 0,
+               "corrupt cache evidence must not suppress ordinary discovery");
     } else {
         std::cerr << "toolchain discovery error: " << result.error().message << '\n';
         if (!result.error().path.empty()) {
@@ -85,6 +192,13 @@ int main() {
                       << " native=" << result.error().process_error->native_code << '\n';
         }
     }
+
+    if (had_original_secret) {
+        _putenv_s(secret_name, original_secret.c_str());
+    } else {
+        _putenv_s(secret_name, "");
+    }
+    fs::remove(cache_file, cleanup_error);
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

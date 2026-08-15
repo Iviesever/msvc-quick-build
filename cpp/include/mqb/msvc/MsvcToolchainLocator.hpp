@@ -35,6 +35,10 @@ struct DiscoveryOptions {
     std::vector<std::filesystem::path> portable_roots;
     std::optional<std::filesystem::path> vswhere_path;
     std::optional<std::filesystem::path> cmd_path;
+    // Visual Studio discovery only. nullopt uses MQB's user-local cache under
+    // LOCALAPPDATA; an explicitly empty path disables persistent reuse. Custom
+    // vswhere/cmd overrides also disable reuse so explicit discovery remains authoritative.
+    std::optional<std::filesystem::path> cache_file;
 };
 
 struct MsvcToolchain {
@@ -49,6 +53,9 @@ struct MsvcToolchain {
     StandardLibraryModuleSources standard_library_modules;
     ToolchainSource source{ToolchainSource::visual_studio};
     std::vector<process::EnvironmentVariable> environment;
+    // True only when validated persistent Visual Studio discovery evidence was
+    // reused without invoking vswhere/cmd/vcvarsall for this call.
+    bool reused{false};
 };
 
 enum class ToolchainErrorCode {
