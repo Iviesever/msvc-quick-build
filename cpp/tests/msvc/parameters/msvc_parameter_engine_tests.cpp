@@ -1,4 +1,5 @@
 #include <array>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -154,6 +155,46 @@ int main() {
             expect(routed->link_time_code_generation.has_value() && *routed->link_time_code_generation,
                    "/GL should normalize to coupled LTCG enablement");
         }
+    }
+    {
+        const std::vector<std::string> arguments{"/Iinclude", "/DVALUE=1", "/W4"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(routed.has_value(), "attached /I and /D routing should succeed");
+        if (routed) {
+            expect(routed->include_directories.size() == 1
+                       && routed->include_directories.front() == std::filesystem::u8path("include"),
+                   "attached /I should become structured include policy");
+            expect(routed->defines.size() == 1 && routed->defines.front() == "VALUE=1",
+                   "attached /D should become structured define policy");
+            expect(routed->passthrough.size() == 1 && routed->passthrough.front() == "/W4",
+                   "structured /I and /D should be removed from opaque passthrough");
+        }
+    }
+    {
+        const std::vector<std::string> arguments{"/I", "third party", "/D", "NAME=7", "/O2"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(routed.has_value(), "split /I and /D routing should succeed");
+        if (routed) {
+            expect(routed->include_directories.size() == 1
+                       && routed->include_directories.front() == std::filesystem::u8path("third party"),
+                   "split /I operand should become structured include policy");
+            expect(routed->defines.size() == 1 && routed->defines.front() == "NAME=7",
+                   "split /D operand should become structured define policy");
+            expect(routed->passthrough.size() == 1 && routed->passthrough.front() == "/O2",
+                   "split preprocessor inputs should not leak operands into passthrough");
+        }
+    }
+    {
+        const std::vector<std::string> arguments{"/I"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(!routed && routed.error().code == ParameterErrorCode::invalid_value,
+               "missing /I operand should fail closed");
+    }
+    {
+        const std::vector<std::string> arguments{"/D"};
+        auto routed = MsvcParameterEngine::route_compiler(arguments);
+        expect(!routed && routed.error().code == ParameterErrorCode::invalid_value,
+               "missing /D operand should fail closed");
     }
     {
         const std::vector<std::string> arguments{"/GL-"};
