@@ -5,10 +5,12 @@
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/process/Process.hpp"
@@ -146,15 +148,22 @@ template <std::size_t Count>
 
 } // namespace toolchain_environment_detail
 
-// Compiler-side effective search identity. INCLUDE controls header lookup,
-// LIBPATH controls #using metadata lookup, and PATH can participate in MSVC
-// helper-tool discovery. The remaining variables describe the selected
-// toolset/SDK roots that produced those effective search paths. Ambient CL/_CL_
-// is deliberately excluded because MQB masks it at process launch.
-[[nodiscard]] inline std::string compiler_environment_stamp(
+// Effective MSVC search environment identity. INCLUDE controls header lookup,
+// LIB controls LINK library/object lookup, LIBPATH controls compiler #using
+// metadata lookup, and PATH can participate in compiler/linker helper-tool
+// discovery. The remaining variables name the selected toolset/SDK roots that
+// produced those effective values. CL/_CL_/LINK/_LINK_ are deliberately absent:
+// MQB masks those ambient option injectors at process launch.
+//
+// LIB is intentionally part of the same toolchain stamp. MQB's target pipeline
+// is compile -> link, so a LIB value/order mutation invalidates upstream cache
+// identity and therefore guarantees a fresh LINK observation without turning
+// every warm link validation into a filesystem rescan of all transitive libs.
+[[nodiscard]] inline std::string effective_toolchain_environment_stamp(
     const std::span<const process::EnvironmentVariable> environment) {
     constexpr std::array names{
         std::string_view{"INCLUDE"},
+        std::string_view{"LIB"},
         std::string_view{"LIBPATH"},
         std::string_view{"PATH"},
         std::string_view{"VCToolsInstallDir"},
@@ -167,14 +176,14 @@ template <std::size_t Count>
     return toolchain_environment_detail::environment_stamp(
         environment,
         names,
-        "mqb.compiler.environment.v1");
+        "mqb.toolchain.environment.v1");
 }
 
-// Preserve ToolchainIdentity as the core cache boundary while letting the MSVC
-// backend make the binary stamp represent the *effective compiler identity*:
-// executable bytes/mtime plus the search environment actually passed to cl.exe.
-inline void seal_compiler_environment_identity(MsvcToolchain& toolchain) {
-    toolchain.identity.binary_stamp += "|" + compiler_environment_stamp(toolchain.environment);
+// Core already treats binary_stamp as an opaque backend identity component.
+// Seal the effective search environment into that boundary so old cache entries
+// naturally fail closed without another compile-cache format migration.
+inline void seal_effective_toolchain_environment_identity(MsvcToolchain& toolchain) {
+    toolchain.identity.binary_stamp += "|" + effective_toolchain_environment_stamp(toolchain.environment);
 }
 
 // A reused vcvars cache is only valid while its selected Windows SDK/UCRT
