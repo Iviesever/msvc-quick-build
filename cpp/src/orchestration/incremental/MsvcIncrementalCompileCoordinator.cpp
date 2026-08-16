@@ -59,6 +59,17 @@ void add_reason_once(
     return left == right || left.lexically_normal() == right.lexically_normal();
 }
 
+[[nodiscard]] bool has_include_search_freshness_marker(
+    const CompileCacheEntry& entry) {
+    for (const auto& dependency : entry.dependencies) {
+        std::error_code error_code;
+        if (std::filesystem::is_directory(dependency, error_code) && !error_code) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void add_dependency_once(
     std::vector<std::filesystem::path>& dependencies,
     const std::filesystem::path& dependency) {
@@ -199,6 +210,14 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         source_snapshot.snapshot,
         output_snapshots,
         dependency_snapshots);
+
+    // Cache entries sealed before Include Search Resolution Freshness contain
+    // only file dependencies. New entries always include at least the source
+    // directory namespace. Force one conservative reseal after upgrading so a
+    // pre-fix cache cannot preserve the exact stale warm hit this closure fixes.
+    if (cached_entry && !has_include_search_freshness_marker(*cached_entry)) {
+        add_reason_once(result.validation.reasons, BuildReason::dependency_changed);
+    }
 
     if (request.force_rebuild) {
         add_reason_once(result.validation.reasons, BuildReason::explicit_rebuild);
