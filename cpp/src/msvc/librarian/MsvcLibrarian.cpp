@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "mqb/msvc/MsvcParameterEngine.hpp"
+#include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 
 namespace mqb::msvc {
 namespace {
@@ -73,7 +74,9 @@ MsvcLibrarian::identity(const MsvcToolchain& toolchain) {
     return LibrarianIdentity{
         .librarian = toolchain.librarian,
         .version = toolchain.identity.version,
-        .binary_stamp = std::to_string(size) + ":" + std::to_string(modified.time_since_epoch().count()),
+        .binary_stamp = std::to_string(size) + ":"
+            + std::to_string(modified.time_since_epoch().count()) + "|"
+            + librarian_environment_stamp(toolchain.environment),
     };
 }
 

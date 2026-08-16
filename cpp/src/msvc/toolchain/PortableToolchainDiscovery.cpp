@@ -1,6 +1,7 @@
 #include "PortableToolchainDiscovery.hpp"
 
 #include <filesystem>
+#include <string>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -8,8 +9,21 @@
 #include "ToolchainDiscoveryPrimitives.hpp"
 
 namespace mqb::msvc::detail {
+namespace {
 
 namespace fs = std::filesystem;
+
+[[nodiscard]] std::string joined_environment(const std::vector<fs::path>& paths) {
+    std::string value;
+    for (const auto& path : paths) {
+        if (!value.empty()) value.push_back(';');
+        value += path_to_utf8(path);
+    }
+    return value;
+}
+
+} // namespace
+
 using process::EnvironmentVariable;
 
 std::expected<MsvcToolchain, ToolchainError> discover_portable_toolchain(
@@ -70,6 +84,13 @@ std::expected<MsvcToolchain, ToolchainError> discover_portable_toolchain(
         *sdk_bin / target,
     };
 
+    // Portable mode is an MQB-owned toolchain environment. Do not append the
+    // launching shell's INCLUDE/LIB/LIBPATH/PATH: those values can silently
+    // redirect headers, libraries, metadata, or helper tools away from the
+    // portable bundle. Explicit empty metadata variables also mask vcvars state
+    // inherited from a Developer Command Prompt. Portable discovery resolves
+    // the selected VC/SDK roots directly and does not consume those ambient
+    // metadata aliases.
     return MsvcToolchain{
         .identity = ToolchainIdentity{
             .compiler = compiler,
@@ -82,9 +103,16 @@ std::expected<MsvcToolchain, ToolchainError> discover_portable_toolchain(
         .standard_library_modules = discover_standard_library_modules(*vc_tools),
         .source = ToolchainSource::portable,
         .environment = {
-            EnvironmentVariable{"PATH", prepend_environment(path_prefixes, "PATH")},
-            EnvironmentVariable{"INCLUDE", prepend_environment(include_prefixes, "INCLUDE")},
-            EnvironmentVariable{"LIB", prepend_environment(lib_prefixes, "LIB")},
+            EnvironmentVariable{"PATH", joined_environment(path_prefixes)},
+            EnvironmentVariable{"INCLUDE", joined_environment(include_prefixes)},
+            EnvironmentVariable{"LIB", joined_environment(lib_prefixes)},
+            EnvironmentVariable{"LIBPATH", {}},
+            EnvironmentVariable{"VCToolsInstallDir", {}},
+            EnvironmentVariable{"WindowsSdkDir", {}},
+            EnvironmentVariable{"WindowsSDKVersion", {}},
+            EnvironmentVariable{"UniversalCRTSdkDir", {}},
+            EnvironmentVariable{"UCRTVersion", {}},
+            EnvironmentVariable{"NETFXSDKDir", {}},
         },
     };
 }

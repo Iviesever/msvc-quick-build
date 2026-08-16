@@ -1,11 +1,17 @@
 #include <chrono>
+#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
+#include "mqb/msvc/MsvcLibrarian.hpp"
+#include "mqb/msvc/MsvcLinker.hpp"
+#include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/process/Process.hpp"
 
@@ -54,6 +60,27 @@ private:
     fs::path path_;
 };
 
+class EnvironmentGuard {
+public:
+    explicit EnvironmentGuard(std::string name) : name_(std::move(name)) {
+        if (const char* current = std::getenv(name_.c_str()); current != nullptr) {
+            original_ = std::string{current};
+        }
+    }
+
+    ~EnvironmentGuard() {
+        _putenv_s(name_.c_str(), original_ ? original_->c_str() : "");
+    }
+
+    void set(const std::string_view value) const {
+        _putenv_s(name_.c_str(), std::string{value}.c_str());
+    }
+
+private:
+    std::string name_;
+    std::optional<std::string> original_;
+};
+
 void touch(const fs::path& path) {
     fs::create_directories(path.parent_path());
     std::ofstream file{path, std::ios::binary};
@@ -67,9 +94,48 @@ void make_sdk_version(const fs::path& root, const std::string_view version) {
     fs::create_directories(root / "Windows Kits" / "10" / "bin" / version_text);
 }
 
+[[nodiscard]] const mqb::process::EnvironmentVariable* find_environment(
+    const mqb::msvc::MsvcToolchain& toolchain,
+    const std::string_view name) {
+    for (const auto& variable : toolchain.environment) {
+        if (variable.name == name) return &variable;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] mqb::process::EnvironmentVariable* find_environment(
+    std::vector<mqb::process::EnvironmentVariable>& environment,
+    const std::string_view name) {
+    for (auto& variable : environment) {
+        if (variable.name == name) return &variable;
+    }
+    return nullptr;
+}
+
 } // namespace
 
 int main() {
+    EnvironmentGuard ambient_path{"PATH"};
+    EnvironmentGuard ambient_include{"INCLUDE"};
+    EnvironmentGuard ambient_lib{"LIB"};
+    EnvironmentGuard ambient_libpath{"LIBPATH"};
+    EnvironmentGuard ambient_vc_tools{"VCToolsInstallDir"};
+    EnvironmentGuard ambient_sdk_dir{"WindowsSdkDir"};
+    EnvironmentGuard ambient_sdk_version{"WindowsSDKVersion"};
+    EnvironmentGuard ambient_ucrt_dir{"UniversalCRTSdkDir"};
+    EnvironmentGuard ambient_ucrt_version{"UCRTVersion"};
+    EnvironmentGuard ambient_netfx{"NETFXSDKDir"};
+    ambient_path.set("ambient-path-a;ambient-path-b");
+    ambient_include.set("ambient-include-a;ambient-include-b");
+    ambient_lib.set("ambient-lib-a;ambient-lib-b");
+    ambient_libpath.set("ambient-libpath-a;ambient-libpath-b");
+    ambient_vc_tools.set("ambient-vc-tools");
+    ambient_sdk_dir.set("ambient-sdk-dir");
+    ambient_sdk_version.set("ambient-sdk-version");
+    ambient_ucrt_dir.set("ambient-ucrt-dir");
+    ambient_ucrt_version.set("ambient-ucrt-version");
+    ambient_netfx.set("ambient-netfx-sdk");
+
     TemporaryDirectory fixture;
     const fs::path portable = fixture.path() / "portable_msvc";
 
@@ -111,13 +177,128 @@ int main() {
         expect(result->identity.version == "14.50.20000",
                "portable discovery should select the lexicographically latest VC tools version");
         expect(!result->identity.binary_stamp.empty(),
-               "compiler identity should include a binary stamp");
-        expect(result->environment.size() == 3,
-               "portable discovery should provide PATH/INCLUDE/LIB overrides");
-        expect(result->environment[0].name == "PATH",
-               "portable environment should expose PATH first");
-        expect(result->environment[0].value.find("10.0.30000.0") != std::string::npos,
+               "compiler identity should include a binary and compiler-environment stamp");
+        expect(result->environment.size() == 10,
+               "portable discovery should own all effective search and toolchain metadata variables");
+
+        const auto* path = find_environment(*result, "PATH");
+        const auto* include = find_environment(*result, "INCLUDE");
+        const auto* lib = find_environment(*result, "LIB");
+        const auto* libpath = find_environment(*result, "LIBPATH");
+        expect(path != nullptr && path->value.find("10.0.30000.0") != std::string::npos,
                "portable PATH should use the latest Windows Kit version");
+        expect(path != nullptr && path->value.find("ambient-path") == std::string::npos,
+               "portable PATH must not inherit ambient tool lookup roots");
+        expect(include != nullptr && include->value.find("ambient-include") == std::string::npos,
+               "portable INCLUDE must not inherit ambient header roots");
+        expect(lib != nullptr && lib->value.find("ambient-lib") == std::string::npos,
+               "portable LIB must not inherit ambient library roots");
+        expect(libpath != nullptr && libpath->value.empty(),
+               "portable LIBPATH must explicitly mask ambient metadata roots");
+
+        for (const std::string_view metadata_name : {
+                 "VCToolsInstallDir",
+                 "WindowsSdkDir",
+                 "WindowsSDKVersion",
+                 "UniversalCRTSdkDir",
+                 "UCRTVersion",
+                 "NETFXSDKDir",
+             }) {
+            const auto* metadata = find_environment(*result, metadata_name);
+            expect(metadata != nullptr && metadata->value.empty(),
+                   "portable discovery must explicitly mask ambient vcvars metadata");
+        }
+
+        const std::string compiler_stamp =
+            mqb::msvc::compiler_environment_stamp(result->environment);
+        const std::string linker_stamp =
+            mqb::msvc::linker_environment_stamp(result->environment);
+        const std::string librarian_stamp =
+            mqb::msvc::librarian_environment_stamp(result->environment);
+        expect(result->identity.binary_stamp.ends_with(compiler_stamp),
+               "portable compiler cache identity should seal compiler search environment");
+
+        const auto linker_identity = mqb::msvc::MsvcLinker::identity(*result);
+        expect(linker_identity.has_value(),
+               "portable link.exe should expose a linker identity without launching it");
+        if (linker_identity) {
+            expect(linker_identity->binary_stamp.ends_with(linker_stamp),
+                   "portable linker cache identity should seal library/helper search environment");
+        }
+        const auto librarian_identity = mqb::msvc::MsvcLibrarian::identity(*result);
+        expect(librarian_identity.has_value(),
+               "portable lib.exe should expose a librarian identity without launching it");
+        if (librarian_identity) {
+            expect(librarian_identity->binary_stamp.ends_with(librarian_stamp),
+                   "portable librarian cache identity should seal library/tool search environment");
+        }
+
+        auto include_order_changed = result->environment;
+        if (auto* effective_include = find_environment(include_order_changed, "INCLUDE")) {
+            effective_include->value = "B;A";
+        }
+        expect(mqb::msvc::compiler_environment_stamp(include_order_changed) != compiler_stamp,
+               "effective INCLUDE replacement/order changes must change compiler identity");
+        expect(mqb::msvc::linker_environment_stamp(include_order_changed) == linker_stamp,
+               "INCLUDE-only changes must not invalidate linker identity");
+        expect(mqb::msvc::librarian_environment_stamp(include_order_changed) == librarian_stamp,
+               "INCLUDE-only changes must not invalidate librarian identity");
+
+        auto lib_order_changed = *result;
+        if (auto* effective_lib = find_environment(lib_order_changed.environment, "LIB")) {
+            effective_lib->value = "B;A";
+        }
+        expect(mqb::msvc::compiler_environment_stamp(lib_order_changed.environment) == compiler_stamp,
+               "LIB-only changes must not rebuild translation units");
+        expect(mqb::msvc::linker_environment_stamp(lib_order_changed.environment) != linker_stamp,
+               "effective LIB replacement/order changes must change linker identity");
+        expect(mqb::msvc::librarian_environment_stamp(lib_order_changed.environment) != librarian_stamp,
+               "effective LIB replacement/order changes must change librarian identity");
+        const auto changed_linker_identity = mqb::msvc::MsvcLinker::identity(lib_order_changed);
+        expect(linker_identity && changed_linker_identity
+                   && changed_linker_identity->binary_stamp != linker_identity->binary_stamp,
+               "LIB order mutation must directly invalidate MsvcLinker identity");
+        const auto changed_librarian_identity = mqb::msvc::MsvcLibrarian::identity(lib_order_changed);
+        expect(librarian_identity && changed_librarian_identity
+                   && changed_librarian_identity->binary_stamp != librarian_identity->binary_stamp,
+               "LIB order mutation must directly invalidate MsvcLibrarian identity");
+
+        auto libpath_changed = result->environment;
+        if (auto* effective_libpath = find_environment(libpath_changed, "LIBPATH")) {
+            effective_libpath->value = "metadata-b;metadata-a";
+        }
+        expect(mqb::msvc::compiler_environment_stamp(libpath_changed) != compiler_stamp,
+               "effective LIBPATH changes must change compiler identity");
+        expect(mqb::msvc::linker_environment_stamp(libpath_changed) == linker_stamp,
+               "LIBPATH-only changes must not invalidate linker identity");
+        expect(mqb::msvc::librarian_environment_stamp(libpath_changed) == librarian_stamp,
+               "LIBPATH-only changes must not invalidate librarian identity");
+
+        ambient_path.set("ambient-path-b;ambient-path-a");
+        ambient_include.set("ambient-include-b;ambient-include-a");
+        ambient_lib.set("ambient-lib-b;ambient-lib-a");
+        ambient_libpath.set("ambient-libpath-b;ambient-libpath-a");
+        ambient_vc_tools.set("ambient-vc-tools-mutated");
+        ambient_sdk_dir.set("ambient-sdk-dir-mutated");
+        ambient_sdk_version.set("ambient-sdk-version-mutated");
+        ambient_ucrt_dir.set("ambient-ucrt-dir-mutated");
+        ambient_ucrt_version.set("ambient-ucrt-version-mutated");
+        ambient_netfx.set("ambient-netfx-sdk-mutated");
+        const auto after_ambient_mutation = locator.discover(options);
+        expect(after_ambient_mutation.has_value()
+                   && after_ambient_mutation->identity.binary_stamp == result->identity.binary_stamp,
+               "portable ambient search/metadata mutation must not perturb compiler identity");
+        if (after_ambient_mutation) {
+            const auto after_linker_identity = mqb::msvc::MsvcLinker::identity(*after_ambient_mutation);
+            expect(linker_identity && after_linker_identity
+                       && after_linker_identity->binary_stamp == linker_identity->binary_stamp,
+                   "portable ambient search/metadata mutation must not perturb linker identity");
+            const auto after_librarian_identity = mqb::msvc::MsvcLibrarian::identity(*after_ambient_mutation);
+            expect(librarian_identity && after_librarian_identity
+                       && after_librarian_identity->binary_stamp == librarian_identity->binary_stamp,
+                   "portable ambient search/metadata mutation must not perturb librarian identity");
+        }
+
         expect(result->standard_library_modules.std
                    && *result->standard_library_modules.std == std_source.lexically_normal(),
                "portable discovery should expose std.ixx from the selected VC Tools version");

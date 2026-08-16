@@ -8,6 +8,7 @@
 #include "ToolchainDiscoveryPrimitives.hpp"
 #include "VisualStudioToolchainCache.hpp"
 #include "VisualStudioToolchainDiscovery.hpp"
+#include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 
 namespace mqb::msvc {
 
@@ -19,7 +20,9 @@ MsvcToolchainLocator::discover(const DiscoveryOptions& options) const {
         for (const auto& portable_root : options.portable_roots) {
             std::error_code error_code;
             if (fs::is_directory(portable_root, error_code)) {
-                return detail::discover_portable_toolchain(portable_root, options);
+                auto portable = detail::discover_portable_toolchain(portable_root, options);
+                if (portable) seal_compiler_environment_identity(*portable);
+                return portable;
             }
         }
 
@@ -33,17 +36,24 @@ MsvcToolchainLocator::discover(const DiscoveryOptions& options) const {
     const auto cache_file = detail::visual_studio_toolchain_cache_file(options);
     if (cache_file) {
         if (auto cached = detail::reuse_visual_studio_toolchain_cache(*cache_file, options)) {
-            return std::move(*cached);
+            if (cached_visual_studio_environment_is_fresh(*cached)) {
+                seal_compiler_environment_identity(*cached);
+                return std::move(*cached);
+            }
         }
     }
 
     auto discovered = detail::discover_visual_studio_toolchain(runner_, options);
     if (discovered && cache_file) {
+        // Persist raw compiler-binary evidence. Compiler environment identity is
+        // sealed only after the persistent discovery cache is written so its
+        // existing binary-stamp validation remains a pure executable check.
         detail::save_visual_studio_toolchain_cache_best_effort(
             *cache_file,
             options,
             *discovered);
     }
+    if (discovered) seal_compiler_environment_identity(*discovered);
     return discovered;
 }
 

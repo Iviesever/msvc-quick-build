@@ -22,7 +22,7 @@ namespace {
 namespace fs = std::filesystem;
 using process::EnvironmentVariable;
 
-constexpr std::string_view cache_magic = "MQB_TOOLCHAIN_CACHE_V6";
+constexpr std::string_view cache_magic = "MQB_TOOLCHAIN_CACHE_V9";
 constexpr std::uintmax_t max_cache_size = 1024u * 1024u;
 constexpr std::size_t max_cache_entries = 64u;
 constexpr std::size_t max_cache_string = 256u * 1024u;
@@ -35,7 +35,8 @@ struct CacheRecord {
     fs::path vc_tools_root;
     std::string binary_stamp;
     std::vector<EnvironmentVariable> environment;
-    std::vector<fs::path> path_prefixes;
+    std::string ambient_path;
+    std::string effective_path;
 };
 
 struct ToolPaths {
@@ -232,36 +233,6 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
         && trusted_directory_list(lib_path->value, roots);
 }
 
-[[nodiscard]] std::vector<fs::path> trusted_path_prefixes(const MsvcToolchain& toolchain) {
-    const auto* path = find_environment(toolchain.environment, "PATH");
-    if (path == nullptr || path->value.empty()) return {};
-    const auto roots = trusted_roots(toolchain.environment, toolchain.vc_tools_root);
-    std::vector<fs::path> result;
-    for (const auto part : split_semicolon(path->value)) {
-        fs::path directory = stable_path(detail::path_from_utf8(part));
-        std::error_code error_code;
-        if (!fs::is_directory(directory, error_code) || error_code || !path_inside_any_root(roots, directory)) continue;
-        const auto duplicate = std::find_if(result.begin(), result.end(), [&](const fs::path& existing) {
-            return normalized_path_text(existing) == normalized_path_text(directory);
-        });
-        if (duplicate == result.end()) result.push_back(std::move(directory));
-    }
-    return result;
-}
-
-[[nodiscard]] std::string joined_path(const std::vector<fs::path>& prefixes) {
-    std::string value;
-    for (const auto& prefix : prefixes) {
-        if (!value.empty()) value.push_back(';');
-        value += detail::path_to_utf8(prefix);
-    }
-    if (const auto inherited = detail::environment_value("PATH"); inherited && !inherited->empty()) {
-        if (!value.empty()) value.push_back(';');
-        value += *inherited;
-    }
-    return value;
-}
-
 [[nodiscard]] ToolPaths tool_paths(const fs::path& vc_tools_root, const DiscoveryOptions& options) {
     const fs::path directory = stable_path(vc_tools_root) / "bin"
         / detail::host_directory(options.host_architecture)
@@ -297,12 +268,8 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
     for (const auto& variable : record.environment) {
         if (!write_quoted(stream, "env_name", variable.name) || !write_quoted(stream, "env_value", variable.value)) return false;
     }
-    if (record.path_prefixes.size() > max_cache_entries) return false;
-    stream << "path_prefixes " << record.path_prefixes.size() << '\n';
-    for (const auto& prefix : record.path_prefixes) {
-        if (!write_quoted(stream, "path_prefix", detail::path_to_utf8(prefix))) return false;
-    }
-    return static_cast<bool>(stream);
+    return write_quoted(stream, "ambient_path", record.ambient_path)
+        && write_quoted(stream, "effective_path", record.effective_path);
 }
 
 [[nodiscard]] std::optional<std::size_t> read_count(std::istream& stream, const std::string_view expected_label) {
@@ -331,13 +298,9 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
             || !cacheable_environment_name(variable.name)) return std::nullopt;
         record.environment.push_back(std::move(variable));
     }
-    const auto path_count = read_count(stream, "path_prefixes");
-    if (!path_count) return std::nullopt;
-    for (std::size_t index = 0; index < *path_count; ++index) {
-        std::string value;
-        if (!read_quoted(stream, "path_prefix", value)) return std::nullopt;
-        record.path_prefixes.push_back(stable_path(detail::path_from_utf8(value)));
-    }
+    if (!read_quoted(stream, "ambient_path", record.ambient_path)
+        || !read_quoted(stream, "effective_path", record.effective_path)
+        || record.effective_path.empty()) return std::nullopt;
     stream >> std::ws;
     if (!stream.eof()) return std::nullopt;
     return record;
@@ -359,6 +322,14 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
         if (!stream) return std::nullopt;
         auto record = read_record(stream);
         if (!record || !cache_key_matches(*record, options) || record->binary_stamp.empty()) return std::nullopt;
+
+        const std::string current_ambient_path = detail::environment_value("PATH").value_or(std::string{});
+        if (record->ambient_path != current_ambient_path) {
+            // PATH is part of compiler/linker effective identity. Never replay a
+            // vcvars result against a different launching PATH; rediscover it.
+            return std::nullopt;
+        }
+
         if (!fs::is_directory(record->vc_tools_root, error_code) || error_code) return std::nullopt;
         const auto latest_tools = detail::latest_directory(record->vc_tools_root.parent_path());
         if (!latest_tools || normalized_path_text(*latest_tools) != normalized_path_text(record->vc_tools_root)) return std::nullopt;
@@ -370,14 +341,13 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
         auto stamp = detail::binary_stamp(paths.compiler);
         if (!stamp || *stamp != record->binary_stamp) return std::nullopt;
         if (!environment_is_cacheable(record->environment, record->vc_tools_root)) return std::nullopt;
-        const auto roots = trusted_roots(record->environment, record->vc_tools_root);
-        if (record->path_prefixes.empty()) return std::nullopt;
-        for (const auto& prefix : record->path_prefixes) {
-            error_code.clear();
-            if (!fs::is_directory(prefix, error_code) || error_code || !path_inside_any_root(roots, prefix)) return std::nullopt;
-        }
+
+        // PATH is opaque vcvars output, not a set of MQB-owned roots. Persist it
+        // byte-for-byte and bind it to the exact ambient PATH that produced it;
+        // attempting to classify every vcvars-added entry against an incomplete
+        // trusted-root list caused valid discovery caches to be discarded.
         std::vector<EnvironmentVariable> environment = std::move(record->environment);
-        environment.push_back(EnvironmentVariable{.name = "PATH", .value = joined_path(record->path_prefixes)});
+        environment.push_back(EnvironmentVariable{.name = "PATH", .value = std::move(record->effective_path)});
         return MsvcToolchain{
             .identity = ToolchainIdentity{
                 .compiler = paths.compiler,
@@ -408,9 +378,13 @@ void save_visual_studio_cache_best_effort(
         if (normalized_path_text(expected.compiler) != normalized_path_text(toolchain.identity.compiler)
             || normalized_path_text(expected.linker) != normalized_path_text(toolchain.linker)
             || normalized_path_text(expected.librarian) != normalized_path_text(toolchain.librarian)) return;
+
         std::vector<EnvironmentVariable> environment = cacheable_environment(toolchain);
-        std::vector<fs::path> path_prefixes = trusted_path_prefixes(toolchain);
-        if (!environment_is_cacheable(environment, root) || path_prefixes.empty()) return;
+        const auto* path = find_environment(toolchain.environment, "PATH");
+        if (path == nullptr || path->value.empty()) return;
+        const std::string ambient_path = detail::environment_value("PATH").value_or(std::string{});
+        if (!environment_is_cacheable(environment, root)) return;
+
         const CacheRecord record{
             .target_architecture = detail::architecture_name(options.target_architecture),
             .host_architecture = detail::architecture_name(options.host_architecture),
@@ -418,7 +392,8 @@ void save_visual_studio_cache_best_effort(
             .vc_tools_root = root,
             .binary_stamp = toolchain.identity.binary_stamp,
             .environment = std::move(environment),
-            .path_prefixes = std::move(path_prefixes),
+            .ambient_path = ambient_path,
+            .effective_path = path->value,
         };
         std::error_code error_code;
         if (!cache_file.parent_path().empty()) {

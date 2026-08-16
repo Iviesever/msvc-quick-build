@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
+
 namespace mqb::msvc {
 namespace {
 
@@ -267,7 +269,8 @@ MsvcLinker::identity(const MsvcToolchain& toolchain) {
         .linker = toolchain.linker,
         .version = toolchain.identity.version,
         .binary_stamp = std::to_string(size) + ":"
-            + std::to_string(modified.time_since_epoch().count()),
+            + std::to_string(modified.time_since_epoch().count()) + "|"
+            + linker_environment_stamp(toolchain.environment),
     };
 }
 
