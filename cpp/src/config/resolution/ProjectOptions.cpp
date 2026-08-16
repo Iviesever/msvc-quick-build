@@ -37,6 +37,7 @@ void apply_build(
     append_all(effective.libraries, overrides.libraries);
     append_all(effective.compiler_arguments, overrides.compiler_arguments);
     append_all(effective.linker_arguments, overrides.linker_arguments);
+    append_all(effective.librarian_arguments, overrides.librarian_arguments);
 }
 
 void apply_discovery(

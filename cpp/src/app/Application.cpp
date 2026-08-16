@@ -324,6 +324,10 @@ int Application::run(const std::span<const std::string_view> arguments) {
         || !validate_parameter_capabilities(
             mqb::msvc::ParameterTool::linker,
             options.linker_arguments,
+            toolchain->identity.version)
+        || !validate_parameter_capabilities(
+            mqb::msvc::ParameterTool::librarian,
+            options.librarian_arguments,
             toolchain->identity.version)) {
         return 2;
     }
@@ -449,6 +453,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
                     : std::vector<fs::path>{},
                 .target = std::move(*target_artifacts),
                 .compiler_options = std::move(compiler_options),
+                .librarian_arguments = std::move(options.librarian_arguments),
                 .project_root = project_root,
                 .target_name = target_name,
                 .max_parallel_jobs = parallelism,
@@ -458,6 +463,12 @@ int Application::run(const std::span<const std::string_view> arguments) {
             },
             *toolchain,
             runner);
+    }
+
+    if (!options.librarian_arguments.empty()) {
+        diagnostics::print_error(
+            "native MSVC librarian policy is only valid for static-library targets");
+        return 2;
     }
 
     mqb::LinkOptions link_options;

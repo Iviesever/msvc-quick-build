@@ -77,6 +77,105 @@ int main() {
     }
 
     {
+        const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+        TempTree tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_native_librarian_policy_" + std::to_string(unique)),
+        };
+        fs::create_directories(tree.root);
+
+        const std::vector arguments{
+            "main.cpp"sv,
+            "--type"sv, "static"sv,
+            "/W4"sv,
+            "/lib"sv,
+            "/EXPORT:mqb_export"sv,
+            "/WX"sv,
+        };
+        auto parsed = mqb::cli::parse_arguments(arguments);
+        expect(parsed.has_value(), "native /lib boundary should parse as native argv before project setup");
+        if (parsed) {
+            expect(parsed->compiler_arguments.size() == 4
+                       && parsed->compiler_arguments[0] == "/W4"
+                       && parsed->compiler_arguments[1] == "/lib"
+                       && parsed->compiler_arguments[2] == "/EXPORT:mqb_export"
+                       && parsed->compiler_arguments[3] == "/WX",
+                   "CLI parser should preserve /lib and its tail until ownership routing");
+
+            auto project = mqb::app::prepare_project(*parsed, tree.root);
+            expect(project.has_value(), "project setup should split and route native /lib policy");
+            if (project) {
+                expect(parsed->compiler_arguments.size() == 1
+                           && parsed->compiler_arguments[0] == "/W4",
+                       "compiler argv before /lib should remain compiler-owned");
+                expect(parsed->librarian_arguments.size() == 2
+                           && parsed->librarian_arguments[0] == "/EXPORT:mqb_export"
+                           && parsed->librarian_arguments[1] == "/WX",
+                       "every native option after /lib should become routed librarian policy in order");
+                expect(project->effective.target_kind == mqb::TargetKind::static_library,
+                       "native librarian policy should coexist with the typed static target kind");
+            }
+        }
+
+        const std::vector empty_tail_arguments{
+            "main.cpp"sv,
+            "--type"sv, "static"sv,
+            "/lib"sv,
+        };
+        auto empty_tail = mqb::cli::parse_arguments(empty_tail_arguments);
+        expect(empty_tail.has_value(), "bare /lib should remain syntactically parseable at CLI stage");
+        if (empty_tail) {
+            auto project = mqb::app::prepare_project(*empty_tail, tree.root);
+            expect(!project && project.error().message.find("requires at least one librarian option") != std::string::npos,
+                   "bare /lib should fail closed at ownership routing");
+        }
+
+        const std::vector owned_output_arguments{
+            "main.cpp"sv,
+            "--type"sv, "static"sv,
+            "/lib"sv,
+            "/OUT:hijack.lib"sv,
+        };
+        auto owned_output = mqb::cli::parse_arguments(owned_output_arguments);
+        expect(owned_output.has_value(), "Class A librarian option should reach ownership routing");
+        if (owned_output) {
+            auto project = mqb::app::prepare_project(*owned_output, tree.root);
+            expect(!project && project.error().message.find("/OUT:hijack.lib") != std::string::npos,
+                   "Class A /OUT after /lib should be rejected before product execution");
+        }
+
+        const std::vector wrong_tool_arguments{
+            "main.cpp"sv,
+            "--type"sv, "static"sv,
+            "/lib"sv,
+            "/W4"sv,
+        };
+        auto wrong_tool = mqb::cli::parse_arguments(wrong_tool_arguments);
+        expect(wrong_tool.has_value(), "compiler-only option after /lib should parse before classification");
+        if (wrong_tool) {
+            auto project = mqb::app::prepare_project(*wrong_tool, tree.root);
+            expect(!project,
+                   "compiler-only option after /lib must fail librarian classification instead of leaking back to cl.exe");
+        }
+
+        const std::vector duplicate_boundary_arguments{
+            "main.cpp"sv,
+            "--type"sv, "static"sv,
+            "/lib"sv,
+            "/WX"sv,
+            "/LIB"sv,
+            "/EXPORT:duplicate"sv,
+        };
+        auto duplicate_boundary = mqb::cli::parse_arguments(duplicate_boundary_arguments);
+        expect(duplicate_boundary.has_value(), "duplicate /lib boundary should parse before routing");
+        if (duplicate_boundary) {
+            auto project = mqb::app::prepare_project(*duplicate_boundary, tree.root);
+            expect(!project && project.error().message.find("duplicate native MSVC /lib separator") != std::string::npos,
+                   "duplicate /lib boundary should be rejected deterministically");
+        }
+    }
+
+    {
         const std::vector arguments{
             "main.cpp"sv,
             "--type"sv, "dll"sv,

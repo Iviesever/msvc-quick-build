@@ -52,7 +52,9 @@ public:
         std::span<const std::filesystem::path> objects,
         const std::filesystem::path& output,
         const LibrarianIdentity& librarian,
-        bool link_time_code_generation = false);
+        bool link_time_code_generation = false,
+        Architecture architecture = Architecture::x64,
+        std::span<const std::string> additional_arguments = {});
 
     [[nodiscard]] static BuildSignature from_digest(const SignatureDigest digest) noexcept {
         return BuildSignature{digest};

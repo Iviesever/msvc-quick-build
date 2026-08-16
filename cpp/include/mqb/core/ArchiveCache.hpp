@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "mqb/core/BuildSignature.hpp"
@@ -35,7 +36,9 @@ public:
         const FileSnapshot& output_snapshot,
         std::span<const FileSnapshot> object_snapshots,
         bool force_archive = false,
-        bool link_time_code_generation = false);
+        bool link_time_code_generation = false,
+        Architecture architecture = Architecture::x64,
+        std::span<const std::string> additional_arguments = {});
 };
 
 } // namespace mqb

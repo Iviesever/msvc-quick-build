@@ -68,6 +68,26 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
         });
     }
 
+    auto librarian_routing = msvc::MsvcParameterEngine::route_librarian(
+        request.additional_arguments);
+    if (!librarian_routing) {
+        return std::unexpected(IncrementalArchiveError{
+            .code = IncrementalArchiveErrorCode::librarian_parameter_invalid,
+            .message = "invalid native MSVC librarian argument: "
+                + librarian_routing.error().message,
+            .parameter_error = librarian_routing.error(),
+        });
+    }
+    if (librarian_routing->architecture
+        && *librarian_routing->architecture != request.architecture) {
+        return std::unexpected(IncrementalArchiveError{
+            .code = IncrementalArchiveErrorCode::librarian_parameter_invalid,
+            .message = "native MSVC librarian /MACHINE conflicts with the typed target architecture",
+        });
+    }
+    const bool effective_ltcg = request.link_time_code_generation
+        || librarian_routing->link_time_code_generation.value_or(false);
+
     std::optional<ArchiveCacheEntry> cached_entry;
     auto loaded = ArchiveCacheFile::load(request.cache_file);
     if (loaded) {
@@ -101,7 +121,9 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
         output_snapshot,
         object_snapshots,
         request.force_archive,
-        request.link_time_code_generation);
+        effective_ltcg,
+        request.architecture,
+        librarian_routing->passthrough);
 
     // A reusable archive validation already proves that there is no archive
     // action to schedule. Keep the generic planner on miss/rebuild paths only.
@@ -141,7 +163,9 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
         .objects = action->objects,
         .output = action->output,
         .working_directory = request.working_directory,
-        .link_time_code_generation = request.link_time_code_generation,
+        .architecture = request.architecture,
+        .link_time_code_generation = effective_ltcg,
+        .additional_arguments = librarian_routing->passthrough,
     });
     if (!archived) {
         return std::unexpected(IncrementalArchiveError{
@@ -159,7 +183,9 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
             action->objects,
             action->output,
             *librarian_identity,
-            request.link_time_code_generation),
+            effective_ltcg,
+            request.architecture,
+            librarian_routing->passthrough),
         .objects = action->objects,
         .output = action->output,
     };

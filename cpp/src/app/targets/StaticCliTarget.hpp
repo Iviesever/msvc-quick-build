@@ -23,6 +23,7 @@ struct StaticCliTargetRequest {
     std::vector<std::filesystem::path> additional_objects;
     TargetArtifacts target;
     CompilerOptions compiler_options;
+    std::vector<std::string> librarian_arguments;
     std::filesystem::path project_root;
     std::string target_name;
     orchestration::ParallelismPolicy max_parallel_jobs{};

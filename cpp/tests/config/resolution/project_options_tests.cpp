@@ -32,6 +32,8 @@ int main() {
                "smart discovery should be enabled by default");
         expect(!effective.output_name,
                "output should remain unset by default");
+        expect(effective.librarian_arguments.empty(),
+               "librarian argument policy should be empty by default");
         expect(effective.external_module_providers.empty(),
                "external module provider registry should be empty by default");
     }
@@ -46,6 +48,9 @@ int main() {
     project.build.include_directories = {fs::path{"config/include"}};
     project.build.library_directories = {fs::path{"config/lib"}};
     project.build.libraries = {"configlib"};
+    project.build.compiler_arguments = {"/W3"};
+    project.build.linker_arguments = {"/DEBUG:NONE"};
+    project.build.librarian_arguments = {"/EXPORT:config_symbol"};
     project.discovery.enabled = false;
     project.discovery.exclude_directories = {fs::path{"tests"}};
     project.discovery.extra_sources = {fs::path{"src/config-extra.cpp"}};
@@ -78,6 +83,8 @@ int main() {
                "project config should disable discovery");
         expect(effective.defines == project.build.defines,
                "project list values should populate effective options");
+        expect(effective.librarian_arguments == project.build.librarian_arguments,
+               "project librarian arguments should populate effective options");
         expect(effective.external_module_providers.size() == 2
                    && effective.external_module_providers[0].logical_name == "vendor.math"
                    && effective.external_module_providers[1].logical_name == "config.only",
@@ -91,6 +98,9 @@ int main() {
     profile.build.defines = {"PROFILE_B=2", "SHARED=profile"};
     profile.build.include_directories = {fs::path{"profile/include"}};
     profile.build.libraries = {"profilelib"};
+    profile.build.compiler_arguments = {"/W4"};
+    profile.build.linker_arguments = {"/OPT:REF"};
+    profile.build.librarian_arguments = {"/WX"};
     profile.discovery.enabled = true;
     profile.discovery.exclude_directories = {fs::path{"profile-tests"}};
     profile.modules.external_providers = {
@@ -132,6 +142,10 @@ int main() {
                    && effective.libraries[0] == "configlib"
                    && effective.libraries[1] == "profilelib",
                "profile libraries should append after base libraries");
+        expect(effective.librarian_arguments.size() == 2
+                   && effective.librarian_arguments[0] == "/EXPORT:config_symbol"
+                   && effective.librarian_arguments[1] == "/WX",
+               "profile librarian arguments should append after base librarian policy");
         expect(effective.external_module_providers.size() == 3,
                "profile modules should replace by logical name and append profile-only providers");
         if (effective.external_module_providers.size() == 3) {
@@ -157,6 +171,9 @@ int main() {
         cli.build.include_directories = {fs::path{"cli/include"}};
         cli.build.library_directories = {fs::path{"cli/lib"}};
         cli.build.libraries = {"clilib"};
+        cli.build.compiler_arguments = {"/WX"};
+        cli.build.linker_arguments = {"/OPT:NOREF"};
+        cli.build.librarian_arguments = {"/IGNORE:4006"};
         cli.discovery.enabled = false;
         cli.discovery.exclude_directories = {fs::path{"cli-tests"}};
         cli.discovery.extra_sources = {fs::path{"src/cli-extra.cpp"}};
@@ -205,6 +222,21 @@ int main() {
                    && effective.libraries[1] == "profilelib"
                    && effective.libraries[2] == "clilib",
                "libraries should append through all three layers");
+        expect(effective.compiler_arguments.size() == 3
+                   && effective.compiler_arguments[0] == "/W3"
+                   && effective.compiler_arguments[1] == "/W4"
+                   && effective.compiler_arguments[2] == "/WX",
+               "compiler arguments should append through all three layers");
+        expect(effective.linker_arguments.size() == 3
+                   && effective.linker_arguments[0] == "/DEBUG:NONE"
+                   && effective.linker_arguments[1] == "/OPT:REF"
+                   && effective.linker_arguments[2] == "/OPT:NOREF",
+               "linker arguments should append through all three layers");
+        expect(effective.librarian_arguments.size() == 3
+                   && effective.librarian_arguments[0] == "/EXPORT:config_symbol"
+                   && effective.librarian_arguments[1] == "/WX"
+                   && effective.librarian_arguments[2] == "/IGNORE:4006",
+               "librarian arguments should append base then profile then CLI without being dropped");
         expect(effective.discovery_exclude_directories.size() == 3,
                "discovery exclude directories should be additive across all layers");
         expect(effective.discovery_extra_sources.size() == 2,

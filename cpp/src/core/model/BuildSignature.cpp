@@ -296,17 +296,25 @@ BuildSignature BuildSignature::for_archive(
     const std::span<const std::filesystem::path> objects,
     const std::filesystem::path& output,
     const LibrarianIdentity& librarian,
-    const bool link_time_code_generation) {
+    const bool link_time_code_generation,
+    const Architecture architecture,
+    const std::span<const std::string> additional_arguments) {
     StableHasher hasher;
-    hasher.add_string("mqb.archive.signature.v1");
+    // v2 intentionally invalidates pre-librarian-parameter cache entries. The
+    // archive recipe now owns architecture plus routed native LIB argv.
+    hasher.add_string("mqb.archive.signature.v2");
     hasher.add_paths(objects);
     hasher.add_path(output);
     hasher.add_path(librarian.librarian);
     hasher.add_string(librarian.version);
     hasher.add_string(librarian.binary_stamp);
+    hasher.add_enum(architecture);
     if (link_time_code_generation) {
-        // Preserve historical archive identities when LTCG is off.
         hasher.add_string("mqb.ltcg.archive.v1");
+    }
+    hasher.add_string("mqb.archive.native-arguments.v1");
+    for (const auto& argument : additional_arguments) {
+        hasher.add_string(argument);
     }
     return BuildSignature{hasher.finish()};
 }
