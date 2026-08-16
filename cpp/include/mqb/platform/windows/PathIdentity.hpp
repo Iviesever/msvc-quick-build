@@ -39,4 +39,25 @@ namespace mqb::platform::windows {
     return key;
 }
 
+// Root-containment decisions are identity decisions on Windows, not lexical
+// spelling decisions. Compare the same canonical keys used by caches,
+// discovery, library resolution, and toolchain identity, and require a path
+// separator at the boundary so `C:/project2` is not inside `C:/project`.
+[[nodiscard]] inline bool path_identity_contains(
+    const std::filesystem::path& root,
+    const std::filesystem::path& candidate) {
+    std::string root_key = path_identity_key(root);
+    const std::string candidate_key = path_identity_key(candidate);
+    if (root_key.empty() || candidate_key.empty()) {
+        return false;
+    }
+    if (candidate_key == root_key) {
+        return true;
+    }
+    if (root_key.back() != '/') {
+        root_key.push_back('/');
+    }
+    return candidate_key.starts_with(root_key);
+}
+
 } // namespace mqb::platform::windows

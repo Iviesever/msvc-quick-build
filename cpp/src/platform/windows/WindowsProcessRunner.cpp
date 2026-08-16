@@ -412,10 +412,6 @@ read_inherited_environment() {
         if (!wide_name) {
             return std::unexpected(wide_name.error());
         }
-        auto wide_value = utf8_to_wide(override_variable.value, "environment variable value");
-        if (!wide_value) {
-            return std::unexpected(wide_value.error());
-        }
 
         const auto existing = std::find_if(
             entries.begin(),
@@ -423,6 +419,17 @@ read_inherited_environment() {
             [&wide_name](const EnvironmentEntry& entry) {
                 return environment_name_equal(entry.name, *wide_name);
             });
+        if (override_variable.remove) {
+            if (existing != entries.end()) {
+                entries.erase(existing);
+            }
+            continue;
+        }
+
+        auto wide_value = utf8_to_wide(override_variable.value, "environment variable value");
+        if (!wide_value) {
+            return std::unexpected(wide_value.error());
+        }
         if (existing != entries.end()) {
             existing->name = std::move(*wide_name);
             existing->value = std::move(*wide_value);

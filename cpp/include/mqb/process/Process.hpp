@@ -13,6 +13,9 @@ namespace mqb::process {
 struct EnvironmentVariable {
     std::string name;
     std::string value;
+    // Removal is distinct from assigning an empty string on Windows: some
+    // MSVC tools observe presence itself (for example LINK_REPRO).
+    bool remove{false};
 };
 
 struct ProcessSpec {

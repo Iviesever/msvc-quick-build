@@ -166,7 +166,7 @@ SourceDiscovery::discover(const Request& request) {
         if (!source) {
             return std::unexpected(source.error());
         }
-        if (*source == entry) {
+        if (path_key(*source) == path_key(entry)) {
             return std::unexpected(failure(
                 ErrorCode::invalid_correction,
                 *source,
@@ -200,7 +200,7 @@ SourceDiscovery::discover(const Request& request) {
                     "discovery extra source must not be inside an excluded directory"));
             }
         }
-        if (*source != entry && extra_source_keys.insert(key).second) {
+        if (key != path_key(entry) && extra_source_keys.insert(key).second) {
             extra_sources.push_back(std::move(*source));
         }
     }
@@ -303,7 +303,11 @@ SourceDiscovery::discover(const Request& request) {
         [](const fs::path& left, const fs::path& right) {
             return path_key(left) < path_key(right);
         });
-    const auto entry_position = std::find(result.sources.begin(), result.sources.end(), entry);
+    const std::string entry_key = path_key(entry);
+    const auto entry_position = std::find_if(
+        result.sources.begin(),
+        result.sources.end(),
+        [&](const fs::path& source) { return path_key(source) == entry_key; });
     if (entry_position != result.sources.end() && entry_position != result.sources.begin()) {
         std::rotate(result.sources.begin(), entry_position, entry_position + 1);
     }
@@ -317,7 +321,7 @@ SourceDiscovery::discover(const Request& request) {
         }
     }
 
-    if (result.sources.empty() || result.sources.front() != entry) {
+    if (result.sources.empty() || path_key(result.sources.front()) != entry_key) {
         return std::unexpected(failure(
             ErrorCode::invalid_entry,
             entry,

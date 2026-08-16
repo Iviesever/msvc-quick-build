@@ -27,10 +27,10 @@ void suppress_ambient_compiler_options(
     std::vector<process::EnvironmentVariable>& environment) {
     // cl.exe prepends CL and appends _CL_ to its explicit argv. Those hidden
     // arguments would bypass MQB's Parameter Engine, structured ownership, and
-    // compile identity. Empty overrides preserve the inherited vcvars environment
-    // while making the explicit MQB argv the complete compiler option surface.
-    environment.push_back(process::EnvironmentVariable{"CL", {}});
-    environment.push_back(process::EnvironmentVariable{"_CL_", {}});
+    // compile identity. Remove the variables entirely: an empty value is still
+    // a present environment variable and is not a general substitute for absence.
+    environment.push_back(process::EnvironmentVariable{"CL", {}, true});
+    environment.push_back(process::EnvironmentVariable{"_CL_", {}, true});
 }
 
 [[nodiscard]] std::expected<process::ProcessResult, CompilerError> run_compiler(

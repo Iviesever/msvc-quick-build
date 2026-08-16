@@ -71,12 +71,12 @@ namespace fs = std::filesystem;
 void suppress_ambient_linker_options(
     std::vector<process::EnvironmentVariable>& environment) {
     // link.exe prepends LINK and appends _LINK_ to its explicit argv. It also
-    // honors link_repro as an implicit diagnostic-artifact request. Hidden
-    // state could otherwise bypass MQB-owned routing/cache identity. Preserve
-    // LIB/PATH/vcvars state while making the explicit MQB argv authoritative.
-    environment.push_back(process::EnvironmentVariable{"LINK", {}});
-    environment.push_back(process::EnvironmentVariable{"_LINK_", {}});
-    environment.push_back(process::EnvironmentVariable{"link_repro", {}});
+    // honors LINK_REPRO as an implicit diagnostic-artifact request. Hidden
+    // state could otherwise bypass MQB-owned routing/cache identity. Remove
+    // those variables entirely while preserving LIB/PATH/vcvars state.
+    environment.push_back(process::EnvironmentVariable{"LINK", {}, true});
+    environment.push_back(process::EnvironmentVariable{"_LINK_", {}, true});
+    environment.push_back(process::EnvironmentVariable{"LINK_REPRO", {}, true});
 }
 
 [[nodiscard]] std::string linker_option_body_upper(const std::string_view argument) {
