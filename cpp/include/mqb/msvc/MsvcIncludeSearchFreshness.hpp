@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "mqb/core/CompilerOptions.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 #include "mqb/process/Process.hpp"
 
 namespace mqb::msvc {
@@ -19,11 +20,8 @@ namespace include_freshness_detail {
 namespace fs = std::filesystem;
 
 [[nodiscard]] inline bool same_path(const fs::path& left, const fs::path& right) {
-    if (left == right || left.lexically_normal() == right.lexically_normal()) {
-        return true;
-    }
-    std::error_code error_code;
-    return fs::equivalent(left, right, error_code) && !error_code;
+    return mqb::platform::windows::path_identity_key(left)
+        == mqb::platform::windows::path_identity_key(right);
 }
 
 [[nodiscard]] inline bool ascii_iequals(
@@ -94,7 +92,7 @@ inline void append_unique(std::vector<fs::path>& paths, fs::path path) {
 // Compiler search-root identity is an ordered argv/environment fact, not a
 // filesystem-equivalence set. Preserve each normalized spelling (including
 // duplicates) exactly as MSVC sees it. Besides being more faithful, this keeps
-// the warm path free of equivalent()/status syscalls while constructing roots.
+// the warm path free of filesystem identity/status syscalls while constructing roots.
 inline void append_search_root(std::vector<fs::path>& roots, fs::path path) {
     if (path.empty()) return;
     roots.push_back(path.lexically_normal());
@@ -131,9 +129,10 @@ inline void append_search_root(std::vector<fs::path>& roots, fs::path path) {
 }
 
 // The compiler reports resolved dependency paths using filesystem spelling,
-// while a user-supplied /I root may differ only by Windows casing or by an
-// equivalent path spelling. Fall back to an ancestor walk using equivalent()
-// so we still recover the include-relative suffix in those cases.
+// while a user-supplied /I root may differ only by Windows ASCII casing or a
+// lexically equivalent spelling. Fall back to an ancestor walk using the shared
+// Windows path-identity authority so include-relative suffix recovery cannot
+// establish a second equality rule.
 [[nodiscard]] inline std::optional<fs::path> relative_if_within(
     const fs::path& child,
     const fs::path& root) {
