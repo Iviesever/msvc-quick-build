@@ -44,21 +44,31 @@ function Invoke-MqbChecked {
 }
 
 $previousLocalAppData = $env:LOCALAPPDATA
+$previousLinkRepro = $env:LINK_REPRO
 try {
     # Final Closure architecture contract: MQB-owned persistent state must remain
     # inside the active project's .mqb tree. Point LOCALAPPDATA at a fresh decoy
     # so a regression to the old user-local VS discovery cache is observable.
     $stateProject = Join-Path $root 'state-project'
     $decoyLocalAppData = Join-Path $root 'decoy-local-app-data'
+    $ambientLinkRepro = Join-Path $root 'ambient-link-repro'
     New-Item -ItemType Directory -Path $stateProject -Force | Out-Null
     New-Item -ItemType Directory -Path $decoyLocalAppData -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $stateProject 'main.cpp') -Encoding utf8 -Value 'int main() { return 0; }'
     $env:LOCALAPPDATA = $decoyLocalAppData
+    $env:LINK_REPRO = $ambientLinkRepro
 
-    [void](Invoke-MqbChecked `
+    $coldStateOutput = Invoke-MqbChecked `
         -WorkingDirectory $stateProject `
         -Arguments @('build', 'main.cpp', '--env', 'vs', '--no-discover') `
-        -Description 'project-local state cold build')
+        -Description 'project-local state cold build'
+    $coldStateText = $coldStateOutput -join "`n"
+    if ($coldStateText -match 'LINK_REPRO|LNK4046') {
+        throw "ambient LINK_REPRO remained observable to link.exe:`n$coldStateText"
+    }
+    if (Test-Path -LiteralPath $ambientLinkRepro) {
+        throw "ambient LINK_REPRO created an unmanaged diagnostic artifact: $ambientLinkRepro"
+    }
 
     $projectCache = Join-Path $stateProject '.mqb/cache/toolchain/vs-x64.cache'
     if (-not (Test-Path -LiteralPath $projectCache -PathType Leaf)) {
@@ -147,6 +157,12 @@ finally {
     else {
         $env:LOCALAPPDATA = $previousLocalAppData
     }
+    if ($null -eq $previousLinkRepro) {
+        Remove-Item Env:LINK_REPRO -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:LINK_REPRO = $previousLinkRepro
+    }
 }
 
-Write-Host 'Final Closure cross-stage state/path gate passed.'
+Write-Host 'Final Closure cross-stage state/path/environment gate passed.'
