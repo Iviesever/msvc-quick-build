@@ -95,12 +95,13 @@ int main() {
 
 #ifdef _WIN32
     // Existing physical paths are normalized before deriving source identity.
-    // This prevents scanner/user aliases (case differences, 8.3/long-path or
-    // other canonical spellings) from splitting one source into two caches.
+    // The project root deliberately contains non-ASCII components: ASCII case
+    // aliases must collapse without feeding the UTF-8 bytes through tolower.
     const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-    const fs::path physical_root = fs::temp_directory_path()
+    const fs::path unicode_parent = fs::temp_directory_path() / fs::path{u8"MQB_项目_テスト"};
+    const fs::path physical_root = unicode_parent
         / ("MqB_Artifact_Alias_" + std::to_string(tick));
-    const fs::path physical_header = physical_root / "Include" / "Util.hpp";
+    const fs::path physical_header = physical_root / fs::path{u8"Include/模块Util.hpp"};
     fs::create_directories(physical_header.parent_path());
     {
         std::ofstream file{physical_header, std::ios::binary | std::ios::trunc};
@@ -108,29 +109,29 @@ int main() {
     }
 
     auto physical_layout = mqb::ProjectArtifactLayout::create(physical_root);
-    expect(physical_layout.has_value(), "existing physical project root should create a layout");
+    expect(physical_layout.has_value(), "Unicode physical project root should create a layout");
     if (physical_layout) {
         std::string alias_component = physical_root.filename().string();
         for (auto& ch : alias_component) {
             if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
         }
         const fs::path root_alias = physical_root.parent_path() / alias_component;
-        const fs::path source_alias = root_alias / "include" / "util.hpp";
+        const fs::path source_alias = root_alias / fs::path{u8"include/模块util.hpp"};
         auto real_artifacts = physical_layout->for_source(physical_header);
         auto alias_artifacts = physical_layout->for_source(source_alias);
         expect(real_artifacts.has_value() && alias_artifacts.has_value(),
-               "case aliases of an existing Windows source should map to artifacts");
+               "case aliases inside a Unicode Windows project should map to artifacts");
         if (real_artifacts && alias_artifacts) {
             expect(real_artifacts->object == alias_artifacts->object
                        && real_artifacts->dependencies == alias_artifacts->dependencies
                        && real_artifacts->module_dependencies == alias_artifacts->module_dependencies
                        && real_artifacts->module_interface == alias_artifacts->module_interface
                        && real_artifacts->compile_cache == alias_artifacts->compile_cache,
-                   "one physical Windows source must have one stable artifact identity across path aliases");
+                   "one Unicode Windows source must have one stable artifact identity across ASCII case aliases");
         }
     }
     std::error_code cleanup_error;
-    fs::remove_all(physical_root, cleanup_error);
+    fs::remove_all(unicode_parent, cleanup_error);
 #endif
 
     expect(!layout->for_target("../demo"), "target names with parent traversal must be rejected");
