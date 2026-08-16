@@ -59,6 +59,7 @@ int run_static_target(
         .additional_objects = std::move(request.additional_objects),
         .target = request.target,
         .compiler_options = std::move(request.compiler_options),
+        .librarian_arguments = std::move(request.librarian_arguments),
         .working_directory = request.project_root,
         .max_parallel_compiles = request.max_parallel_jobs,
         .force_downstream_rebuild = request.force_downstream_rebuild,
