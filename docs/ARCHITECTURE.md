@@ -256,9 +256,11 @@ MQB 面向 Windows/MSVC，因此凡是判断**路径是否代表同一 Windows �
 mqb::platform::windows::path_identity_key(path)
 ```
 
-它负责 lexical normalization，并只折叠 ASCII `A-Z`；non-ASCII UTF-8 bytes 原样保留，不允许经过 locale-sensitive narrow `std::tolower`。Discovery、artifact layout、module provider identity、compile/link/archive cache、`BuildSignature`、library resolver、LINK freshness/observation、Visual Studio/portable toolchain identity 都必须共享这一规则。
+它负责 lexical normalization、消除非根路径的冗余尾分隔符，并只折叠 ASCII `A-Z`；non-ASCII UTF-8 bytes 原样保留，不允许经过 locale-sensitive narrow `std::tolower`。Discovery、artifact layout、module provider identity、compile/link/archive cache、`BuildSignature`、library resolver、LINK freshness/observation、Visual Studio/portable toolchain identity 都必须共享这一规则。
 
 以下操作不得自行重新实现 Windows path identity：path equality、dedup、set membership、case-insensitive key、root containment。`generic_string() + std::tolower`、自定义 `normalized_path_text()` / `same_windows_path()` 一类实现都不属于允许的 identity primitive。
+
+存在一个刻意收窄的不同语义：当 MQB 需要验证**两个已经存在的路径是否指向同一个物理 filesystem object**时，例如 `/sourceDependencies` 返回的 source provenance，或 include-search freshness 需要把 junction/symlink/canonical alias 视为同一个已存在搜索目录，可以在先比较 `path_identity_key()` 后使用 `std::filesystem::equivalent()` 作为 physical-provenance probe。它不得生成 identity key，也不得用于 `BuildSignature`、cache/artifact ownership、普通 path set membership，代码必须用明确的 `physical/provenance` 命名与注释说明该语义。
 
 字符串**展示/序列化**、环境变量名比较、MSVC option parsing，以及“选择 latest version”所需的确定性**排序**不是路径 identity；这些场景可以保留各自规则，但代码应避免把 ordering/formatting helper 当作 equality authority。
 
@@ -292,7 +294,7 @@ cpp/
 10. Correctness 优先于缓存命中率；unsupported/ambiguous state fail closed。
 11. `cpp/include`、`cpp/src`、`cpp/tests` 各自只有一个物理根。
 12. MQB 自身的开发、测试与发布构建以 MQB 为构建系统。
-13. Windows path equality / dedup / identity key 只能由 `path_identity_key()` 定义；其他层不得建立第二套 case-folding authority。
+13. Windows path equality / dedup / identity key 只能由 `path_identity_key()` 定义；`filesystem::equivalent()` 仅允许用于显式的已存在 physical-provenance/freshness probe，不能成为第二套 lexical/case-folding authority。
 
 ## 11. 当前边界
 
