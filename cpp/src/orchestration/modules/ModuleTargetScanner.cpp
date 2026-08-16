@@ -40,11 +40,17 @@ namespace fs = std::filesystem;
     return std::nullopt;
 }
 
-[[nodiscard]] std::optional<FileSnapshot> snapshot_regular_file(const fs::path& path) {
+[[nodiscard]] std::optional<FileSnapshot> snapshot_path(
+    const fs::path& path,
+    const bool require_regular_file) {
     if (path.empty()) return std::nullopt;
     std::error_code error_code;
     const auto status = fs::status(path, error_code);
-    if (error_code || !fs::is_regular_file(status)) return std::nullopt;
+    if (error_code) return std::nullopt;
+    const bool supported_type = require_regular_file
+        ? fs::is_regular_file(status)
+        : (fs::is_regular_file(status) || fs::is_directory(status));
+    if (!supported_type) return std::nullopt;
     const auto modified = fs::last_write_time(path, error_code);
     if (error_code) return std::nullopt;
     return FileSnapshot{
@@ -52,6 +58,14 @@ namespace fs = std::filesystem;
         .exists = true,
         .modified = modified,
     };
+}
+
+[[nodiscard]] std::optional<FileSnapshot> snapshot_regular_file(const fs::path& path) {
+    return snapshot_path(path, true);
+}
+
+[[nodiscard]] std::optional<FileSnapshot> snapshot_file_or_directory(const fs::path& path) {
+    return snapshot_path(path, false);
 }
 
 [[nodiscard]] std::optional<std::string> read_text_file(const fs::path& path) {
@@ -88,7 +102,7 @@ namespace fs = std::filesystem;
     std::vector<FileSnapshot> dependency_snapshots;
     dependency_snapshots.reserve(evidence.dependencies.size());
     for (const auto& dependency : evidence.dependencies) {
-        auto snapshot = snapshot_regular_file(dependency.path);
+        auto snapshot = snapshot_file_or_directory(dependency.path);
         if (!snapshot) return std::nullopt;
         dependency_snapshots.push_back(std::move(*snapshot));
     }
@@ -175,7 +189,7 @@ scan_requested_module_sources(
     batch.scans.reserve(request.sources.size());
     batch.units.reserve(request.sources.size() + 2u);
 
-    for (std::size_t index = 0; index < request.sources.size(); ++index) {
+    for (std::size_t index = 0; index < attempts.size(); ++index) {
         if (!attempts[index]) {
             return std::unexpected(failure(
                 IncrementalModuleTargetErrorCode::scheduling_failed,
