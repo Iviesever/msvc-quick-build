@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "mqb/platform/windows/CommandLine.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace {
 
@@ -60,6 +61,7 @@ void expect_round_trip(
 } // namespace
 
 int main() {
+    using mqb::platform::windows::path_identity_contains;
     using mqb::platform::windows::quote_command_line_argument;
 
     expect(quote_command_line_argument(L"plain") == L"plain",
@@ -89,6 +91,32 @@ int main() {
         L"mqb.exe",
         {L"\\\\server\\share\\folder with space\\", L"a\\\"b", L"\\\""},
         "UNC paths and quote-adjacent backslashes should round-trip");
+
+    expect(
+        path_identity_contains(
+            L"C:\\Work\\MQB",
+            L"c:\\work\\mqb\\src\\main.cpp"),
+        "project containment should use Windows case-insensitive identity");
+    expect(
+        path_identity_contains(
+            L"C:\\Work\\MQB\\",
+            L"c:\\work\\mqb"),
+        "project containment should treat trailing separators and root aliases as identical");
+    expect(
+        !path_identity_contains(
+            L"C:\\Work\\MQB",
+            L"C:\\Work\\MQB2\\main.cpp"),
+        "project containment must enforce a component boundary");
+    expect(
+        path_identity_contains(
+            L"C:\\项目\\MQB",
+            L"c:\\项目\\mqb\\src\\main.cpp"),
+        "project containment should preserve non-ASCII path bytes while folding ASCII case");
+    expect(
+        !path_identity_contains(
+            L"C:\\项目\\MQB",
+            L"C:\\項目\\MQB\\src\\main.cpp"),
+        "project containment must not locale-fold distinct non-ASCII path identities");
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
