@@ -18,6 +18,13 @@
 namespace mqb::platform::windows {
 namespace path_identity_detail {
 
+[[nodiscard]] inline bool is_ascii(const std::u8string& value) noexcept {
+    for (const char8_t ch : value) {
+        if (static_cast<unsigned char>(ch) >= 0x80u) return false;
+    }
+    return true;
+}
+
 // CompareStringOrdinal(..., TRUE) uses the operating system uppercase table for
 // case-insensitive ordinal comparison. LCMapStringEx without
 // LCMAP_LINGUISTIC_CASING uses the matching file-system casing rules, giving us
@@ -62,6 +69,14 @@ namespace path_identity_detail {
 
 [[nodiscard]] inline std::u8string identity_utf8(
     const std::filesystem::path& normalized) {
+    std::u8string original = normalized.generic_u8string();
+    if (is_ascii(original)) {
+        // Keep the overwhelmingly common path through MQB identical to the old
+        // authority: no Win32 call and no wide-string conversion for ASCII-only
+        // projects/toolchains. path_identity_key() performs the ASCII fold.
+        return original;
+    }
+
     if (const auto mapped = filesystem_uppercase(normalized.wstring())) {
         return std::filesystem::path{*mapped}.generic_u8string();
     }
@@ -69,7 +84,7 @@ namespace path_identity_detail {
     // Fail conservatively if Windows casing cannot be produced. Preserving the
     // original Unicode spelling can only cause an avoidable cache miss for a
     // case alias; it cannot collapse two distinct paths into one identity.
-    return normalized.generic_u8string();
+    return original;
 }
 
 } // namespace path_identity_detail
