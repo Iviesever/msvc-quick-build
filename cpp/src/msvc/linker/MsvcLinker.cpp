@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::msvc {
 namespace {
@@ -120,25 +121,13 @@ void suppress_ambient_linker_options(
     return std::string_view::npos;
 }
 
-[[nodiscard]] std::string windows_path_key(const fs::path& path) {
-    std::string key = path.lexically_normal().generic_string();
-    std::transform(
-        key.begin(),
-        key.end(),
-        key.begin(),
-        [](const unsigned char character) {
-            return static_cast<char>(std::tolower(character));
-        });
-    return key;
-}
-
 void add_unique_path(std::vector<fs::path>& paths, const fs::path& path) {
-    const std::string key = windows_path_key(path);
+    const std::string key = mqb::platform::windows::path_identity_key(path);
     const auto duplicate = std::find_if(
         paths.begin(),
         paths.end(),
         [&](const fs::path& existing) {
-            return windows_path_key(existing) == key;
+            return mqb::platform::windows::path_identity_key(existing) == key;
         });
     if (duplicate == paths.end()) {
         paths.push_back(path.lexically_normal());
