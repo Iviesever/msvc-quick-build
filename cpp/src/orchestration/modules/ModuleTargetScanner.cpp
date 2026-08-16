@@ -88,21 +88,6 @@ namespace fs = std::filesystem;
     return true;
 }
 
-[[nodiscard]] bool has_include_search_freshness_marker(
-    const CompileCacheEntry& entry,
-    const ModuleScanEvidence& evidence) {
-    // Cache v4's exact root vector is valid freshness identity even when a
-    // module source has no textual headers and therefore no directory snapshot.
-    if (!entry.include_search_roots.empty()) return true;
-    for (const auto& dependency : evidence.dependencies) {
-        std::error_code error_code;
-        if (fs::is_directory(dependency.path, error_code) && !error_code) {
-            return true;
-        }
-    }
-    return false;
-}
-
 [[nodiscard]] std::optional<std::string> read_text_file(const fs::path& path) {
     std::ifstream stream{path, std::ios::binary};
     if (!stream) return std::nullopt;
@@ -125,12 +110,9 @@ namespace fs = std::filesystem;
     const auto& entry = **loaded;
     const auto& evidence = *entry.module_scan;
 
-    // Pre-closure scan evidence has neither cache-v4 root identity nor any
-    // directory namespace snapshot. Rescan once after upgrading and reseal.
-    if (!has_include_search_freshness_marker(entry, evidence)) {
-        return std::nullopt;
-    }
-
+    // Module-scan migration is encoded in BuildSignature's v2 scan domain.
+    // Old evidence fails signature validation exactly once; valid new evidence
+    // may legitimately have zero include roots and zero directory snapshots.
     const auto current_roots = msvc::include_search_roots(
         options,
         scanner.toolchain().environment,
