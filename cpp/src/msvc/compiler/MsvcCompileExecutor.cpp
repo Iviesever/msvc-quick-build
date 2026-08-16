@@ -11,6 +11,7 @@
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildSignature.hpp"
 #include "mqb/msvc/MsvcCompiler.hpp"
+#include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/msvc/MsvcSourceDependenciesReader.hpp"
 
 namespace mqb::msvc {
@@ -250,7 +251,17 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
         });
     }
 
+    const auto include_freshness = include_search_freshness_directories(
+        dependencies->includes,
+        request.unit.source,
+        request.options,
+        toolchain_.environment,
+        request.working_directory);
+
     std::vector<fs::path> cache_dependencies = std::move(dependencies->includes);
+    for (const auto& directory : include_freshness) {
+        add_interface_dependency(cache_dependencies, directory);
+    }
     for (const auto& reference : request.unit.module_references) {
         add_interface_dependency(cache_dependencies, reference.interface_file);
     }
