@@ -166,7 +166,7 @@ SourceDiscovery::discover(const Request& request) {
         if (!source) {
             return std::unexpected(source.error());
         }
-        if (*source == entry) {
+        if (path_key(*source) == path_key(entry)) {
             return std::unexpected(failure(
                 ErrorCode::invalid_correction,
                 *source,
@@ -200,7 +200,7 @@ SourceDiscovery::discover(const Request& request) {
                     "discovery extra source must not be inside an excluded directory"));
             }
         }
-        if (*source != entry && extra_source_keys.insert(key).second) {
+        if (key != path_key(entry) && extra_source_keys.insert(key).second) {
             extra_sources.push_back(std::move(*source));
         }
     }
@@ -278,64 +278,34 @@ SourceDiscovery::discover(const Request& request) {
     }
 
     result.sources.reserve(selection.selected_indices.size() + extra_sources.size());
+    result.sources.push_back(indexed->files[entry_it->second].path);
     for (const std::size_t index : selection.selected_indices) {
-        result.sources.push_back(indexed->files[index].path);
-    }
-
-    bool extras_are_indexed = true;
-    for (const auto& source : extra_sources) {
-        const std::string key = path_key(source);
-        if (!indexed->index_by_path.contains(key)) {
-            extras_are_indexed = false;
+        const fs::path& source = indexed->files[index].path;
+        if (index != entry_it->second) {
+            result.sources.push_back(source);
         }
-        const auto duplicate = std::find_if(
-            result.sources.begin(),
-            result.sources.end(),
-            [&](const fs::path& existing) { return path_key(existing) == key; });
-        if (duplicate == result.sources.end()) {
+        result.requires_module_pipeline = result.requires_module_pipeline
+            || detail::file_requires_module_pipeline(indexed->files[index]);
+    }
+    for (const auto& source : extra_sources) {
+        if (std::find_if(
+                result.sources.begin(),
+                result.sources.end(),
+                [&](const fs::path& existing) {
+                    return path_key(existing) == path_key(source);
+                }) == result.sources.end()) {
             result.sources.push_back(source);
         }
     }
 
-    std::sort(
-        result.sources.begin(),
-        result.sources.end(),
-        [](const fs::path& left, const fs::path& right) {
-            return path_key(left) < path_key(right);
-        });
-    const auto entry_position = std::find(result.sources.begin(), result.sources.end(), entry);
-    if (entry_position != result.sources.end() && entry_position != result.sources.begin()) {
-        std::rotate(result.sources.begin(), entry_position, entry_position + 1);
-    }
-
-    for (const auto& source : result.sources) {
-        const auto selected = indexed->index_by_path.find(path_key(source));
-        if (selected != indexed->index_by_path.end()
-            && detail::file_requires_module_pipeline(indexed->files[selected->second])) {
-            result.requires_module_pipeline = true;
-            break;
-        }
-    }
-
-    if (result.sources.empty() || result.sources.front() != entry) {
-        return std::unexpected(failure(
-            ErrorCode::invalid_entry,
-            entry,
-            "source discovery did not retain the entry translation unit"));
-    }
-
-    if (cache_file
-        && indexed->cacheable
-        && extras_are_indexed
-        && result.warnings.empty()) {
-        detail::save_discovery_cache_best_effort(
-            *cache_file,
-            detail::DiscoveryCacheRecord{
-                .request = cache_identity,
-                .result = result,
-                .files = indexed->file_snapshots,
-                .directories = indexed->directory_snapshots,
-            });
+    if (cache_file && indexed->cacheable) {
+        detail::DiscoveryCacheRecord record{
+            .request = cache_identity,
+            .result = result,
+            .files = std::move(indexed->file_snapshots),
+            .directories = std::move(indexed->directory_snapshots),
+        };
+        detail::save_discovery_cache_best_effort(*cache_file, record);
     }
     return result;
 }
