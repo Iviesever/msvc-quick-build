@@ -158,6 +158,14 @@ jobs:
             -RepoRoot $PWD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify __has_include freshness
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/verify_has_include_freshness.ps1') `
+            -MqbPath (Join-Path $PWD 'native-out/debug/mqb.exe') `
+            -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify linker side-output repair
         shell: pwsh
         run: |
