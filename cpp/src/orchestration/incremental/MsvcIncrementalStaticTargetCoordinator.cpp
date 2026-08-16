@@ -180,7 +180,9 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
         .output = request.target.executable,
         .cache_file = request.target.link_cache,
         .working_directory = request.working_directory,
+        .architecture = request.compiler_options.architecture,
         .link_time_code_generation = request.compiler_options.link_time_code_generation,
+        .additional_arguments = request.librarian_arguments,
         .force_archive = request.force_downstream_rebuild || result.any_compiled,
     });
     timings.archive = std::chrono::duration_cast<std::chrono::nanoseconds>(
