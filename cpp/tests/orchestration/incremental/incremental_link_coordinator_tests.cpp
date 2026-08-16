@@ -327,6 +327,76 @@ int main() {
     expect(order_runner.calls == 3,
            "changed /ORDER file should cause exactly one additional link execution");
 
+    const fs::path base_lib_directory = fixture.path() / "base-lib";
+    const fs::path base_file = base_lib_directory / "bases.txt";
+    const fs::path base_output = fixture.path() / "bin" / "based.exe";
+    const fs::path base_cache = fixture.path() / "cache" / "based.linkcache";
+    write_text(base_file, "app 0x160000000\n");
+
+    auto base_toolchain = toolchain;
+    base_toolchain.environment.push_back({
+        .name = "LIB",
+        .value = path_text(base_lib_directory),
+    });
+    LinkerLikeRunner base_runner;
+    base_runner.output = base_output;
+    mqb::msvc::MsvcLinker base_linker{base_toolchain, base_runner};
+    mqb::orchestration::MsvcIncrementalLinkCoordinator base_coordinator{
+        base_toolchain, base_linker};
+
+    mqb::LinkOptions base_options = debug_options;
+    base_options.additional_arguments = {"/BASE:@bases.txt,app"};
+    const mqb::orchestration::IncrementalLinkRequest base_request{
+        .objects = {object},
+        .output = base_output,
+        .options = base_options,
+        .cache_file = base_cache,
+        .working_directory = fixture.path(),
+        .force_relink = false,
+    };
+
+    const auto base_cold = base_coordinator.run(base_request);
+    expect(base_cold.has_value() && base_cold->linked,
+           "cold /BASE response-file link should execute successfully");
+    expect(base_runner.calls == 1,
+           "cold /BASE response-file link should invoke link.exe once");
+    if (base_runner.calls == 1) {
+        expect(std::find(
+                   base_runner.last_spec.arguments.begin(),
+                   base_runner.last_spec.arguments.end(),
+                   "/BASE:@bases.txt,app") != base_runner.last_spec.arguments.end(),
+               "/BASE freshness observation must preserve the user's raw LINK argv");
+    }
+
+    const auto base_warm = base_coordinator.run(base_request);
+    expect(base_warm.has_value() && !base_warm->linked,
+           "unchanged /BASE response file should remain a warm no-op");
+    expect(base_runner.calls == 1,
+           "warm /BASE response-file link should skip link.exe");
+
+    std::error_code base_time_error;
+    const auto base_output_time = fs::last_write_time(base_output, base_time_error);
+    expect(!base_time_error,
+           "BASE response-file fixture should read linked output timestamp");
+    write_text(base_file, "app 0x170000000\n");
+    base_time_error.clear();
+    fs::last_write_time(
+        base_file,
+        base_output_time + std::chrono::seconds{2},
+        base_time_error);
+    expect(!base_time_error,
+           "BASE response-file fixture should make the response file newer than output");
+
+    const auto base_changed = base_coordinator.run(base_request);
+    expect(base_changed.has_value() && base_changed->linked,
+           "changed /BASE response file should invalidate link freshness");
+    if (base_changed) {
+        expect(base_changed->validation.file_inputs_changed,
+               "changed /BASE response file should be a tracked linker file-input change");
+    }
+    expect(base_runner.calls == 2,
+           "changed /BASE response file should cause exactly one additional link execution");
+
     write_text(cache_file, "not an MQB link cache");
     const auto corrupt = coordinator.run(request);
     expect(corrupt.has_value(),
