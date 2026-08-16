@@ -35,10 +35,12 @@ struct DiscoveryOptions {
     std::vector<std::filesystem::path> portable_roots;
     std::optional<std::filesystem::path> vswhere_path;
     std::optional<std::filesystem::path> cmd_path;
-    // Visual Studio discovery only. nullopt uses MQB's user-local cache under
-    // LOCALAPPDATA; an explicitly empty path disables persistent reuse. Custom
-    // vswhere/cmd overrides also disable reuse so explicit discovery remains authoritative.
-    std::optional<std::filesystem::path> cache_file;
+    // Visual Studio discovery only. Persistent reuse is opt-in: the default
+    // engaged-but-empty path disables it. The MQB application supplies a cache
+    // path under the active project's .mqb tree; tests/embedders may supply an
+    // explicit path of their own. Custom vswhere/cmd overrides also disable
+    // reuse so explicit discovery remains authoritative.
+    std::optional<std::filesystem::path> cache_file{std::filesystem::path{}};
 };
 
 struct MsvcToolchain {
