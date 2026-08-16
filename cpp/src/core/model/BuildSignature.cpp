@@ -283,6 +283,12 @@ BuildSignature BuildSignature::for_link(
         hasher.add_string("mqb.libfuzzer.link.v1");
         hasher.add_enum(*options.fuzzer_runtime_library);
     }
+    if (options.msvc_openmp_runtime) {
+        // Classic /openmp and /openmp:experimental can inject vcomp/vcompd
+        // default-library directives into objects. Preserve non-OpenMP link
+        // identities and append only the cross-stage runtime ownership domain.
+        hasher.add_string("mqb.msvc-openmp.link.v1");
+    }
     return BuildSignature{hasher.finish()};
 }
 
