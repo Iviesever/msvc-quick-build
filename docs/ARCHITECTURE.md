@@ -256,7 +256,7 @@ MQB 面向 Windows/MSVC，因此凡是判断**路径是否代表同一 Windows �
 mqb::platform::windows::path_identity_key(path)
 ```
 
-它负责 lexical normalization、消除非根路径的冗余尾分隔符，并只折叠 ASCII `A-Z`；non-ASCII UTF-8 bytes 原样保留，不允许经过 locale-sensitive narrow `std::tolower`。Discovery、artifact layout、module provider identity、compile/link/archive cache、`BuildSignature`、library resolver、LINK freshness/observation、Visual Studio/portable toolchain identity 都必须共享这一规则。
+它负责 lexical normalization、消除非根路径的冗余尾分隔符，并依据 Windows ordinal / file-system casing 规则使用操作系统大小写表对 Unicode 路径进行 case folding。它**不会**执行 Unicode normalization：Unicode canonical-equivalent 但 ordinal 上不同的 code-point sequence 仍保持 distinct。ASCII-only 路径保留无需 Win32 API 的 fast path，并维持既有 lowercase ASCII key 拼写；真正不同的 non-ASCII 字符仍保持 distinct，而 `É` / `é` 这类 Windows non-ASCII case pair 必须收敛为同一 identity。Locale-sensitive narrow `std::tolower` 绝不能成为路径 identity primitive。Discovery、artifact layout、module provider identity、compile/link/archive cache、`BuildSignature`、library resolver、LINK freshness/observation、Visual Studio/portable toolchain identity 都必须共享这一规则。
 
 以下操作不得自行重新实现 Windows path identity：path equality、dedup、set membership、case-insensitive key、root containment。`generic_string() + std::tolower`、自定义 `normalized_path_text()` / `same_windows_path()` 一类实现都不属于允许的 identity primitive。
 
