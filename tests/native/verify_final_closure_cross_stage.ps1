@@ -91,10 +91,10 @@ try {
     # Final Closure #5 cross-stage contract: application project scope and source
     # discovery containment must share the same Windows path authority. Project-
     # only extra_sources is required to satisfy the link. The second invocation
-    # addresses the same entry through a different ASCII-case spelling and must
+    # addresses the same entry through a different Unicode-case spelling and must
     # preserve both project semantics and the downstream warm/no-op path. Exact
     # discovery-cache reuse is asserted directly by source_discovery_cache_tests.
-    $caseProject = Join-Path $root 'CaseProject'
+    $caseProject = Join-Path $root 'CaféProject'
     New-Item -ItemType Directory -Path $caseProject -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $caseProject 'main.cpp') -Encoding utf8 -Value @(
         'int helper();',
@@ -135,19 +135,19 @@ try {
     $aliasedDirectory = $caseProject.ToUpperInvariant()
     $aliasedEntry = Join-Path $aliasedDirectory 'main.cpp'
     if (-not (Test-Path -LiteralPath $aliasedEntry -PathType Leaf)) {
-        throw "Windows case-alias fixture did not resolve to the same entry: $aliasedEntry"
+        throw "Windows Unicode case-alias fixture did not resolve to the same entry: $aliasedEntry"
     }
 
     $caseOutput = Invoke-MqbChecked `
         -WorkingDirectory $caseProject `
         -Arguments @('build', $aliasedEntry, '--env', 'vs', '--verbose') `
-        -Description 'Windows case-alias project discovery build'
+        -Description 'Windows Unicode case-alias project discovery build'
     $caseText = $caseOutput -join "`n"
     if ($caseText -notmatch '\[discover\]\s+2 translation units') {
-        throw "case-alias entry did not retain project-scoped smart discovery:`n$caseText"
+        throw "Unicode case-alias entry did not retain project-scoped smart discovery:`n$caseText"
     }
     if ($caseText -notmatch '\[up-to-date\]') {
-        throw 'case-alias entry broke the downstream warm/no-op path'
+        throw 'Unicode case-alias entry broke the downstream warm/no-op path'
     }
 }
 finally {
