@@ -38,6 +38,11 @@ struct LinkOptions {
     // default-library directive into objects; the CRT mode is carried here so
     // MQB can seal that implicit linker file input without re-emitting it.
     std::optional<RuntimeLibrary> fuzzer_runtime_library;
+    // True for the classic Microsoft OpenMP runtime selected by /openmp or
+    // /openmp:experimental. cl.exe may inject vcomp.lib or vcompd.lib through
+    // object default-library directives, so LINK freshness must observe those
+    // toolchain inputs without rewriting the user's native linker argv.
+    bool msvc_openmp_runtime{false};
     std::vector<std::filesystem::path> library_directories;
     std::vector<std::string> libraries;
     std::vector<std::string> additional_arguments;
