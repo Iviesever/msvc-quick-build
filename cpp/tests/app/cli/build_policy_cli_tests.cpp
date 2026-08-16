@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
@@ -93,25 +94,26 @@ int main() {
             "/WX"sv,
         };
         auto parsed = mqb::cli::parse_arguments(arguments);
-        expect(parsed.has_value(), "native /lib boundary should parse as native argv before project setup");
+        expect(parsed.has_value(), "native /lib boundary should enter a one-way librarian tail");
         if (parsed) {
-            expect(parsed->compiler_arguments.size() == 4
-                       && parsed->compiler_arguments[0] == "/W4"
-                       && parsed->compiler_arguments[1] == "/lib"
-                       && parsed->compiler_arguments[2] == "/EXPORT:mqb_export"
-                       && parsed->compiler_arguments[3] == "/WX",
-                   "CLI parser should preserve /lib and its tail until ownership routing");
+            expect(parsed->compiler_arguments.size() == 1
+                       && parsed->compiler_arguments[0] == "/W4",
+                   "compiler argv before /lib should remain compiler-owned at the CLI boundary");
+            expect(parsed->librarian_arguments.size() == 2
+                       && parsed->librarian_arguments[0] == "/EXPORT:mqb_export"
+                       && parsed->librarian_arguments[1] == "/WX",
+                   "every argv element after /lib should be captured as ordered librarian policy");
 
             auto project = mqb::app::prepare_project(*parsed, tree.root);
-            expect(project.has_value(), "project setup should split and route native /lib policy");
+            expect(project.has_value(), "project setup should route CLI librarian policy");
             if (project) {
                 expect(parsed->compiler_arguments.size() == 1
                            && parsed->compiler_arguments[0] == "/W4",
-                       "compiler argv before /lib should remain compiler-owned");
+                       "project setup must preserve compiler argv that preceded /lib");
                 expect(parsed->librarian_arguments.size() == 2
                            && parsed->librarian_arguments[0] == "/EXPORT:mqb_export"
                            && parsed->librarian_arguments[1] == "/WX",
-                       "every native option after /lib should become routed librarian policy in order");
+                       "routed librarian policy should preserve CLI tail order");
                 expect(project->effective.target_kind == mqb::TargetKind::static_library,
                        "native librarian policy should coexist with the typed static target kind");
             }
@@ -124,16 +126,14 @@ int main() {
             "/WX"sv,
         };
         auto uppercase = mqb::cli::parse_arguments(uppercase_arguments);
-        expect(uppercase.has_value(), "uppercase /LIB boundary should parse before ownership routing");
+        expect(uppercase.has_value(), "uppercase /LIB should be accepted as the librarian boundary");
         if (uppercase) {
+            expect(uppercase->compiler_arguments.empty()
+                       && uppercase->librarian_arguments.size() == 1
+                       && uppercase->librarian_arguments.front() == "/WX",
+                   "uppercase /LIB should route its tail exclusively to librarian argv");
             auto project = mqb::app::prepare_project(*uppercase, tree.root);
-            expect(project.has_value(), "uppercase /LIB should be accepted as the librarian boundary");
-            if (project) {
-                expect(uppercase->compiler_arguments.empty()
-                           && uppercase->librarian_arguments.size() == 1
-                           && uppercase->librarian_arguments.front() == "/WX",
-                       "uppercase /LIB should route its tail exclusively to librarian argv");
-            }
+            expect(project.has_value(), "uppercase /LIB librarian policy should survive project setup");
         }
 
         const std::vector shorthand_arguments{
@@ -148,6 +148,24 @@ int main() {
                        && shorthand->libraries[0] == "kernel32"
                        && shorthand->libraries[1] == "user32",
                    "-l separated and attached forms must retain library shorthand semantics");
+        }
+
+        const std::vector tail_shorthand_arguments{
+            "main.cpp"sv,
+            "--type"sv, "static"sv,
+            "/lib"sv,
+            "-luser32"sv,
+        };
+        auto tail_shorthand = mqb::cli::parse_arguments(tail_shorthand_arguments);
+        expect(tail_shorthand.has_value(), "-l after /lib should remain inside the librarian tail");
+        if (tail_shorthand) {
+            expect(tail_shorthand->libraries.empty()
+                       && tail_shorthand->librarian_arguments.size() == 1
+                       && tail_shorthand->librarian_arguments.front() == "-luser32",
+                   "/lib must be one-way and prevent later -l text from becoming MQB library shorthand");
+            auto project = mqb::app::prepare_project(*tail_shorthand, tree.root);
+            expect(!project,
+                   "link-library shorthand text after /lib should fail librarian classification rather than leak back to MQB parsing");
         }
 
         for (const auto rejected : {"-lib"sv, "-LIB"sv}) {
@@ -179,18 +197,29 @@ int main() {
                    "raw -lib must not regain librarian-boundary semantics inside ProjectSetup");
         }
 
+        const std::vector option_after_boundary_arguments{
+            "main.cpp"sv,
+            "--type"sv, "static"sv,
+            "/lib"sv,
+            "/WX"sv,
+            "--verbose"sv,
+        };
+        auto option_after_boundary = mqb::cli::parse_arguments(option_after_boundary_arguments);
+        expect(!option_after_boundary,
+               "MQB long options after /lib should fail instead of escaping the one-way librarian tail");
+        if (!option_after_boundary) {
+            expect(option_after_boundary.error().message.find("must appear before native MSVC /lib") != std::string::npos,
+                   "post-/lib MQB option error should explain the boundary ordering rule");
+        }
+
         const std::vector empty_tail_arguments{
             "main.cpp"sv,
             "--type"sv, "static"sv,
             "/lib"sv,
         };
         auto empty_tail = mqb::cli::parse_arguments(empty_tail_arguments);
-        expect(empty_tail.has_value(), "bare /lib should remain syntactically parseable at CLI stage");
-        if (empty_tail) {
-            auto project = mqb::app::prepare_project(*empty_tail, tree.root);
-            expect(!project && project.error().message.find("requires at least one librarian option") != std::string::npos,
-                   "bare /lib should fail closed at ownership routing");
-        }
+        expect(!empty_tail && empty_tail.error().message.find("requires at least one librarian option") != std::string::npos,
+               "bare /lib should fail closed at the CLI boundary");
 
         const std::vector owned_output_arguments{
             "main.cpp"sv,
@@ -229,20 +258,20 @@ int main() {
             "/EXPORT:duplicate"sv,
         };
         auto duplicate_boundary = mqb::cli::parse_arguments(duplicate_boundary_arguments);
-        expect(duplicate_boundary.has_value(), "duplicate /lib boundary should parse before routing");
-        if (duplicate_boundary) {
-            auto project = mqb::app::prepare_project(*duplicate_boundary, tree.root);
-            expect(!project && project.error().message.find("duplicate native MSVC /lib separator") != std::string::npos,
-                   "duplicate /lib boundary should be rejected deterministically");
-        }
+        expect(!duplicate_boundary
+                   && duplicate_boundary.error().message.find("duplicate native MSVC /lib separator") != std::string::npos,
+               "duplicate /lib boundary should be rejected deterministically by the CLI state machine");
 
         const std::string_view help = mqb::cli::usage();
         expect(help.find("/lib <librarian-options...>") != std::string_view::npos,
                "--help contract should expose the native /lib librarian boundary");
-        expect(help.find("-lib`/`-LIB` is rejected") != std::string_view::npos,
+        expect(help.find("-lib`/`-LIB`") != std::string_view::npos
+                   && help.find("is rejected") != std::string_view::npos,
                "--help contract should expose the chosen dash -lib rejection policy");
         expect(help.find("build.librarian_args") != std::string_view::npos,
                "--help contract should expose the librarian config surface");
+        expect(help.find("one-way compiler-to-librarian boundary") != std::string_view::npos,
+               "--help contract should expose the one-way /lib boundary semantics");
     }
 
     {
