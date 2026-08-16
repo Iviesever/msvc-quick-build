@@ -142,6 +142,34 @@ mqb build math.cpp vector.cpp --type static -o math
 
 支持 `exe`、`dll`、`static`。`mqb run` 只适用于 executable target。
 
+### 原生 linker / librarian 参数
+
+Executable / DLL 构建使用 `/link` 把其后的 build argv 交给 `link.exe`：
+
+```powershell
+mqb build foo.cpp /O2 /link /DEBUG:FULL /STACK:8388608
+```
+
+Static target 使用独立的 `/lib` boundary，把其后的参数交给 `lib.exe`：
+
+```powershell
+mqb build foo.cpp --type static /lib /WX /EXPORT:foo
+```
+
+`/lib` 是 **static librarian boundary 的唯一公开拼写**（`/LIB` 同样接受）；`-lib` / `-LIB` 明确拒绝，以免与 MQB 的 `-l <name>` / `-l<name>` library shorthand 冲突。Librarian policy 也可以配置：
+
+```json
+{
+  "version": 1,
+  "build": {
+    "type": "static",
+    "librarian_args": ["/WX", "/EXPORT:foo"]
+  }
+}
+```
+
+`librarian_args` 与其他 list policy 一样按 base config → selected profile → CLI `/lib` 顺序追加；它只允许用于 static target，并进入 archive recipe/cache identity。
+
 ## 核心能力
 
 - `mqb build` / `mqb run` 项目命令与 fail-closed 默认入口解析。
@@ -154,7 +182,7 @@ mqb build math.cpp vector.cpp --type static -o math
 - `-j / --jobs` 有界并行 scan/compile。
 - `exe` / `dll` / `static` typed targets。
 - typed runtime、LTCG、subsystem policy。
-- 原生 MSVC compiler/linker 参数与 `/link` 分界。
+- 原生 MSVC compiler/linker/librarian 参数，以及 `/link` / `/lib` 明确分界。
 - project-local named modules 与 header units。
 - external/prebuilt named-module IFC providers。
 - MSVC toolchain-owned `import std` / `import std.compat`。
@@ -193,11 +221,24 @@ MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成�
 }
 ```
 
+静态库可以声明 librarian policy：
+
+```json
+{
+  "version": 1,
+  "build": {
+    "entry": "src/math.cpp",
+    "type": "static",
+    "librarian_args": ["/WX"]
+  }
+}
+```
+
 `build.entry` 相对 `mqb.json` 解析，仅在 `mqb build` / `mqb run` 没有显式 positional source 时使用。若未设置，MQB 只在 project root 与 `src/` 中寻找 conventional `main.{c,cpp,cc,cxx}`；必须恰好命中一个，否则明确报错。
 
 `build.pch` 可为非空 header 路径或 `false`。配置/profile 中的 PCH 路径相对 `mqb.json`；CLI `--pch` 路径相对 invocation directory。Profile 可覆盖或用 `pch: false` 关闭 base PCH，CLI `--pch` / `--no-pch` 再覆盖 profile。
 
-Named profile 也声明在同一配置文件中，并用 `--profile <name>` 显式选择。Profile 内路径同样相对 `mqb.json`，native compiler/linker arguments 仍经过统一的 MSVC Parameter Engine；profile 名本身不是额外 cache 维度，最终生效的构建语义才决定 cache identity。
+Named profile 也声明在同一配置文件中，并用 `--profile <name>` 显式选择。Profile 内路径同样相对 `mqb.json`，native compiler/linker/librarian arguments 仍经过统一的 MSVC Parameter Engine；profile 名本身不是额外 cache 维度，最终生效的构建语义才决定 cache identity。
 
 External/prebuilt module IFC 也可在配置中声明：
 
@@ -243,6 +284,7 @@ mqb <source...> [options]
 | `-l <name>` / `--lib <name>` | library |
 | `/option` / `-option` | 原生 MSVC compiler 参数 |
 | `/link <...>` | 后续 build 参数路由到 linker |
+| `/lib <...>` | static target：后续 build 参数路由到 librarian；`-lib` 不支持 |
 | `--compiler-arg <arg>` | 原样 compiler argv element |
 | `--linker-arg <arg>` | 原样 linker argv element |
 | `--env <auto|vs|portable>` | toolchain selection |

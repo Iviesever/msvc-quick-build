@@ -331,6 +331,21 @@ int main() {
     expect(override_run.has_value() && override_run->exit_code == 43,
            "CLI-overridden LTCG executable should consume the existing static library");
 
+    auto invalid_librarian_policy = run_process(
+        runner, mqb_executable, tree.root,
+        {"consumer.cpp", "--no-discover", "--env", "vs", "--type", "exe",
+         "-o", "invalid_librarian", "/lib", "/WX"});
+    expect(invalid_librarian_policy.has_value(),
+           "non-static librarian-policy invocation should launch");
+    if (invalid_librarian_policy) {
+        expect(invalid_librarian_policy->exit_code == 2,
+               "non-static target should reject native librarian policy");
+        expect(invalid_librarian_policy->stderr_text.find(
+                   "native MSVC librarian policy is only valid for static-library targets")
+                   != std::string::npos,
+               "non-static librarian-policy failure should explain the static-only contract");
+    }
+
     auto invalid_policy = run_process(
         runner, mqb_executable, tree.root,
         {"math.cpp", "--type", "static", "--subsystem", "console"});

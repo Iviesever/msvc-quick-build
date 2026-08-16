@@ -49,7 +49,8 @@ profiles
     "library_dirs": ["third_party/lib"],
     "libraries": ["user32", "codec.lib"],
     "compiler_args": ["/W4"],
-    "linker_args": ["/OPT:NOREF"]
+    "linker_args": ["/OPT:NOREF"],
+    "librarian_args": []
   },
   "discovery": {
     "enabled": true,
@@ -104,7 +105,8 @@ profiles
 | `library_dirs` | string[] | library search path；static target 不接受 |
 | `libraries` | string[] | link libraries；static target 不接受 |
 | `compiler_args` | string[] | 按顺序传给 `cl.exe` 的原始 argv element |
-| `linker_args` | string[] | 按顺序传给 linker 的原始 argv element；static target 不接受 |
+| `linker_args` | string[] | 按顺序传给 `link.exe` 的原始 argv element；static target 不接受 |
+| `librarian_args` | string[] | 按顺序传给 `lib.exe` 的原始 argv element；只允许 static target |
 
 ### 默认入口
 
@@ -200,7 +202,7 @@ MQB 自己拥有 synthetic creator、`.pch`、配对 creator `.obj`、`/FI`、`/
 
 ### Typed policy
 
-`type`、`runtime`、`ltcg`、`subsystem`、`pch` 是 MQB 的强类型/结构化策略，不是字符串形式的 MSVC flag 别名。MQB 后端负责最终命令行拼写，冲突的 raw compiler/linker argument 不应被用来绕过 typed policy 或 MQB-owned artifact routing。
+`type`、`runtime`、`ltcg`、`subsystem`、`pch` 是 MQB 的强类型/结构化策略，不是字符串形式的 MSVC flag 别名。MQB 后端负责最终命令行拼写，冲突的 raw compiler/linker/librarian argument 不应被用来绕过 typed policy 或 MQB-owned artifact routing。
 
 `ltcg: true` 同时影响 compile 与 downstream target：
 
@@ -209,6 +211,30 @@ MQB 自己拥有 synthetic creator、`.pch`、配对 creator `.obj`、`/FI`、`/
 - static library：librarian `/LTCG`。
 
 DLL import library 与最终 DLL 一起位于 `.mqb/bin/`。Static target 使用独立的 `lib.exe` archive pipeline 和 archive cache。
+
+### Librarian policy
+
+Static library 的原生 librarian 参数可以直接写在配置中：
+
+```json
+{
+  "version": 1,
+  "build": {
+    "type": "static",
+    "librarian_args": ["/WX", "/EXPORT:math_entry"]
+  }
+}
+```
+
+CLI 对应形式是：
+
+```powershell
+mqb build math.cpp --type static /lib /WX /EXPORT:math_entry
+```
+
+`/lib` 是 librarian boundary 的唯一公开拼写；`/LIB` 也接受。`-lib` / `-LIB` 不作为 boundary，并在 CLI 上明确拒绝，因为 `-l <name>` / `-l<name>` 已属于 MQB 的 link-library shorthand。
+
+`/lib` 必须至少跟一个 librarian 参数，重复 `/lib` / `/LIB` 会 fail closed。其后的参数进入 `MsvcParameterEngine::route_librarian()`：MQB-owned `/OUT` 等 structural 参数不能覆盖 artifact ownership；错误工具的参数也会拒绝。最终 `librarian_args` 只允许 static target，exe / DLL 使用时 fail closed。
 
 ## 4. `discovery`
 
@@ -304,9 +330,11 @@ modules
   "version": 1,
   "build": {
     "entry": "src/main.cpp",
+    "type": "static",
     "standard": "23",
     "pch": "include/pch.hpp",
-    "defines": ["PROJECT=1"]
+    "defines": ["PROJECT=1"],
+    "librarian_args": ["/EXPORT:base_symbol"]
   },
   "profiles": {
     "dev": {
@@ -315,7 +343,8 @@ modules
         "runtime": "MDd",
         "pch": false,
         "defines": ["DEV=1"],
-        "compiler_args": ["/W4"]
+        "compiler_args": ["/W4"],
+        "librarian_args": ["/WX"]
       }
     },
     "release": {
@@ -351,7 +380,7 @@ mqb build --profile=release
 - `--profile` 需要项目存在 `mqb.json`；
 - 未找到 profile 时 fail closed，并列出可用 profile 名；
 - profile 中的 relative path（包括 `pch`）与 base config 一样，以 `mqb.json` 所在目录为基准；
-- profile 中的 `compiler_args` / `linker_args` 仍进入同一 MSVC Parameter Engine，semantic option 会先在 profile 自身层归一化，然后再由更高优先级 CLI 覆盖；
+- profile 中的 `compiler_args` / `linker_args` / `librarian_args` 仍进入同一 MSVC Parameter Engine，semantic option 会先在 profile 自身层归一化，然后再由更高优先级 CLI 覆盖；
 - profile 可以选择 `type` / `pch` 等 policy，因此最终 target 仍受同一 executable/static/DLL/PCH 合法性门禁约束。
 
 ## 7. 优先级
@@ -392,7 +421,13 @@ output
 base mqb.json entries -> selected profile entries -> CLI entries
 ```
 
-适用于 defines、include dirs、library dirs、libraries、compiler args、linker args，以及 discovery list corrections。
+适用于 defines、include dirs、library dirs、libraries、compiler args、linker args、**librarian args**，以及 discovery list corrections。对于 librarian，CLI list 来自 `/lib` tail；因此最终顺序为：
+
+```text
+build.librarian_args
+-> profiles.<name>.build.librarian_args
+-> CLI /lib <...>
+```
 
 External module provider registry 按 logical module name 合并；同名后层项定点覆盖前层项，而不是制造重复 provider。
 
@@ -467,6 +502,7 @@ PCH 的 identity 由最终 effective PCH header/artifact/role 与正常 compiler
 - `ltcg` 同时改变 compile 与 link/archive identity；
 - `subsystem` 只影响 link identity；
 - libraries / library dirs / linker args 改变 link identity；
+- **librarian args 改变 archive recipe/cache identity，并触发 static target 重新归档**；
 - `type` 改变 downstream target ownership；
 - discovery/profile corrections 通过最终 source set 影响参与构建的 TUs；
 - external/prebuilt IFC identity 改变会使依赖它的 consumer compile cache 失效；
@@ -483,6 +519,7 @@ PCH 的 identity 由最终 effective PCH header/artifact/role 与正常 compiler
 - ordinary C++ `exe` / `dll` / `static` 支持 first-class PCH；
 - first-class PCH 与 C TU 或 Modules/Header Units pipeline 组合时当前 fail closed；
 - static target 不接受 subsystem、library paths/libraries、linker args；
+- librarian args 只允许 static target；native librarian CLI 使用 `/lib` / `/LIB`，不支持 `-lib` / `-LIB`；
 - **需要 Modules/Header Units pipeline 的 static-library target 当前仍 fail closed**；
 - discovery correction 使用精确路径，不支持 glob；
 - default-entry conventional fallback 不递归、不使用 glob；

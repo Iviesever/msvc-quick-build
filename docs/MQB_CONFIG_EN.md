@@ -49,7 +49,8 @@ profiles
     "library_dirs": ["third_party/lib"],
     "libraries": ["user32", "codec.lib"],
     "compiler_args": ["/W4"],
-    "linker_args": ["/OPT:NOREF"]
+    "linker_args": ["/OPT:NOREF"],
+    "librarian_args": []
   },
   "discovery": {
     "enabled": true,
@@ -105,6 +106,7 @@ profiles
 | `libraries` | string[] | link libraries; not accepted for static targets |
 | `compiler_args` | string[] | ordered raw argv elements passed to `cl.exe` |
 | `linker_args` | string[] | ordered raw linker argv elements; not accepted for static targets |
+| `librarian_args` | string[] | ordered raw `lib.exe` argv elements; accepted only for static targets |
 
 ### Default entry
 
@@ -200,7 +202,7 @@ First-class PCH currently supports ordinary C++ source sets for `exe` / `dll` / 
 
 ### Typed policy
 
-`type`, `runtime`, `ltcg`, `subsystem`, and `pch` are structured MQB policies, not string aliases for MSVC flags. The backend owns final command-line spelling; raw compiler/linker arguments should not bypass typed policy or MQB-owned artifact routing.
+`type`, `runtime`, `ltcg`, `subsystem`, and `pch` are structured MQB policies, not string aliases for MSVC flags. The backend owns final command-line spelling; raw compiler/linker/librarian arguments should not bypass typed policy or MQB-owned artifact routing.
 
 `ltcg: true` affects both compile and the downstream target:
 
@@ -209,6 +211,30 @@ First-class PCH currently supports ordinary C++ source sets for `exe` / `dll` / 
 - static library: librarian `/LTCG`.
 
 A DLL import library is placed beside the DLL under `.mqb/bin/`. Static targets use a dedicated `lib.exe` archive pipeline and archive cache.
+
+### Librarian policy
+
+Native librarian parameters for a static library can be configured directly:
+
+```json
+{
+  "version": 1,
+  "build": {
+    "type": "static",
+    "librarian_args": ["/WX", "/EXPORT:math_entry"]
+  }
+}
+```
+
+The CLI equivalent is:
+
+```powershell
+mqb build math.cpp --type static /lib /WX /EXPORT:math_entry
+```
+
+`/lib` is the only public librarian-boundary spelling; uppercase `/LIB` is accepted as well. `-lib` / `-LIB` are not boundaries and are rejected by the CLI because `-l <name>` / `-l<name>` already belong to MQB's link-library shorthand.
+
+A `/lib` boundary must be followed by at least one librarian option, and duplicate `/lib` / `/LIB` boundaries fail closed. The tail flows through `MsvcParameterEngine::route_librarian()`: MQB-owned structural switches such as `/OUT` cannot override artifact ownership, and wrong-tool switches are rejected. Effective `librarian_args` are valid only for static targets; using them with an executable or DLL fails closed.
 
 ## 4. `discovery`
 
@@ -304,9 +330,11 @@ Example:
   "version": 1,
   "build": {
     "entry": "src/main.cpp",
+    "type": "static",
     "standard": "23",
     "pch": "include/pch.hpp",
-    "defines": ["PROJECT=1"]
+    "defines": ["PROJECT=1"],
+    "librarian_args": ["/EXPORT:base_symbol"]
   },
   "profiles": {
     "dev": {
@@ -315,7 +343,8 @@ Example:
         "runtime": "MDd",
         "pch": false,
         "defines": ["DEV=1"],
-        "compiler_args": ["/W4"]
+        "compiler_args": ["/W4"],
+        "librarian_args": ["/WX"]
       }
     },
     "release": {
@@ -351,7 +380,7 @@ The current contract is deliberately small and deterministic:
 - `--profile` requires an `mqb.json` project configuration;
 - an unknown profile fails closed and reports the available profile names;
 - relative paths inside a profile, including `pch`, use the `mqb.json` directory as their base, exactly like root config paths;
-- profile `compiler_args` / `linker_args` still flow through the same MSVC Parameter Engine. Semantic native options are normalized within the profile layer before higher-precedence CLI policy is applied;
+- profile `compiler_args` / `linker_args` / `librarian_args` still flow through the same MSVC Parameter Engine. Semantic native options are normalized within the profile layer before higher-precedence CLI policy is applied;
 - a profile may select policy such as `type` and `pch`, so the final target still passes through the same executable/static/DLL/PCH validity gates.
 
 ## 7. Precedence
@@ -392,7 +421,13 @@ Ordinary list-like inputs append deterministically:
 base mqb.json entries -> selected profile entries -> CLI entries
 ```
 
-This applies to defines, include dirs, library dirs, libraries, compiler args, linker args, and discovery list corrections.
+This applies to defines, include dirs, library dirs, libraries, compiler args, linker args, **librarian args**, and discovery list corrections. For librarian policy, the CLI list is the `/lib` tail, so the effective order is:
+
+```text
+build.librarian_args
+-> profiles.<name>.build.librarian_args
+-> CLI /lib <...>
+```
 
 The external module provider registry merges by logical module name. A matching entry in a later layer replaces the earlier provider rather than creating a duplicate.
 
@@ -467,6 +502,7 @@ Typical effects:
 - `ltcg` changes compile and link/archive identity;
 - `subsystem` changes link identity only;
 - libraries, library dirs, and linker args change link identity;
+- **librarian args change archive recipe/cache identity and force a static target to rearchive**;
 - `type` changes downstream target ownership;
 - discovery/profile corrections affect participating TUs through the final source set;
 - changing an external/prebuilt IFC invalidates dependent consumer compile caches;
@@ -483,6 +519,7 @@ Missing recorded outputs invalidate the corresponding compile/link/archive/PCH c
 - ordinary C++ `exe` / `dll` / `static` targets support first-class PCH;
 - first-class PCH combined with a C translation unit or Modules/Header Unit pipeline currently fails closed;
 - static targets do not accept subsystem, library paths/libraries, or linker args;
+- librarian args are accepted only for static targets; native librarian CLI uses `/lib` or `/LIB`, while `-lib` / `-LIB` are rejected;
 - **static-library targets that require the Modules/Header Units pipeline still fail closed**;
 - discovery corrections use exact paths and do not support globs;
 - conventional default-entry fallback is non-recursive and does not use globs;

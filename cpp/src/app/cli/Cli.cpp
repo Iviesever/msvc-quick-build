@@ -261,6 +261,8 @@ parse_arguments(const std::span<const std::string_view> arguments) {
 
     bool native_linker_tail = false;
     bool native_linker_tail_has_argument = false;
+    bool native_librarian_tail = false;
+    bool native_librarian_tail_has_argument = false;
 
     for (std::size_t index = first_argument; index < arguments.size(); ++index) {
         const std::string_view argument = arguments[index];
@@ -270,6 +272,19 @@ parse_arguments(const std::span<const std::string_view> arguments) {
                 options.build.run_arguments.emplace_back(arguments[index]);
             }
             break;
+        }
+        if (native_librarian_tail) {
+            if (argument == "/lib" || argument == "/LIB") {
+                return std::unexpected(error("duplicate native MSVC /lib separator"));
+            }
+            if (argument.starts_with("--")) {
+                return std::unexpected(error(
+                    "MQB option '" + std::string{argument}
+                    + "' must appear before native MSVC /lib"));
+            }
+            options.librarian_arguments.emplace_back(argument);
+            native_librarian_tail_has_argument = true;
+            continue;
         }
         if (native_linker_tail) {
             if (argument == "/link" || argument == "-link") {
@@ -282,6 +297,14 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             }
             options.linker_arguments.emplace_back(argument);
             native_linker_tail_has_argument = true;
+            continue;
+        }
+        if (argument == "/lib" || argument == "/LIB") {
+            if (options.build.sources.empty() && options.command == Command::direct) {
+                return std::unexpected(error(
+                    "native MSVC /lib must appear after at least one source file"));
+            }
+            native_librarian_tail = true;
             continue;
         }
         if (argument == "/link" || argument == "-link") {
@@ -578,6 +601,11 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.libraries.emplace_back(*value);
             continue;
         }
+        if (argument == "-lib" || argument == "-LIB") {
+            return std::unexpected(error(
+                "'-lib' is not a librarian separator; use '/lib' for static-target librarian options, "
+                "or '-l <name>' / '-l<name>' for a link library"));
+        }
         if (argument == "-I" || argument.starts_with("-I")) {
             auto value = attached_or_next(arguments, index, argument, "-I");
             if (!value) return std::unexpected(value.error());
@@ -630,6 +658,9 @@ parse_arguments(const std::span<const std::string_view> arguments) {
     if (native_linker_tail && !native_linker_tail_has_argument) {
         return std::unexpected(error("native MSVC /link requires at least one linker option"));
     }
+    if (native_librarian_tail && !native_librarian_tail_has_argument) {
+        return std::unexpected(error("native MSVC /lib requires at least one librarian option"));
+    }
     if (!options.show_help
         && options.build.sources.empty()
         && options.command == Command::direct) {
@@ -647,6 +678,7 @@ std::string_view usage() noexcept {
     return "MQB " MQB_VERSION " - MSVC Quick Build (C++ refactor)\n\n"
 R"(Usage:
   mqb build [entry.cpp] [options] [MSVC-compiler-options] [/link linker-options...]
+  mqb build [source...] --type static [options] [MSVC-compiler-options] [/lib librarian-options...]
   mqb run [entry.cpp] [options] [MSVC-compiler-options] [/link linker-options...] [-- program-args...]
   mqb <entry.cpp> [options] [MSVC-compiler-options] [/link linker-options...] [-- program-args...]
   mqb <source.cpp> <more-sources...|module.ixx...> [options] [MSVC-compiler-options] [/link linker-options...] [-- program-args...]
@@ -720,6 +752,8 @@ Options:
   --lib <name>            Link a library
   /option, -option        Route a native MSVC compiler switch through the parameter engine
   /link <link-options...> Route the remaining build argv to native linker options
+  /lib <librarian-options...>
+                           Route the remaining static-target build argv to native lib.exe options
   --compiler-arg <arg>    Append one raw cl.exe argument
   --linker-arg <arg>      Append one raw link.exe argument
   --env <auto|vs|portable>
@@ -736,22 +770,27 @@ PCH structural switches remain in the parameter engine's MQB-owned/unsupported d
 
 Native MSVC compiler switches may use '/' or a single '-' prefix. MQB '--long' options remain
 in the MQB namespace. `/link` (or `-link`) is a one-way compiler-to-linker boundary for build
-arguments; MQB options must appear before it. The outer `--` delimiter still ends build parsing
-and starts executable argv. `mqb run ... /link ... -- child-args` and the legacy source-first
-`--run` form remain supported. Native switches and @response syntax are not semantically
-reimplemented by the CLI: they flow through the same ownership, normalization, conflict, and
-cache-identity rules as --compiler-arg/--linker-arg. For direct native syntax the CLI asks the
-parameter engine for each option's token shape before treating a following bare token as a
-source. Exact split forms such as `/I dir`, `/D NAME`, `/U NAME`, and `/external:I dir` keep
-their option and operand as ordered raw compiler argv; attached spellings consume no extra token.
+arguments; `/lib` is the one-way compiler-to-librarian boundary for static-library builds. The
+librarian separator accepts the lowercase `/lib` and uppercase `/LIB` spellings; `-lib`/`-LIB`
+is rejected so it cannot collide with MQB's `-l` library shorthand. MQB options must appear
+before either native boundary. The outer `--` delimiter still ends build parsing and starts
+executable argv. `mqb run ... /link ... -- child-args` and the legacy source-first `--run` form
+remain supported. Native switches and @response syntax are not semantically reimplemented by
+the CLI: they flow through the same ownership, normalization, conflict, and cache-identity rules
+as --compiler-arg/--linker-arg and build.librarian_args. For direct native compiler syntax the
+CLI asks the parameter engine for each option's token shape before treating a following bare
+token as a source. Exact split forms such as `/I dir`, `/D NAME`, `/U NAME`, and `/external:I dir`
+keep their option and operand as ordered raw compiler argv; attached spellings consume no extra token.
 
-Static libraries are produced by MSVC lib.exe from the compiled object set. Linker-only policy
-(libraries, library search paths, subsystem, and raw linker arguments) is rejected for static
-targets. Typed LTCG remains valid for static targets and couples /GL compilation with lib.exe
-/LTCG archive policy.
+Static libraries are produced by MSVC lib.exe from the compiled object set. Native librarian
+policy can be supplied with `mqb build foo.cpp --type static /lib ...` or through
+`build.librarian_args`; config/profile/CLI list values append in base -> profile -> CLI order.
+Librarian arguments are rejected for non-static targets. Linker-only policy (libraries, library
+search paths, subsystem, and raw linker arguments) is rejected for static targets. Typed LTCG
+remains valid for static targets and couples /GL compilation with lib.exe /LTCG archive policy.
 
-Raw compiler/linker arguments preserve argv element boundaries; MQB does not split a quoted
-string into multiple switches. Project config entries are applied first, selected profile
+Raw compiler/linker/librarian arguments preserve argv element boundaries; MQB does not split a
+quoted string into multiple switches. Project config entries are applied first, selected profile
 entries append/override next, and CLI entries apply last. Typed runtime/LTCG/PCH policy and
 structured artifact routing are emitted after raw arguments so the BuildPlan remains authoritative.
 
