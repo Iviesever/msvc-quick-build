@@ -7,6 +7,7 @@
 
 #include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcFuzzerPolicy.hpp"
+#include "mqb/msvc/MsvcOpenMpPolicy.hpp"
 
 namespace mqb::orchestration::detail {
 
@@ -27,6 +28,9 @@ IncrementalLinkRequest make_module_target_link_request(
         request.compiler_options,
         effective_link_options);
     msvc::MsvcFuzzerPolicy::apply_link_policy(
+        request.compiler_options,
+        effective_link_options);
+    msvc::MsvcOpenMpPolicy::apply_link_policy(
         request.compiler_options,
         effective_link_options);
 
