@@ -1,10 +1,12 @@
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <expected>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <variant>
@@ -67,12 +69,174 @@ void snapshot_inputs(
     return left == right || left.lexically_normal() == right.lexically_normal();
 }
 
+[[nodiscard]] std::string windows_path_key(const fs::path& path) {
+    std::string value = path.lexically_normal().generic_string();
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](const unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    return value;
+}
+
+[[nodiscard]] bool same_windows_path(const fs::path& left, const fs::path& right) {
+    return windows_path_key(left) == windows_path_key(right);
+}
+
+[[nodiscard]] bool contains_windows_path(
+    const std::vector<fs::path>& paths,
+    const fs::path& expected) {
+    return std::any_of(paths.begin(), paths.end(), [&](const fs::path& path) {
+        return same_windows_path(path, expected);
+    });
+}
+
+void append_unique_path(std::vector<fs::path>& paths, const fs::path& path) {
+    if (!contains_windows_path(paths, path)) {
+        paths.push_back(path.lexically_normal());
+    }
+}
+
+void append_unique_paths(
+    std::vector<fs::path>& paths,
+    const std::vector<fs::path>& additions) {
+    for (const auto& path : additions) {
+        append_unique_path(paths, path);
+    }
+}
+
 [[nodiscard]] bool contains_path(
     const std::vector<fs::path>& paths,
     const fs::path& expected) {
     return std::any_of(paths.begin(), paths.end(), [&](const fs::path& path) {
         return same_path(path, expected);
     });
+}
+
+[[nodiscard]] bool ascii_iequals(
+    const std::string_view left,
+    const std::string_view right) noexcept {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        const auto a = static_cast<unsigned char>(left[index]);
+        const auto b = static_cast<unsigned char>(right[index]);
+        if (std::tolower(a) != std::tolower(b)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] std::string path_to_utf8(const fs::path& path) {
+    const auto bytes = path.generic_u8string();
+    return std::string{
+        reinterpret_cast<const char*>(bytes.data()),
+        bytes.size()};
+}
+
+[[nodiscard]] fs::path path_from_utf8(const std::string_view value) {
+    std::u8string bytes;
+    bytes.assign(
+        reinterpret_cast<const char8_t*>(value.data()),
+        reinterpret_cast<const char8_t*>(value.data() + value.size()));
+    return fs::path{bytes};
+}
+
+[[nodiscard]] std::string_view environment_value(
+    const msvc::MsvcToolchain& toolchain,
+    const std::string_view name) noexcept {
+    for (const auto& variable : toolchain.environment) {
+        if (ascii_iequals(variable.name, name)) {
+            return variable.value;
+        }
+    }
+    return {};
+}
+
+[[nodiscard]] std::vector<fs::path> split_library_path(const std::string_view value) {
+    std::vector<fs::path> result;
+    std::size_t begin = 0;
+    while (begin <= value.size()) {
+        const std::size_t separator = value.find(';', begin);
+        const std::size_t end = separator == std::string_view::npos
+            ? value.size()
+            : separator;
+        std::string_view token = value.substr(begin, end - begin);
+        while (!token.empty()
+            && std::isspace(static_cast<unsigned char>(token.front())) != 0) {
+            token.remove_prefix(1);
+        }
+        while (!token.empty()
+            && std::isspace(static_cast<unsigned char>(token.back())) != 0) {
+            token.remove_suffix(1);
+        }
+        if (token.size() >= 2 && token.front() == '"' && token.back() == '"') {
+            token.remove_prefix(1);
+            token.remove_suffix(1);
+        }
+        if (!token.empty()) {
+            result.push_back(path_from_utf8(token));
+        }
+        if (separator == std::string_view::npos) {
+            break;
+        }
+        begin = separator + 1;
+    }
+    return result;
+}
+
+void add_search_directory(
+    std::vector<fs::path>& directories,
+    const fs::path& base,
+    const fs::path& directory) {
+    if (directory.empty()) {
+        return;
+    }
+    const fs::path normalized = directory.is_absolute()
+        ? directory.lexically_normal()
+        : (base / directory).lexically_normal();
+    if (!contains_windows_path(directories, normalized)) {
+        directories.push_back(normalized);
+    }
+}
+
+[[nodiscard]] std::vector<fs::path> library_search_directories(
+    const msvc::MsvcToolchain& toolchain,
+    const std::vector<fs::path>& configured,
+    const fs::path& requested_working_directory) {
+    std::error_code error_code;
+    fs::path base = requested_working_directory.empty()
+        ? fs::current_path(error_code)
+        : fs::absolute(requested_working_directory, error_code);
+    if (error_code) {
+        return {};
+    }
+    base = base.lexically_normal();
+
+    std::vector<fs::path> directories;
+    directories.reserve(configured.size() + 8);
+    for (const auto& directory : configured) {
+        add_search_directory(directories, base, directory);
+    }
+    add_search_directory(directories, base, base);
+    for (const auto& directory : split_library_path(environment_value(toolchain, "LIB"))) {
+        add_search_directory(directories, base, directory);
+    }
+    return directories;
+}
+
+[[nodiscard]] bool library_path(const fs::path& path) {
+    return ascii_iequals(path_to_utf8(path.extension()), ".lib");
+}
+
+[[nodiscard]] bool parent_is_search_directory(
+    const fs::path& library,
+    const std::vector<fs::path>& directories) {
+    return contains_windows_path(directories, library.parent_path());
 }
 
 void add_reason(std::vector<BuildReason>& reasons, const BuildReason reason) {
@@ -161,10 +325,15 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         });
     }
     std::vector<fs::path> linker_file_inputs;
-    linker_file_inputs.reserve(linker_file_routing->inputs.size());
+    linker_file_inputs.reserve(linker_file_routing->inputs.size() + 16);
     for (const auto& input : linker_file_routing->inputs) {
-        linker_file_inputs.push_back(input.path);
+        append_unique_path(linker_file_inputs, input.path);
     }
+    // Observer-schema sentinel. Every cache created after transitive library
+    // observation includes the exact link.exe as a file input. Pre-observation
+    // caches lack it, so the first upgraded build must relink and seal LINK's
+    // real library-search evidence instead of incorrectly reusing stale state.
+    append_unique_path(linker_file_inputs, toolchain_.linker);
 
     auto default_library_routing = msvc::MsvcDefaultLibraryPolicy::route(
         request.options.additional_arguments);
@@ -219,10 +388,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         };
         return std::unexpected(std::move(error));
     }
-    linker_file_inputs.insert(
-        linker_file_inputs.end(),
-        resolved_default_libraries->files.begin(),
-        resolved_default_libraries->files.end());
+    append_unique_paths(linker_file_inputs, resolved_default_libraries->files);
 
     if (!whole_archive_routing->libraries.empty()) {
         LinkOptions whole_archive_options = request.options;
@@ -240,10 +406,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             };
             return std::unexpected(std::move(error));
         }
-        linker_file_inputs.insert(
-            linker_file_inputs.end(),
-            resolved_whole_archive_libraries->files.begin(),
-            resolved_whole_archive_libraries->files.end());
+        append_unique_paths(linker_file_inputs, resolved_whole_archive_libraries->files);
     }
 
     if (request.options.address_sanitizer_runtime_library
@@ -269,10 +432,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             };
             return std::unexpected(std::move(error));
         }
-        linker_file_inputs.insert(
-            linker_file_inputs.end(),
-            resolved_asan_libraries->files.begin(),
-            resolved_asan_libraries->files.end());
+        append_unique_paths(linker_file_inputs, resolved_asan_libraries->files);
     }
 
     if (request.options.address_sanitizer_vcasan_runtime_library) {
@@ -297,10 +457,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
                 };
                 return std::unexpected(std::move(error));
             }
-            linker_file_inputs.insert(
-                linker_file_inputs.end(),
-                resolved_vcasan_library->files.begin(),
-                resolved_vcasan_library->files.end());
+            append_unique_paths(linker_file_inputs, resolved_vcasan_library->files);
         }
     }
 
@@ -327,10 +484,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
                 };
                 return std::unexpected(std::move(error));
             }
-            linker_file_inputs.insert(
-                linker_file_inputs.end(),
-                resolved_fuzzer_library->files.begin(),
-                resolved_fuzzer_library->files.end());
+            append_unique_paths(linker_file_inputs, resolved_fuzzer_library->files);
         }
     }
 
@@ -358,12 +512,15 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
                 };
                 return std::unexpected(std::move(error));
             }
-            linker_file_inputs.insert(
-                linker_file_inputs.end(),
-                resolved_openmp_libraries->files.begin(),
-                resolved_openmp_libraries->files.end());
+            append_unique_paths(linker_file_inputs, resolved_openmp_libraries->files);
         }
     }
+
+    // Keep a clean declaration-derived set. Cached transitive observations are
+    // merged only for validation; after a real LINK pass the cache is rebuilt
+    // from this set plus the newly observed search evidence, so removed object
+    // directives cannot linger forever.
+    const std::vector<fs::path> declared_linker_file_inputs = linker_file_inputs;
 
     const std::optional<fs::path> requested_map_output =
         msvc::MsvcLinker::map_file_path(
@@ -400,6 +557,49 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             .path = request.cache_file,
             .message = loaded.error().message,
         });
+    }
+
+    if (cached_entry) {
+        const auto search_directories = library_search_directories(
+            toolchain_,
+            request.options.library_directories,
+            working_directory);
+        for (const auto& cached_input : cached_entry->file_inputs) {
+            if (!library_path(cached_input)
+                || contains_windows_path(declared_linker_file_inputs, cached_input)
+                || contains_windows_path(resolved_libraries->files, cached_input)) {
+                continue;
+            }
+
+            fs::path current_input = cached_input;
+            // A library previously found in LINK's normal search directories is
+            // re-resolved by basename on every warm validation. This catches a
+            // new higher-priority same-name library without requiring another
+            // link first. Libraries outside the search path are treated as
+            // absolute directive inputs and retain their exact path.
+            if (parent_is_search_directory(cached_input, search_directories)) {
+                const std::vector<std::string> request_name{
+                    path_to_utf8(cached_input.filename())};
+                auto rerouted = msvc::MsvcLibraryResolver::resolve_available(
+                    toolchain_,
+                    request_name,
+                    request.options.library_directories,
+                    working_directory);
+                if (!rerouted) {
+                    IncrementalLinkError error{
+                        .code = IncrementalLinkErrorCode::library_resolution_failed,
+                        .message = "failed to re-resolve cached transitive MSVC library evidence: "
+                            + rerouted.error().message,
+                        .library_resolution_error = rerouted.error(),
+                    };
+                    return std::unexpected(std::move(error));
+                }
+                if (!rerouted->files.empty()) {
+                    current_input = rerouted->files.front();
+                }
+            }
+            append_unique_path(linker_file_inputs, current_input);
+        }
     }
 
     auto output_snapshot_result = detail::snapshot_regular_file(request.output);
@@ -509,6 +709,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             || result.validation.file_inputs_changed
             || linker_file_routing->requires_full_link
             || request.options.address_sanitizer_runtime_library.has_value(),
+        .observe_library_search = true,
     };
     auto linked = linker_.link(invocation);
     if (!linked) {
@@ -517,6 +718,10 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             "MSVC link action failed",
             linked.error()));
     }
+
+    const auto observed_libraries =
+        msvc::MsvcLinker::observed_library_paths(linked->stdout_text);
+    msvc::MsvcLinker::sanitize_library_observation_output(*linked, request.options);
 
     result.linked = true;
     result.process = std::move(*linked);
@@ -558,6 +763,18 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             result.warnings);
     }
 
+    std::vector<fs::path> sealed_linker_file_inputs = declared_linker_file_inputs;
+    for (const auto& observed : observed_libraries) {
+        if (contains_windows_path(action->libraries, observed)) {
+            continue;
+        }
+        std::error_code error_code;
+        if (!fs::is_regular_file(observed, error_code) || error_code) {
+            continue;
+        }
+        append_unique_path(sealed_linker_file_inputs, observed);
+    }
+
     const LinkCacheEntry new_entry{
         .linker = *linker_identity,
         .signature = BuildSignature::for_link(
@@ -569,7 +786,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         .objects = action->objects,
         .output = action->output,
         .libraries = action->libraries,
-        .file_inputs = linker_file_inputs,
+        .file_inputs = std::move(sealed_linker_file_inputs),
         .side_outputs = std::move(side_outputs),
     };
     auto saved = LinkCacheFile::save(request.cache_file, new_entry);
