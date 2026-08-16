@@ -299,11 +299,12 @@ private:
     const DiscoveryRequestIdentity& request) noexcept {
     if (record.request != request
         || record.result.sources.empty()
-        || record.result.sources.front().lexically_normal() != request.entry.lexically_normal()
+        || mqb::platform::windows::path_identity_key(record.result.sources.front())
+            != mqb::platform::windows::path_identity_key(request.entry)
         || record.result.indexed_files != record.files.size()
         || record.directories.empty()
-        || record.directories.front().path.lexically_normal()
-            != request.project_root.lexically_normal()) {
+        || mqb::platform::windows::path_identity_key(record.directories.front().path)
+            != mqb::platform::windows::path_identity_key(request.project_root)) {
         return false;
     }
     return true;
