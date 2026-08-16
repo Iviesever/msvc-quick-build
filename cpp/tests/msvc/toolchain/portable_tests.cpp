@@ -137,7 +137,7 @@ int main() {
     ambient_netfx.set("ambient-netfx-sdk");
 
     TemporaryDirectory fixture;
-    const fs::path portable = fixture.path() / "portable_msvc";
+    const fs::path portable = fixture.path() / fs::path{u8"portable_msvc_工具链_テスト"};
 
     fs::create_directories(portable / "VC" / "Tools" / "MSVC" / "14.40.10000");
     const fs::path latest_vc = portable / "VC" / "Tools" / "MSVC" / "14.50.20000";
@@ -163,13 +163,13 @@ int main() {
     options.portable_roots = {portable};
 
     const auto result = locator.discover(options);
-    expect(result.has_value(), "automatic discovery should select an existing portable toolchain first");
+    expect(result.has_value(), "automatic discovery should select an existing Unicode portable toolchain first");
     expect(runner.calls == 0, "portable discovery should not invoke vswhere or cmd.exe");
     if (result) {
         expect(result->source == mqb::msvc::ToolchainSource::portable,
                "portable discovery should retain toolchain provenance");
         expect(result->identity.compiler == tool_bin / "cl.exe",
-               "portable discovery should resolve the requested host/target compiler");
+               "portable discovery should resolve the requested host/target compiler under a Unicode root");
         expect(result->linker == tool_bin / "link.exe",
                "portable discovery should resolve link.exe beside cl.exe");
         expect(result->librarian == tool_bin / "lib.exe",
