@@ -27,6 +27,18 @@ public:
         return false;
     }
 
+    [[nodiscard]] static bool vcasan_default_library_enabled(
+        const std::span<const std::string> arguments) noexcept {
+        for (const auto& argument : arguments) {
+            const std::string_view body = option_body(argument);
+            if (ascii_iequals(body, "Zl")
+                || ascii_iequals(body, "fno-sanitize-address-vcasan-lib")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     [[nodiscard]] static RuntimeLibrary effective_runtime_library(
         const CompilerOptions& options) noexcept {
         if (options.runtime_library) {
@@ -41,10 +53,18 @@ public:
         const CompilerOptions& compiler_options,
         LinkOptions& link_options) noexcept {
         if (compiler_enabled(compiler_options.additional_arguments)) {
-            link_options.address_sanitizer_runtime_library =
+            const RuntimeLibrary runtime =
                 effective_runtime_library(compiler_options);
+            link_options.address_sanitizer_runtime_library = runtime;
+            if (vcasan_default_library_enabled(
+                    compiler_options.additional_arguments)) {
+                link_options.address_sanitizer_vcasan_runtime_library = runtime;
+            } else {
+                link_options.address_sanitizer_vcasan_runtime_library.reset();
+            }
         } else {
             link_options.address_sanitizer_runtime_library.reset();
+            link_options.address_sanitizer_vcasan_runtime_library.reset();
         }
     }
 
@@ -118,6 +138,21 @@ public:
             "clang_rt.asan-" + arch + ".lib",
             "clang_rt.asan_cxx-" + arch + ".lib",
         };
+    }
+
+    [[nodiscard]] static std::string vcasan_library_name(
+        const RuntimeLibrary runtime) {
+        switch (runtime) {
+        case RuntimeLibrary::mt:
+            return "libvcasan.lib";
+        case RuntimeLibrary::md:
+            return "vcasan.lib";
+        case RuntimeLibrary::mtd:
+            return "libvcasand.lib";
+        case RuntimeLibrary::mdd:
+            return "vcasand.lib";
+        }
+        return "vcasan.lib";
     }
 
     static void apply_runtime_path(

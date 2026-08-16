@@ -274,6 +274,35 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             resolved_asan_libraries->files.end());
     }
 
+    if (request.options.address_sanitizer_vcasan_runtime_library) {
+        const std::string vcasan_library =
+            msvc::MsvcAddressSanitizerPolicy::vcasan_library_name(
+                *request.options.address_sanitizer_vcasan_runtime_library);
+        if (msvc::MsvcDefaultLibraryPolicy::allows_implicit_library(
+                *default_library_routing,
+                vcasan_library)) {
+            LinkOptions vcasan_options = request.options;
+            vcasan_options.libraries = {vcasan_library};
+            auto resolved_vcasan_library = msvc::MsvcLibraryResolver::resolve(
+                toolchain_,
+                vcasan_options,
+                working_directory);
+            if (!resolved_vcasan_library) {
+                IncrementalLinkError error{
+                    .code = IncrementalLinkErrorCode::library_resolution_failed,
+                    .message = "failed to resolve inferred MSVC VCAsan runtime library: "
+                        + resolved_vcasan_library.error().message,
+                    .library_resolution_error = resolved_vcasan_library.error(),
+                };
+                return std::unexpected(std::move(error));
+            }
+            linker_file_inputs.insert(
+                linker_file_inputs.end(),
+                resolved_vcasan_library->files.begin(),
+                resolved_vcasan_library->files.end());
+        }
+    }
+
     if (request.options.fuzzer_runtime_library) {
         const std::string fuzzer_library =
             msvc::MsvcFuzzerPolicy::inferred_library_name(
