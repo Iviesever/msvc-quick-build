@@ -13,6 +13,8 @@ namespace {
 using namespace std::string_view_literals;
 constexpr std::string_view kUnregisteredRationale =
     "option is not present in MQB's current MSVC parameter registry";
+constexpr std::string_view kDynamicDebuggingRationale =
+    "Dynamic Debugging introduces cross-stage policy and secondary artifacts that are not yet represented in MQB's build/cache graph.";
 
 template <std::size_t N>
 [[nodiscard]] bool contains_exact(const std::string_view value, const std::array<std::string_view, N>& candidates) noexcept {
@@ -61,6 +63,9 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     const std::string_view body = option_body(argument);
     if (body.empty()) return unregistered(ParameterTool::compiler, {});
 
+    if (body == "dynamicdeopt" || body.starts_with("dynamicdeopt:")) {
+        return compiler_unsupported(body, std::string{kDynamicDebuggingRationale});
+    }
     if (body == "MD" || body == "MDd" || body == "MT" || body == "MTd") {
         return classified(ParameterTool::compiler, ParameterOwnership::semantic, "/runtime", "normalized to RuntimeLibrary");
     }
@@ -140,7 +145,7 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (contains_exact(body, pipeline_exact)) return compiler_unsupported(body, "option replaces normal object compilation or changes the output kind outside MQB's target pipeline");
 
     static constexpr std::array passthrough_exact{
-        "?"sv, "HELP"sv, "analyze-"sv, "bigobj"sv, "Brepro"sv, "Bt+"sv, "C"sv, "dynamicdeopt"sv, "fastfail"sv,
+        "?"sv, "HELP"sv, "analyze-"sv, "bigobj"sv, "Brepro"sv, "Bt+"sv, "C"sv, "fastfail"sv,
         "FC"sv, "FS"sv, "GA"sv, "GF"sv, "GH"sv, "Gh"sv, "GT"sv, "Gv"sv, "Gz"sv, "homeparams"sv, "hotpatch"sv,
         "J"sv, "JMC"sv, "jumptablerdata"sv, "nologo"sv, "O1"sv, "O2"sv, "Od"sv, "options:strict"sv, "Os"sv, "Ot"sv, "Ox"sv, "Oy"sv,
         "PD"sv, "permissive"sv, "permissive-"sv, "PH"sv, "presetPadding"sv, "Qfast_transcendentals"sv, "Qimprecise_fwaits"sv,
@@ -170,6 +175,9 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
     if (raw_body.empty()) return unregistered(ParameterTool::linker, {});
     const std::string body = upper_ascii(raw_body);
 
+    if (body == "DYNAMICDEOPT" || body.starts_with("DYNAMICDEOPT:")) {
+        return linker_unsupported(body, std::string{kDynamicDebuggingRationale});
+    }
     if (body.starts_with("MACHINE:") || body.starts_with("SUBSYSTEM:") || body == "LTCG" || body == "LTCG:OFF") {
         return classified(ParameterTool::linker, ParameterOwnership::semantic, "/" + body, "normalized to typed linker policy");
     }
@@ -211,7 +219,7 @@ ParameterClassification classify_linker_parameter(const std::string_view argumen
 
     static constexpr std::array passthrough_exact{
         "?"sv, "ALLOWBIND"sv, "ALLOWISOLATION"sv, "APPCONTAINER"sv, "ASSEMBLYDEBUG"sv, "CETCOMPAT"sv, "DEBUG"sv, "DEBUG:FULL"sv, "DEBUG:NONE"sv,
-        "DELAYSIGN"sv, "DYNAMICBASE"sv, "DYNAMICDEOPT"sv, "FIXED"sv, "FORCE"sv, "FUNCTIONPADMIN"sv, "HIGHENTROPYVA"sv, "IGNOREIDL"sv,
+        "DELAYSIGN"sv, "DYNAMICBASE"sv, "FIXED"sv, "FORCE"sv, "FUNCTIONPADMIN"sv, "HIGHENTROPYVA"sv, "IGNOREIDL"sv,
         "INCREMENTAL"sv, "INCREMENTAL:NO"sv, "INFERASANLIBS"sv, "INFERASANLIBS:NO"sv, "INTEGRITYCHECK"sv, "LARGEADDRESSAWARE"sv, "MANIFEST"sv, "MAP"sv,
         "MANIFEST:NO"sv, "NOASSEMBLY"sv, "NODEFAULTLIB"sv, "NOENTRY"sv, "NOFUNCTIONPADSECTION"sv, "NOLOGO"sv, "NXCOMPAT"sv,
         "PROFILE"sv, "RELEASE"sv, "SAFESEH"sv, "TIME"sv, "TSAWARE"sv, "VERBOSE"sv, "WHOLEARCHIVE"sv, "WX"sv, "WX:NO"sv,
@@ -255,6 +263,9 @@ ParameterClassification classify_librarian_parameter(const std::string_view argu
     if (raw_body.empty()) return unregistered(ParameterTool::librarian, {});
     const std::string body = upper_ascii(raw_body);
 
+    if (body == "DYNAMICDEOPT" || body.starts_with("DYNAMICDEOPT:")) {
+        return librarian_unsupported(body, std::string{kDynamicDebuggingRationale});
+    }
     if (body.starts_with("MACHINE:") || body == "LTCG") return classified(ParameterTool::librarian, ParameterOwnership::semantic, "/" + body, "normalized to typed archive policy");
     if (body.starts_with("OUT:")) return classified(ParameterTool::librarian, ParameterOwnership::mqb_owned, "/OUT", "MQB owns archive output identity and atomic replacement");
     if (body == "LIST" || body.starts_with("DEF:") || body.starts_with("EXTRACT:") || body.starts_with("NAME:") || body.starts_with("REMOVE:")) return librarian_unsupported(body, "option changes lib.exe operating mode or archive membership outside MQB's build graph");
