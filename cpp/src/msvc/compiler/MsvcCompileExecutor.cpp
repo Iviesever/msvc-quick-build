@@ -251,6 +251,10 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
         });
     }
 
+    const auto search_roots = include_search_roots(
+        request.options,
+        toolchain_.environment,
+        request.working_directory);
     const auto include_freshness = include_search_freshness_directories(
         dependencies->includes,
         request.unit.source,
@@ -282,6 +286,7 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
             request.options),
         .outputs = request.unit.outputs,
         .dependencies = std::move(cache_dependencies),
+        .include_search_roots = search_roots,
     };
 
     return CompileExecutionResult{
