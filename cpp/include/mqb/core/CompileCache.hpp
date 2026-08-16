@@ -29,6 +29,11 @@ struct CompileCacheEntry {
     BuildSignature signature;
     std::vector<Artifact> outputs;
     std::vector<std::filesystem::path> dependencies;
+    // Exact ordered compiler-global include roots (/I, native /I or
+    // /external:I, then vcvars INCLUDE unless /X). Directory timestamps answer
+    // namespace freshness; this vector answers root identity/order freshness,
+    // including environment-backed root replacement/removal.
+    std::vector<std::filesystem::path> include_search_roots;
     std::optional<ModuleScanEvidence> module_scan;
 };
 
