@@ -67,7 +67,9 @@ ArchiveCacheValidation ArchiveCacheValidator::validate(
     const FileSnapshot& output_snapshot,
     const std::span<const FileSnapshot> object_snapshots,
     const bool force_archive,
-    const bool link_time_code_generation) {
+    const bool link_time_code_generation,
+    const Architecture architecture,
+    const std::span<const std::string> additional_arguments) {
     ArchiveCacheValidation result;
 
     if (force_archive) add_reason(result.reasons, BuildReason::explicit_rebuild);
@@ -89,7 +91,9 @@ ArchiveCacheValidation ArchiveCacheValidator::validate(
         current_objects,
         current_output,
         current_librarian,
-        link_time_code_generation);
+        link_time_code_generation,
+        architecture,
+        additional_arguments);
     if (cached.signature != signature && librarian_matches && inputs_match) {
         add_reason(result.reasons, BuildReason::archive_recipe_changed);
     }
