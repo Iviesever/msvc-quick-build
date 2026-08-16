@@ -151,9 +151,10 @@ template <std::size_t Count>
 // cl.exe search identity. INCLUDE controls ordinary header lookup, LIBPATH
 // controls #using metadata lookup, and PATH can affect compiler helper-tool
 // discovery. The vcvars metadata names the selected toolset/SDK state from which
-// those effective values were produced. LIB belongs to LINK and is deliberately
-// excluded so a library-search-only mutation does not rebuild every translation
-// unit. CL/_CL_ are absent because MQB masks those option injectors at launch.
+// those effective values were produced. LIB belongs to LINK/LIB and is
+// deliberately excluded so a library-search-only mutation does not rebuild
+// every translation unit. CL/_CL_ are absent because MQB masks those option
+// injectors at launch.
 [[nodiscard]] inline std::string compiler_environment_stamp(
     const std::span<const process::EnvironmentVariable> environment) {
     constexpr std::array names{
@@ -193,6 +194,28 @@ template <std::size_t Count>
         environment,
         names,
         "mqb.linker.environment.v1");
+}
+
+// lib.exe also has an environment library path: its /LIBPATH option overrides
+// that path. Native librarian passthrough therefore makes LIB a real archive
+// resolution input even though MQB supplies its primary object inputs as full
+// paths. PATH and vcvars metadata remain part of the effective tool context.
+[[nodiscard]] inline std::string librarian_environment_stamp(
+    const std::span<const process::EnvironmentVariable> environment) {
+    constexpr std::array names{
+        std::string_view{"LIB"},
+        std::string_view{"PATH"},
+        std::string_view{"VCToolsInstallDir"},
+        std::string_view{"WindowsSdkDir"},
+        std::string_view{"WindowsSDKVersion"},
+        std::string_view{"UniversalCRTSdkDir"},
+        std::string_view{"UCRTVersion"},
+        std::string_view{"NETFXSDKDir"},
+    };
+    return toolchain_environment_detail::environment_stamp(
+        environment,
+        names,
+        "mqb.librarian.environment.v1");
 }
 
 // Core already treats ToolchainIdentity::binary_stamp as an opaque compiler
