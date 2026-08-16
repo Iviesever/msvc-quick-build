@@ -78,11 +78,11 @@ try {
         throw 'project-local toolchain cache migration broke the warm/no-op build path'
     }
 
-    # Final Closure #5 cross-stage contract: application-level project scope must
-    # use the same Windows identity authority as caches/discovery. The source is
-    # passed through a different ASCII-case spelling of the exact same directory.
-    # Project-only extra_sources is required to satisfy the link, so the build
-    # fails on the pre-fix lexical/case-sensitive containment path.
+    # Final Closure #5 cross-stage contract: application project scope, source
+    # discovery containment, and discovery-cache identity must share the same
+    # Windows path authority. Project-only extra_sources is required to satisfy
+    # the link. The second invocation addresses the same entry through a different
+    # ASCII-case spelling and must both build correctly and reuse the cache.
     $caseProject = Join-Path $root 'CaseProject'
     New-Item -ItemType Directory -Path $caseProject -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $caseProject 'main.cpp') -Encoding utf8 -Value @(
@@ -106,6 +106,23 @@ try {
 }
 '@
 
+    $canonicalEntry = Join-Path $caseProject 'main.cpp'
+    $coldCaseOutput = Invoke-MqbChecked `
+        -WorkingDirectory $caseProject `
+        -Arguments @('build', $canonicalEntry, '--env', 'vs', '--verbose') `
+        -Description 'canonical project discovery build'
+    $coldCaseText = $coldCaseOutput -join "`n"
+    if ($coldCaseText -notmatch '\[discover\]\s+2 translation units') {
+        throw "canonical entry did not apply project-scoped extra_sources:`n$coldCaseText"
+    }
+
+    $discoveryCache = Join-Path $caseProject '.mqb/cache/discovery/source-discovery.mqbcache'
+    if (-not (Test-Path -LiteralPath $discoveryCache -PathType Leaf)) {
+        throw "discovery cache missing after canonical build: $discoveryCache"
+    }
+    $cacheWriteTime = (Get-Item -LiteralPath $discoveryCache).LastWriteTimeUtc
+    Start-Sleep -Milliseconds 1200
+
     $aliasedDirectory = $caseProject.ToUpperInvariant()
     $aliasedEntry = Join-Path $aliasedDirectory 'main.cpp'
     if (-not (Test-Path -LiteralPath $aliasedEntry -PathType Leaf)) {
@@ -119,6 +136,13 @@ try {
     $caseText = $caseOutput -join "`n"
     if ($caseText -notmatch '\[discover\]\s+2 translation units') {
         throw "case-alias entry did not retain project-scoped smart discovery:`n$caseText"
+    }
+    $cacheWriteTimeAfterAlias = (Get-Item -LiteralPath $discoveryCache).LastWriteTimeUtc
+    if ($cacheWriteTimeAfterAlias -ne $cacheWriteTime) {
+        throw 'case-alias entry caused an avoidable discovery-cache rewrite instead of identity-stable reuse'
+    }
+    if ($caseText -notmatch '\[up-to-date\]') {
+        throw 'case-alias entry broke the downstream warm/no-op path'
     }
 }
 finally {
