@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "mqb/core/LinkOptions.hpp"
+#include "mqb/msvc/MsvcBaseAddressPolicy.hpp"
 #include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
@@ -116,6 +117,75 @@ int main() {
     empty_options.libraries = {""};
     const auto empty = mqb::msvc::MsvcLibraryResolver::resolve(toolchain, empty_options, work);
     expect(!empty, "empty requested library should be rejected");
+
+    const fs::path env_base_file = env_dir / "bases.txt";
+    const fs::path local_shadow_base_file = work / "bases.txt";
+    const fs::path explicit_base_file = work / "nested" / "bases.txt";
+    touch(env_base_file);
+    touch(local_shadow_base_file);
+    touch(explicit_base_file);
+
+    const auto numeric_base = mqb::msvc::MsvcBaseAddressPolicy::route(
+        toolchain,
+        std::vector<std::string>{"/BASE:0x140000000"},
+        work);
+    expect(numeric_base.has_value() && !numeric_base->response_file,
+           "numeric /BASE should not invent a tracked file input");
+
+    const auto explicit_base = mqb::msvc::MsvcBaseAddressPolicy::route(
+        toolchain,
+        std::vector<std::string>{"/BASE:@nested/bases.txt,app"},
+        work);
+    expect(explicit_base.has_value()
+               && explicit_base->response_file == explicit_base_file.lexically_normal(),
+           "path-bearing /BASE response file should resolve from link working directory");
+
+    const auto env_base = mqb::msvc::MsvcBaseAddressPolicy::route(
+        toolchain,
+        std::vector<std::string>{"/BASE:@bases.txt,app"},
+        work);
+    expect(env_base.has_value()
+               && env_base->response_file == env_base_file.lexically_normal(),
+           "bare /BASE response file must use LIB and must not prefer the working directory");
+
+    const auto numeric_wins = mqb::msvc::MsvcBaseAddressPolicy::route(
+        toolchain,
+        std::vector<std::string>{
+            "/BASE:@bases.txt,app",
+            "/base:0x150000000",
+        },
+        work);
+    expect(numeric_wins.has_value() && !numeric_wins->response_file,
+           "last numeric /BASE should replace earlier response-file freshness evidence");
+
+    const auto response_file_wins = mqb::msvc::MsvcBaseAddressPolicy::route(
+        toolchain,
+        std::vector<std::string>{
+            "/BASE:0x150000000",
+            "-base:@bases.txt,app",
+        },
+        work);
+    expect(response_file_wins.has_value()
+               && response_file_wins->response_file == env_base_file.lexically_normal(),
+           "last response-file /BASE should become effective regardless of option case/prefix");
+
+    const auto malformed_base = mqb::msvc::MsvcBaseAddressPolicy::route(
+        toolchain,
+        std::vector<std::string>{"/BASE:@bases.txt"},
+        work);
+    expect(!malformed_base
+               && malformed_base.error().code
+                   == mqb::msvc::BaseAddressErrorCode::invalid_response_file,
+           "malformed /BASE response-file form should fail closed");
+
+    const auto missing_base = mqb::msvc::MsvcBaseAddressPolicy::route(
+        toolchain,
+        std::vector<std::string>{"/BASE:@missing-bases.txt,app"},
+        work);
+    expect(!missing_base
+               && missing_base.error().code
+                   == mqb::msvc::BaseAddressErrorCode::response_file_not_found,
+           "bare /BASE response file absent from LIB must fail before LINK");
 
     const std::vector<std::string> default_policy_args{
         "/DEFAULTLIB:math",
