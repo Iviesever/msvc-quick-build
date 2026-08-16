@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/LibrarianIdentity.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/process/Process.hpp"
@@ -16,7 +17,9 @@ struct ArchiveInvocation {
     std::vector<std::filesystem::path> objects;
     std::filesystem::path output;
     std::filesystem::path working_directory;
+    Architecture architecture{Architecture::x64};
     bool link_time_code_generation{false};
+    std::vector<std::string> additional_arguments;
 };
 
 enum class LibrarianErrorCode {
