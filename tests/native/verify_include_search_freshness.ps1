@@ -67,7 +67,7 @@ function Require-Compile {
         [Parameter(Mandatory = $true)][string]$Description
     )
     if ($Result.Text -notmatch ("\[compile\]\s+" + [Regex]::Escape($Source))) {
-        throw "$Description did not compile $Source:`n$($Result.Text)"
+        throw "$Description did not compile ${Source}:`n$($Result.Text)"
     }
 }
 
@@ -81,7 +81,7 @@ function Require-UpToDate {
         throw "$Description did not report $Source up-to-date:`n$($Result.Text)"
     }
     if ($Result.Text -match ("\[compile\]\s+" + [Regex]::Escape($Source))) {
-        throw "$Description launched an unnecessary compiler for $Source:`n$($Result.Text)"
+        throw "$Description launched an unnecessary compiler for ${Source}:`n$($Result.Text)"
     }
 }
 
