@@ -50,6 +50,16 @@ void force_cache_format_version(const fs::path& cache_file, const std::uint32_t 
     stream.flush();
 }
 
+[[nodiscard]] fs::path ascii_upper_path(const fs::path& path) {
+    std::wstring text = path.wstring();
+    for (wchar_t& ch : text) {
+        if (ch >= L'a' && ch <= L'z') {
+            ch = static_cast<wchar_t>(ch + (L'A' - L'a'));
+        }
+    }
+    return fs::path{text};
+}
+
 [[nodiscard]] bool contains_source(
     const std::vector<fs::path>& sources,
     const fs::path& source) {
@@ -117,6 +127,18 @@ int main() {
                "persistent discovery reuse must preserve exact source ordering");
         expect(warm->indexed_files == cold->indexed_files,
                "persistent discovery reuse must preserve indexed-file accounting");
+    }
+
+    mqb::discovery::Request case_alias_request = request;
+    case_alias_request.project_root = ascii_upper_path(tree.root);
+    case_alias_request.entry = ascii_upper_path(entry);
+    const auto case_alias_warm = mqb::discovery::SourceDiscovery::discover(case_alias_request);
+    expect(case_alias_warm.has_value(), "Windows case-alias discovery should succeed");
+    if (case_alias_warm && cold) {
+        expect(case_alias_warm->reused,
+               "Windows case aliases must reuse the same persistent discovery identity");
+        expect(case_alias_warm->sources == cold->sources,
+               "case-alias discovery reuse must preserve canonical selected source paths");
     }
 
     force_cache_format_version(default_cache, 2u);
