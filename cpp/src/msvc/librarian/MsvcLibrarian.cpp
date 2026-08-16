@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "mqb/msvc/MsvcParameterEngine.hpp"
+#include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 
 namespace mqb::msvc {
 namespace {
@@ -73,7 +74,9 @@ MsvcLibrarian::identity(const MsvcToolchain& toolchain) {
     return LibrarianIdentity{
         .librarian = toolchain.librarian,
         .version = toolchain.identity.version,
-        .binary_stamp = std::to_string(size) + ":" + std::to_string(modified.time_since_epoch().count()),
+        .binary_stamp = std::to_string(size) + ":"
+            + std::to_string(modified.time_since_epoch().count()) + "|"
+            + librarian_environment_stamp(toolchain.environment),
     };
 }
 
@@ -85,7 +88,7 @@ MsvcLibrarian::build_arguments(const ArchiveInvocation& invocation) {
     }
     if (invocation.output.empty()) {
         return std::unexpected(failure(
-            LibrarianErrorCode::invalid_request, "archive output path is empty"));
+            LibrarianErrorCode::invalid_request, "link output path is empty"));
     }
 
     auto routed = MsvcParameterEngine::route_librarian(invocation.additional_arguments);
@@ -134,7 +137,7 @@ MsvcLibrarian::archive(const ArchiveInvocation& invocation) const {
     }
     if (invocation.output.empty()) {
         return std::unexpected(failure(
-            LibrarianErrorCode::invalid_request, "archive output path is empty"));
+            LibrarianErrorCode::invalid_request, "link output path is empty"));
     }
 
     std::error_code ec;
