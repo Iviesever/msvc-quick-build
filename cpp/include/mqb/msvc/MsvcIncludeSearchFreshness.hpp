@@ -197,10 +197,9 @@ include_search_freshness_directories(
     using namespace include_freshness_detail;
 
     const fs::path working = effective_working_directory(working_directory);
+    const fs::path absolute_source = absolute_search_path(source, working);
     std::vector<fs::path> ordered_roots;
-    append_unique(
-        ordered_roots,
-        absolute_search_path(source.parent_path(), working));
+    append_unique(ordered_roots, absolute_source.parent_path());
     for (const auto& include_directory : options.include_directories) {
         append_unique(
             ordered_roots,
