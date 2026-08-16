@@ -31,6 +31,7 @@ struct EffectiveProjectOptions {
     std::vector<std::string> libraries;
     std::vector<std::string> compiler_arguments;
     std::vector<std::string> linker_arguments;
+    std::vector<std::string> librarian_arguments;
 
     bool discovery_enabled{true};
     std::vector<std::filesystem::path> discovery_exclude_directories;
