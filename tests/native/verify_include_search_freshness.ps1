@@ -266,5 +266,37 @@ if ((Invoke-Program (Program-Path $case7 'header-unit-shadow')) -ne 32) {
     throw 'header-unit resolution did not move to the newly higher-priority util.hpp'
 }
 
-Write-Host 'Include search resolution freshness checks passed: typed/native /I, removal, order, quote/angle shadowing, P1689 reuse, header units, and zero-process no-op behavior.'
+# PCH creator + consumer coverage. The synthetic creator must stay warm when
+# unchanged, but a transitive include search reroute inside the forced PCH
+# header must rebuild the PCH and propagate rebuild to every consumer.
+$casePch = New-CaseDirectory 'pch-shadow'
+New-Item -ItemType Directory -Force -Path (Join-Path $casePch 'high') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $casePch 'low') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $casePch 'include') | Out-Null
+Write-Utf8 (Join-Path $casePch 'low/pick.hpp') @('inline int pch_selected_value() { return 41; }')
+Write-Utf8 (Join-Path $casePch 'include/pch.hpp') @('#pragma once', '#include <pick.hpp>')
+Write-Utf8 (Join-Path $casePch 'main.cpp') @('int main() { return pch_selected_value(); }')
+$casePchArgs = @('build', 'main.cpp', '--release', '--no-discover', '--env', 'vs', '--pch', 'include/pch.hpp', '-I', 'high', '-I', 'low', '-o', 'pch-shadow')
+$casePchCold = Invoke-Mqb $casePch $casePchArgs
+Require-Success $casePchCold 'PCH include-search cold build'
+if ((Invoke-Program (Program-Path $casePch 'pch-shadow')) -ne 41) { throw 'PCH cold build did not use low/pick.hpp' }
+$casePchWarm = Invoke-Mqb $casePch $casePchArgs
+Require-Success $casePchWarm 'PCH include-search warm build'
+if ($casePchWarm.Text -notmatch '\[up-to-date\]\s+pch') {
+    throw "unchanged PCH creator did not remain warm:`n$($casePchWarm.Text)"
+}
+Require-UpToDate $casePchWarm 'main.cpp' 'PCH include-search warm build'
+Start-Sleep -Milliseconds 100
+Write-Utf8 (Join-Path $casePch 'high/pick.hpp') @('inline int pch_selected_value() { return 42; }')
+$casePchShadow = Invoke-Mqb $casePch $casePchArgs
+Require-Success $casePchShadow 'PCH higher-priority transitive shadow build'
+if ($casePchShadow.Text -notmatch '\[pch\]') {
+    throw "PCH transitive search reroute did not rebuild the creator:`n$($casePchShadow.Text)"
+}
+Require-Compile $casePchShadow 'main.cpp' 'PCH higher-priority transitive shadow build'
+if ((Invoke-Program (Program-Path $casePch 'pch-shadow')) -ne 42) {
+    throw 'PCH consumer did not observe newly higher-priority transitive header'
+}
+
+Write-Host 'Include search resolution freshness checks passed: typed/native /I, removal, order, quote/angle shadowing, P1689 reuse, header units, PCH creator/consumer, and zero-process no-op behavior.'
 exit 0
