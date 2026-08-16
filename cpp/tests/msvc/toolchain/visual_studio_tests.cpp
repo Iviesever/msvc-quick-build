@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 
+#include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 
@@ -38,6 +39,18 @@ void expect(const bool condition, const std::string_view message) {
 
 [[nodiscard]] const mqb::process::EnvironmentVariable* find_environment_variable(
     const mqb::msvc::MsvcToolchain& toolchain,
+    const std::string_view name) {
+    const auto found = std::find_if(
+        toolchain.environment.begin(),
+        toolchain.environment.end(),
+        [name](const mqb::process::EnvironmentVariable& variable) {
+            return equals_ignore_case(variable.name, std::string{name});
+        });
+    return found == toolchain.environment.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] mqb::process::EnvironmentVariable* find_environment_variable(
+    mqb::msvc::MsvcToolchain& toolchain,
     const std::string_view name) {
     const auto found = std::find_if(
         toolchain.environment.begin(),
@@ -124,6 +137,17 @@ int main() {
                "vcvars environment should contain LIBPATH");
         expect(has_environment_variable(*result, "VCToolsInstallDir"),
                "vcvars environment should expose VCToolsInstallDir");
+        expect(has_environment_variable(*result, "WindowsSdkDir")
+                   && has_environment_variable(*result, "WindowsSDKVersion"),
+               "vcvars environment should expose the selected Windows SDK identity");
+        expect(has_environment_variable(*result, "UniversalCRTSdkDir")
+                   && has_environment_variable(*result, "UCRTVersion"),
+               "vcvars environment should expose the selected UCRT identity");
+
+        const std::string cold_environment_stamp =
+            mqb::msvc::effective_toolchain_environment_stamp(result->environment);
+        expect(result->identity.binary_stamp.ends_with(cold_environment_stamp),
+               "cold VS compiler identity should seal the effective search environment");
 
         expect(fs::is_regular_file(cache_file),
                "cold Visual Studio discovery should persist validated cache evidence");
@@ -152,7 +176,7 @@ int main() {
             expect(cached->identity.version == result->identity.version,
                    "cache hit should preserve VC tools version");
             expect(cached->identity.binary_stamp == result->identity.binary_stamp,
-                   "cache hit should preserve compiler binary stamp");
+                   "cache hit should preserve binary plus effective-environment identity");
             expect(cached->linker == result->linker,
                    "cache hit should reconstruct the same linker path");
             expect(cached->librarian == result->librarian,
@@ -169,6 +193,29 @@ int main() {
             expect(cached_path != nullptr && current_path != nullptr
                        && cached_path->value.find(current_path) != std::string::npos,
                    "cache hit should append the current process PATH");
+
+            auto stale_sdk = *cached;
+            if (auto* sdk_version = find_environment_variable(stale_sdk, "WindowsSDKVersion")) {
+                sdk_version->value = "0.0.0.0\\";
+                expect(!mqb::msvc::cached_visual_studio_environment_is_fresh(stale_sdk),
+                       "stale cached Windows SDK selection must fail closed");
+            } else {
+                expect(false, "cached VS environment should retain WindowsSDKVersion");
+            }
+
+            auto lib_order_changed = cached->environment;
+            const auto lib = std::find_if(
+                lib_order_changed.begin(),
+                lib_order_changed.end(),
+                [](const mqb::process::EnvironmentVariable& variable) {
+                    return equals_ignore_case(variable.name, "LIB");
+                });
+            if (lib != lib_order_changed.end()) {
+                lib->value += ";C:\\mqb-synthetic-higher-priority-lib-root";
+                expect(mqb::msvc::effective_toolchain_environment_stamp(lib_order_changed)
+                           != mqb::msvc::effective_toolchain_environment_stamp(cached->environment),
+                       "effective VS LIB mutation/order must invalidate toolchain identity");
+            }
         }
 
         {
