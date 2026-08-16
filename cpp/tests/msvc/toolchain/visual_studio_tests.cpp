@@ -222,11 +222,11 @@ int main() {
                        && cached_lib_path->value == cold_lib_path->value,
                    "cache hit should preserve vcvars LIBPATH exactly");
 
+            const auto* cold_path = find_environment_variable(*result, "PATH");
             const auto* cached_path = find_environment_variable(*cached, "PATH");
-            const char* current_path = std::getenv("PATH");
-            expect(cached_path != nullptr && current_path != nullptr
-                       && cached_path->value.find(current_path) != std::string::npos,
-                   "cache hit should append the current process PATH");
+            expect(cold_path != nullptr && cached_path != nullptr
+                       && cached_path->value == cold_path->value,
+                   "cache hit should preserve the exact effective vcvars PATH");
 
             auto stale_sdk = *cached;
             if (auto* sdk_version = find_environment_variable(stale_sdk, "WindowsSDKVersion")) {
@@ -253,6 +253,20 @@ int main() {
                        "effective VS LIB mutation must directly invalidate MsvcLinker identity");
             }
         }
+
+        const char* current_path_value = std::getenv("PATH");
+        const std::string original_path = current_path_value == nullptr
+            ? std::string{}
+            : std::string{current_path_value};
+        _putenv_s("PATH", (original_path + ";C:\\mqb-synthetic-ambient-path-change").c_str());
+        RejectingRunner path_change_runner;
+        mqb::msvc::MsvcToolchainLocator path_change_locator{path_change_runner};
+        const auto path_changed = path_change_locator.discover(options);
+        expect(!path_changed.has_value(),
+               "cached VS environment must not be reused against a different ambient PATH");
+        expect(path_change_runner.calls != 0,
+               "ambient PATH mutation should fall back to ordinary vcvars discovery");
+        _putenv_s("PATH", original_path.c_str());
 
         const bool poisoned = poison_cached_windows_sdk_version(cache_file, cache_text);
         expect(poisoned,
