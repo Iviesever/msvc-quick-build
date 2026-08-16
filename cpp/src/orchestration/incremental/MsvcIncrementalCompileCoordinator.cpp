@@ -76,6 +76,10 @@ void add_reason_once(
 
 [[nodiscard]] bool has_include_search_freshness_marker(
     const CompileCacheEntry& entry) {
+    // Cache v4 persists exact ordered global roots even for a TU with no
+    // resolved textual headers. Such a TU has no directory namespace evidence
+    // to seal, but it is still a post-closure cache entry and must remain warm.
+    if (!entry.include_search_roots.empty()) return true;
     for (const auto& dependency : entry.dependencies) {
         std::error_code error_code;
         if (std::filesystem::is_directory(dependency, error_code) && !error_code) {
@@ -231,10 +235,10 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         toolchain_.environment,
         request.working_directory);
 
-    // Cache entries sealed before Include Search Resolution Freshness contain
-    // only file dependencies. New entries always contain directory namespace
-    // evidence. Force one conservative reseal after upgrading so a pre-fix
-    // cache cannot preserve the exact stale warm hit this closure fixes.
+    // Cache entries sealed before Include Search Resolution Freshness have no
+    // global-root identity and no directory namespace evidence. Force one
+    // conservative reseal after upgrading so a pre-fix cache cannot preserve
+    // the exact stale warm hit this closure fixes.
     if (cached_entry && !has_include_search_freshness_marker(*cached_entry)) {
         add_reason_once(result.validation.reasons, BuildReason::dependency_changed);
     }
