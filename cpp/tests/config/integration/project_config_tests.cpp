@@ -57,7 +57,8 @@ int main() {
     "defines": ["ONE=1", "TEXT=\u6d4b\u8bd5"],
     "include_dirs": ["include", "unicode/\u6d4b\u8bd5"],
     "library_dirs": ["vendor libs"],
-    "libraries": ["math", "codec.lib"]
+    "libraries": ["math", "codec.lib"],
+    "librarian_args": ["/EXPORT:config_symbol", "/WX"]
   },
   "discovery": {
     "enabled": false,
@@ -79,7 +80,8 @@ int main() {
         "runtime": "MDd",
         "defines": ["PROFILE_DEV=1"],
         "include_dirs": ["profiles/dev/include"],
-        "compiler_args": ["/W4"]
+        "compiler_args": ["/W4"],
+        "librarian_args": ["/IGNORE:4006"]
       },
       "discovery": {
         "enabled": true,
@@ -154,6 +156,10 @@ int main() {
                    && loaded->build.libraries[0] == "math"
                    && loaded->build.libraries[1] == "codec.lib",
                "library order should be preserved");
+        expect(loaded->build.librarian_arguments.size() == 2
+                   && loaded->build.librarian_arguments[0] == "/EXPORT:config_symbol"
+                   && loaded->build.librarian_arguments[1] == "/WX",
+               "build.librarian_args should decode in declaration order");
         expect(loaded->discovery.enabled && !*loaded->discovery.enabled,
                "discovery enabled override should decode false");
         expect(loaded->discovery.exclude_directories.size() == 1
@@ -198,6 +204,9 @@ int main() {
                        && dev->second.build.include_directories[0]
                            == (tree.root / "profiles/dev/include").lexically_normal(),
                    "profile paths should resolve relative to mqb.json");
+            expect(dev->second.build.librarian_arguments.size() == 1
+                       && dev->second.build.librarian_arguments[0] == "/IGNORE:4006",
+                   "profile build.librarian_args should decode independently from compiler args");
             expect(dev->second.discovery.enabled && *dev->second.discovery.enabled,
                    "profile discovery scalar should decode");
             expect(dev->second.discovery.extra_sources.size() == 1
@@ -227,7 +236,9 @@ int main() {
                    && !minimal->build.entry && !minimal->build.output_name,
                "missing build scalar/path fields must remain unset rather than receiving defaults");
         expect(minimal->build.defines.empty() && minimal->build.include_directories.empty()
-                   && minimal->build.library_directories.empty() && minimal->build.libraries.empty(),
+                   && minimal->build.library_directories.empty() && minimal->build.libraries.empty()
+                   && minimal->build.compiler_arguments.empty() && minimal->build.linker_arguments.empty()
+                   && minimal->build.librarian_arguments.empty(),
                "missing build list fields must remain empty overrides");
         expect(!minimal->discovery.enabled,
                "missing discovery enabled field must remain unset");
@@ -255,6 +266,12 @@ int main() {
     auto bad_profile_field = mqb::config::ProjectConfigLoader::load(config_file);
     expect(!bad_profile_field && bad_profile_field.error().code == mqb::config::ErrorCode::schema_error,
            "unknown profile fields should be rejected by strict schema");
+
+    write_text(config_file, R"json({"version":1,"build":{"librarian_args":"/WX"}})json");
+    auto bad_librarian_args = mqb::config::ProjectConfigLoader::load(config_file);
+    expect(!bad_librarian_args
+               && bad_librarian_args.error().code == mqb::config::ErrorCode::schema_error,
+           "build.librarian_args must be an array of non-empty strings");
 
     write_text(config_file, R"json({"version":1,"modules":{"external":{"vendor.math":7}}})json");
     auto bad_provider_type = mqb::config::ProjectConfigLoader::load(config_file);
