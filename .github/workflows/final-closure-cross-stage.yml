@@ -1,0 +1,67 @@
+name: Final Closure Cross-Stage
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cpp/**'
+      - 'tests/native/verify_final_closure_cross_stage.ps1'
+      - '.github/workflows/final-closure-cross-stage.yml'
+  pull_request:
+    paths:
+      - 'cpp/**'
+      - 'tests/native/verify_final_closure_cross_stage.ps1'
+      - '.github/workflows/final-closure-cross-stage.yml'
+
+concurrency:
+  group: final-closure-cross-stage-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Project state + Windows identity
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Acquire pinned MQB seed
+        id: seed
+        shell: pwsh
+        run: |
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD `
+            -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$seed" >> $env:GITHUB_OUTPUT
+
+      - name: Build current Debug MQB with MQB
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath 'VERSION' -Raw).Trim()
+          $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+            -RepoRoot $PWD `
+            -Version "$version-dev" `
+            -Configuration Debug `
+            -Clean `
+            -OutputPath (Join-Path $PWD 'native-out/debug/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+            throw "Debug MQB build output missing: $mqb"
+          }
+
+      - name: Verify Final Closure cross-stage invariants
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/verify_final_closure_cross_stage.ps1') `
+            -MqbPath (Join-Path $PWD 'native-out/debug/mqb.exe') `
+            -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
