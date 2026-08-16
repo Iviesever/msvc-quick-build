@@ -74,21 +74,6 @@ void add_reason_once(
     return true;
 }
 
-[[nodiscard]] bool has_include_search_freshness_marker(
-    const CompileCacheEntry& entry) {
-    // Cache v4 persists exact ordered global roots even for a TU with no
-    // resolved textual headers. Such a TU has no directory namespace evidence
-    // to seal, but it is still a post-closure cache entry and must remain warm.
-    if (!entry.include_search_roots.empty()) return true;
-    for (const auto& dependency : entry.dependencies) {
-        std::error_code error_code;
-        if (std::filesystem::is_directory(dependency, error_code) && !error_code) {
-            return true;
-        }
-    }
-    return false;
-}
-
 void add_dependency_once(
     std::vector<std::filesystem::path>& dependencies,
     const std::filesystem::path& dependency) {
@@ -235,13 +220,10 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         toolchain_.environment,
         request.working_directory);
 
-    // Cache entries sealed before Include Search Resolution Freshness have no
-    // global-root identity and no directory namespace evidence. Force one
-    // conservative reseal after upgrading so a pre-fix cache cannot preserve
-    // the exact stale warm hit this closure fixes.
-    if (cached_entry && !has_include_search_freshness_marker(*cached_entry)) {
-        add_reason_once(result.validation.reasons, BuildReason::dependency_changed);
-    }
+    // Cache migration is owned by BuildSignature's compile domain. The v5
+    // domain invalidates pre-closure entries exactly once, including recipes
+    // with zero include roots and zero directory freshness evidence. Do not
+    // infer cache generation from whether those evidence vectors are empty.
 
     // CompilerOptions already identify typed/native /I ordering, but vcvars
     // INCLUDE is ambient toolchain environment rather than argv. Compare the
