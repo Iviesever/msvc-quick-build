@@ -318,4 +318,4 @@ mqb <source...> [options]
 
 ## License
 
-Apache License 2.0（SPDX: `Apache-2.0`）。完整条款见 [`LICENSE`](LICENSE）。
+Apache License 2.0（SPDX: `Apache-2.0`）。完整条款见 [`LICENSE`](LICENSE)。
