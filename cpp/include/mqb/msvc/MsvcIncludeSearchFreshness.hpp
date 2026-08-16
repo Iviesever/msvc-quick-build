@@ -18,7 +18,11 @@ namespace include_freshness_detail {
 namespace fs = std::filesystem;
 
 [[nodiscard]] inline bool same_path(const fs::path& left, const fs::path& right) {
-    return left == right || left.lexically_normal() == right.lexically_normal();
+    if (left == right || left.lexically_normal() == right.lexically_normal()) {
+        return true;
+    }
+    std::error_code error_code;
+    return fs::equivalent(left, right, error_code) && !error_code;
 }
 
 [[nodiscard]] inline bool ascii_iequals(
@@ -95,10 +99,9 @@ inline void append_unique(std::vector<fs::path>& paths, fs::path path) {
     return {};
 }
 
-[[nodiscard]] inline std::optional<fs::path> relative_if_within(
+[[nodiscard]] inline std::optional<fs::path> lexical_relative_if_within(
     const fs::path& child,
     const fs::path& root) {
-    if (child.empty() || root.empty()) return std::nullopt;
     const fs::path relative = child.lexically_normal().lexically_relative(root.lexically_normal());
     if (relative.empty()) {
         return same_path(child, root) ? std::optional<fs::path>{fs::path{}} : std::nullopt;
@@ -108,6 +111,35 @@ inline void append_unique(std::vector<fs::path>& paths, fs::path path) {
         if (component == "..") return std::nullopt;
     }
     return relative;
+}
+
+// The compiler reports resolved dependency paths using filesystem spelling,
+// while a user-supplied /I root may differ only by Windows casing or by an
+// equivalent path spelling. Fall back to an ancestor walk using equivalent()
+// so we still recover the include-relative suffix in those cases.
+[[nodiscard]] inline std::optional<fs::path> relative_if_within(
+    const fs::path& child,
+    const fs::path& root) {
+    if (child.empty() || root.empty()) return std::nullopt;
+    if (auto relative = lexical_relative_if_within(child, root)) {
+        return relative;
+    }
+
+    fs::path cursor = child.lexically_normal();
+    fs::path suffix;
+    while (!cursor.empty()) {
+        if (same_path(cursor, root)) {
+            return suffix;
+        }
+        const fs::path filename = cursor.filename();
+        if (!filename.empty()) {
+            suffix = suffix.empty() ? filename : filename / suffix;
+        }
+        const fs::path parent = cursor.parent_path();
+        if (parent.empty() || parent == cursor) break;
+        cursor = parent;
+    }
+    return std::nullopt;
 }
 
 inline void append_raw_include_roots(
@@ -173,23 +205,63 @@ inline void append_environment_include_roots(
     }
 }
 
+inline void collect_relative_parent_suffix(
+    std::vector<fs::path>& suffixes,
+    const fs::path& dependency,
+    const fs::path& search_root) {
+    const auto relative = relative_if_within(dependency, search_root);
+    if (!relative) return;
+    const fs::path parent = relative->parent_path();
+    if (!parent.empty()) append_unique(suffixes, parent);
+}
+
 } // namespace include_freshness_detail
+
+// Return the ordered compiler-global include roots. Typed -I roots are emitted
+// before native passthrough arguments, matching CompilerArgumentBuilder; the
+// vcvars INCLUDE list follows them unless /X disables standard include paths.
+// The exact ordered list is persisted in the compile cache so environment-root
+// replacement/removal is identity, not merely directory timestamp evidence.
+[[nodiscard]] inline std::vector<std::filesystem::path> include_search_roots(
+    const CompilerOptions& options,
+    const std::span<const process::EnvironmentVariable> environment,
+    const std::optional<std::filesystem::path>& working_directory) {
+    using namespace include_freshness_detail;
+
+    const std::filesystem::path working = effective_working_directory(working_directory);
+    std::vector<std::filesystem::path> roots;
+    for (const auto& include_directory : options.include_directories) {
+        append_unique(
+            roots,
+            absolute_search_path(include_directory, working));
+    }
+    append_raw_include_roots(roots, options.additional_arguments, working);
+    if (!ignores_environment_include_roots(options.additional_arguments)) {
+        append_environment_include_roots(roots, environment, working);
+    }
+    return roots;
+}
 
 // Return directory paths whose namespace determines whether a previously
 // resolved include remains the first MSVC search hit. These paths are sealed
 // into the existing compile/module-scan dependency evidence. Warm validation
 // only stats them; it never launches cl.exe or /scanDependencies.
 //
-// Ordinary source/header directories are conservative quote-include roots.
-// The synthetic PCH creator is the exception: its source lives beside MQB-owned
-// outputs and contains no textual includes, so watching that artifact directory
-// would make its own first build alter its freshness evidence. Its forced PCH
-// header and every transitive include are still represented by resolved-header
-// parent directories below. Ordered /I and /external:I roots are watched
-// directly, and for a dependency resolved below a later root we also watch the
-// corresponding parent directory (or its deepest existing ancestor) in every
-// higher-priority root. This catches a new same-name header appearing without
-// changing argv or the previously resolved file.
+// Quoted includes may search the current header's directory and directories of
+// still-open parent headers before the global /I + INCLUDE roots. /sourceDependencies
+// reports the resolved files but not those include edges/spellings, so every
+// resolved header parent is conservatively treated as a possible local root.
+// For every include-relative parent suffix we can recover from the resolved
+// dependency graph, the corresponding directory (or deepest existing ancestor)
+// is watched under every possible local/global root. This catches a new shadow
+// file even when its candidate subdirectory already existed and only that nested
+// directory's mtime changes.
+//
+// The synthetic PCH creator is the exception to adding its source directory as
+// a local root: that source lives beside MQB-owned outputs and has no textual
+// includes, so watching its artifact directory would self-invalidate. Its
+// forced PCH header and all transitive includes still contribute real local
+// roots and relative-suffix evidence.
 [[nodiscard]] inline std::vector<std::filesystem::path>
 include_search_freshness_directories(
     const std::span<const std::filesystem::path> resolved_includes,
@@ -202,50 +274,51 @@ include_search_freshness_directories(
 
     const fs::path working = effective_working_directory(working_directory);
     const fs::path absolute_source = absolute_search_path(source, working);
-    std::vector<fs::path> ordered_roots;
-    const bool synthetic_pch_creator = options.precompiled_header
-        && options.precompiled_header->role == PrecompiledHeaderRole::create;
-    if (!synthetic_pch_creator) {
-        append_unique(ordered_roots, absolute_source.parent_path());
-    }
-    for (const auto& include_directory : options.include_directories) {
-        append_unique(
-            ordered_roots,
-            absolute_search_path(include_directory, working));
-    }
-    append_raw_include_roots(ordered_roots, options.additional_arguments, working);
-    if (!ignores_environment_include_roots(options.additional_arguments)) {
-        append_environment_include_roots(ordered_roots, environment, working);
-    }
-
-    std::vector<fs::path> watched;
-    for (const auto& root : ordered_roots) {
-        append_unique(watched, deepest_existing_directory(root));
-    }
+    const std::vector<fs::path> global_roots = include_search_roots(
+        options,
+        environment,
+        working_directory);
 
     std::vector<fs::path> normalized_dependencies;
     normalized_dependencies.reserve(resolved_includes.size());
     for (const auto& dependency : resolved_includes) {
-        const fs::path normalized = absolute_search_path(dependency, working);
-        normalized_dependencies.push_back(normalized);
-        append_unique(watched, deepest_existing_directory(normalized.parent_path()));
+        normalized_dependencies.push_back(absolute_search_path(dependency, working));
     }
 
+    std::vector<fs::path> local_roots;
+    const bool synthetic_pch_creator = options.precompiled_header
+        && options.precompiled_header->role == PrecompiledHeaderRole::create;
+    if (!synthetic_pch_creator) {
+        append_unique(local_roots, absolute_source.parent_path());
+    }
     for (const auto& dependency : normalized_dependencies) {
-        for (std::size_t winning_index = 0; winning_index < ordered_roots.size(); ++winning_index) {
-            const auto relative = relative_if_within(dependency, ordered_roots[winning_index]);
-            if (!relative) continue;
+        append_unique(local_roots, dependency.parent_path());
+    }
 
-            const fs::path relative_parent = relative->parent_path();
-            for (std::size_t candidate_index = 0;
-                 candidate_index <= winning_index;
-                 ++candidate_index) {
-                append_unique(
-                    watched,
-                    deepest_existing_directory(
-                        ordered_roots[candidate_index] / relative_parent));
-            }
-            break;
+    std::vector<fs::path> watched;
+    for (const auto& root : local_roots) {
+        append_unique(watched, deepest_existing_directory(root));
+    }
+    for (const auto& root : global_roots) {
+        append_unique(watched, deepest_existing_directory(root));
+    }
+
+    std::vector<fs::path> relative_parent_suffixes;
+    for (const auto& dependency : normalized_dependencies) {
+        for (const auto& root : local_roots) {
+            collect_relative_parent_suffix(relative_parent_suffixes, dependency, root);
+        }
+        for (const auto& root : global_roots) {
+            collect_relative_parent_suffix(relative_parent_suffixes, dependency, root);
+        }
+    }
+
+    for (const auto& suffix : relative_parent_suffixes) {
+        for (const auto& root : local_roots) {
+            append_unique(watched, deepest_existing_directory(root / suffix));
+        }
+        for (const auto& root : global_roots) {
+            append_unique(watched, deepest_existing_directory(root / suffix));
         }
     }
 
