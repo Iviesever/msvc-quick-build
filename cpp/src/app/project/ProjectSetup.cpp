@@ -50,42 +50,6 @@ template <typename T>
     return message;
 }
 
-[[nodiscard]] bool is_native_librarian_boundary(const std::string_view argument) noexcept {
-    return argument == "/lib" || argument == "/LIB";
-}
-
-[[nodiscard]] std::expected<void, std::string> extract_native_librarian_tail(
-    mqb::config::BuildOverrides& build,
-    const std::string_view layer) {
-    std::optional<std::size_t> boundary;
-    for (std::size_t index = 0; index < build.compiler_arguments.size(); ++index) {
-        if (!is_native_librarian_boundary(build.compiler_arguments[index])) {
-            continue;
-        }
-        if (boundary) {
-            return std::unexpected(
-                std::string{layer} + " contains a duplicate native MSVC /lib separator");
-        }
-        boundary = index;
-    }
-    if (!boundary) {
-        return {};
-    }
-    if (*boundary + 1 == build.compiler_arguments.size()) {
-        return std::unexpected(
-            std::string{layer} + " native MSVC /lib requires at least one librarian option");
-    }
-
-    build.librarian_arguments.insert(
-        build.librarian_arguments.end(),
-        std::make_move_iterator(build.compiler_arguments.begin() + *boundary + 1),
-        std::make_move_iterator(build.compiler_arguments.end()));
-    build.compiler_arguments.erase(
-        build.compiler_arguments.begin() + *boundary,
-        build.compiler_arguments.end());
-    return {};
-}
-
 [[nodiscard]] std::expected<void, std::string> append_linker_file_input(
     std::vector<mqb::msvc::LinkerFileInput>& inputs,
     mqb::msvc::LinkerFileInput input,
@@ -320,13 +284,6 @@ prepare_project(
     cli_overrides.build.librarian_arguments = options.librarian_arguments;
     cli_overrides.discovery.enabled = options.discovery_override;
     cli_overrides.modules.external_providers = options.external_module_providers;
-
-    if (auto extracted = extract_native_librarian_tail(cli_overrides.build, "CLI"); !extracted) {
-        return std::unexpected(ProjectSetupError{
-            .message = extracted.error(),
-            .config_error = std::nullopt,
-        });
-    }
 
     std::vector<fs::path> native_include_directories;
     // This app-layer vector exists only while resolving config/profile/CLI so
