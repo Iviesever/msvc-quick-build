@@ -2,6 +2,7 @@
 #include <shellapi.h>
 
 #include <cstddef>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -58,10 +59,38 @@ void expect_round_trip(
     ::LocalFree(argv);
 }
 
+void expect_path_key_matches_windows_ordinal(
+    const std::wstring_view left,
+    const std::wstring_view right,
+    const std::string_view label) {
+    const int comparison = ::CompareStringOrdinal(
+        left.data(),
+        static_cast<int>(left.size()),
+        right.data(),
+        static_cast<int>(right.size()),
+        TRUE);
+    if (comparison == 0) {
+        ++failures;
+        std::cerr << "FAIL: " << label << " (CompareStringOrdinal failed)\n";
+        return;
+    }
+
+    const bool windows_equal = comparison == CSTR_EQUAL;
+    const bool key_equal =
+        mqb::platform::windows::path_identity_key(std::filesystem::path{left})
+        == mqb::platform::windows::path_identity_key(std::filesystem::path{right});
+    if (windows_equal != key_equal) {
+        ++failures;
+        std::cerr << "FAIL: " << label
+                  << " (path key equality disagrees with CompareStringOrdinal)\n";
+    }
+}
+
 } // namespace
 
 int main() {
     using mqb::platform::windows::path_identity_contains;
+    using mqb::platform::windows::path_identity_key;
     using mqb::platform::windows::quote_command_line_argument;
 
     expect(quote_command_line_argument(L"plain") == L"plain",
@@ -111,12 +140,56 @@ int main() {
         path_identity_contains(
             L"C:\\项目\\MQB",
             L"c:\\项目\\mqb\\src\\main.cpp"),
-        "project containment should preserve non-ASCII path bytes while folding ASCII case");
+        "project containment should preserve non-ASCII path components while folding ASCII case");
     expect(
         !path_identity_contains(
             L"C:\\项目\\MQB",
             L"C:\\項目\\MQB\\src\\main.cpp"),
-        "project containment must not locale-fold distinct non-ASCII path identities");
+        "project containment must not conflate distinct non-ASCII code points");
+
+    expect(
+        path_identity_key(L"C:\\Café\\Écho.cpp")
+            == path_identity_key(L"c:\\CAFÉ\\éCHO.cpp"),
+        "Windows Unicode case aliases must share one path identity key");
+    expect(
+        path_identity_contains(
+            L"C:\\Café\\Éditeur",
+            L"c:\\CAFÉ\\éditeur\\src\\main.cpp"),
+        "project containment must honor non-ASCII Windows case aliases");
+    expect(
+        path_identity_key(L"C:\\Ångström")
+            != path_identity_key(L"C:\\A\u030Angström"),
+        "ordinal path identity must not normalize canonically equivalent Unicode sequences");
+
+    // The canonical key is only valid if its equality relation is exactly the
+    // Windows ordinal, case-insensitive relation used for NTFS-style names.
+    // Include pairs where linguistic/full Unicode casing could differ from the
+    // operating-system file-system uppercase table so an over-aggressive string
+    // mapping cannot silently create false cache/path collisions.
+    expect_path_key_matches_windows_ordinal(
+        L"C:\\Café\\Écho.cpp",
+        L"c:\\CAFÉ\\éCHO.cpp",
+        "accented Latin case alias");
+    expect_path_key_matches_windows_ordinal(
+        L"C:\\Straße\\main.cpp",
+        L"C:\\STRASSE\\main.cpp",
+        "sharp-s versus SS");
+    expect_path_key_matches_windows_ordinal(
+        L"C:\\ﬃ\\main.cpp",
+        L"C:\\FFI\\main.cpp",
+        "ligature versus expanded letters");
+    expect_path_key_matches_windows_ordinal(
+        L"C:\\Σ\\main.cpp",
+        L"C:\\σ\\main.cpp",
+        "Greek sigma case alias");
+    expect_path_key_matches_windows_ordinal(
+        L"C:\\Σ\\main.cpp",
+        L"C:\\ς\\main.cpp",
+        "Greek final sigma case alias");
+    expect_path_key_matches_windows_ordinal(
+        L"C:\\Ångström",
+        L"C:\\A\u030Angström",
+        "precomposed versus decomposed Unicode");
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

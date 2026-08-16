@@ -50,11 +50,13 @@ void force_cache_format_version(const fs::path& cache_file, const std::uint32_t 
     stream.flush();
 }
 
-[[nodiscard]] fs::path ascii_upper_path(const fs::path& path) {
+[[nodiscard]] fs::path unicode_case_alias_path(const fs::path& path) {
     std::wstring text = path.wstring();
     for (wchar_t& ch : text) {
         if (ch >= L'a' && ch <= L'z') {
             ch = static_cast<wchar_t>(ch + (L'A' - L'a'));
+        } else if (ch == L'é') {
+            ch = L'É';
         }
     }
     return fs::path{text};
@@ -84,7 +86,7 @@ int main() {
     const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
     TempTree tree{
         .root = fs::temp_directory_path()
-            / ("mqb_source_discovery_cache_" + std::to_string(unique)),
+            / fs::path{L"mqb_source_discovery_cache_Café_" + std::to_wstring(unique)},
     };
     fs::create_directories(tree.root / "src");
 
@@ -130,15 +132,21 @@ int main() {
     }
 
     mqb::discovery::Request case_alias_request = request;
-    case_alias_request.project_root = ascii_upper_path(tree.root);
-    case_alias_request.entry = ascii_upper_path(entry);
+    case_alias_request.project_root = unicode_case_alias_path(tree.root);
+    case_alias_request.entry = unicode_case_alias_path(entry);
+    expect(
+        case_alias_request.project_root != tree.root,
+        "Unicode alias fixture should use a distinct path spelling");
+    expect(
+        fs::is_directory(case_alias_request.project_root),
+        "Windows should resolve the Unicode case alias to the same project directory");
     const auto case_alias_warm = mqb::discovery::SourceDiscovery::discover(case_alias_request);
-    expect(case_alias_warm.has_value(), "Windows case-alias discovery should succeed");
+    expect(case_alias_warm.has_value(), "Windows Unicode case-alias discovery should succeed");
     if (case_alias_warm && cold) {
         expect(case_alias_warm->reused,
-               "Windows case aliases must reuse the same persistent discovery identity");
+               "Windows Unicode case aliases must reuse the same persistent discovery identity");
         expect(case_alias_warm->sources == cold->sources,
-               "case-alias discovery reuse must preserve canonical selected source paths");
+               "Unicode case-alias discovery reuse must preserve canonical selected source paths");
     }
 
     force_cache_format_version(default_cache, 2u);

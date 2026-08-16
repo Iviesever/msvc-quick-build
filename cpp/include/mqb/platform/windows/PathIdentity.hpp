@@ -1,14 +1,99 @@
 #pragma once
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#define MQB_PATH_IDENTITY_DEFINED_NOMINMAX
+#endif
+#include <windows.h>
+#ifdef MQB_PATH_IDENTITY_DEFINED_NOMINMAX
+#undef NOMINMAX
+#undef MQB_PATH_IDENTITY_DEFINED_NOMINMAX
+#endif
+
 #include <filesystem>
+#include <limits>
+#include <optional>
 #include <string>
 
 namespace mqb::platform::windows {
+namespace path_identity_detail {
 
-// MQB targets Windows/MSVC. Internal path identity must therefore be stable
-// across ordinary ASCII case differences without routing non-ASCII path bytes
-// through the active narrow-character locale. Preserve UTF-8 bytes verbatim
-// and fold only ASCII A-Z after lexical normalization.
+[[nodiscard]] inline bool is_ascii(const std::u8string& value) noexcept {
+    for (const char8_t ch : value) {
+        if (static_cast<unsigned char>(ch) >= 0x80u) return false;
+    }
+    return true;
+}
+
+// CompareStringOrdinal(..., TRUE) uses the operating system uppercase table for
+// case-insensitive ordinal comparison. LCMapStringEx without
+// LCMAP_LINGUISTIC_CASING uses the matching file-system casing rules, giving us
+// a reusable canonical spelling for cache/hash keys rather than only a pairwise
+// comparison primitive. Do not request Unicode normalization: Windows ordinal
+// filename identity deliberately keeps canonically equivalent code-point
+// sequences distinct.
+[[nodiscard]] inline std::optional<std::wstring> filesystem_uppercase(
+    const std::wstring& value) {
+    if (value.empty()) return std::wstring{};
+    if (value.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+        return std::nullopt;
+    }
+
+    const int source_size = static_cast<int>(value.size());
+    const int required = ::LCMapStringEx(
+        LOCALE_NAME_INVARIANT,
+        LCMAP_UPPERCASE,
+        value.data(),
+        source_size,
+        nullptr,
+        0,
+        nullptr,
+        nullptr,
+        0);
+    if (required <= 0) return std::nullopt;
+
+    std::wstring mapped(static_cast<std::size_t>(required), L'\0');
+    const int written = ::LCMapStringEx(
+        LOCALE_NAME_INVARIANT,
+        LCMAP_UPPERCASE,
+        value.data(),
+        source_size,
+        mapped.data(),
+        required,
+        nullptr,
+        nullptr,
+        0);
+    if (written != required) return std::nullopt;
+    return mapped;
+}
+
+[[nodiscard]] inline std::u8string identity_utf8(
+    const std::filesystem::path& normalized) {
+    std::u8string original = normalized.generic_u8string();
+    if (is_ascii(original)) {
+        // Keep the overwhelmingly common path through MQB identical to the old
+        // authority: no Win32 call and no wide-string conversion for ASCII-only
+        // projects/toolchains. path_identity_key() performs the ASCII fold.
+        return original;
+    }
+
+    if (const auto mapped = filesystem_uppercase(normalized.wstring())) {
+        return std::filesystem::path{*mapped}.generic_u8string();
+    }
+
+    // Fail conservatively if Windows casing cannot be produced. Preserving the
+    // original Unicode spelling can only cause an avoidable cache miss for a
+    // case alias; it cannot collapse two distinct paths into one identity.
+    return original;
+}
+
+} // namespace path_identity_detail
+
+// MQB targets Windows/MSVC. Internal path identity therefore follows Windows
+// case-insensitive ordinal filename semantics across Unicode, rather than only
+// ASCII case or the process' active linguistic locale. After Windows file-system
+// casing, fold ASCII A-Z back to lowercase so existing ASCII-only MQB cache keys
+// remain stable while non-ASCII case pairs share one identity.
 //
 // std::filesystem::path::lexically_normal() preserves a trailing separator on
 // non-root paths. Windows path identity does not: `C:/sdk` and `C:/sdk/` name
@@ -24,7 +109,7 @@ namespace mqb::platform::windows {
         normalized = parent;
     }
 
-    const std::u8string utf8 = normalized.generic_u8string();
+    const std::u8string utf8 = path_identity_detail::identity_utf8(normalized);
     std::string key;
     key.reserve(utf8.size());
     for (const char8_t ch : utf8) {
