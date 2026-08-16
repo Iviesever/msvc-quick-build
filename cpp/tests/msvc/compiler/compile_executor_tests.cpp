@@ -3,6 +3,7 @@
 #include <expected>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -106,6 +107,31 @@ void write_dependencies(
         }) != entry.dependencies.end();
 }
 
+[[nodiscard]] bool has_only_expected_files_and_freshness_directories(
+    const mqb::CompileCacheEntry& entry,
+    const std::initializer_list<fs::path> expected_files) {
+    for (const auto& expected : expected_files) {
+        if (!has_dependency(entry, expected)) return false;
+    }
+
+    for (const auto& dependency : entry.dependencies) {
+        const auto normalized = dependency.lexically_normal();
+        const bool expected_file = std::any_of(
+            expected_files.begin(),
+            expected_files.end(),
+            [&normalized](const fs::path& expected) {
+                return expected.lexically_normal() == normalized;
+            });
+        if (expected_file) continue;
+
+        std::error_code error_code;
+        if (!fs::is_directory(dependency, error_code) || error_code) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] bool has_output(
     const mqb::CompileCacheEntry& entry,
     const fs::path& expected,
@@ -203,9 +229,10 @@ int main() {
                "cache entry should preserve toolchain version");
         expect(result->cache_entry.toolchain.binary_stamp == toolchain.identity.binary_stamp,
                "cache entry should preserve compiler binary stamp");
-        expect(result->cache_entry.dependencies.size() == 1
-                   && result->cache_entry.dependencies.front() == header.lexically_normal(),
-               "cache entry should store compiler-discovered include dependencies");
+        expect(has_only_expected_files_and_freshness_directories(
+                   result->cache_entry,
+                   {header}),
+               "cache entry should store compiler includes plus only directory namespace evidence");
         expect(result->cache_entry.signature
                    == mqb::BuildSignature::for_compile(unit, toolchain.identity, options),
                "cache entry should persist the compile recipe signature");
@@ -344,8 +371,10 @@ int main() {
                "consumer cache should retain compiler-discovered headers");
         expect(has_dependency(consumer_result->cache_entry, module_ifc),
                "consumer cache should persist imported IFC as a freshness dependency");
-        expect(consumer_result->cache_entry.dependencies.size() == 2,
-               "consumer cache should store header and IFC without unrelated artifacts");
+        expect(has_only_expected_files_and_freshness_directories(
+                   consumer_result->cache_entry,
+                   {header, module_ifc}),
+               "consumer cache should contain header/IFC plus only directory namespace evidence");
     }
 
     const int calls_before_invalid_contracts = runner.calls;
