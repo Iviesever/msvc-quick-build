@@ -117,6 +117,68 @@ int main() {
             }
         }
 
+        const std::vector uppercase_arguments{
+            "main.cpp"sv,
+            "--type"sv, "static"sv,
+            "/LIB"sv,
+            "/WX"sv,
+        };
+        auto uppercase = mqb::cli::parse_arguments(uppercase_arguments);
+        expect(uppercase.has_value(), "uppercase /LIB boundary should parse before ownership routing");
+        if (uppercase) {
+            auto project = mqb::app::prepare_project(*uppercase, tree.root);
+            expect(project.has_value(), "uppercase /LIB should be accepted as the librarian boundary");
+            if (project) {
+                expect(uppercase->compiler_arguments.empty()
+                           && uppercase->librarian_arguments.size() == 1
+                           && uppercase->librarian_arguments.front() == "/WX",
+                       "uppercase /LIB should route its tail exclusively to librarian argv");
+            }
+        }
+
+        const std::vector shorthand_arguments{
+            "main.cpp"sv,
+            "-l"sv, "kernel32"sv,
+            "-luser32"sv,
+        };
+        auto shorthand = mqb::cli::parse_arguments(shorthand_arguments);
+        expect(shorthand.has_value(), "-l library shorthand must remain valid");
+        if (shorthand) {
+            expect(shorthand->libraries.size() == 2
+                       && shorthand->libraries[0] == "kernel32"
+                       && shorthand->libraries[1] == "user32",
+                   "-l separated and attached forms must retain library shorthand semantics");
+        }
+
+        for (const auto rejected : {"-lib"sv, "-LIB"sv}) {
+            const std::vector dash_arguments{
+                "main.cpp"sv,
+                "--type"sv, "static"sv,
+                rejected,
+                "/WX"sv,
+            };
+            auto dash = mqb::cli::parse_arguments(dash_arguments);
+            expect(!dash, "dash -lib spellings must be rejected instead of colliding with -l");
+            if (!dash) {
+                expect(dash.error().message.find("use '/lib'") != std::string::npos,
+                       "rejected -lib spelling should point users to the slash librarian boundary");
+            }
+        }
+
+        const std::vector raw_dash_arguments{
+            "main.cpp"sv,
+            "--type"sv, "static"sv,
+            "--compiler-arg"sv, "-lib"sv,
+            "/WX"sv,
+        };
+        auto raw_dash = mqb::cli::parse_arguments(raw_dash_arguments);
+        expect(raw_dash.has_value(), "raw --compiler-arg should preserve -lib for parameter routing");
+        if (raw_dash) {
+            auto project = mqb::app::prepare_project(*raw_dash, tree.root);
+            expect(!project,
+                   "raw -lib must not regain librarian-boundary semantics inside ProjectSetup");
+        }
+
         const std::vector empty_tail_arguments{
             "main.cpp"sv,
             "--type"sv, "static"sv,
@@ -173,6 +235,14 @@ int main() {
             expect(!project && project.error().message.find("duplicate native MSVC /lib separator") != std::string::npos,
                    "duplicate /lib boundary should be rejected deterministically");
         }
+
+        const std::string_view help = mqb::cli::usage();
+        expect(help.find("/lib <librarian-options...>") != std::string_view::npos,
+               "--help contract should expose the native /lib librarian boundary");
+        expect(help.find("-lib`/`-LIB` is rejected") != std::string_view::npos,
+               "--help contract should expose the chosen dash -lib rejection policy");
+        expect(help.find("build.librarian_args") != std::string_view::npos,
+               "--help contract should expose the librarian config surface");
     }
 
     {
