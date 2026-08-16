@@ -66,9 +66,10 @@ void suppress_ambient_compiler_options(
     std::vector<process::EnvironmentVariable>& environment) {
     // P1689 scans are compiler invocations too. They must observe the same
     // explicit option surface as real compiles or hidden CL/_CL_ arguments can
-    // change topology without changing MQB's module-scan identity.
-    environment.push_back(process::EnvironmentVariable{"CL", {}});
-    environment.push_back(process::EnvironmentVariable{"_CL_", {}});
+    // change topology without changing MQB's module-scan identity. Remove the
+    // variables entirely so scan and compile share the same launch contract.
+    environment.push_back(process::EnvironmentVariable{"CL", {}, true});
+    environment.push_back(process::EnvironmentVariable{"_CL_", {}, true});
 }
 
 [[nodiscard]] std::expected<void, ModuleScanError> prepare_output(
