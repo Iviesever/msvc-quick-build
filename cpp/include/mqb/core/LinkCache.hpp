@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <optional>
 #include <span>
-#include <string>
 #include <vector>
 
 #include "mqb/core/BuildSignature.hpp"
@@ -24,11 +23,6 @@ struct LinkCacheEntry {
     // are not ordinary object/library inputs (initially native /DEF files).
     std::vector<std::filesystem::path> file_inputs;
     std::vector<std::filesystem::path> side_outputs;
-    // Opaque state for the library search roots used to resolve LINK-observed
-    // transitive default libraries. When unchanged, cached absolute library
-    // paths can be reused without repeating basename search on every warm build.
-    // This state is validation metadata only and is not linker argv/identity.
-    std::string observed_library_search_state;
 };
 
 struct LinkCacheValidation {
