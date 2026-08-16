@@ -182,6 +182,31 @@ Require-Success $case4Shadow 'quoted source-directory shadow build'
 Require-Compile $case4Shadow 'main.cpp' 'quoted source-directory shadow build'
 if ((Invoke-Program (Program-Path $case4 'quoted')) -ne 6) { throw 'quoted source-directory shadow was not selected' }
 
+# 4b. Quoted lookup also searches the directory of the including header. Keep
+# that candidate subdirectory present before the cold build so adding only the
+# same-name file later changes the nested directory mtime, not the outer root.
+$case4b = New-CaseDirectory 'nested-quoted-shadow'
+New-Item -ItemType Directory -Force -Path (Join-Path $case4b 'src/nested') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $case4b 'low/nested') | Out-Null
+Write-Utf8 (Join-Path $case4b 'low/nested/pick.hpp') @('inline int nested_value() { return 51; }')
+Write-Utf8 (Join-Path $case4b 'src/outer.hpp') @('#pragma once', '#include "nested/pick.hpp"', 'inline int outer_value() { return nested_value(); }')
+Write-Utf8 (Join-Path $case4b 'main.cpp') @('#include "src/outer.hpp"', 'int main() { return outer_value(); }')
+$case4bArgs = @('main.cpp', '--release', '--no-discover', '--env', 'vs', '-I', 'low', '-o', 'nested-quoted')
+$case4bCold = Invoke-Mqb $case4b $case4bArgs
+Require-Success $case4bCold 'nested quoted cold build'
+if ((Invoke-Program (Program-Path $case4b 'nested-quoted')) -ne 51) { throw 'nested quoted cold build did not resolve low/nested/pick.hpp' }
+$case4bWarm = Invoke-Mqb $case4b $case4bArgs
+Require-Success $case4bWarm 'nested quoted warm build'
+Require-UpToDate $case4bWarm 'main.cpp' 'nested quoted warm build'
+Start-Sleep -Milliseconds 100
+Write-Utf8 (Join-Path $case4b 'src/nested/pick.hpp') @('inline int nested_value() { return 52; }')
+$case4bShadow = Invoke-Mqb $case4b $case4bArgs
+Require-Success $case4bShadow 'nested quoted header-directory shadow build'
+Require-Compile $case4bShadow 'main.cpp' 'nested quoted header-directory shadow build'
+if ((Invoke-Program (Program-Path $case4b 'nested-quoted')) -ne 52) {
+    throw 'nested quoted include did not move to the including-header directory'
+}
+
 # 5. Native MSVC /I syntax participates in the same search freshness model;
 # this specifically covers raw passthrough roots rather than typed -I policy.
 $case5 = New-CaseDirectory 'native-angle-shadow'
@@ -298,5 +323,5 @@ if ((Invoke-Program (Program-Path $casePch 'pch-shadow')) -ne 42) {
     throw 'PCH consumer did not observe newly higher-priority transitive header'
 }
 
-Write-Host 'Include search resolution freshness checks passed: typed/native /I, removal, order, quote/angle shadowing, P1689 reuse, header units, PCH creator/consumer, and zero-process no-op behavior.'
+Write-Host 'Include search resolution freshness checks passed: typed/native /I, removal, order, direct/nested quote and angle shadowing, P1689 reuse, header units, PCH creator/consumer, and zero-process no-op behavior.'
 exit 0
