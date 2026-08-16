@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "mqb/core/LinkOptions.hpp"
@@ -23,6 +24,10 @@ struct LinkInvocation {
     // This avoids stale archive-member reuse inside MSVC's .ilk state while
     // preserving ordinary Debug incremental linking for object-only changes.
     bool force_full_link{false};
+    // Ask LINK itself to report the exact libraries it searches while resolving
+    // object/archive directives. This is observation only: it does not alter the
+    // user's linker policy or explicit library argv.
+    bool observe_library_search{false};
 };
 
 enum class LinkerErrorCode {
@@ -83,6 +88,20 @@ public:
         const std::filesystem::path& output,
         const LinkOptions& options,
         const std::filesystem::path& working_directory = {});
+
+    // Parse /VERBOSE:LIB output without depending on localized progress labels.
+    // LINK documents that the library/object names are emitted as full paths;
+    // MQB extracts only absolute .lib path tokens and treats them as non-owning
+    // freshness evidence.
+    [[nodiscard]] static std::vector<std::filesystem::path>
+    observed_library_paths(std::string_view stdout_text);
+
+    // Internal /VERBOSE:LIB is an implementation detail. Unless the user asked
+    // for linker progress output themselves, retain only LNK diagnostics in the
+    // visible stdout after observation has been parsed.
+    static void sanitize_library_observation_output(
+        process::ProcessResult& result,
+        const LinkOptions& options);
 
     [[nodiscard]] static std::expected<std::vector<std::string>, LinkerError>
     build_arguments(const LinkInvocation& invocation);
