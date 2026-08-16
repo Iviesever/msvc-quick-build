@@ -101,6 +101,12 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
     if (body == "fno-sanitize-address-vcasan-lib") {
         return classified(ParameterTool::compiler, ParameterOwnership::passthrough, "/fno-sanitize-address-vcasan-lib", "VCAsan default-library opt-out is preserved verbatim in compile identity and projected into ASan link freshness policy");
     }
+    if (body == "openmp:llvm") {
+        return compiler_unsupported(body, "LLVM OpenMP selects the separate experimental libomp runtime whose libraries/DLL deployment are not yet represented in MQB's link/runtime ownership model; use classic /openmp or /openmp:experimental for now");
+    }
+    if (body == "openmp" || body == "openmp:experimental" || body == "openmp-") {
+        return classified(ParameterTool::compiler, ParameterOwnership::passthrough, "/" + std::string{body}, "classic MSVC OpenMP mode is preserved verbatim in compile identity and projected into vcomp/vcompd link freshness policy");
+    }
     if (body == "experimental:log" || body.starts_with("experimental:log")) {
         return compiler_unsupported(body, "option creates a diagnostic log artifact that is not represented in MQB's cache/artifact graph");
     }
@@ -147,7 +153,7 @@ ParameterClassification classify_compiler_parameter(const std::string_view argum
         "AI"sv, "arch"sv, "await"sv, "cgthreads"sv, "constexpr:"sv, "D"sv, "diagnostics"sv, "EH"sv,
         "execution-charset"sv, "external:"sv, "favor:"sv, "feature"sv, "FI"sv, "forceInterlockedFunctions"sv,
         "fp:"sv, "fpcvt:"sv, "fsanitize"sv, "Gd"sv, "Gr"sv, "GR"sv, "GS"sv, "Gs"sv, "Gu"sv, "guard:"sv, "Gw"sv, "Gy"sv,
-        "I"sv, "Ob"sv, "Oi"sv, "openmp"sv, "Qpar"sv, "Qpar-report:"sv, "Qspectre"sv, "Qvec-report:"sv, "RTC"sv,
+        "I"sv, "Ob"sv, "Oi"sv, "Qpar"sv, "Qpar-report:"sv, "Qspectre"sv, "Qvec-report:"sv, "RTC"sv,
         "source-charset"sv, "U"sv, "vd"sv, "vm"sv, "volatile:"sv, "w1"sv, "w2"sv, "w3"sv, "w4"sv, "wd"sv, "we"sv, "wo"sv,
         "Wv:"sv, "Zc:"sv, "ZH:"sv, "Zm"sv, "Zo"sv, "Zp"sv,
     };
