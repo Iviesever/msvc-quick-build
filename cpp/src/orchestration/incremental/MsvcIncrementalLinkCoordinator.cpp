@@ -449,7 +449,8 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             toolchain_,
             cached_observed_inputs,
             request.options.library_directories,
-            working_directory);
+            working_directory,
+            request.cache_file);
         if (!refreshed_observed) {
             IncrementalLinkError error{
                 .code = IncrementalLinkErrorCode::library_resolution_failed,
