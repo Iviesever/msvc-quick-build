@@ -88,7 +88,7 @@ MsvcLibrarian::build_arguments(const ArchiveInvocation& invocation) {
     }
     if (invocation.output.empty()) {
         return std::unexpected(failure(
-            LibrarianErrorCode::invalid_request, "link output path is empty"));
+            LibrarianErrorCode::invalid_request, "archive output path is empty"));
     }
 
     auto routed = MsvcParameterEngine::route_librarian(invocation.additional_arguments);
@@ -137,7 +137,7 @@ MsvcLibrarian::archive(const ArchiveInvocation& invocation) const {
     }
     if (invocation.output.empty()) {
         return std::unexpected(failure(
-            LibrarianErrorCode::invalid_request, "link output path is empty"));
+            LibrarianErrorCode::invalid_request, "archive output path is empty"));
     }
 
     std::error_code ec;
