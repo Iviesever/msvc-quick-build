@@ -248,6 +248,20 @@ config path   -> directory containing mqb.json
 
 存在 `mqb.json` 时，它的目录是 project root 与 `.mqb/` root；否则 project root 由 invocation/source context 决定。
 
+### Windows path identity authority
+
+MQB 面向 Windows/MSVC，因此凡是判断**路径是否代表同一 Windows 路径**的逻辑，都只有一个 authority：
+
+```cpp
+mqb::platform::windows::path_identity_key(path)
+```
+
+它负责 lexical normalization，并只折叠 ASCII `A-Z`；non-ASCII UTF-8 bytes 原样保留，不允许经过 locale-sensitive narrow `std::tolower`。Discovery、artifact layout、module provider identity、compile/link/archive cache、`BuildSignature`、library resolver、LINK freshness/observation、Visual Studio/portable toolchain identity 都必须共享这一规则。
+
+以下操作不得自行重新实现 Windows path identity：path equality、dedup、set membership、case-insensitive key、root containment。`generic_string() + std::tolower`、自定义 `normalized_path_text()` / `same_windows_path()` 一类实现都不属于允许的 identity primitive。
+
+字符串**展示/序列化**、环境变量名比较、MSVC option parsing，以及“选择 latest version”所需的确定性**排序**不是路径 identity；这些场景可以保留各自规则，但代码应避免把 ordering/formatting helper 当作 equality authority。
+
 配置解析与 precedence 的完整行为见 [`MQB_CONFIG.md`](MQB_CONFIG.md)。
 
 ## 9. 源码物理结构
@@ -278,6 +292,7 @@ cpp/
 10. Correctness 优先于缓存命中率；unsupported/ambiguous state fail closed。
 11. `cpp/include`、`cpp/src`、`cpp/tests` 各自只有一个物理根。
 12. MQB 自身的开发、测试与发布构建以 MQB 为构建系统。
+13. Windows path equality / dedup / identity key 只能由 `path_identity_key()` 定义；其他层不得建立第二套 case-folding authority。
 
 ## 11. 当前边界
 
