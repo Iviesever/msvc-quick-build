@@ -371,7 +371,7 @@ int main(const int argc, char* argv[]) {
             mqb_executable,
             discovery_tree.root,
             {"build", "identity_main.cpp", "--env", "vs", "--debug",
-             "--pch", "base_pch.hpp", "/FIraw.hpp", "--verbose",
+             "--pch", "base_pch.hpp", "/I.", "/FIraw.hpp", "--verbose",
              "-o", "pch_discovery_raw_and_typed"});
         expect(raw_and_pch_discovery.has_value(), "raw /FI + typed PCH discovery build should launch");
         if (raw_and_pch_discovery) {
