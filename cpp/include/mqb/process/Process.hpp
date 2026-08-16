@@ -4,9 +4,8 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
-#include <span>
+#include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace mqb::process {
@@ -22,10 +21,11 @@ struct EnvironmentVariable {
 struct ProcessSpec {
     std::filesystem::path executable;
     std::vector<std::string> arguments;
-    std::filesystem::path working_directory;
+    std::optional<std::filesystem::path> working_directory;
     std::vector<EnvironmentVariable> environment;
-    bool capture_stdout{false};
-    bool capture_stderr{false};
+    bool inherit_environment{true};
+    bool capture_stdout{true};
+    bool capture_stderr{true};
 };
 
 struct ProcessResult {
@@ -36,31 +36,26 @@ struct ProcessResult {
 };
 
 enum class ProcessErrorCode {
-    executable_not_found,
-    working_directory_not_found,
-    invalid_environment,
-    pipe_creation_failed,
-    process_creation_failed,
+    invalid_specification,
+    launch_failed,
     wait_failed,
-    read_failed,
+    io_failed,
 };
 
 struct ProcessError {
-    ProcessErrorCode code{ProcessErrorCode::process_creation_failed};
-    std::string message;
+    ProcessErrorCode code{ProcessErrorCode::launch_failed};
     std::uint32_t native_code{};
+    std::string message;
 };
 
 class ProcessRunner {
 public:
     virtual ~ProcessRunner() = default;
 
+    // Orchestration may call run() concurrently on the same runner instance.
+    // Implementations must keep per-launch state isolated.
     [[nodiscard]] virtual std::expected<ProcessResult, ProcessError>
     run(const ProcessSpec& spec) = 0;
 };
-
-[[nodiscard]] std::string format_command_for_display(
-    const std::filesystem::path& executable,
-    std::span<const std::string> arguments);
 
 } // namespace mqb::process
