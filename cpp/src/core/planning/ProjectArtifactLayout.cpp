@@ -1,7 +1,5 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
@@ -9,6 +7,8 @@
 #include <string>
 #include <string_view>
 #include <utility>
+
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb {
 namespace {
@@ -41,18 +41,13 @@ namespace fs = std::filesystem;
     return canonical.lexically_normal();
 }
 
-[[nodiscard]] fs::path windows_identity_casefold(fs::path path) {
-#ifdef _WIN32
-    std::string value = path.generic_string();
-    std::transform(
-        value.begin(),
-        value.end(),
-        value.begin(),
-        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return fs::path{value};
-#else
-    return path;
-#endif
+[[nodiscard]] fs::path identity_path(const fs::path& path) {
+    const std::string key = platform::windows::path_identity_key(path);
+    std::u8string utf8;
+    utf8.assign(
+        reinterpret_cast<const char8_t*>(key.data()),
+        reinterpret_cast<const char8_t*>(key.data() + key.size()));
+    return fs::path{utf8};
 }
 
 [[nodiscard]] bool safe_relative(const fs::path& relative) {
@@ -80,7 +75,7 @@ namespace fs = std::filesystem;
     while (!current.empty()) {
         error_code.clear();
         if (fs::equivalent(current, project_root, error_code) && !error_code) {
-            return windows_identity_casefold(relative.lexically_normal());
+            return identity_path(relative.lexically_normal());
         }
         const fs::path parent = current.parent_path();
         if (parent.empty() || parent == current) break;
@@ -94,8 +89,8 @@ namespace fs = std::filesystem;
     constexpr std::uint64_t offset = 14695981039346656037ull;
     constexpr std::uint64_t prime = 1099511628211ull;
     std::uint64_t hash = offset;
-    const auto bytes = windows_identity_casefold(path.lexically_normal()).generic_u8string();
-    for (const char8_t byte : bytes) {
+    const std::string identity = platform::windows::path_identity_key(path);
+    for (const unsigned char byte : identity) {
         hash ^= static_cast<std::uint8_t>(byte);
         hash *= prime;
     }
@@ -115,16 +110,13 @@ namespace fs = std::filesystem;
     }
 
     fs::path relative = normalized_source.lexically_relative(project_root);
-#ifdef _WIN32
-    relative = windows_identity_casefold(std::move(relative));
-#endif
     if (safe_relative(relative)) {
-        return relative;
+        return identity_path(relative);
     }
 
-    const fs::path identity = windows_identity_casefold(normalized_source);
+    const fs::path identity = identity_path(normalized_source);
     return fs::path{".external"}
-        / stable_path_hash(identity)
+        / stable_path_hash(normalized_source)
         / identity.filename();
 }
 

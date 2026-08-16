@@ -13,6 +13,7 @@
 #include "mqb/msvc/MsvcCompiler.hpp"
 #include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/msvc/MsvcSourceDependenciesReader.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::msvc {
 namespace {
@@ -44,21 +45,28 @@ namespace fs = std::filesystem;
     return found;
 }
 
-[[nodiscard]] bool same_existing_file(
+[[nodiscard]] bool same_path_identity(
     const fs::path& left,
     const fs::path& right) {
+    return mqb::platform::windows::path_identity_key(left)
+        == mqb::platform::windows::path_identity_key(right);
+}
+
+[[nodiscard]] bool same_existing_physical_file(
+    const fs::path& left,
+    const fs::path& right) {
+    if (same_path_identity(left, right)) {
+        return true;
+    }
+
+    // This is deliberately not a second path-identity primitive. The compiler
+    // can report an existing source through a junction/symlink/canonical alias;
+    // sourceDependencies provenance must prove that both spellings refer to the
+    // same physical filesystem object. Cache keys, dependency deduplication,
+    // and artifact ownership continue to use path_identity_key() exclusively.
     std::error_code error_code;
     const bool equivalent = fs::equivalent(left, right, error_code);
     return equivalent && !error_code;
-}
-
-[[nodiscard]] bool same_dependency_path(
-    const fs::path& left,
-    const fs::path& right) {
-    if (same_existing_file(left, right)) {
-        return true;
-    }
-    return left.lexically_normal() == right.lexically_normal();
 }
 
 [[nodiscard]] bool regular_file(const fs::path& path) {
@@ -73,7 +81,7 @@ void add_interface_dependency(
         dependencies.begin(),
         dependencies.end(),
         [&interface_file](const fs::path& dependency) {
-            return same_dependency_path(dependency, interface_file);
+            return same_path_identity(dependency, interface_file);
         });
     if (duplicate == dependencies.end()) {
         dependencies.push_back(interface_file.lexically_normal());
@@ -166,8 +174,9 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
                 return std::unexpected(invalid_request(
                     "PCH creator must expose exactly one non-empty precompiled-header artifact"));
             }
-            if (pch_output->path.lexically_normal()
-                != request.options.precompiled_header->artifact.lexically_normal()) {
+            if (!same_path_identity(
+                    pch_output->path,
+                    request.options.precompiled_header->artifact)) {
                 return std::unexpected(invalid_request(
                     "PCH creator output must match the typed precompiled-header artifact path"));
             }
@@ -244,7 +253,7 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
         });
     }
 
-    if (!same_existing_file(dependencies->source, request.unit.source)) {
+    if (!same_existing_physical_file(dependencies->source, request.unit.source)) {
         return std::unexpected(CompileExecutorError{
             .code = CompileExecutorErrorCode::dependency_metadata_failed,
             .message = "sourceDependencies metadata belongs to a different translation unit",

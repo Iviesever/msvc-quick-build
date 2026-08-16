@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "ToolchainDiscoveryPrimitives.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::msvc::detail {
 namespace {
@@ -55,6 +56,11 @@ struct ToolPaths {
     return path;
 }
 
+[[nodiscard]] bool same_path(const fs::path& left, const fs::path& right) {
+    return mqb::platform::windows::path_identity_key(left)
+        == mqb::platform::windows::path_identity_key(right);
+}
+
 [[nodiscard]] int preference_value(const ToolchainPreference preference) noexcept {
     switch (preference) {
     case ToolchainPreference::automatic: return 0;
@@ -71,17 +77,6 @@ struct ToolPaths {
     case ToolchainPreference::portable: return "portable";
     }
     return "unknown";
-}
-
-[[nodiscard]] std::string lower_ascii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](const unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
-[[nodiscard]] std::string normalized_path_text(const fs::path& path) {
-    return lower_ascii(detail::path_to_utf8(stable_path(path)));
 }
 
 [[nodiscard]] bool cache_key_matches(const CacheRecord& record, const DiscoveryOptions& options) {
@@ -146,11 +141,12 @@ struct ToolPaths {
     if (error_code) return false;
     const fs::path absolute_candidate = stable_path(fs::absolute(candidate, error_code));
     if (error_code) return false;
-    std::string root_text = normalized_path_text(absolute_root);
-    const std::string candidate_text = normalized_path_text(absolute_candidate);
-    if (candidate_text == root_text) return true;
-    if (!root_text.empty() && root_text.back() != '/') root_text.push_back('/');
-    return candidate_text.starts_with(root_text);
+    std::string root_key = mqb::platform::windows::path_identity_key(absolute_root);
+    const std::string candidate_key =
+        mqb::platform::windows::path_identity_key(absolute_candidate);
+    if (candidate_key == root_key) return true;
+    if (!root_key.empty() && root_key.back() != '/') root_key.push_back('/');
+    return candidate_key.starts_with(root_key);
 }
 
 void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
@@ -158,7 +154,7 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
     root = stable_path(std::move(root));
     if (!fs::is_directory(root, error_code) || error_code) return;
     const auto duplicate = std::find_if(roots.begin(), roots.end(), [&](const fs::path& existing) {
-        return normalized_path_text(existing) == normalized_path_text(root);
+        return same_path(existing, root);
     });
     if (duplicate == roots.end()) roots.push_back(std::move(root));
 }
@@ -225,7 +221,7 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
     const auto* tools = find_environment(environment, "VCToolsInstallDir");
     if (include == nullptr || lib == nullptr || lib_path == nullptr || tools == nullptr
         || include->value.empty() || lib->value.empty() || lib_path->value.empty() || tools->value.empty()) return false;
-    if (normalized_path_text(detail::path_from_utf8(tools->value)) != normalized_path_text(vc_tools_root)) return false;
+    if (!same_path(detail::path_from_utf8(tools->value), vc_tools_root)) return false;
     const auto roots = trusted_roots(environment, vc_tools_root);
     return !roots.empty()
         && trusted_directory_list(include->value, roots)
@@ -332,7 +328,7 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
 
         if (!fs::is_directory(record->vc_tools_root, error_code) || error_code) return std::nullopt;
         const auto latest_tools = detail::latest_directory(record->vc_tools_root.parent_path());
-        if (!latest_tools || normalized_path_text(*latest_tools) != normalized_path_text(record->vc_tools_root)) return std::nullopt;
+        if (!latest_tools || !same_path(*latest_tools, record->vc_tools_root)) return std::nullopt;
         const ToolPaths paths = tool_paths(record->vc_tools_root, options);
         for (const auto& file : {paths.compiler, paths.linker, paths.librarian}) {
             error_code.clear();
@@ -375,9 +371,9 @@ void save_visual_studio_cache_best_effort(
         if (toolchain.source != ToolchainSource::visual_studio || toolchain.reused) return;
         const fs::path root = stable_path(toolchain.vc_tools_root);
         const ToolPaths expected = tool_paths(root, options);
-        if (normalized_path_text(expected.compiler) != normalized_path_text(toolchain.identity.compiler)
-            || normalized_path_text(expected.linker) != normalized_path_text(toolchain.linker)
-            || normalized_path_text(expected.librarian) != normalized_path_text(toolchain.librarian)) return;
+        if (!same_path(expected.compiler, toolchain.identity.compiler)
+            || !same_path(expected.linker, toolchain.linker)
+            || !same_path(expected.librarian, toolchain.librarian)) return;
 
         std::vector<EnvironmentVariable> environment = cacheable_environment(toolchain);
         const auto* path = find_environment(toolchain.environment, "PATH");

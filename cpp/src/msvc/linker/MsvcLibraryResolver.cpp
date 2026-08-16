@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/platform/windows/PathIdentity.hpp"
+
 namespace mqb::msvc {
 namespace {
 
@@ -60,27 +62,13 @@ namespace fs = std::filesystem;
     return true;
 }
 
-[[nodiscard]] std::string windows_path_key(const fs::path& path) {
-    std::string value = path.lexically_normal().generic_string();
-    std::transform(
-        value.begin(),
-        value.end(),
-        value.begin(),
-        [](const unsigned char character) {
-            return static_cast<char>(std::tolower(character));
-        });
-    return value;
-}
-
-[[nodiscard]] bool same_windows_path(const fs::path& left, const fs::path& right) {
-    return windows_path_key(left) == windows_path_key(right);
-}
-
 [[nodiscard]] bool contains_windows_path(
     const std::vector<fs::path>& paths,
     const fs::path& expected) {
+    const std::string expected_key =
+        mqb::platform::windows::path_identity_key(expected);
     return std::any_of(paths.begin(), paths.end(), [&](const fs::path& path) {
-        return same_windows_path(path, expected);
+        return mqb::platform::windows::path_identity_key(path) == expected_key;
     });
 }
 

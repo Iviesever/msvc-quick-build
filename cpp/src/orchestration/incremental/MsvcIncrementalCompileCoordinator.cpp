@@ -16,6 +16,7 @@
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/msvc/MsvcSourceDependenciesReader.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 #include "IncrementalFileSnapshot.hpp"
 
@@ -57,11 +58,8 @@ void add_reason_once(
 [[nodiscard]] bool same_path(
     const std::filesystem::path& left,
     const std::filesystem::path& right) {
-    if (left == right || left.lexically_normal() == right.lexically_normal()) {
-        return true;
-    }
-    std::error_code error_code;
-    return std::filesystem::equivalent(left, right, error_code) && !error_code;
+    return mqb::platform::windows::path_identity_key(left)
+        == mqb::platform::windows::path_identity_key(right);
 }
 
 [[nodiscard]] bool same_ordered_paths(

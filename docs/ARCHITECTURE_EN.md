@@ -248,6 +248,22 @@ config path   -> directory containing mqb.json
 
 When `mqb.json` exists, its directory is the project root and `.mqb/` root. Without it, the project root is derived from invocation/source context.
 
+### Windows path identity authority
+
+MQB targets Windows/MSVC, so every decision asking whether two paths represent the **same Windows path** has exactly one authority:
+
+```cpp
+mqb::platform::windows::path_identity_key(path)
+```
+
+It performs lexical normalization, removes redundant trailing separators from non-root paths, and folds ASCII `A-Z` only. Non-ASCII UTF-8 bytes are preserved verbatim and must never be passed through locale-sensitive narrow `std::tolower`. Discovery, artifact layout, module-provider identity, compile/link/archive caches, `BuildSignature`, library resolution, LINK freshness/observation, and Visual Studio/portable toolchain identity all share this rule.
+
+Path equality, deduplication, set membership, case-insensitive keys, and root containment must not reimplement Windows path identity. Patterns such as `generic_string() + std::tolower` or local `normalized_path_text()` / `same_windows_path()` helpers are not valid identity primitives.
+
+There is one deliberately narrow different semantic: when MQB must prove that **two already-existing paths refer to the same physical filesystem object**, for example `/sourceDependencies` source provenance or include-search freshness coalescing a junction/symlink/canonical alias to the same existing search directory, code may use `std::filesystem::equivalent()` after first checking `path_identity_key()`. That is a physical-provenance probe: it must not generate identity keys and must not be used for `BuildSignature`, cache/artifact ownership, or ordinary path-set membership. Such code must use explicit `physical/provenance` naming and comments.
+
+String **display/serialization**, environment-variable-name comparison, MSVC option parsing, and deterministic **ordering** used to select a latest version are not path identity. Those operations may retain purpose-specific rules, but ordering/formatting helpers must not become equality authorities.
+
 See [`MQB_CONFIG_EN.md`](MQB_CONFIG_EN.md) for full parsing and precedence behavior.
 
 ## 9. Physical source layout
@@ -278,6 +294,7 @@ Those roots are organized by responsibility such as `core / config / discovery /
 10. Correctness beats cache hit rate; unsupported or ambiguous states fail closed.
 11. `cpp/include`, `cpp/src`, and `cpp/tests` each have one physical root.
 12. MQB uses MQB as the build system for its own development, tests, and release builds.
+13. Windows path equality, deduplication, and identity keys are defined only by `path_identity_key()`; `filesystem::equivalent()` is restricted to explicit existing-object physical-provenance/freshness probes and may not become a second lexical/case-folding authority.
 
 ## 11. Current boundary
 

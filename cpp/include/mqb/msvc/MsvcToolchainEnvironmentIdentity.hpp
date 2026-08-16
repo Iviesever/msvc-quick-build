@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 #include "mqb/process/Process.hpp"
 
 namespace mqb::msvc {
@@ -118,6 +119,9 @@ template <std::size_t Count>
         }
     }
     if (error_code || directories.empty()) return std::nullopt;
+    // Version selection is deterministic ordering, not path equality. Keep the
+    // native case-preserving filename order here; identity comparisons below
+    // use the shared Windows path primitive.
     std::ranges::sort(
         directories,
         {},
@@ -141,9 +145,8 @@ template <std::size_t Count>
     const auto latest = latest_directory(
         stable_path(path_from_utf8(root->value)) / "Include");
     return latest
-        && ascii_iequals(
-            latest->filename().string(),
-            selected.filename().string());
+        && mqb::platform::windows::path_identity_key(latest->filename())
+            == mqb::platform::windows::path_identity_key(selected.filename());
 }
 
 } // namespace toolchain_environment_detail

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "mqb/core/CompilerOptions.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 #include "mqb/process/Process.hpp"
 
 namespace mqb::msvc {
@@ -18,12 +19,29 @@ namespace include_freshness_detail {
 
 namespace fs = std::filesystem;
 
-[[nodiscard]] inline bool same_path(const fs::path& left, const fs::path& right) {
-    if (left == right || left.lexically_normal() == right.lexically_normal()) {
+[[nodiscard]] inline bool same_path_identity(
+    const fs::path& left,
+    const fs::path& right) {
+    return mqb::platform::windows::path_identity_key(left)
+        == mqb::platform::windows::path_identity_key(right);
+}
+
+[[nodiscard]] inline bool same_existing_search_location(
+    const fs::path& left,
+    const fs::path& right) {
+    if (same_path_identity(left, right)) {
         return true;
     }
+
+    // Include-search freshness observes filesystem namespaces, not cache-key
+    // spelling. A compiler-reported header and a user search root can reach the
+    // same existing directory through a junction/symlink/canonical alias. Use
+    // equivalent() only as a physical-provenance probe for those existing
+    // locations; it never generates a path key and is not used by signatures,
+    // artifact ownership, or general path set membership.
     std::error_code error_code;
-    return fs::equivalent(left, right, error_code) && !error_code;
+    const bool equivalent = fs::equivalent(left, right, error_code);
+    return equivalent && !error_code;
 }
 
 [[nodiscard]] inline bool ascii_iequals(
@@ -85,7 +103,7 @@ inline void append_unique(std::vector<fs::path>& paths, fs::path path) {
     if (path.empty()) return;
     path = path.lexically_normal();
     if (std::none_of(paths.begin(), paths.end(), [&](const fs::path& existing) {
-            return same_path(existing, path);
+            return same_existing_search_location(existing, path);
         })) {
         paths.push_back(std::move(path));
     }
@@ -94,7 +112,7 @@ inline void append_unique(std::vector<fs::path>& paths, fs::path path) {
 // Compiler search-root identity is an ordered argv/environment fact, not a
 // filesystem-equivalence set. Preserve each normalized spelling (including
 // duplicates) exactly as MSVC sees it. Besides being more faithful, this keeps
-// the warm path free of equivalent()/status syscalls while constructing roots.
+// the warm path free of filesystem identity/status syscalls while constructing roots.
 inline void append_search_root(std::vector<fs::path>& roots, fs::path path) {
     if (path.empty()) return;
     roots.push_back(path.lexically_normal());
@@ -121,7 +139,9 @@ inline void append_search_root(std::vector<fs::path>& roots, fs::path path) {
     const fs::path& root) {
     const fs::path relative = child.lexically_normal().lexically_relative(root.lexically_normal());
     if (relative.empty()) {
-        return same_path(child, root) ? std::optional<fs::path>{fs::path{}} : std::nullopt;
+        return same_path_identity(child, root)
+            ? std::optional<fs::path>{fs::path{}}
+            : std::nullopt;
     }
     if (relative.is_absolute()) return std::nullopt;
     for (const auto& component : relative) {
@@ -131,9 +151,10 @@ inline void append_search_root(std::vector<fs::path>& roots, fs::path path) {
 }
 
 // The compiler reports resolved dependency paths using filesystem spelling,
-// while a user-supplied /I root may differ only by Windows casing or by an
-// equivalent path spelling. Fall back to an ancestor walk using equivalent()
-// so we still recover the include-relative suffix in those cases.
+// while a user-supplied /I root may name the same existing search location
+// through a junction/symlink/canonical alias. Lexical Windows identity remains
+// authoritative first; the ancestor fallback uses physical equivalence only to
+// recover the include-relative suffix for that freshness observation.
 [[nodiscard]] inline std::optional<fs::path> relative_if_within(
     const fs::path& child,
     const fs::path& root) {
@@ -145,7 +166,7 @@ inline void append_search_root(std::vector<fs::path>& roots, fs::path path) {
     fs::path cursor = child.lexically_normal();
     fs::path suffix;
     while (!cursor.empty()) {
-        if (same_path(cursor, root)) {
+        if (same_existing_search_location(cursor, root)) {
             return suffix;
         }
         const fs::path filename = cursor.filename();

@@ -7,6 +7,7 @@
 
 #include "mqb/core/LinkOptions.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace {
 
@@ -88,6 +89,26 @@ int main() {
            "Debug required side outputs should include the linker PDB");
     expect(!contains_path(debug_outputs, "bin/my app.exe.manifest"),
            "external manifest is conditional on LINK actually producing content and must not be required blindly");
+
+    const std::u8string observed_text =
+        u8"    Found C:\\项目\\Lib\\Math.LIB\n"
+        u8"    Found c:\\项目\\lib\\math.lib\n"
+        u8"    Found C:\\項目\\Lib\\Math.lib\n";
+    const auto observed_libraries = mqb::msvc::MsvcLinker::observed_library_paths(
+        std::string_view{
+            reinterpret_cast<const char*>(observed_text.data()),
+            observed_text.size()});
+    expect(observed_libraries.size() == 2,
+           "LINK library observation should deduplicate ASCII case aliases without collapsing distinct non-ASCII paths");
+    if (observed_libraries.size() == 2) {
+        expect(mqb::platform::windows::path_identity_key(observed_libraries[0])
+                   == mqb::platform::windows::path_identity_key(
+                       std::filesystem::path{u8"C:/项目/Lib/Math.LIB"}),
+               "observed Unicode library path should preserve non-ASCII UTF-8 bytes");
+        expect(mqb::platform::windows::path_identity_key(observed_libraries[0])
+                   != mqb::platform::windows::path_identity_key(observed_libraries[1]),
+               "different non-ASCII library components must remain distinct path identities");
+    }
 
     auto debug_none = invocation;
     debug_none.options.additional_arguments = {"/DEBUG:NONE"};
