@@ -32,6 +32,7 @@
 #include "mqb/orchestration/MsvcIncrementalPchCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/orchestration/ParallelismPolicy.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 #include "mqb/process/Process.hpp"
 
@@ -55,7 +56,7 @@ namespace fs = std::filesystem;
 [[nodiscard]] bool inside_project(
     const fs::path& project_root,
     const fs::path& path) {
-    return safe_relative(path.lexically_normal().lexically_relative(project_root.lexically_normal()));
+    return mqb::platform::windows::path_identity_contains(project_root, path);
 }
 
 [[nodiscard]] fs::path display_source(
@@ -72,7 +73,14 @@ void add_portable_root_if_missing(
         return;
     }
     const fs::path normalized = candidate.lexically_normal();
-    if (std::find(roots.begin(), roots.end(), normalized) == roots.end()) {
+    const std::string candidate_key = mqb::platform::windows::path_identity_key(normalized);
+    const bool present = std::any_of(
+        roots.begin(),
+        roots.end(),
+        [&](const fs::path& root) {
+            return mqb::platform::windows::path_identity_key(root) == candidate_key;
+        });
+    if (!present) {
         roots.push_back(normalized);
     }
 }
@@ -314,6 +322,13 @@ int Application::run(const std::span<const std::string_view> arguments) {
     toolchain_discovery.host_architecture = mqb::Architecture::x64;
     toolchain_discovery.preference = options.toolchain_preference;
     toolchain_discovery.portable_roots = options.portable_roots;
+    std::string toolchain_cache_name = "vs-";
+    toolchain_cache_name += mqb::to_string(options.build.architecture);
+    toolchain_cache_name += ".cache";
+    toolchain_discovery.cache_file = layout->artifact_root()
+        / "cache"
+        / "toolchain"
+        / toolchain_cache_name;
 
     auto toolchain = locator.discover(toolchain_discovery);
     if (!toolchain) {
