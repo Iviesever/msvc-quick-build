@@ -222,6 +222,12 @@ int Application::run(const std::span<const std::string_view> arguments) {
             diagnostics::print_error(forced_includes.error().message);
             return 2;
         }
+        // First-class PCH remains typed MQB policy. Project only the compiler-visible
+        // forced-include semantic into discovery after raw /FI operands, matching
+        // the final cl.exe argument order without leaking /Yc, /Yu, or /Fp ownership.
+        if (effective.precompiled_header) {
+            forced_includes->push_back(effective.precompiled_header->lexically_normal());
+        }
 
         const fs::path& entry = requested_sources.front();
         const bool project_scoped = inside_project(project_root, entry);
