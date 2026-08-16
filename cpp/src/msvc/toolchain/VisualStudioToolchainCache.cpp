@@ -22,7 +22,7 @@ namespace {
 namespace fs = std::filesystem;
 using process::EnvironmentVariable;
 
-constexpr std::string_view cache_magic = "MQB_TOOLCHAIN_CACHE_V8";
+constexpr std::string_view cache_magic = "MQB_TOOLCHAIN_CACHE_V9";
 constexpr std::uintmax_t max_cache_size = 1024u * 1024u;
 constexpr std::size_t max_cache_entries = 64u;
 constexpr std::size_t max_cache_string = 256u * 1024u;
@@ -208,51 +208,6 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
     return true;
 }
 
-[[nodiscard]] std::vector<std::string> normalized_path_entries(const std::string& value) {
-    std::vector<std::string> entries;
-    for (const auto part : split_semicolon(value)) {
-        entries.push_back(normalized_path_text(detail::path_from_utf8(part)));
-    }
-    return entries;
-}
-
-[[nodiscard]] bool effective_path_is_cacheable(
-    const std::string& effective_path,
-    const std::string& ambient_path,
-    const std::vector<EnvironmentVariable>& environment,
-    const fs::path& vc_tools_root) {
-    const auto effective_entries = split_semicolon(effective_path);
-    if (effective_entries.empty()) return false;
-
-    // Persist the complete vcvars PATH byte-for-byte, but bind it to the exact
-    // ambient PATH from which it was produced. Entries inherited from ambient
-    // PATH may point anywhere; every non-ambient entry must still belong to the
-    // validated Visual Studio/Windows SDK/SystemRoot trust set. This avoids
-    // reconstructing or reordering vcvars PATH while retaining the old cache's
-    // fail-closed protection against injected search roots.
-    const auto ambient_entries = normalized_path_entries(ambient_path);
-    const auto roots = trusted_roots(environment, vc_tools_root);
-    if (roots.empty()) return false;
-
-    for (const auto part : effective_entries) {
-        const fs::path directory = stable_path(detail::path_from_utf8(part));
-        const std::string normalized = normalized_path_text(directory);
-        const bool inherited = std::find(
-            ambient_entries.begin(),
-            ambient_entries.end(),
-            normalized) != ambient_entries.end();
-        if (inherited) continue;
-
-        std::error_code error_code;
-        if (!fs::is_directory(directory, error_code)
-            || error_code
-            || !path_inside_any_root(roots, directory)) {
-            return false;
-        }
-    }
-    return true;
-}
-
 [[nodiscard]] std::vector<EnvironmentVariable> cacheable_environment(const MsvcToolchain& toolchain) {
     std::vector<EnvironmentVariable> result;
     for (const auto& variable : toolchain.environment) {
@@ -344,7 +299,8 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
         record.environment.push_back(std::move(variable));
     }
     if (!read_quoted(stream, "ambient_path", record.ambient_path)
-        || !read_quoted(stream, "effective_path", record.effective_path)) return std::nullopt;
+        || !read_quoted(stream, "effective_path", record.effective_path)
+        || record.effective_path.empty()) return std::nullopt;
     stream >> std::ws;
     if (!stream.eof()) return std::nullopt;
     return record;
@@ -384,13 +340,12 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
         }
         auto stamp = detail::binary_stamp(paths.compiler);
         if (!stamp || *stamp != record->binary_stamp) return std::nullopt;
-        if (!environment_is_cacheable(record->environment, record->vc_tools_root)
-            || !effective_path_is_cacheable(
-                record->effective_path,
-                record->ambient_path,
-                record->environment,
-                record->vc_tools_root)) return std::nullopt;
+        if (!environment_is_cacheable(record->environment, record->vc_tools_root)) return std::nullopt;
 
+        // PATH is opaque vcvars output, not a set of MQB-owned roots. Persist it
+        // byte-for-byte and bind it to the exact ambient PATH that produced it;
+        // attempting to classify every vcvars-added entry against an incomplete
+        // trusted-root list caused valid discovery caches to be discarded.
         std::vector<EnvironmentVariable> environment = std::move(record->environment);
         environment.push_back(EnvironmentVariable{.name = "PATH", .value = std::move(record->effective_path)});
         return MsvcToolchain{
@@ -428,8 +383,7 @@ void save_visual_studio_cache_best_effort(
         const auto* path = find_environment(toolchain.environment, "PATH");
         if (path == nullptr || path->value.empty()) return;
         const std::string ambient_path = detail::environment_value("PATH").value_or(std::string{});
-        if (!environment_is_cacheable(environment, root)
-            || !effective_path_is_cacheable(path->value, ambient_path, environment, root)) return;
+        if (!environment_is_cacheable(environment, root)) return;
 
         const CacheRecord record{
             .target_architecture = detail::architecture_name(options.target_architecture),
