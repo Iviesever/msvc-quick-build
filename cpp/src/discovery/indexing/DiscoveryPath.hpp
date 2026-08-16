@@ -41,20 +41,12 @@ namespace fs = std::filesystem;
 }
 
 [[nodiscard]] inline bool inside_root(const fs::path& root, const fs::path& path) {
-    const fs::path relative = path.lexically_normal().lexically_relative(root.lexically_normal());
-    if (relative.empty() || relative.is_absolute()) {
-        return false;
-    }
-    for (const auto& component : relative) {
-        if (component == "..") {
-            return false;
-        }
-    }
-    return true;
+    return path_key(root) != path_key(path)
+        && mqb::platform::windows::path_identity_contains(root, path);
 }
 
 [[nodiscard]] inline bool same_or_inside(const fs::path& root, const fs::path& path) {
-    return path.lexically_normal() == root.lexically_normal() || inside_root(root, path);
+    return mqb::platform::windows::path_identity_contains(root, path);
 }
 
 [[nodiscard]] inline std::string extension_lower(const fs::path& path) {
