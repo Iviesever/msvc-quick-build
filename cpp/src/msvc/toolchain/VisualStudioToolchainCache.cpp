@@ -91,13 +91,11 @@ struct ToolPaths {
         if (options.cache_file->empty()) return std::nullopt;
         return stable_path(*options.cache_file);
     }
-    const auto local_app_data = detail::environment_path("LOCALAPPDATA");
-    if (!local_app_data || local_app_data->empty()) return std::nullopt;
     const std::string filename =
         "msvc-" + std::string{preference_name(options.preference)} + "-"
         + detail::architecture_name(options.host_architecture) + "-"
         + detail::architecture_name(options.target_architecture) + ".mqbcache";
-    return stable_path(*local_app_data / "MQB" / "cache" / "toolchain" / filename);
+    return stable_path(fs::path{".mqb"} / "cache" / "toolchain" / filename);
 }
 
 [[nodiscard]] bool environment_name_equal(const std::string_view left, const std::string_view right) {
@@ -141,12 +139,7 @@ struct ToolPaths {
     if (error_code) return false;
     const fs::path absolute_candidate = stable_path(fs::absolute(candidate, error_code));
     if (error_code) return false;
-    std::string root_key = mqb::platform::windows::path_identity_key(absolute_root);
-    const std::string candidate_key =
-        mqb::platform::windows::path_identity_key(absolute_candidate);
-    if (candidate_key == root_key) return true;
-    if (!root_key.empty() && root_key.back() != '/') root_key.push_back('/');
-    return candidate_key.starts_with(root_key);
+    return mqb::platform::windows::path_identity_contains(absolute_root, absolute_candidate);
 }
 
 void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
