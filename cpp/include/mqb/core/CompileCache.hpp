@@ -35,11 +35,6 @@ struct CompileCacheEntry {
     // including environment-backed root replacement/removal.
     std::vector<std::filesystem::path> include_search_roots;
     std::optional<ModuleScanEvidence> module_scan;
-    // True only for cache-format v4+ entries produced after Include Search
-    // Resolution Freshness existed. This avoids inferring migration state from
-    // non-empty evidence: `/X` with no /I and no textual headers is a valid
-    // sealed entry whose root/directory evidence is intentionally empty.
-    bool include_search_freshness_sealed{false};
 };
 
 struct CompileCacheValidation {
