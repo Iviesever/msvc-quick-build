@@ -216,18 +216,74 @@ inline void collect_relative_parent_suffix(
     if (!parent.empty()) append_unique(suffixes, parent);
 }
 
-// A local directory participates in MSVC's special quoted-include search only
-// when the corresponding source/header can issue a quoted (or macro-expanded)
-// include. Pure angle-include files do not search their own directory. This
-// cheap cold-path source inspection prevents unrelated artifacts created beside
-// a TU (for example LINK /MAP output) from poisoning the compile warm path.
-// Unknown/macro include operands conservatively opt into local search.
-[[nodiscard]] inline bool may_use_local_include_search(const fs::path& file) {
-    std::ifstream stream{file, std::ios::binary};
-    if (!stream) return true;
+struct IncludeSearchUse {
+    bool any_search{false};
+    bool may_search_local{false};
+    std::vector<fs::path> parent_suffixes;
+};
 
-    std::string line;
-    while (std::getline(stream, line)) {
+inline void record_literal_operand(
+    IncludeSearchUse& use,
+    const std::string_view line,
+    std::size_t position) {
+    while (position < line.size()
+        && (line[position] == ' ' || line[position] == '\t')) {
+        ++position;
+    }
+    if (position >= line.size()) {
+        use.any_search = true;
+        use.may_search_local = true;
+        return;
+    }
+
+    const char opener = line[position];
+    if (opener != '<' && opener != '"') {
+        // Macro-expanded include / __has_include operand. Its eventual form may
+        // be quoted, so preserve local-search freshness conservatively.
+        use.any_search = true;
+        use.may_search_local = true;
+        return;
+    }
+
+    use.any_search = true;
+    if (opener == '"') use.may_search_local = true;
+    const char closer = opener == '<' ? '>' : '"';
+    const std::size_t end = line.find(closer, position + 1u);
+    if (end == std::string_view::npos) return;
+
+    const fs::path operand = utf8_path(line.substr(position + 1u, end - position - 1u));
+    const fs::path parent = operand.parent_path();
+    if (!parent.empty()) append_unique(use.parent_suffixes, parent);
+}
+
+// Cold-path inspection distinguishes files that can participate in MSVC's
+// local quoted-include search from pure angle/no-include files. It also records
+// literal parent suffixes for unresolved probes such as __has_include(<x/y.hpp>)
+// so a file appearing inside an already-existing nested directory is visible.
+// Unknown/macro operands opt into local search conservatively.
+[[nodiscard]] inline IncludeSearchUse inspect_include_search_use(const fs::path& file) {
+    std::ifstream stream{file, std::ios::binary};
+    if (!stream) {
+        return IncludeSearchUse{.any_search = true, .may_search_local = true};
+    }
+
+    IncludeSearchUse use;
+    std::string line_storage;
+    while (std::getline(stream, line_storage)) {
+        const std::string_view line{line_storage};
+
+        std::size_t has_include = 0;
+        while ((has_include = line.find("__has_include", has_include)) != std::string_view::npos) {
+            std::size_t position = has_include + std::string_view{"__has_include"}.size();
+            while (position < line.size()
+                && (line[position] == ' ' || line[position] == '\t')) {
+                ++position;
+            }
+            if (position < line.size() && line[position] == '(') ++position;
+            record_literal_operand(use, line, position);
+            has_include = position;
+        }
+
         std::size_t position = 0;
         while (position < line.size()
             && (line[position] == ' ' || line[position] == '\t')) {
@@ -241,7 +297,7 @@ inline void collect_relative_parent_suffix(
         }
         constexpr std::string_view include_token = "include";
         if (position + include_token.size() > line.size()
-            || std::string_view{line}.substr(position, include_token.size()) != include_token) {
+            || line.substr(position, include_token.size()) != include_token) {
             continue;
         }
         position += include_token.size();
@@ -252,15 +308,9 @@ inline void collect_relative_parent_suffix(
             && line[position] != '<') {
             continue;
         }
-        while (position < line.size()
-            && (line[position] == ' ' || line[position] == '\t')) {
-            ++position;
-        }
-        if (position >= line.size()) return true;
-        if (line[position] == '<') continue;
-        return true;
+        record_literal_operand(use, line, position);
     }
-    return false;
+    return use;
 }
 
 } // namespace include_freshness_detail
@@ -290,27 +340,23 @@ inline void collect_relative_parent_suffix(
     return roots;
 }
 
-// Return directory paths whose namespace determines whether a previously
-// resolved include remains the first MSVC search hit. These paths are sealed
-// into the existing compile/module-scan dependency evidence. Warm validation
-// only stats them; it never launches cl.exe or /scanDependencies.
+// Return directory paths whose namespace determines whether include-search
+// resolution can change. These paths are sealed into the existing compile and
+// module-scan freshness evidence. Warm validation only stats filesystem
+// metadata; it never launches cl.exe or /scanDependencies.
 //
 // Quoted includes may search the current header's directory and directories of
-// still-open parent headers before the global /I + INCLUDE roots. /sourceDependencies
-// reports the resolved files but not those include edges/spellings, so every
-// resolved header that can actually issue a quoted/macro include contributes a
-// conservative possible local root. Pure angle-only files do not: their local
-// directory is irrelevant to resolution and may contain unrelated build output.
-// For every include-relative parent suffix we can recover from the resolved
-// dependency graph, the corresponding directory (or deepest existing ancestor)
-// is watched under every possible local/global root. This catches a new shadow
-// file even when its candidate subdirectory already existed and only that nested
-// directory's mtime changes.
+// still-open parent headers before global /I + INCLUDE roots. /sourceDependencies
+// reports resolved files but not include edges/spellings, so every source/header
+// that can issue a quoted or macro include contributes a conservative possible
+// local root. Pure angle/no-include files do not, preventing unrelated artifacts
+// created beside a TU (for example LINK /MAP output) from poisoning the compile
+// warm path.
 //
-// The synthetic PCH creator is the exception to adding its source directory as
-// a local root: that source lives beside MQB-owned outputs and has no textual
-// includes. Its forced PCH header and all transitive includes still contribute
-// real local/global freshness evidence.
+// Literal #include / __has_include operands additionally contribute parent
+// suffixes even when the header was not resolved on the previous build. This
+// covers the important "absent then appears" case, including a file appearing
+// in an already-existing nested candidate directory.
 [[nodiscard]] inline std::vector<std::filesystem::path>
 include_search_freshness_directories(
     const std::span<const std::filesystem::path> resolved_includes,
@@ -323,6 +369,10 @@ include_search_freshness_directories(
 
     const fs::path working = effective_working_directory(working_directory);
     const fs::path absolute_source = absolute_search_path(source, working);
+    const std::vector<fs::path> global_roots = include_search_roots(
+        options,
+        environment,
+        working_directory);
 
     std::vector<fs::path> normalized_dependencies;
     normalized_dependencies.reserve(resolved_includes.size());
@@ -330,27 +380,36 @@ include_search_freshness_directories(
         normalized_dependencies.push_back(absolute_search_path(dependency, working));
     }
 
-    // No resolved textual header means there is no previous include resolution
-    // for directory namespace churn to reroute. Exact global-root identity is
-    // still persisted separately by include_search_roots().
-    if (normalized_dependencies.empty()) return {};
-
-    const std::vector<fs::path> global_roots = include_search_roots(
-        options,
-        environment,
-        working_directory);
-
+    bool any_search_usage = false;
     std::vector<fs::path> local_roots;
+    std::vector<fs::path> relative_parent_suffixes;
+
     const bool synthetic_pch_creator = options.precompiled_header
         && options.precompiled_header->role == PrecompiledHeaderRole::create;
-    if (!synthetic_pch_creator && may_use_local_include_search(absolute_source)) {
+    const IncludeSearchUse source_use = inspect_include_search_use(absolute_source);
+    any_search_usage = any_search_usage || source_use.any_search;
+    if (!synthetic_pch_creator && source_use.may_search_local) {
         append_unique(local_roots, absolute_source.parent_path());
     }
+    for (const auto& suffix : source_use.parent_suffixes) {
+        append_unique(relative_parent_suffixes, suffix);
+    }
+
     for (const auto& dependency : normalized_dependencies) {
-        if (may_use_local_include_search(dependency)) {
+        const IncludeSearchUse dependency_use = inspect_include_search_use(dependency);
+        any_search_usage = any_search_usage || dependency_use.any_search;
+        if (dependency_use.may_search_local) {
             append_unique(local_roots, dependency.parent_path());
         }
+        for (const auto& suffix : dependency_use.parent_suffixes) {
+            append_unique(relative_parent_suffixes, suffix);
+        }
     }
+
+    // A successful TU with no textual include search (and no __has_include)
+    // cannot be rerouted by directory namespace churn. Exact global-root identity
+    // is still stored separately so ambient INCLUDE replacement remains visible.
+    if (!any_search_usage && normalized_dependencies.empty()) return {};
 
     std::vector<fs::path> watched;
     for (const auto& root : local_roots) {
@@ -360,7 +419,6 @@ include_search_freshness_directories(
         append_unique(watched, deepest_existing_directory(root));
     }
 
-    std::vector<fs::path> relative_parent_suffixes;
     for (const auto& dependency : normalized_dependencies) {
         for (const auto& root : local_roots) {
             collect_relative_parent_suffix(relative_parent_suffixes, dependency, root);
