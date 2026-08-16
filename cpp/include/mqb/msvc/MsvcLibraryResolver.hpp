@@ -47,6 +47,24 @@ public:
         std::span<const std::string> libraries,
         std::span<const std::filesystem::path> library_directories,
         const std::filesystem::path& working_directory = {});
+
+    // Refresh full library paths previously observed from LINK /VERBOSE:LIB.
+    // The link-cache file is written only after LINK's observation has been
+    // sealed. If no search directory changed after that seal time, the cached
+    // absolute paths are already authoritative and basename search is skipped.
+    // Once any -L / working-directory / LIB search root changes, libraries that
+    // came from those roots are re-resolved by basename so a newly higher-
+    // priority same-name library is visible before LINK runs again. Paths outside
+    // those roots are absolute directive inputs and keep their exact identity.
+    // Non-library paths are ignored, allowing callers to pass mixed cached
+    // file-input evidence without duplicating library-search policy.
+    [[nodiscard]] static std::expected<ResolvedLibraries, LibraryResolutionError>
+    refresh_observed(
+        const MsvcToolchain& toolchain,
+        std::span<const std::filesystem::path> observed_inputs,
+        std::span<const std::filesystem::path> library_directories,
+        const std::filesystem::path& working_directory,
+        const std::filesystem::path& observation_seal_file);
 };
 
 } // namespace mqb::msvc

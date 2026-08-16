@@ -37,6 +37,13 @@ namespace fs = std::filesystem;
     return fs::path{bytes};
 }
 
+[[nodiscard]] std::string path_to_utf8(const fs::path& path) {
+    const auto bytes = path.generic_u8string();
+    return std::string{
+        reinterpret_cast<const char*>(bytes.data()),
+        bytes.size()};
+}
+
 [[nodiscard]] bool ascii_iequals(
     const std::string_view left,
     const std::string_view right) {
@@ -51,6 +58,36 @@ namespace fs = std::filesystem;
         }
     }
     return true;
+}
+
+[[nodiscard]] std::string windows_path_key(const fs::path& path) {
+    std::string value = path.lexically_normal().generic_string();
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](const unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    return value;
+}
+
+[[nodiscard]] bool same_windows_path(const fs::path& left, const fs::path& right) {
+    return windows_path_key(left) == windows_path_key(right);
+}
+
+[[nodiscard]] bool contains_windows_path(
+    const std::vector<fs::path>& paths,
+    const fs::path& expected) {
+    return std::any_of(paths.begin(), paths.end(), [&](const fs::path& path) {
+        return same_windows_path(path, expected);
+    });
+}
+
+void append_unique_path(std::vector<fs::path>& paths, const fs::path& path) {
+    if (!contains_windows_path(paths, path)) {
+        paths.push_back(path.lexically_normal());
+    }
 }
 
 [[nodiscard]] std::string_view environment_value(
@@ -128,9 +165,50 @@ void add_search_directory(
         return;
     }
     const fs::path normalized = make_absolute(working_directory, directory);
-    if (std::find(directories.begin(), directories.end(), normalized) == directories.end()) {
+    if (!contains_windows_path(directories, normalized)) {
         directories.push_back(normalized);
     }
+}
+
+[[nodiscard]] std::vector<fs::path> search_directories_for(
+    const MsvcToolchain& toolchain,
+    const std::span<const fs::path> library_directories,
+    const fs::path& working_directory) {
+    std::vector<fs::path> search_directories;
+    search_directories.reserve(library_directories.size() + 8);
+    for (const auto& directory : library_directories) {
+        add_search_directory(search_directories, working_directory, directory);
+    }
+    add_search_directory(search_directories, working_directory, working_directory);
+    for (const auto& directory : split_library_path(environment_value(toolchain, "LIB"))) {
+        add_search_directory(search_directories, working_directory, directory);
+    }
+    return search_directories;
+}
+
+[[nodiscard]] bool search_roots_changed_since(
+    const std::vector<fs::path>& search_directories,
+    const fs::path& observation_seal_file) {
+    if (observation_seal_file.empty()) {
+        return true;
+    }
+
+    std::error_code error_code;
+    const auto sealed = fs::last_write_time(observation_seal_file, error_code);
+    if (error_code) {
+        return true;
+    }
+
+    for (const auto& directory : search_directories) {
+        error_code.clear();
+        const auto modified = fs::last_write_time(directory, error_code);
+        // Missing/inaccessible search roots need the conservative path. A root
+        // can become available later and introduce a higher-priority library.
+        if (error_code || modified > sealed) {
+            return true;
+        }
+    }
+    return false;
 }
 
 [[nodiscard]] bool regular_file(const fs::path& path) {
@@ -146,6 +224,10 @@ void add_search_directory(
     return library;
 }
 
+[[nodiscard]] bool library_path(const fs::path& path) {
+    return ascii_iequals(path_to_utf8(path.extension()), ".lib");
+}
+
 [[nodiscard]] std::expected<ResolvedLibraries, LibraryResolutionError>
 resolve_requests(
     const MsvcToolchain& toolchain,
@@ -158,15 +240,10 @@ resolve_requests(
         return std::unexpected(working_directory.error());
     }
 
-    std::vector<fs::path> search_directories;
-    search_directories.reserve(library_directories.size() + 8);
-    for (const auto& directory : library_directories) {
-        add_search_directory(search_directories, *working_directory, directory);
-    }
-    add_search_directory(search_directories, *working_directory, *working_directory);
-    for (const auto& directory : split_library_path(environment_value(toolchain, "LIB"))) {
-        add_search_directory(search_directories, *working_directory, directory);
-    }
+    const auto search_directories = search_directories_for(
+        toolchain,
+        library_directories,
+        *working_directory);
 
     ResolvedLibraries result;
     result.files.reserve(libraries.size());
@@ -245,6 +322,53 @@ MsvcLibraryResolver::resolve_available(
         library_directories,
         requested_working_directory,
         false);
+}
+
+std::expected<ResolvedLibraries, LibraryResolutionError>
+MsvcLibraryResolver::refresh_observed(
+    const MsvcToolchain& toolchain,
+    const std::span<const fs::path> observed_inputs,
+    const std::span<const fs::path> library_directories,
+    const fs::path& requested_working_directory,
+    const fs::path& observation_seal_file) {
+    auto working_directory = resolve_working_directory(requested_working_directory);
+    if (!working_directory) {
+        return std::unexpected(working_directory.error());
+    }
+    const auto search_directories = search_directories_for(
+        toolchain,
+        library_directories,
+        *working_directory);
+    const bool reroute = search_roots_changed_since(
+        search_directories,
+        observation_seal_file);
+
+    ResolvedLibraries result;
+    result.files.reserve(observed_inputs.size());
+    for (const auto& observed_input : observed_inputs) {
+        if (!library_path(observed_input)) {
+            continue;
+        }
+
+        fs::path current = make_absolute(*working_directory, observed_input);
+        if (reroute && contains_windows_path(search_directories, current.parent_path())) {
+            const std::vector<std::string> basename{path_to_utf8(current.filename())};
+            auto rerouted = resolve_requests(
+                toolchain,
+                basename,
+                library_directories,
+                *working_directory,
+                false);
+            if (!rerouted) {
+                return std::unexpected(rerouted.error());
+            }
+            if (!rerouted->files.empty()) {
+                current = rerouted->files.front();
+            }
+        }
+        append_unique_path(result.files, current);
+    }
+    return result;
 }
 
 } // namespace mqb::msvc

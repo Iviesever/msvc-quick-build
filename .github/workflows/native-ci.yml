@@ -142,6 +142,14 @@ jobs:
             -RepoRoot $PWD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify transitive default-library freshness
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/verify_transitive_default_library_freshness.ps1') `
+            -MqbPath (Join-Path $PWD 'native-out/debug/mqb.exe') `
+            -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify linker side-output repair
         shell: pwsh
         run: |
