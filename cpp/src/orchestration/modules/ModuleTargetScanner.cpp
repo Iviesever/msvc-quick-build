@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "mqb/core/CompileCacheFile.hpp"
 #include "mqb/core/FileSnapshot.hpp"
 #include "mqb/modules/P1689.hpp"
+#include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/orchestration/BoundedWorkScheduler.hpp"
 
 namespace mqb::orchestration::detail {
@@ -68,6 +70,24 @@ namespace fs = std::filesystem;
     return snapshot_path(path, false);
 }
 
+[[nodiscard]] bool same_path(const fs::path& left, const fs::path& right) {
+    if (left == right || left.lexically_normal() == right.lexically_normal()) {
+        return true;
+    }
+    std::error_code error_code;
+    return fs::equivalent(left, right, error_code) && !error_code;
+}
+
+[[nodiscard]] bool same_ordered_paths(
+    const std::span<const fs::path> left,
+    const std::span<const fs::path> right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (!same_path(left[index], right[index])) return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool has_include_search_freshness_marker(
     const ModuleScanEvidence& evidence) {
     for (const auto& dependency : evidence.dependencies) {
@@ -92,17 +112,27 @@ namespace fs = std::filesystem;
 [[nodiscard]] std::optional<msvc::ModuleScanResult> try_reuse_scan(
     const ModuleCompileSourceRequest& source,
     const CompilerOptions& options,
+    const std::optional<fs::path>& working_directory,
     msvc::MsvcModuleDependencyScanner& scanner) {
     auto loaded = CompileCacheFile::load(source.artifacts.compile_cache);
     if (!loaded || !*loaded || !(**loaded).module_scan) {
         return std::nullopt;
     }
-    const auto& evidence = *(**loaded).module_scan;
+    const auto& entry = **loaded;
+    const auto& evidence = *entry.module_scan;
 
     // Pre-closure scan evidence contains only file snapshots and therefore
     // cannot prove that a higher-priority include namespace stayed unchanged.
     // Rescan once after upgrading and reseal directory-backed evidence.
     if (!has_include_search_freshness_marker(evidence)) {
+        return std::nullopt;
+    }
+
+    const auto current_roots = msvc::include_search_roots(
+        options,
+        scanner.toolchain().environment,
+        working_directory);
+    if (!same_ordered_paths(entry.include_search_roots, current_roots)) {
         return std::nullopt;
     }
 
@@ -154,7 +184,14 @@ scan_module_source(
     const CompilerOptions& options,
     const fs::path& working_directory,
     msvc::MsvcModuleDependencyScanner& scanner) {
-    if (auto reused = try_reuse_scan(source, options, scanner)) {
+    const auto effective_working_directory = working_directory_for(
+        working_directory,
+        source.source);
+    if (auto reused = try_reuse_scan(
+            source,
+            options,
+            effective_working_directory,
+            scanner)) {
         return std::move(*reused);
     }
 
@@ -163,7 +200,7 @@ scan_module_source(
         .output_file = source.artifacts.module_dependencies,
         .options = options,
         .kind = source.kind,
-        .working_directory = working_directory_for(working_directory, source.source),
+        .working_directory = effective_working_directory,
     });
 }
 
