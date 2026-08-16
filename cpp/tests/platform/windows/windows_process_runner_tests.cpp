@@ -1,4 +1,5 @@
 #include <barrier>
+#include <cstdlib>
 #include <filesystem>
 #include <future>
 #include <iostream>
@@ -73,6 +74,23 @@ int main(const int argc, char** argv) {
         expect(contains(result->stderr_text, "STDERR-MARKER"),
                "stderr should be captured separately from stdout");
     }
+
+    expect(_putenv_s("MQB_TEST_ENV", "parent-only") == 0,
+           "test should be able to seed an inherited parent environment variable");
+    mqb::process::ProcessSpec removed_environment = spec;
+    removed_environment.arguments = {"removed"};
+    removed_environment.environment = {
+        mqb::process::EnvironmentVariable{"MQB_TEST_ENV", {}, true},
+    };
+    const auto removed_result = runner.run(removed_environment);
+    expect(removed_result.has_value(),
+           "process should launch when an inherited environment variable is removed");
+    if (removed_result) {
+        expect(contains(removed_result->stdout_text, "ENV=[<missing>]"),
+               "remove=true must make an inherited variable absent, not merely empty");
+    }
+    expect(_putenv_s("MQB_TEST_ENV", "") == 0,
+           "test should clean up the seeded parent environment variable");
 
     mqb::process::ProcessSpec isolated_environment = spec;
     isolated_environment.arguments = {"isolated"};
