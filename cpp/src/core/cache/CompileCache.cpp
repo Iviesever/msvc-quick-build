@@ -5,13 +5,16 @@
 #include <optional>
 #include <span>
 
+#include "mqb/platform/windows/PathIdentity.hpp"
+
 namespace mqb {
 namespace {
 
 [[nodiscard]] bool same_path(
     const std::filesystem::path& left,
     const std::filesystem::path& right) {
-    return left == right || left.lexically_normal() == right.lexically_normal();
+    return platform::windows::path_identity_key(left)
+        == platform::windows::path_identity_key(right);
 }
 
 [[nodiscard]] bool same_toolchain(
