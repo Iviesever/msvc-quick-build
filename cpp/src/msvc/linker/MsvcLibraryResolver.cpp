@@ -186,6 +186,31 @@ void add_search_directory(
     return search_directories;
 }
 
+[[nodiscard]] bool search_roots_changed_since(
+    const std::vector<fs::path>& search_directories,
+    const fs::path& observation_seal_file) {
+    if (observation_seal_file.empty()) {
+        return true;
+    }
+
+    std::error_code error_code;
+    const auto sealed = fs::last_write_time(observation_seal_file, error_code);
+    if (error_code) {
+        return true;
+    }
+
+    for (const auto& directory : search_directories) {
+        error_code.clear();
+        const auto modified = fs::last_write_time(directory, error_code);
+        // Missing/inaccessible search roots need the conservative path. A root
+        // can become available later and introduce a higher-priority library.
+        if (error_code || modified > sealed) {
+            return true;
+        }
+    }
+    return false;
+}
+
 [[nodiscard]] bool regular_file(const fs::path& path) {
     std::error_code error_code;
     return fs::is_regular_file(path, error_code) && !error_code;
@@ -304,7 +329,8 @@ MsvcLibraryResolver::refresh_observed(
     const MsvcToolchain& toolchain,
     const std::span<const fs::path> observed_inputs,
     const std::span<const fs::path> library_directories,
-    const fs::path& requested_working_directory) {
+    const fs::path& requested_working_directory,
+    const fs::path& observation_seal_file) {
     auto working_directory = resolve_working_directory(requested_working_directory);
     if (!working_directory) {
         return std::unexpected(working_directory.error());
@@ -313,6 +339,9 @@ MsvcLibraryResolver::refresh_observed(
         toolchain,
         library_directories,
         *working_directory);
+    const bool reroute = search_roots_changed_since(
+        search_directories,
+        observation_seal_file);
 
     ResolvedLibraries result;
     result.files.reserve(observed_inputs.size());
@@ -322,7 +351,7 @@ MsvcLibraryResolver::refresh_observed(
         }
 
         fs::path current = make_absolute(*working_directory, observed_input);
-        if (contains_windows_path(search_directories, current.parent_path())) {
+        if (reroute && contains_windows_path(search_directories, current.parent_path())) {
             const std::vector<std::string> basename{path_to_utf8(current.filename())};
             auto rerouted = resolve_requests(
                 toolchain,
