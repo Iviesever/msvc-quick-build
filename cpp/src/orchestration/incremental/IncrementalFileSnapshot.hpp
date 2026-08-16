@@ -35,7 +35,9 @@ struct IncrementalFileSnapshotResult {
     };
 }
 
-[[nodiscard]] inline IncrementalFileSnapshotResult snapshot_regular_file(const fs::path& path) {
+[[nodiscard]] inline IncrementalFileSnapshotResult snapshot_path(
+    const fs::path& path,
+    const bool require_regular_file) {
     if (path.empty()) {
         return missing_file_snapshot(path);
     }
@@ -57,7 +59,10 @@ struct IncrementalFileSnapshotResult {
             },
         };
     }
-    if (!fs::is_regular_file(status)) {
+    const bool supported_type = require_regular_file
+        ? fs::is_regular_file(status)
+        : (fs::is_regular_file(status) || fs::is_directory(status));
+    if (!supported_type) {
         return missing_file_snapshot(path);
     }
 
@@ -86,6 +91,15 @@ struct IncrementalFileSnapshotResult {
         },
         .failure = std::nullopt,
     };
+}
+
+[[nodiscard]] inline IncrementalFileSnapshotResult snapshot_regular_file(const fs::path& path) {
+    return snapshot_path(path, true);
+}
+
+[[nodiscard]] inline IncrementalFileSnapshotResult snapshot_file_or_directory(
+    const fs::path& path) {
+    return snapshot_path(path, false);
 }
 
 } // namespace mqb::orchestration::detail
