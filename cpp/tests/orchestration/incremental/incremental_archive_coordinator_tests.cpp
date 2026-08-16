@@ -56,10 +56,12 @@ void write_text(const fs::path& path, const std::string_view text) {
 class LibrarianLikeRunner final : public mqb::process::ProcessRunner {
 public:
     int calls{};
+    mqb::process::ProcessSpec last_spec;
 
     std::expected<mqb::process::ProcessResult, mqb::process::ProcessError>
     run(const mqb::process::ProcessSpec& spec) override {
         ++calls;
+        last_spec = spec;
         const auto output_argument = std::find_if(
             spec.arguments.begin(),
             spec.arguments.end(),
@@ -99,6 +101,13 @@ public:
         });
 }
 
+[[nodiscard]] bool has_argument(
+    const mqb::process::ProcessSpec& spec,
+    const std::string_view expected) {
+    return std::find(spec.arguments.begin(), spec.arguments.end(), expected)
+        != spec.arguments.end();
+}
+
 } // namespace
 
 int main() {
@@ -136,6 +145,7 @@ int main() {
         .output = output,
         .cache_file = cache_file,
         .working_directory = fixture.path(),
+        .architecture = mqb::Architecture::x64,
         .link_time_code_generation = false,
         .force_archive = false,
     };
@@ -163,6 +173,53 @@ int main() {
         expect(warm->validation.reusable(), "unchanged warm archive cache should be reusable");
     }
     expect(runner.calls == 1, "warm archive cache hit should not invoke lib.exe again");
+
+    auto native_request = request;
+    native_request.output = fixture.path() / "lib" / "native.lib";
+    native_request.cache_file = fixture.path() / "cache" / "native.archivecache";
+    native_request.additional_arguments = {"/EXPORT:mqb_export", "/WX"};
+
+    const auto native_cold = coordinator.run(native_request);
+    expect(native_cold.has_value() && native_cold->archived,
+           "cold native librarian policy should execute successfully");
+    expect(runner.calls == 2,
+           "cold native librarian policy should invoke lib.exe exactly once");
+    expect(has_argument(runner.last_spec, "/EXPORT:mqb_export"),
+           "Class C librarian /EXPORT should reach the real archive invocation");
+    expect(has_argument(runner.last_spec, "/WX"),
+           "Class C librarian /WX should reach the real archive invocation");
+    expect(has_argument(runner.last_spec, "/MACHINE:X64"),
+           "typed archive architecture should reach lib.exe as /MACHINE:X64");
+
+    const auto native_warm = coordinator.run(native_request);
+    expect(native_warm.has_value() && !native_warm->archived,
+           "unchanged native librarian policy should reuse the archive cache");
+    expect(runner.calls == 2,
+           "warm native librarian policy should not invoke lib.exe again");
+
+    auto changed_native_request = native_request;
+    changed_native_request.additional_arguments = {"/EXPORT:mqb_export", "/WX:NO"};
+    const auto native_changed = coordinator.run(changed_native_request);
+    expect(native_changed.has_value() && native_changed->archived,
+           "changing only librarian argv must invalidate archive freshness");
+    if (native_changed) {
+        expect(has_reason(native_changed->validation, mqb::BuildReason::archive_recipe_changed),
+               "librarian argv mutation should report archive_recipe_changed");
+    }
+    expect(runner.calls == 3,
+           "librarian argv mutation should cause exactly one additional lib.exe invocation");
+
+    auto owned_output_request = native_request;
+    owned_output_request.output = fixture.path() / "lib" / "owned-output.lib";
+    owned_output_request.cache_file = fixture.path() / "cache" / "owned-output.archivecache";
+    owned_output_request.additional_arguments = {"/OUT:hijack.lib"};
+    const auto owned_output = coordinator.run(owned_output_request);
+    expect(!owned_output
+               && owned_output.error().code
+                   == mqb::orchestration::IncrementalArchiveErrorCode::librarian_parameter_invalid,
+           "Class A /OUT should fail at archive parameter routing before lib.exe");
+    expect(runner.calls == 3,
+           "rejected Class A librarian policy must not launch lib.exe");
 
     std::error_code snapshot_error;
     const auto output_time = fs::last_write_time(output, snapshot_error);
@@ -193,7 +250,7 @@ int main() {
                    mqb::orchestration::IncrementalArchiveWarningCode::file_snapshot_failed),
                "non-regular object paths should be ordinary missing snapshots, not I/O warnings");
     }
-    expect(runner.calls == 2,
+    expect(runner.calls == 4,
            "directory object should force exactly one conservative rearchive");
     expect(fs::is_regular_file(output),
            "directory object regression should still leave a valid archive output");
