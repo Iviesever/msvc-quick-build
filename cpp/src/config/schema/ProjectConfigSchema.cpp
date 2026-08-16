@@ -241,7 +241,7 @@ using JsonValue = json::Value;
         {
             "configuration", "architecture", "standard", "runtime", "ltcg",
             "subsystem", "type", "entry", "pch", "output", "defines", "include_dirs",
-            "library_dirs", "libraries", "compiler_args", "linker_args",
+            "library_dirs", "libraries", "compiler_args", "linker_args", "librarian_args",
         },
         "build");
     if (!known) return std::unexpected(known.error());
@@ -382,6 +382,12 @@ using JsonValue = json::Value;
         auto values = require_strings(file, it->second, "build.linker_args");
         if (!values) return std::unexpected(values.error());
         out.linker_arguments = std::move(*values);
+    }
+
+    if (auto it = (**object).find("librarian_args"); it != (**object).end()) {
+        auto values = require_strings(file, it->second, "build.librarian_args");
+        if (!values) return std::unexpected(values.error());
+        out.librarian_arguments = std::move(*values);
     }
 
     return {};
