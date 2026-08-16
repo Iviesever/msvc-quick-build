@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -87,6 +88,12 @@ public:
         / ("mqb-vs-toolchain-cache-test-"
            + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
            + ".mqbcache");
+}
+
+[[nodiscard]] fs::path unique_cache_root() {
+    return fs::temp_directory_path()
+        / ("mqb-vs-toolchain-cache-root-test-"
+           + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
 }
 
 [[nodiscard]] bool poison_cached_windows_sdk_version(
@@ -310,6 +317,50 @@ int main() {
         _putenv_s(secret_name, "");
     }
     fs::remove(cache_file, cleanup_error);
+
+    // Even a standalone locator call that explicitly supplies no cache path must
+    // never fall back to user-global MQB state. The cache authority itself owns
+    // this invariant: nullopt resolves below the current working directory's
+    // .mqb tree with an architecture-specific filename.
+    const fs::path default_cache_root = unique_cache_root();
+    const fs::path decoy_local_app_data = default_cache_root / "decoy-local-app-data";
+    fs::create_directories(decoy_local_app_data, cleanup_error);
+    const fs::path original_working_directory = fs::current_path();
+    const char* inherited_local_app_data = std::getenv("LOCALAPPDATA");
+    const bool had_local_app_data = inherited_local_app_data != nullptr;
+    const std::string original_local_app_data = had_local_app_data
+        ? std::string{inherited_local_app_data}
+        : std::string{};
+    _putenv_s("LOCALAPPDATA", decoy_local_app_data.string().c_str());
+    fs::current_path(default_cache_root, cleanup_error);
+    expect(!cleanup_error, "standalone cache test should enter its isolated working directory");
+    if (!cleanup_error) {
+        mqb::msvc::DiscoveryOptions default_cache_options;
+        default_cache_options.preference = mqb::msvc::ToolchainPreference::visual_studio;
+        default_cache_options.target_architecture = mqb::Architecture::x64;
+        default_cache_options.host_architecture = mqb::Architecture::x64;
+        default_cache_options.cache_file = std::nullopt;
+        const auto default_cache_result = locator.discover(default_cache_options);
+        expect(default_cache_result.has_value(),
+               "standalone Visual Studio discovery should succeed with the implicit project-local cache");
+        expect(
+            fs::is_regular_file(
+                default_cache_root / ".mqb/cache/toolchain/msvc-vs-x64-x64.mqbcache"),
+            "nullopt Visual Studio cache path should resolve under the working directory .mqb tree");
+        expect(
+            !fs::exists(decoy_local_app_data / "MQB"),
+            "nullopt Visual Studio cache path must not write legacy LOCALAPPDATA/MQB state");
+    }
+    cleanup_error.clear();
+    fs::current_path(original_working_directory, cleanup_error);
+    expect(!cleanup_error, "standalone cache test should restore its original working directory");
+    if (had_local_app_data) {
+        _putenv_s("LOCALAPPDATA", original_local_app_data.c_str());
+    } else {
+        _putenv_s("LOCALAPPDATA", "");
+    }
+    cleanup_error.clear();
+    fs::remove_all(default_cache_root, cleanup_error);
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
