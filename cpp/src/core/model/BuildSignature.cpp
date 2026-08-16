@@ -10,6 +10,7 @@
 
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb {
 namespace {
@@ -38,11 +39,8 @@ public:
     }
 
     void add_path(const std::filesystem::path& value) noexcept {
-        const auto normalized = value.lexically_normal().generic_u8string();
-        add_u64(static_cast<std::uint64_t>(normalized.size()));
-        for (const char8_t byte : normalized) {
-            add_byte(static_cast<std::uint8_t>(byte));
-        }
+        const std::string identity = platform::windows::path_identity_key(value);
+        add_string(identity);
     }
 
     template <typename Enum>
