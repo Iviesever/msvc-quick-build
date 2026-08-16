@@ -287,7 +287,6 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
         .outputs = request.unit.outputs,
         .dependencies = std::move(cache_dependencies),
         .include_search_roots = search_roots,
-        .include_search_freshness_sealed = true,
     };
 
     return CompileExecutionResult{
