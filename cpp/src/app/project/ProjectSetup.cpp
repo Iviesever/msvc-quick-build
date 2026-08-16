@@ -51,8 +51,7 @@ template <typename T>
 }
 
 [[nodiscard]] bool is_native_librarian_boundary(const std::string_view argument) noexcept {
-    return argument == "/lib" || argument == "-lib"
-        || argument == "/LIB" || argument == "-LIB";
+    return argument == "/lib" || argument == "/LIB";
 }
 
 [[nodiscard]] std::expected<void, std::string> extract_native_librarian_tail(
