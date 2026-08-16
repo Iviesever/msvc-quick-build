@@ -91,6 +91,15 @@ inline void append_unique(std::vector<fs::path>& paths, fs::path path) {
     }
 }
 
+// Compiler search-root identity is an ordered argv/environment fact, not a
+// filesystem-equivalence set. Preserve each normalized spelling (including
+// duplicates) exactly as MSVC sees it. Besides being more faithful, this keeps
+// the warm path free of equivalent()/status syscalls while constructing roots.
+inline void append_search_root(std::vector<fs::path>& roots, fs::path path) {
+    if (path.empty()) return;
+    roots.push_back(path.lexically_normal());
+}
+
 [[nodiscard]] inline fs::path deepest_existing_directory(fs::path candidate) {
     candidate = candidate.lexically_normal();
     while (!candidate.empty()) {
@@ -174,7 +183,7 @@ inline void append_raw_include_roots(
         }
 
         if (value && !value->empty()) {
-            append_unique(
+            append_search_root(
                 roots,
                 absolute_search_path(utf8_path(*value), working_directory));
         }
@@ -202,7 +211,7 @@ inline void append_environment_include_roots(
                 variable.value.data() + begin,
                 (end == std::string::npos ? variable.value.size() : end) - begin};
             if (!part.empty()) {
-                append_unique(
+                append_search_root(
                     roots,
                     absolute_search_path(utf8_path(part), working_directory));
             }
@@ -349,11 +358,12 @@ inline void record_literal_operand(
 
 } // namespace include_freshness_detail
 
-// Return the ordered compiler-global include roots. Typed -I roots are emitted
-// before native passthrough arguments, matching CompilerArgumentBuilder; the
-// vcvars INCLUDE list follows them unless /X disables standard include paths.
-// The exact ordered list is persisted in the compile cache so environment-root
-// replacement/removal is identity, not merely directory timestamp evidence.
+// Return the exact ordered compiler-global include roots. Typed -I roots are
+// emitted before native passthrough arguments, matching CompilerArgumentBuilder;
+// the vcvars INCLUDE list follows them unless /X disables standard include paths.
+// Ordered normalized spellings (including duplicates) are persisted in the
+// compile cache so environment-root replacement/removal is identity without any
+// filesystem lookup on the warm path.
 [[nodiscard]] inline std::vector<std::filesystem::path> include_search_roots(
     const CompilerOptions& options,
     const std::span<const process::EnvironmentVariable> environment,
@@ -363,7 +373,7 @@ inline void record_literal_operand(
     const std::filesystem::path working = effective_working_directory(working_directory);
     std::vector<std::filesystem::path> roots;
     for (const auto& include_directory : options.include_directories) {
-        append_unique(
+        append_search_root(
             roots,
             absolute_search_path(include_directory, working));
     }
@@ -403,10 +413,6 @@ include_search_freshness_directories(
 
     const fs::path working = effective_working_directory(working_directory);
     const fs::path absolute_source = absolute_search_path(source, working);
-    const std::vector<fs::path> global_roots = include_search_roots(
-        options,
-        environment,
-        working_directory);
 
     std::vector<fs::path> normalized_dependencies;
     normalized_dependencies.reserve(resolved_includes.size());
@@ -444,6 +450,14 @@ include_search_freshness_directories(
     // cannot be rerouted by directory namespace churn. Exact global-root identity
     // is still stored separately so ambient INCLUDE replacement remains visible.
     if (!any_search_usage && normalized_dependencies.empty()) return {};
+
+    // Build global root identity only after the no-search fast exit. The compile
+    // executor calls this function after a successful compile; source files with
+    // no include lookup therefore avoid even lexical vcvars INCLUDE processing.
+    const std::vector<fs::path> global_roots = include_search_roots(
+        options,
+        environment,
+        working_directory);
 
     std::vector<fs::path> watched;
     for (const auto& root : local_roots) {
