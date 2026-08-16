@@ -116,6 +116,11 @@ private:
             fs::path{"include/a.hpp"},
             fs::path{"include/nested/b.hpp"},
         },
+        .include_search_roots = {
+            fs::path{"include/first"},
+            fs::path{"include/second"},
+            fs::path{"toolchain/include"},
+        },
     };
 }
 
@@ -151,6 +156,10 @@ private:
             options),
         .outputs = unit.outputs,
         .dependencies = {fs::path{"include/shared.hpp"}},
+        .include_search_roots = {
+            fs::path{"include"},
+            fs::path{"toolchain/include"},
+        },
     };
     if (!ifc_only) {
         entry.module_scan = mqb::ModuleScanEvidence{
@@ -189,6 +198,14 @@ void write_bytes(
 void write_all(const fs::path& file, const std::vector<char>& bytes) {
     std::ofstream stream{file, std::ios::binary | std::ios::trunc};
     stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
+void set_format_version(std::vector<char>& bytes, const std::uint32_t version) {
+    if (bytes.size() < 12) return;
+    bytes[8] = static_cast<char>(version & 0xffu);
+    bytes[9] = static_cast<char>((version >> 8u) & 0xffu);
+    bytes[10] = static_cast<char>((version >> 16u) & 0xffu);
+    bytes[11] = static_cast<char>((version >> 24u) & 0xffu);
 }
 
 void expect_round_trip(
@@ -234,6 +251,9 @@ void expect_round_trip(
     expect(
         entry.dependencies == original.dependencies,
         std::string{description} + " dependencies should round-trip");
+    expect(
+        entry.include_search_roots == original.include_search_roots,
+        std::string{description} + " ordered include-search roots should round-trip");
     expect(
         entry.module_scan.has_value() == original.module_scan.has_value(),
         std::string{description} + " scan-evidence presence should round-trip");
@@ -293,29 +313,49 @@ int main() {
         make_module_entry(true),
         "IFC-only cache entry");
 
-    // A v3 entry without scan evidence is exactly the v2 payload plus a zero
-    // presence marker. Remove the marker and rewrite the version to prove old
-    // v2 cache files remain readable and simply lack the new optimization.
+    // Cache v4 inserts an ordered include-root vector between dependencies and
+    // the v3 scan-evidence marker. Build v2/v3 fixtures from a v4 entry with an
+    // empty root vector so removing the final four-byte root count recreates
+    // the old payload exactly (plus/removing the v3 presence marker).
+    auto legacy = original;
+    legacy.include_search_roots.clear();
+    legacy.module_scan.reset();
+
+    const fs::path v3_file = fixture.path() / "legacy-v3.mqbcache";
+    expect(
+        mqb::CompileCacheFile::save(v3_file, legacy).has_value(),
+        "v3 fixture should start as v4");
+    auto v3_bytes = read_all(v3_file);
+    expect(v3_bytes.size() > 16, "v3 fixture should contain root count and scan marker");
+    if (v3_bytes.size() > 16) {
+        // The v4 tail for zero roots/no scan is: root_count(u32=0), present(u8=0).
+        v3_bytes.erase(v3_bytes.end() - 5, v3_bytes.end() - 1);
+        set_format_version(v3_bytes, 3);
+        write_all(v3_file, v3_bytes);
+        const auto v3 = mqb::CompileCacheFile::load(v3_file);
+        expect(v3 && *v3, "legacy v3 should load");
+        if (v3 && *v3) {
+            expect((**v3).include_search_roots.empty(), "legacy v3 should have no root identity evidence");
+            expect(!(**v3).module_scan, "legacy v3 no-scan fixture should remain no-scan");
+        }
+    }
+
     const fs::path v2_file = fixture.path() / "legacy-v2.mqbcache";
     expect(
-        mqb::CompileCacheFile::save(v2_file, original).has_value(),
-        "v2 fixture should start as v3");
+        mqb::CompileCacheFile::save(v2_file, legacy).has_value(),
+        "v2 fixture should start as v4");
     auto v2_bytes = read_all(v2_file);
-    expect(
-        v2_bytes.size() > 13,
-        "v2 fixture should contain payload and presence marker");
-    if (v2_bytes.size() > 13) {
-        v2_bytes[8] = 2;
-        v2_bytes[9] = 0;
-        v2_bytes[10] = 0;
-        v2_bytes[11] = 0;
-        v2_bytes.pop_back();
+    expect(v2_bytes.size() > 16, "v2 fixture should contain root count and scan marker");
+    if (v2_bytes.size() > 16) {
+        v2_bytes.resize(v2_bytes.size() - 5);
+        set_format_version(v2_bytes, 2);
         write_all(v2_file, v2_bytes);
-
         const auto v2 = mqb::CompileCacheFile::load(v2_file);
-        expect(
-            v2 && *v2 && !(**v2).module_scan,
-            "legacy v2 should load without scan evidence");
+        expect(v2 && *v2, "legacy v2 should load");
+        if (v2 && *v2) {
+            expect((**v2).include_search_roots.empty(), "legacy v2 should have no root identity evidence");
+            expect(!(**v2).module_scan, "legacy v2 should load without scan evidence");
+        }
     }
 
     auto empty_outputs = original;
@@ -337,7 +377,7 @@ int main() {
         "replacement should not leave stale metadata");
 
     const fs::path bad_magic = fixture.path() / "bad.mqbcache";
-    write_bytes(bad_magic, {0, 1, 2, 3, 4, 5, 6, 7, 3, 0, 0, 0});
+    write_bytes(bad_magic, {0, 1, 2, 3, 4, 5, 6, 7, 4, 0, 0, 0});
     const auto bad_result = mqb::CompileCacheFile::load(bad_magic);
     expect(!bad_result, "bad magic should fail");
     if (!bad_result) {
@@ -359,7 +399,7 @@ int main() {
     }
 
     const fs::path future = fixture.path() / "future.mqbcache";
-    write_bytes(future, {'M', 'Q', 'B', 'C', 'A', 'C', 'H', 'E', 4, 0, 0, 0});
+    write_bytes(future, {'M', 'Q', 'B', 'C', 'A', 'C', 'H', 'E', 5, 0, 0, 0});
     const auto future_result = mqb::CompileCacheFile::load(future);
     expect(!future_result, "future version should fail");
     if (!future_result) {

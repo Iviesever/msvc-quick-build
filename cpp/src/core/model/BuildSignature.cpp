@@ -151,7 +151,10 @@ BuildSignature BuildSignature::for_compile(
     const ToolchainIdentity& toolchain,
     const CompilerOptions& options) {
     StableHasher hasher;
-    hasher.add_string("mqb.compile.signature.v4");
+    // v5 invalidates pre-include-search-freshness compile cache entries once.
+    // This is the migration marker even when a valid new recipe has no include
+    // roots and therefore no directory namespace evidence to persist.
+    hasher.add_string("mqb.compile.signature.v5");
 
     hasher.add_path(unit.source);
     hasher.add_enum(unit.kind);
@@ -198,7 +201,9 @@ BuildSignature BuildSignature::for_module_scan(
     const ToolchainIdentity& toolchain,
     const CompilerOptions& options) {
     StableHasher hasher;
-    hasher.add_string("mqb.module-scan.signature.v1");
+    // v2 invalidates pre-include-search-freshness P1689 evidence once so the
+    // next successful scan can seal directory namespace snapshots.
+    hasher.add_string("mqb.module-scan.signature.v2");
 
     hasher.add_path(source);
     hasher.add_enum(kind);

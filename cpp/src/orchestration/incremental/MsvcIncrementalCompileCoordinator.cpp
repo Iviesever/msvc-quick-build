@@ -5,6 +5,7 @@
 #include <expected>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "mqb/core/CompileCache.hpp"
 #include "mqb/core/CompileCacheFile.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
+#include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/msvc/MsvcSourceDependenciesReader.hpp"
 
 #include "IncrementalFileSnapshot.hpp"
@@ -52,10 +54,41 @@ void add_reason_once(
     }
 }
 
+[[nodiscard]] bool same_path(
+    const std::filesystem::path& left,
+    const std::filesystem::path& right) {
+    if (left == right || left.lexically_normal() == right.lexically_normal()) {
+        return true;
+    }
+    std::error_code error_code;
+    return std::filesystem::equivalent(left, right, error_code) && !error_code;
+}
+
+[[nodiscard]] bool same_ordered_paths(
+    const std::span<const std::filesystem::path> left,
+    const std::span<const std::filesystem::path> right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (!same_path(left[index], right[index])) return false;
+    }
+    return true;
+}
+
+void add_dependency_once(
+    std::vector<std::filesystem::path>& dependencies,
+    const std::filesystem::path& dependency) {
+    if (dependency.empty()) return;
+    if (std::none_of(dependencies.begin(), dependencies.end(), [&](const auto& existing) {
+            return same_path(existing, dependency);
+        })) {
+        dependencies.push_back(dependency.lexically_normal());
+    }
+}
+
 void seal_module_scan_evidence(
     CompileCacheEntry& cache_entry,
     const IncrementalCompileRequest& request,
-    const ToolchainIdentity& toolchain,
+    const msvc::MsvcToolchain& toolchain,
     std::vector<IncrementalCompileWarning>& warnings) {
     if (!request.module_scan_output) {
         return;
@@ -78,10 +111,21 @@ void seal_module_scan_evidence(
         return;
     }
 
+    std::vector<std::filesystem::path> scan_dependencies = dependencies->includes;
+    const auto include_freshness = msvc::include_search_freshness_directories(
+        dependencies->includes,
+        request.unit.source,
+        request.options,
+        toolchain.environment,
+        request.working_directory);
+    for (const auto& directory : include_freshness) {
+        add_dependency_once(scan_dependencies, directory);
+    }
+
     std::vector<FileSnapshot> include_snapshots;
-    include_snapshots.reserve(dependencies->includes.size());
-    for (const auto& dependency : dependencies->includes) {
-        auto snapshot = detail::snapshot_regular_file(dependency);
+    include_snapshots.reserve(scan_dependencies.size());
+    for (const auto& dependency : scan_dependencies) {
+        auto snapshot = detail::snapshot_file_or_directory(dependency);
         append_snapshot_warning(warnings, dependency, std::move(snapshot.failure));
         if (!snapshot.snapshot.exists) {
             return;
@@ -89,10 +133,10 @@ void seal_module_scan_evidence(
         include_snapshots.push_back(std::move(snapshot.snapshot));
     }
 
-    // A source/header mutation after /scanDependencies but before the compile
-    // completed means the topology artifact is not a trustworthy description
-    // of the successful compile. In that case keep the normal compile cache but
-    // deliberately omit scan evidence so the next build rescans.
+    // A source/header/search-root mutation after /scanDependencies but before
+    // the compile completed means the topology artifact is not a trustworthy
+    // description of the successful compile. In that case keep the normal
+    // compile cache but deliberately omit scan evidence so the next build rescans.
     if (source.snapshot.modified > output.snapshot.modified) {
         return;
     }
@@ -106,7 +150,7 @@ void seal_module_scan_evidence(
         .signature = BuildSignature::for_module_scan(
             request.unit.source,
             request.unit.kind,
-            toolchain,
+            toolchain.identity,
             request.options),
         .source = std::move(source.snapshot),
         .output = std::move(output.snapshot),
@@ -153,7 +197,7 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
     if (cached_entry) {
         dependency_snapshots.reserve(cached_entry->dependencies.size());
         for (const auto& dependency : cached_entry->dependencies) {
-            auto dependency_snapshot = detail::snapshot_regular_file(dependency);
+            auto dependency_snapshot = detail::snapshot_file_or_directory(dependency);
             append_snapshot_warning(
                 result.warnings,
                 dependency,
@@ -170,6 +214,27 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         source_snapshot.snapshot,
         output_snapshots,
         dependency_snapshots);
+
+    const auto current_include_search_roots = msvc::include_search_roots(
+        request.options,
+        toolchain_.environment,
+        request.working_directory);
+
+    // Cache migration is owned by BuildSignature's compile domain. The v5
+    // domain invalidates pre-closure entries exactly once, including recipes
+    // with zero include roots and zero directory freshness evidence. Do not
+    // infer cache generation from whether those evidence vectors are empty.
+
+    // CompilerOptions already identify typed/native /I ordering, but vcvars
+    // INCLUDE is ambient toolchain environment rather than argv. Compare the
+    // exact ordered roots persisted by cache v4 so root replacement/removal is
+    // freshness even when all previously resolved headers still exist.
+    if (cached_entry
+        && !same_ordered_paths(
+            cached_entry->include_search_roots,
+            current_include_search_roots)) {
+        add_reason_once(result.validation.reasons, BuildReason::dependency_changed);
+    }
 
     if (request.force_rebuild) {
         add_reason_once(result.validation.reasons, BuildReason::explicit_rebuild);
@@ -224,7 +289,7 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
     seal_module_scan_evidence(
         executed->cache_entry,
         request,
-        toolchain_.identity,
+        toolchain_,
         result.warnings);
 
     auto saved_cache = CompileCacheFile::save(
