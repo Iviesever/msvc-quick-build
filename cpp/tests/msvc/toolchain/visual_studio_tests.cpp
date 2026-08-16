@@ -88,6 +88,29 @@ public:
            + ".mqbcache");
 }
 
+[[nodiscard]] bool poison_cached_windows_sdk_version(
+    const fs::path& cache_file,
+    std::string cache_text) {
+    constexpr std::string_view marker = "env_name \"WindowsSDKVersion\"";
+    const auto name = cache_text.find(marker);
+    if (name == std::string::npos) return false;
+    const auto value = cache_text.find("env_value ", name + marker.size());
+    if (value == std::string::npos) return false;
+    const auto line_end = cache_text.find('\n', value);
+    if (line_end == std::string::npos) return false;
+    cache_text.replace(value, line_end - value, "env_value \"0.0.0.0\\\\\"");
+
+    std::ofstream stream{cache_file, std::ios::binary | std::ios::trunc};
+    stream << cache_text;
+    stream.flush();
+    return static_cast<bool>(stream);
+}
+
+void restore_cache_text(const fs::path& cache_file, const std::string& cache_text) {
+    std::ofstream stream{cache_file, std::ios::binary | std::ios::trunc};
+    stream << cache_text;
+}
+
 } // namespace
 
 int main() {
@@ -217,6 +240,20 @@ int main() {
                        "effective VS LIB mutation/order must invalidate toolchain identity");
             }
         }
+
+        const bool poisoned = poison_cached_windows_sdk_version(cache_file, cache_text);
+        expect(poisoned,
+               "test should be able to poison only the cached WindowsSDKVersion field");
+        if (poisoned) {
+            RejectingRunner stale_runner;
+            mqb::msvc::MsvcToolchainLocator stale_locator{stale_runner};
+            const auto stale = stale_locator.discover(options);
+            expect(!stale.has_value(),
+                   "stale cached SDK selection should fall back to ordinary discovery");
+            expect(stale_runner.calls != 0,
+                   "stale cached SDK selection must not be reused without vcvars discovery");
+        }
+        restore_cache_text(cache_file, cache_text);
 
         {
             std::ofstream corrupt{cache_file, std::ios::binary | std::ios::trunc};
