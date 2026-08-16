@@ -21,7 +21,7 @@ MsvcToolchainLocator::discover(const DiscoveryOptions& options) const {
             std::error_code error_code;
             if (fs::is_directory(portable_root, error_code)) {
                 auto portable = detail::discover_portable_toolchain(portable_root, options);
-                if (portable) seal_compiler_environment_identity(*portable);
+                if (portable) seal_effective_toolchain_environment_identity(*portable);
                 return portable;
             }
         }
@@ -37,7 +37,7 @@ MsvcToolchainLocator::discover(const DiscoveryOptions& options) const {
     if (cache_file) {
         if (auto cached = detail::reuse_visual_studio_toolchain_cache(*cache_file, options)) {
             if (cached_visual_studio_environment_is_fresh(*cached)) {
-                seal_compiler_environment_identity(*cached);
+                seal_effective_toolchain_environment_identity(*cached);
                 return std::move(*cached);
             }
         }
@@ -53,7 +53,7 @@ MsvcToolchainLocator::discover(const DiscoveryOptions& options) const {
             options,
             *discovered);
     }
-    if (discovered) seal_compiler_environment_identity(*discovered);
+    if (discovered) seal_effective_toolchain_environment_identity(*discovered);
     return discovered;
 }
 
