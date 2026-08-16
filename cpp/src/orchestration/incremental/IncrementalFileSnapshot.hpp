@@ -35,9 +35,7 @@ struct IncrementalFileSnapshotResult {
     };
 }
 
-[[nodiscard]] inline IncrementalFileSnapshotResult snapshot_path(
-    const fs::path& path,
-    const bool require_regular_file) {
+[[nodiscard]] inline IncrementalFileSnapshotResult snapshot_regular_file(const fs::path& path) {
     if (path.empty()) {
         return missing_file_snapshot(path);
     }
@@ -59,10 +57,7 @@ struct IncrementalFileSnapshotResult {
             },
         };
     }
-    const bool supported_type = require_regular_file
-        ? fs::is_regular_file(status)
-        : (fs::is_regular_file(status) || fs::is_directory(status));
-    if (!supported_type) {
+    if (!fs::is_regular_file(status)) {
         return missing_file_snapshot(path);
     }
 
@@ -93,13 +88,42 @@ struct IncrementalFileSnapshotResult {
     };
 }
 
-[[nodiscard]] inline IncrementalFileSnapshotResult snapshot_regular_file(const fs::path& path) {
-    return snapshot_path(path, true);
-}
-
 [[nodiscard]] inline IncrementalFileSnapshotResult snapshot_file_or_directory(
     const fs::path& path) {
-    return snapshot_path(path, false);
+    if (path.empty()) {
+        return missing_file_snapshot(path);
+    }
+
+    // Compile-cache dependencies intentionally admit both regular files and
+    // directories, and FileSnapshot identity is existence + last-write time.
+    // last_write_time() already fails for a missing path, so a preceding
+    // status() would duplicate one filesystem metadata probe on every warm hit.
+    std::error_code error_code;
+    const auto modified = fs::last_write_time(path, error_code);
+    if (error_code) {
+        if (error_code == std::errc::no_such_file_or_directory) {
+            return missing_file_snapshot(path);
+        }
+        return IncrementalFileSnapshotResult{
+            .snapshot = FileSnapshot{
+                .path = path,
+                .exists = false,
+            },
+            .failure = IncrementalFileSnapshotFailure{
+                .kind = IncrementalFileSnapshotFailureKind::timestamp,
+                .error_code = error_code,
+            },
+        };
+    }
+
+    return IncrementalFileSnapshotResult{
+        .snapshot = FileSnapshot{
+            .path = path,
+            .exists = true,
+            .modified = modified,
+        },
+        .failure = std::nullopt,
+    };
 }
 
 } // namespace mqb::orchestration::detail
