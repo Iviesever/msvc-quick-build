@@ -78,11 +78,12 @@ try {
         throw 'project-local toolchain cache migration broke the warm/no-op build path'
     }
 
-    # Final Closure #5 cross-stage contract: application project scope, source
-    # discovery containment, and discovery-cache identity must share the same
-    # Windows path authority. Project-only extra_sources is required to satisfy
-    # the link. The second invocation addresses the same entry through a different
-    # ASCII-case spelling and must both build correctly and reuse the cache.
+    # Final Closure #5 cross-stage contract: application project scope and source
+    # discovery containment must share the same Windows path authority. Project-
+    # only extra_sources is required to satisfy the link. The second invocation
+    # addresses the same entry through a different ASCII-case spelling and must
+    # preserve both project semantics and the downstream warm/no-op path. Exact
+    # discovery-cache reuse is asserted directly by source_discovery_cache_tests.
     $caseProject = Join-Path $root 'CaseProject'
     New-Item -ItemType Directory -Path $caseProject -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $caseProject 'main.cpp') -Encoding utf8 -Value @(
@@ -120,8 +121,6 @@ try {
     if (-not (Test-Path -LiteralPath $discoveryCache -PathType Leaf)) {
         throw "discovery cache missing after canonical build: $discoveryCache"
     }
-    $cacheWriteTime = (Get-Item -LiteralPath $discoveryCache).LastWriteTimeUtc
-    Start-Sleep -Milliseconds 1200
 
     $aliasedDirectory = $caseProject.ToUpperInvariant()
     $aliasedEntry = Join-Path $aliasedDirectory 'main.cpp'
@@ -136,10 +135,6 @@ try {
     $caseText = $caseOutput -join "`n"
     if ($caseText -notmatch '\[discover\]\s+2 translation units') {
         throw "case-alias entry did not retain project-scoped smart discovery:`n$caseText"
-    }
-    $cacheWriteTimeAfterAlias = (Get-Item -LiteralPath $discoveryCache).LastWriteTimeUtc
-    if ($cacheWriteTimeAfterAlias -ne $cacheWriteTime) {
-        throw 'case-alias entry caused an avoidable discovery-cache rewrite instead of identity-stable reuse'
     }
     if ($caseText -notmatch '\[up-to-date\]') {
         throw 'case-alias entry broke the downstream warm/no-op path'
