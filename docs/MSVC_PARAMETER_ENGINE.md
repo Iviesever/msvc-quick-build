@@ -15,7 +15,9 @@ MQB does not try to rename every MSVC switch into a second property system. Inst
 
 Ownership and availability are deliberately separate. An option can be structurally safe for MQB to pass through while only existing on part of the supported MSVC toolset range. Those options survive semantic routing and are admitted after MQB discovers the actual toolchain.
 
-Class C passthrough does not mean MQB must remain blind to every effect of an option. MQB may extract **non-owning semantic evidence** when another subsystem requires it, while keeping the original compiler/linker argv authoritative. Native `/I` and `/external:I` expose their include roots to smart discovery, but remain raw compiler argv and therefore retain their ordering relative to other native compiler options. Native `/D` is parsed as preprocessor metadata for the same reason but is likewise kept raw. Native `/FI` remains raw compiler argv/compile identity while its ordered forced-header operands are observed by smart discovery. `/FI` operands are not rewritten relative to a config/profile/CLI path base because MSVC gives them quoted-include semantics: discovery resolves them from the selected entry source directory and then the effective include search roots. When a native `/I` or `/external:I` path is relative, MQB resolves its payload against the supplying layer's path base (project root for config/profile, invocation directory for CLI) without moving the token in argv.
+Class C passthrough does not mean MQB must remain blind to every effect of an option. MQB may extract **non-owning semantic evidence** when another subsystem requires it, while keeping the original compiler/linker/librarian argv authoritative.
+
+Native `/I` and `/external:I` expose their include roots to smart discovery, but remain raw compiler argv and therefore retain their ordering relative to other native compiler options. Native `/D` is parsed as preprocessor metadata for the same reason but is likewise kept raw. Native `/FI` remains raw compiler argv/compile identity while its ordered forced-header operands are observed by smart discovery. `/FI` operands are not rewritten relative to a config/profile/CLI path base because MSVC gives them quoted-include semantics: discovery resolves them from the selected entry source directory and then the effective include search roots. When a native `/I` or `/external:I` path is relative, MQB resolves its payload against the supplying layer's path base (project root for config/profile, invocation directory for CLI) without moving the token in argv.
 
 Native linker `/DEF:<file>` follows the same evidence-without-ownership model. The raw LINK argument remains authoritative, but MQB resolves a relative definition-file payload inside the layer that supplied it and records the resolved file as a generic linker freshness input. Config/profile paths are based at project root; CLI paths are based at the invocation directory. The argument keeps its original argv position. Because LINK accepts one module-definition file for an invocation, a second effective `/DEF` is rejected before `link.exe` rather than relying on argv ordering.
 
@@ -44,6 +46,21 @@ The shape table follows the actual MSVC spelling contract rather than guessing f
 
 The current model does not invent a generic stateful/variadic mode. If a future MSVC syntax cannot be represented as `none` or `single`, it must receive an explicit shape extension before the CLI is allowed to interpret it.
 
+## Native linker and librarian boundaries
+
+The public CLI has explicit one-way boundaries for downstream native tools:
+
+```powershell
+mqb build foo.cpp /O2 /link /DEBUG:FULL /STACK:8388608
+mqb build foo.cpp --type static /O2 /lib /WX /EXPORT:foo
+```
+
+`/link` routes the remaining build argv to `link.exe`. Static targets use `/lib` to route the remaining build argv to `lib.exe`; uppercase `/LIB` is accepted too. The librarian boundary deliberately does **not** expose a single-dash alias. `-lib` and `-LIB` are rejected before the generic `-l...` shorthand so they cannot be interpreted as `-l ib`. MQB keeps `-l <name>` and `-l<name>` exclusively as link-library shorthand.
+
+The `/lib` tail must contain at least one librarian argument. A second `/lib` or `/LIB` is rejected. After extraction, the tail goes through `MsvcParameterEngine::route_librarian()` exactly like `build.librarian_args`; Class A structural ownership such as `/OUT` remains unavailable to users, Class B `/MACHINE` and `/LTCG` merge into typed policy, Class C options remain ordered passthrough, and unsupported/wrong-tool options fail closed.
+
+Librarian policy is valid only when the final target kind is `static`. Executable and DLL targets reject a non-empty effective librarian argument set before product execution. Conversely, static targets reject linker-only policy such as libraries, library directories, subsystem, and raw linker arguments.
+
 ## Toolchain lifecycle admission
 
 `ToolchainIdentity.version` records the discovered `VCToolsVersion` (for example `14.44.x` or `14.50.x`). `MsvcParameterCapabilities` uses that real toolset identity after discovery instead of baking a single forever-current answer into the ownership registry.
@@ -61,21 +78,34 @@ This two-stage design preserves the existing early config/profile/CLI normalizat
 
 Native parameters are normalized inside the layer that supplied them:
 
-1. `mqb.json` typed fields and `compiler_args` / `linker_args` are normalized together.
-2. A selected profile is normalized as its own overlay.
-3. CLI typed options and native/raw arguments are normalized together.
+1. `mqb.json` typed fields and `compiler_args` / `linker_args` / `librarian_args` are normalized together.
+2. A selected profile is normalized as its own overlay, including its own librarian arguments.
+3. CLI typed options and native/raw arguments are normalized together; a CLI `/lib` tail becomes CLI-layer librarian arguments before routing.
 4. Conflicting typed/native values inside one layer are errors; tracked file inputs obey their LINK semantics across effective layers (`/DEF` is single-instance, `/ORDER` and `/STUB` are last-wins, `/MANIFESTINPUT` is cumulative). Path-bearing `/DEFAULTLIB` declarations are normalized in the same supplying layer while remaining default-library argv.
-5. The project resolver then applies `built-ins < base mqb.json < selected profile < CLI`.
+5. The project resolver applies `built-ins < base mqb.json < selected profile < CLI`. List-valued librarian policy therefore appends in the exact order `build.librarian_args -> profile librarian_args -> CLI /lib tail`.
 6. Requirements or observations that depend on the **final merged linker argv** are derived after layering: `/MANIFESTINPUT` requires final `/MANIFEST:EMBED`, while user-explicit `/DEFAULTLIB` freshness is filtered by final `/NODEFAULTLIB` / `/NODEFAULTLIB:<name>` policy.
-7. After MSVC discovery, remaining raw arguments pass toolchain lifecycle admission.
+7. After MSVC discovery, remaining raw compiler, linker, and librarian arguments pass toolchain lifecycle admission.
 
-Relative path-bearing evidence is resolved before layers are merged: project configuration/profile values use project root, while CLI values use invocation directory. This prevents cwd-dependent cache identity and keeps the rewritten raw argv stable when the same project is invoked from a child directory.
+Relative path-bearing evidence is resolved before layers are merged: project configuration/profile values use project root, while CLI values use invocation directory. This prevents cwd-dependent cache identity and keeps rewritten raw argv stable when the same project is invoked from a child directory.
 
 This prevents argv ordering from becoming a second precedence system for typed semantic policy. Native passthrough options keep their own argv order rather than being silently converted into a reordered property list.
 
+## Archive cache identity
+
+Static-library freshness is defined by the complete effective archive recipe, not only by the object timestamps. The archive signature includes librarian/toolchain identity, target architecture, effective LTCG state, object set/output, and the final routed librarian argv.
+
+That makes librarian policy a first-class cache dimension:
+
+```text
+unchanged librarian argv -> warm archive cache may be reused
+changed librarian argv   -> archive_recipe_changed -> rearchive
+```
+
+`build.librarian_args`, profile librarian arguments, and the CLI `/lib` tail all converge on this same final recipe. The profile name or configuration-file timestamp is not itself a cache dimension; only the effective librarian semantics are.
+
 ## Tool semantics
 
-Compiler option names are treated with compiler spelling/case semantics. Linker and librarian option names are normalized case-insensitively.
+Compiler option names are treated with compiler spelling/case semantics. Linker and librarian option names are normalized case-insensitively by their parameter routers. The CLI boundary itself deliberately recognizes the documented public `/lib` and `/LIB` spellings only; this is separate from case normalization of options *after* the boundary.
 
 MQB compiles one TU per `cl.exe /c` invocation and owns concurrency, so `/MP` is rejected in favor of `-j/--jobs`. Compiler `/F` is also rejected: it asks `cl.exe` to control linker stack size, but MQB owns a separate `link.exe` invocation; use linker `/STACK` instead.
 
@@ -103,6 +133,12 @@ Other file-bearing linker modes beyond promoted `/DEF`, `/ORDER`, `/STUB`, `/MAN
 
 `cpp/tests/msvc/parameters/msvc_parameter_engine_tests.cpp` is the executable ownership and token-shape coverage matrix. It contains representative argv for every option family in the current Microsoft references used by the registry and requires each family to resolve to A, B, C, or D rather than `unregistered`. It also locks split-vs-attached compiler forms so a future registry expansion cannot silently consume a positional source.
 
+`cpp/tests/app/cli/build_policy_cli_tests.cpp` locks the librarian-facing UX contract: `/lib` and `/LIB` route a static-target tail, `-l` remains the link-library shorthand, `-lib` / `-LIB` are rejected with `/lib` guidance, empty and duplicate librarian boundaries fail, and MQB-owned/wrong-tool librarian options remain fail-closed. The same test also treats `mqb --help` text as part of the public contract.
+
+`cpp/tests/config/resolution/project_options_tests.cpp` proves librarian list precedence independently from CLI parsing: base `build.librarian_args`, selected-profile librarian arguments, and CLI overrides append in base -> profile -> CLI order without loss.
+
+`cpp/tests/orchestration/incremental/incremental_archive_coordinator_tests.cpp` proves archive cache identity: native librarian argv reaches the actual archive invocation, an unchanged recipe is reusable, and changing only librarian argv produces `archive_recipe_changed` and exactly one additional librarian invocation.
+
 `cpp/tests/core/cache/link_state_tests.cpp` locks the generic linker file-input execution evidence independently from object/library freshness: warm inputs reuse, while newer/missing/re-resolved inputs or lost metadata invalidate reuse and mark `file_inputs_changed` without contaminating `library_inputs_changed`.
 
 `cpp/tests/orchestration/incremental/incremental_link_coordinator_tests.cpp` locks `/ORDER` execution semantics: repeated order options preserve raw argv but track only the last effective file, malformed `/ORDER` fails before LINK, warm no-op skips LINK, effective order-file mutation invalidates freshness, and every actual `/ORDER` link appends authoritative `/INCREMENTAL:NO` after raw linker arguments.
@@ -115,7 +151,7 @@ Other file-bearing linker modes beyond promoted `/DEF`, `/ORDER`, `/STUB`, `/MAN
 
 `cpp/tests/msvc/linker/library_resolver_tests.cpp` locks explicit-vs-default library resolution policy. Structured libraries remain require-all, while user DEFAULTLIB evidence is available-only; the test also covers case-insensitive `/NODEFAULTLIB:<name>` suppression, optional `.lib` matching, path-bearing layer-base normalization, and shared library-search precedence.
 
-`cpp/tests/e2e/mqb_default_library_e2e_tests.cpp` proves the real user-explicit `/DEFAULTLIB` pipeline on Windows/MSVC. A consumer resolves a symbol only through raw DEFAULTLIB, an unchanged build becomes a zero-LINK cache hit, a default-library-only archive mutation leaves the TU up-to-date but relinks and changes runtime behavior, `/NODEFAULTLIB:<name>` suppresses the raw default library, and a structured explicit library retains priority over a competing DEFAULTLIB. The fixture also proves a suppressed missing DEFAULTLIB does not make MQB stricter than LINK and that project-root-relative `mqb.json` DEFAULTLIB paths remain correct when MQB is launched from a nested directory. The native graph contains 77 tests after this promotion.
+`cpp/tests/e2e/mqb_default_library_e2e_tests.cpp` proves the real user-explicit `/DEFAULTLIB` pipeline on Windows/MSVC. A consumer resolves a symbol only through raw DEFAULTLIB, an unchanged build becomes a zero-LINK cache hit, a default-library-only archive mutation leaves the TU up-to-date but relinks and changes runtime behavior, `/NODEFAULTLIB:<name>` suppresses the raw default library, and a structured explicit library retains priority over a competing DEFAULTLIB. The fixture also proves a suppressed missing DEFAULTLIB does not make MQB stricter than LINK and that project-root-relative `mqb.json` DEFAULTLIB paths remain correct when MQB is launched from a nested directory.
 
 `cpp/tests/app/cli/mqb_native_msvc_cli_e2e_tests.cpp` independently verifies the CLI boundary and native execution path: fixed operands stay in ordered compiler argv, attached forms do not consume the next source, and graph-aware native options such as `/FI` retain their split operand and rebuild behavior under the real candidate MQB/MSVC pipeline.
 
