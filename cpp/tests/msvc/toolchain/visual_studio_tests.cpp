@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 
+#include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
@@ -167,10 +168,16 @@ int main() {
                    && has_environment_variable(*result, "UCRTVersion"),
                "vcvars environment should expose the selected UCRT identity");
 
-        const std::string cold_environment_stamp =
-            mqb::msvc::effective_toolchain_environment_stamp(result->environment);
-        expect(result->identity.binary_stamp.ends_with(cold_environment_stamp),
-               "cold VS compiler identity should seal the effective search environment");
+        const std::string cold_compiler_stamp =
+            mqb::msvc::compiler_environment_stamp(result->environment);
+        const std::string cold_linker_stamp =
+            mqb::msvc::linker_environment_stamp(result->environment);
+        expect(result->identity.binary_stamp.ends_with(cold_compiler_stamp),
+               "cold VS compiler identity should seal compiler search environment");
+        const auto cold_linker_identity = mqb::msvc::MsvcLinker::identity(*result);
+        expect(cold_linker_identity.has_value()
+                   && cold_linker_identity->binary_stamp.ends_with(cold_linker_stamp),
+               "cold VS linker identity should seal library/helper search environment");
 
         expect(fs::is_regular_file(cache_file),
                "cold Visual Studio discovery should persist validated cache evidence");
@@ -199,11 +206,15 @@ int main() {
             expect(cached->identity.version == result->identity.version,
                    "cache hit should preserve VC tools version");
             expect(cached->identity.binary_stamp == result->identity.binary_stamp,
-                   "cache hit should preserve binary plus effective-environment identity");
+                   "cache hit should preserve binary plus compiler-environment identity");
             expect(cached->linker == result->linker,
                    "cache hit should reconstruct the same linker path");
             expect(cached->librarian == result->librarian,
                    "cache hit should reconstruct the same librarian path");
+            const auto cached_linker_identity = mqb::msvc::MsvcLinker::identity(*cached);
+            expect(cold_linker_identity && cached_linker_identity
+                       && cached_linker_identity->binary_stamp == cold_linker_identity->binary_stamp,
+                   "cache hit should preserve linker binary plus effective-environment identity");
 
             const auto* cold_lib_path = find_environment_variable(*result, "LIBPATH");
             const auto* cached_lib_path = find_environment_variable(*cached, "LIBPATH");
@@ -226,18 +237,20 @@ int main() {
                 expect(false, "cached VS environment should retain WindowsSDKVersion");
             }
 
-            auto lib_order_changed = cached->environment;
-            const auto lib = std::find_if(
-                lib_order_changed.begin(),
-                lib_order_changed.end(),
-                [](const mqb::process::EnvironmentVariable& variable) {
-                    return equals_ignore_case(variable.name, "LIB");
-                });
-            if (lib != lib_order_changed.end()) {
+            auto lib_order_changed = *cached;
+            if (auto* lib = find_environment_variable(lib_order_changed, "LIB")) {
                 lib->value += ";C:\\mqb-synthetic-higher-priority-lib-root";
-                expect(mqb::msvc::effective_toolchain_environment_stamp(lib_order_changed)
-                           != mqb::msvc::effective_toolchain_environment_stamp(cached->environment),
-                       "effective VS LIB mutation/order must invalidate toolchain identity");
+                expect(mqb::msvc::compiler_environment_stamp(lib_order_changed.environment)
+                           == mqb::msvc::compiler_environment_stamp(cached->environment),
+                       "effective VS LIB mutation must not invalidate compiler identity");
+                expect(mqb::msvc::linker_environment_stamp(lib_order_changed.environment)
+                           != mqb::msvc::linker_environment_stamp(cached->environment),
+                       "effective VS LIB mutation/order must invalidate linker identity");
+                const auto mutated_linker_identity = mqb::msvc::MsvcLinker::identity(lib_order_changed);
+                expect(cached_linker_identity && mutated_linker_identity
+                           && mutated_linker_identity->binary_stamp
+                               != cached_linker_identity->binary_stamp,
+                       "effective VS LIB mutation must directly invalidate MsvcLinker identity");
             }
         }
 
