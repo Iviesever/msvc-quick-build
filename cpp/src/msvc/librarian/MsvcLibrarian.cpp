@@ -44,10 +44,10 @@ void remove_if_present(const fs::path& path) noexcept {
 
 void suppress_ambient_librarian_repro(
     std::vector<process::EnvironmentVariable>& environment) {
-    // LINK/LIB honor the link_repro environment variable independently of the
+    // LINK/LIB honor the LINK_REPRO environment variable independently of the
     // explicit argv. Repro packages are diagnostic artifact trees outside the
     // archive cache identity, so ambient state must not enable them implicitly.
-    environment.push_back(process::EnvironmentVariable{"link_repro", {}});
+    environment.push_back(process::EnvironmentVariable{"LINK_REPRO", {}, true});
 }
 
 } // namespace
