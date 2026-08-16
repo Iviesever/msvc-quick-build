@@ -68,6 +68,17 @@ namespace fs = std::filesystem;
     return snapshot_path(path, false);
 }
 
+[[nodiscard]] bool has_include_search_freshness_marker(
+    const ModuleScanEvidence& evidence) {
+    for (const auto& dependency : evidence.dependencies) {
+        std::error_code error_code;
+        if (fs::is_directory(dependency.path, error_code) && !error_code) {
+            return true;
+        }
+    }
+    return false;
+}
+
 [[nodiscard]] std::optional<std::string> read_text_file(const fs::path& path) {
     std::ifstream stream{path, std::ios::binary};
     if (!stream) return std::nullopt;
@@ -87,6 +98,13 @@ namespace fs = std::filesystem;
         return std::nullopt;
     }
     const auto& evidence = *(**loaded).module_scan;
+
+    // Pre-closure scan evidence contains only file snapshots and therefore
+    // cannot prove that a higher-priority include namespace stayed unchanged.
+    // Rescan once after upgrading and reseal directory-backed evidence.
+    if (!has_include_search_freshness_marker(evidence)) {
+        return std::nullopt;
+    }
 
     const BuildSignature signature = BuildSignature::for_module_scan(
         source.source,
@@ -189,7 +207,7 @@ scan_requested_module_sources(
     batch.scans.reserve(request.sources.size());
     batch.units.reserve(request.sources.size() + 2u);
 
-    for (std::size_t index = 0; index < attempts.size(); ++index) {
+    for (std::size_t index = 0; index < request.sources.size(); ++index) {
         if (!attempts[index]) {
             return std::unexpected(failure(
                 IncrementalModuleTargetErrorCode::scheduling_failed,
