@@ -197,6 +197,224 @@ int main(const int argc, char* argv[]) {
         expect(fs::is_regular_file(pch_file), "repair should restore the owned .pch artifact");
     }
 
+    // Final Closure #4: smart discovery must observe the effective first-class
+    // PCH as compiler-visible forced-include semantics before source selection.
+    {
+        TempTree discovery_tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_pch_discovery_e2e_" + std::to_string(unique)),
+        };
+        fs::create_directories(discovery_tree.root);
+
+        write_text(
+            discovery_tree.root / "pch.hpp",
+            "#pragma once\n"
+            "#include \"widget.hpp\"\n"
+            "#include \"nested/root.hpp\"\n");
+        write_text(discovery_tree.root / "widget.hpp", "#pragma once\nint widget_value();\n");
+        write_text(discovery_tree.root / "widget.cpp", "int widget_value() { return 20; }\n");
+        write_text(
+            discovery_tree.root / "nested/root.hpp",
+            "#pragma once\n"
+            "#include \"impl/deep.hpp\"\n");
+        write_text(
+            discovery_tree.root / "nested/impl/deep.hpp",
+            "#pragma once\nint deep_value();\n");
+        write_text(
+            discovery_tree.root / "nested/impl/deep.cpp",
+            "int deep_value() { return 22; }\n");
+        write_text(
+            discovery_tree.root / "unrelated.cpp",
+            "int unrelated_pch_discovery_value() { return 99; }\n");
+        write_text(
+            discovery_tree.root / "main.cpp",
+            "int main() { return widget_value() + deep_value() == 42 ? 0 : 1; }\n");
+
+        auto pch_only_reachable = run_process(
+            runner,
+            mqb_executable,
+            discovery_tree.root,
+            {"build", "main.cpp", "--env", "vs", "--debug",
+             "--pch", "pch.hpp", "--verbose", "-o", "pch_discovery"});
+        expect(pch_only_reachable.has_value(),
+               "PCH-aware smart-discovery build should launch");
+        if (pch_only_reachable) {
+            if (pch_only_reachable->exit_code != 0) dump_failure(*pch_only_reachable);
+            expect(pch_only_reachable->exit_code == 0,
+                   "PCH-only reachable implementation sources should build successfully");
+            expect(contains(*pch_only_reachable, "[discover] 3 translation units"),
+                   "PCH root plus nested include should select exactly main, widget, and deep TUs");
+            expect(contains(*pch_only_reachable, "widget.cpp"),
+                   "direct PCH-only header ownership should select widget.cpp");
+            expect(contains(*pch_only_reachable, "deep.cpp"),
+                   "nested include reachable only through PCH should select deep.cpp");
+            expect(!contains(*pch_only_reachable, "unrelated.cpp"),
+                   "PCH discovery root must not turn the indexed project into a global source hub");
+        }
+
+        write_text(discovery_tree.root / "alpha.hpp", "#pragma once\nint alpha_value();\n");
+        write_text(discovery_tree.root / "alpha.cpp", "int alpha_value() { return 1; }\n");
+        write_text(discovery_tree.root / "beta.hpp", "#pragma once\nint beta_value();\n");
+        write_text(discovery_tree.root / "beta.cpp", "int beta_value() { return 2; }\n");
+        write_text(discovery_tree.root / "raw.hpp", "#pragma once\nint raw_value();\n");
+        write_text(discovery_tree.root / "raw.cpp", "int raw_value() { return 3; }\n");
+        write_text(
+            discovery_tree.root / "base_pch.hpp",
+            "#pragma once\n#include \"alpha.hpp\"\n");
+        write_text(
+            discovery_tree.root / "profile_pch.hpp",
+            "#pragma once\n#include \"beta.hpp\"\n");
+        write_text(discovery_tree.root / "identity_main.cpp", "int main() { return 0; }\n");
+        write_text(
+            discovery_tree.root / "mqb.json",
+            R"json({
+  "version": 1,
+  "build": {
+    "pch": "base_pch.hpp"
+  },
+  "profiles": {
+    "alternate": {
+      "build": {
+        "pch": "profile_pch.hpp"
+      }
+    }
+  }
+})json");
+
+        auto base_discovery = run_process(
+            runner,
+            mqb_executable,
+            discovery_tree.root,
+            {"build", "identity_main.cpp", "--env", "vs", "--debug",
+             "--verbose", "-o", "pch_discovery_base"});
+        expect(base_discovery.has_value(), "base PCH discovery build should launch");
+        if (base_discovery) {
+            if (base_discovery->exit_code != 0) dump_failure(*base_discovery);
+            expect(base_discovery->exit_code == 0, "base PCH discovery build should succeed");
+            expect(contains(*base_discovery, "[discover] 2 translation units")
+                       && contains(*base_discovery, "alpha.cpp")
+                       && !contains(*base_discovery, "beta.cpp"),
+                   "base PCH should project alpha.hpp ownership, and only alpha.cpp, into discovery");
+        }
+
+        rewrite_after_tick(
+            discovery_tree.root / "base_pch.hpp",
+            "#pragma once\n#include \"beta.hpp\"\n");
+        auto changed_pch_discovery = run_process(
+            runner,
+            mqb_executable,
+            discovery_tree.root,
+            {"build", "identity_main.cpp", "--env", "vs", "--debug",
+             "--verbose", "-o", "pch_discovery_changed"});
+        expect(changed_pch_discovery.has_value(), "changed PCH discovery build should launch");
+        if (changed_pch_discovery) {
+            if (changed_pch_discovery->exit_code != 0) dump_failure(*changed_pch_discovery);
+            expect(changed_pch_discovery->exit_code == 0,
+                   "changing PCH include graph should rediscover successfully");
+            expect(contains(*changed_pch_discovery, "beta.cpp")
+                       && !contains(*changed_pch_discovery, "alpha.cpp"),
+                   "PCH content changes must alter selected source closure");
+        }
+
+        rewrite_after_tick(
+            discovery_tree.root / "base_pch.hpp",
+            "#pragma once\n#include \"alpha.hpp\"\n");
+        auto resealed_base_discovery = run_process(
+            runner,
+            mqb_executable,
+            discovery_tree.root,
+            {"build", "identity_main.cpp", "--env", "vs", "--debug",
+             "--verbose", "-o", "pch_discovery_resealed_base"});
+        expect(resealed_base_discovery.has_value(), "resealed base PCH discovery should launch");
+        if (resealed_base_discovery) {
+            if (resealed_base_discovery->exit_code != 0) dump_failure(*resealed_base_discovery);
+            expect(resealed_base_discovery->exit_code == 0
+                       && contains(*resealed_base_discovery, "alpha.cpp")
+                       && !contains(*resealed_base_discovery, "beta.cpp"),
+                   "base PCH closure should be resealed before path-identity regression check");
+        }
+
+        auto profile_discovery = run_process(
+            runner,
+            mqb_executable,
+            discovery_tree.root,
+            {"build", "identity_main.cpp", "--env", "vs", "--debug",
+             "--profile", "alternate", "--verbose", "-o", "pch_discovery_profile"});
+        expect(profile_discovery.has_value(), "profile PCH discovery build should launch");
+        if (profile_discovery) {
+            if (profile_discovery->exit_code != 0) dump_failure(*profile_discovery);
+            expect(profile_discovery->exit_code == 0, "profile PCH discovery build should succeed");
+            expect(contains(*profile_discovery, "beta.cpp")
+                       && !contains(*profile_discovery, "alpha.cpp"),
+                   "profile PCH overlay must change discovery and invalidate base-PCH cache identity");
+        }
+
+        auto no_pch_discovery = run_process(
+            runner,
+            mqb_executable,
+            discovery_tree.root,
+            {"build", "identity_main.cpp", "--env", "vs", "--debug",
+             "--profile", "alternate", "--no-pch", "--verbose",
+             "-o", "pch_discovery_off"});
+        expect(no_pch_discovery.has_value(), "--no-pch discovery build should launch");
+        if (no_pch_discovery) {
+            if (no_pch_discovery->exit_code != 0) dump_failure(*no_pch_discovery);
+            expect(no_pch_discovery->exit_code == 0, "--no-pch discovery build should succeed");
+            expect(contains(*no_pch_discovery, "[discover] 1 translation units")
+                       && !contains(*no_pch_discovery, "alpha.cpp")
+                       && !contains(*no_pch_discovery, "beta.cpp"),
+                   "CLI --no-pch must remove the inherited/profile forced discovery root");
+        }
+
+        auto raw_and_pch_discovery = run_process(
+            runner,
+            mqb_executable,
+            discovery_tree.root,
+            {"build", "identity_main.cpp", "--env", "vs", "--debug",
+             "--pch", "base_pch.hpp", "/FIraw.hpp", "--verbose",
+             "-o", "pch_discovery_raw_and_typed"});
+        expect(raw_and_pch_discovery.has_value(), "raw /FI + typed PCH discovery build should launch");
+        if (raw_and_pch_discovery) {
+            if (raw_and_pch_discovery->exit_code != 0) dump_failure(*raw_and_pch_discovery);
+            expect(raw_and_pch_discovery->exit_code == 0,
+                   "raw /FI and first-class PCH should coexist through smart discovery");
+            expect(contains(*raw_and_pch_discovery, "[discover] 3 translation units")
+                       && contains(*raw_and_pch_discovery, "alpha.cpp")
+                       && contains(*raw_and_pch_discovery, "raw.cpp"),
+                   "discovery must union raw /FI and MQB-owned PCH forced roots");
+        }
+    }
+
+    {
+        TempTree ordinary_tree{
+            .root = fs::temp_directory_path()
+                / ("mqb_no_pch_discovery_e2e_" + std::to_string(unique)),
+        };
+        fs::create_directories(ordinary_tree.root);
+        write_text(
+            ordinary_tree.root / "main.cpp",
+            "#include \"ordinary.hpp\"\nint main() { return ordinary_value() == 7 ? 0 : 1; }\n");
+        write_text(ordinary_tree.root / "ordinary.hpp", "#pragma once\nint ordinary_value();\n");
+        write_text(ordinary_tree.root / "ordinary.cpp", "int ordinary_value() { return 7; }\n");
+        write_text(ordinary_tree.root / "unrelated.cpp", "int unrelated_value() { return 0; }\n");
+
+        auto ordinary_discovery = run_process(
+            runner,
+            mqb_executable,
+            ordinary_tree.root,
+            {"build", "main.cpp", "--env", "vs", "--debug",
+             "--verbose", "-o", "ordinary_discovery"});
+        expect(ordinary_discovery.has_value(), "ordinary no-PCH discovery build should launch");
+        if (ordinary_discovery) {
+            if (ordinary_discovery->exit_code != 0) dump_failure(*ordinary_discovery);
+            expect(ordinary_discovery->exit_code == 0, "ordinary no-PCH discovery should remain valid");
+            expect(contains(*ordinary_discovery, "[discover] 2 translation units")
+                       && contains(*ordinary_discovery, "ordinary.cpp")
+                       && !contains(*ordinary_discovery, "unrelated.cpp"),
+                   "ordinary smart-discovery behavior must remain unchanged without PCH");
+        }
+    }
+
     // Exercise the project/profile/CLI scalar precedence through the real
     // candidate binary from a nested invocation directory. Config/profile PCH
     // paths must remain config-relative while CLI PCH paths remain invocation-relative.
