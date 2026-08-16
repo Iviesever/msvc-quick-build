@@ -15,7 +15,6 @@ namespace mqb::app {
 namespace {
 
 namespace fs = std::filesystem;
-
 template <typename T>
 [[nodiscard]] std::expected<void, std::string> merge_semantic_value(
     std::optional<T>& structured,
@@ -49,6 +48,43 @@ template <typename T>
     message += ": ";
     message += error.message;
     return message;
+}
+
+[[nodiscard]] bool is_native_librarian_boundary(const std::string_view argument) noexcept {
+    return argument == "/lib" || argument == "-lib"
+        || argument == "/LIB" || argument == "-LIB";
+}
+
+[[nodiscard]] std::expected<void, std::string> extract_native_librarian_tail(
+    mqb::config::BuildOverrides& build,
+    const std::string_view layer) {
+    std::optional<std::size_t> boundary;
+    for (std::size_t index = 0; index < build.compiler_arguments.size(); ++index) {
+        if (!is_native_librarian_boundary(build.compiler_arguments[index])) {
+            continue;
+        }
+        if (boundary) {
+            return std::unexpected(
+                std::string{layer} + " contains a duplicate native MSVC /lib separator");
+        }
+        boundary = index;
+    }
+    if (!boundary) {
+        return {};
+    }
+    if (*boundary + 1 == build.compiler_arguments.size()) {
+        return std::unexpected(
+            std::string{layer} + " native MSVC /lib requires at least one librarian option");
+    }
+
+    build.librarian_arguments.insert(
+        build.librarian_arguments.end(),
+        std::make_move_iterator(build.compiler_arguments.begin() + *boundary + 1),
+        std::make_move_iterator(build.compiler_arguments.end()));
+    build.compiler_arguments.erase(
+        build.compiler_arguments.begin() + *boundary,
+        build.compiler_arguments.end());
+    return {};
 }
 
 [[nodiscard]] std::expected<void, std::string> append_linker_file_input(
@@ -101,6 +137,13 @@ template <typename T>
     if (!linker) {
         return std::unexpected(parameter_error_message(layer, linker.error()));
     }
+
+    auto librarian = mqb::msvc::MsvcParameterEngine::route_librarian(
+        std::span<const std::string>{build.librarian_arguments});
+    if (!librarian) {
+        return std::unexpected(parameter_error_message(layer, librarian.error()));
+    }
+
     auto linker_files = mqb::msvc::MsvcParameterEngine::linker_file_inputs(
         std::span<const std::string>{linker->passthrough},
         path_base);
@@ -141,6 +184,10 @@ template <typename T>
         return std::unexpected(merged.error());
     }
     if (auto merged = merge_semantic_value(
+            build.architecture, librarian->architecture, layer, "target architecture"); !merged) {
+        return std::unexpected(merged.error());
+    }
+    if (auto merged = merge_semantic_value(
             build.subsystem, linker->subsystem, layer, "target subsystem"); !merged) {
         return std::unexpected(merged.error());
     }
@@ -154,6 +201,14 @@ template <typename T>
         }
         routed_ltcg = linker->link_time_code_generation;
     }
+    if (librarian->link_time_code_generation) {
+        if (routed_ltcg && *routed_ltcg != *librarian->link_time_code_generation) {
+            return std::unexpected(
+                std::string{layer}
+                + " has conflicting compiler/linker/librarian LTCG policy");
+        }
+        routed_ltcg = librarian->link_time_code_generation;
+    }
     if (auto merged = merge_semantic_value(
             build.link_time_code_generation, routed_ltcg, layer, "LTCG"); !merged) {
         return std::unexpected(merged.error());
@@ -161,6 +216,7 @@ template <typename T>
 
     build.compiler_arguments = std::move(compiler->passthrough);
     build.linker_arguments = std::move(default_libraries->passthrough);
+    build.librarian_arguments = std::move(librarian->passthrough);
     return {};
 }
 
@@ -262,8 +318,16 @@ prepare_project(
     cli_overrides.build.libraries = options.libraries;
     cli_overrides.build.compiler_arguments = options.compiler_arguments;
     cli_overrides.build.linker_arguments = options.linker_arguments;
+    cli_overrides.build.librarian_arguments = options.librarian_arguments;
     cli_overrides.discovery.enabled = options.discovery_override;
     cli_overrides.modules.external_providers = options.external_module_providers;
+
+    if (auto extracted = extract_native_librarian_tail(cli_overrides.build, "CLI"); !extracted) {
+        return std::unexpected(ProjectSetupError{
+            .message = extracted.error(),
+            .config_error = std::nullopt,
+        });
+    }
 
     std::vector<fs::path> native_include_directories;
     // This app-layer vector exists only while resolving config/profile/CLI so
@@ -340,6 +404,7 @@ prepare_project(
     options.libraries = effective.libraries;
     options.compiler_arguments = effective.compiler_arguments;
     options.linker_arguments = effective.linker_arguments;
+    options.librarian_arguments = effective.librarian_arguments;
     options.external_module_providers = effective.external_module_providers;
 
     if (auto linker_requirements =
