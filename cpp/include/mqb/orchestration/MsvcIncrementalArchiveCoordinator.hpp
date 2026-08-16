@@ -9,6 +9,7 @@
 #include "mqb/core/ArchiveCache.hpp"
 #include "mqb/core/BuildPlan.hpp"
 #include "mqb/msvc/MsvcLibrarian.hpp"
+#include "mqb/msvc/MsvcParameterEngine.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/process/Process.hpp"
 
@@ -19,7 +20,9 @@ struct IncrementalArchiveRequest {
     std::filesystem::path output;
     std::filesystem::path cache_file;
     std::filesystem::path working_directory;
+    Architecture architecture{Architecture::x64};
     bool link_time_code_generation{false};
+    std::vector<std::string> additional_arguments;
     bool force_archive{false};
 };
 
@@ -37,6 +40,7 @@ struct IncrementalArchiveWarning {
 
 enum class IncrementalArchiveErrorCode {
     librarian_identity_failed,
+    librarian_parameter_invalid,
     planning_failed,
     archive_failed,
 };
@@ -44,6 +48,7 @@ enum class IncrementalArchiveErrorCode {
 struct IncrementalArchiveError {
     IncrementalArchiveErrorCode code{IncrementalArchiveErrorCode::planning_failed};
     std::string message;
+    std::optional<msvc::ParameterError> parameter_error;
     std::optional<msvc::LibrarianError> librarian_error;
 };
 
