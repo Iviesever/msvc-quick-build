@@ -14,6 +14,7 @@
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcFuzzerPolicy.hpp"
+#include "mqb/msvc/MsvcOpenMpPolicy.hpp"
 #include "mqb/orchestration/BoundedWorkScheduler.hpp"
 
 namespace mqb::orchestration {
@@ -203,6 +204,9 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
         request.compiler_options,
         effective_link_options);
     msvc::MsvcFuzzerPolicy::apply_link_policy(
+        request.compiler_options,
+        effective_link_options);
+    msvc::MsvcOpenMpPolicy::apply_link_policy(
         request.compiler_options,
         effective_link_options);
 
