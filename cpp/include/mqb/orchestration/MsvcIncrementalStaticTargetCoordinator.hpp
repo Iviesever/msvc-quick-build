@@ -22,6 +22,7 @@ struct IncrementalStaticTargetRequest {
     std::vector<std::filesystem::path> additional_objects;
     TargetArtifacts target;
     CompilerOptions compiler_options;
+    std::vector<std::string> librarian_arguments;
     std::filesystem::path working_directory;
     ParallelismPolicy max_parallel_compiles{};
     bool force_downstream_rebuild{false};
