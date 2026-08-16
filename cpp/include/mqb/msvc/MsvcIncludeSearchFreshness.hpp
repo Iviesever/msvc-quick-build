@@ -41,6 +41,13 @@ namespace fs = std::filesystem;
     return true;
 }
 
+[[nodiscard]] inline bool ascii_identifier_char(const char value) noexcept {
+    return (value >= 'A' && value <= 'Z')
+        || (value >= 'a' && value <= 'z')
+        || (value >= '0' && value <= '9')
+        || value == '_';
+}
+
 [[nodiscard]] inline fs::path utf8_path(const std::string_view value) {
     std::u8string bytes;
     bytes.assign(
@@ -259,8 +266,10 @@ inline void record_literal_operand(
 // Cold-path inspection distinguishes files that can participate in MSVC's
 // local quoted-include search from pure angle/no-include files. It also records
 // literal parent suffixes for unresolved probes such as __has_include(<x/y.hpp>)
-// so a file appearing inside an already-existing nested directory is visible.
-// Unknown/macro operands opt into local search conservatively.
+// and C++ header-unit imports such as import <x/y.hpp> so a file appearing in an
+// already-existing nested directory is visible. Named-module imports do not
+// participate because they do not carry a header-name token. Unknown/macro
+// include operands opt into local search conservatively.
 [[nodiscard]] inline IncludeSearchUse inspect_include_search_use(const fs::path& file) {
     std::ifstream stream{file, std::ios::binary};
     if (!stream) {
@@ -282,6 +291,31 @@ inline void record_literal_operand(
             if (position < line.size() && line[position] == '(') ++position;
             record_literal_operand(use, line, position);
             has_include = position;
+        }
+
+        // C++20 Header Unit imports use the same header-name lookup semantics as
+        // textual includes. Recognize both `import <x>;` and `import "x";`
+        // (including `export import ...`). A named-module import such as
+        // `import math;` is deliberately ignored.
+        std::size_t import_position = 0;
+        constexpr std::string_view import_token = "import";
+        while ((import_position = line.find(import_token, import_position)) != std::string_view::npos) {
+            const bool left_boundary = import_position == 0
+                || !ascii_identifier_char(line[import_position - 1u]);
+            std::size_t operand_position = import_position + import_token.size();
+            const bool right_boundary = operand_position >= line.size()
+                || !ascii_identifier_char(line[operand_position]);
+            if (left_boundary && right_boundary) {
+                while (operand_position < line.size()
+                    && (line[operand_position] == ' ' || line[operand_position] == '\t')) {
+                    ++operand_position;
+                }
+                if (operand_position < line.size()
+                    && (line[operand_position] == '<' || line[operand_position] == '"')) {
+                    record_literal_operand(use, line, operand_position);
+                }
+            }
+            import_position += import_token.size();
         }
 
         std::size_t position = 0;
@@ -353,10 +387,10 @@ inline void record_literal_operand(
 // created beside a TU (for example LINK /MAP output) from poisoning the compile
 // warm path.
 //
-// Literal #include / __has_include operands additionally contribute parent
-// suffixes even when the header was not resolved on the previous build. This
-// covers the important "absent then appears" case, including a file appearing
-// in an already-existing nested candidate directory.
+// Literal #include / __has_include / Header Unit import operands additionally
+// contribute parent suffixes even when the header was not resolved on the
+// previous build. This covers the important "absent then appears" case,
+// including a file appearing in an already-existing nested candidate directory.
 [[nodiscard]] inline std::vector<std::filesystem::path>
 include_search_freshness_directories(
     const std::span<const std::filesystem::path> resolved_includes,
@@ -406,7 +440,7 @@ include_search_freshness_directories(
         }
     }
 
-    // A successful TU with no textual include search (and no __has_include)
+    // A successful TU with no textual/header-unit search (and no __has_include)
     // cannot be rerouted by directory namespace churn. Exact global-root identity
     // is still stored separately so ambient INCLUDE replacement remains visible.
     if (!any_search_usage && normalized_dependencies.empty()) return {};
