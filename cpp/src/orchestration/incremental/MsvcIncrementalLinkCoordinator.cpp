@@ -20,6 +20,7 @@
 #include "mqb/msvc/MsvcFuzzerPolicy.hpp"
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
+#include "mqb/msvc/MsvcOpenMpPolicy.hpp"
 #include "mqb/msvc/MsvcParameterEngine.hpp"
 #include "mqb/msvc/MsvcWholeArchivePolicy.hpp"
 
@@ -330,6 +331,37 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
                 linker_file_inputs.end(),
                 resolved_fuzzer_library->files.begin(),
                 resolved_fuzzer_library->files.end());
+        }
+    }
+
+    if (request.options.msvc_openmp_runtime) {
+        std::vector<std::string> candidates;
+        for (const auto library : msvc::MsvcOpenMpPolicy::implicit_library_candidates()) {
+            if (msvc::MsvcDefaultLibraryPolicy::allows_implicit_library(
+                    *default_library_routing,
+                    library)) {
+                candidates.emplace_back(library);
+            }
+        }
+        if (!candidates.empty()) {
+            auto resolved_openmp_libraries = msvc::MsvcLibraryResolver::resolve_available(
+                toolchain_,
+                candidates,
+                request.options.library_directories,
+                working_directory);
+            if (!resolved_openmp_libraries) {
+                IncrementalLinkError error{
+                    .code = IncrementalLinkErrorCode::library_resolution_failed,
+                    .message = "failed to resolve MSVC OpenMP runtime freshness evidence: "
+                        + resolved_openmp_libraries.error().message,
+                    .library_resolution_error = resolved_openmp_libraries.error(),
+                };
+                return std::unexpected(std::move(error));
+            }
+            linker_file_inputs.insert(
+                linker_file_inputs.end(),
+                resolved_openmp_libraries->files.begin(),
+                resolved_openmp_libraries->files.end());
         }
     }
 
