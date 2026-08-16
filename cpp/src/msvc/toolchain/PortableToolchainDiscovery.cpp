@@ -87,8 +87,10 @@ std::expected<MsvcToolchain, ToolchainError> discover_portable_toolchain(
     // Portable mode is an MQB-owned toolchain environment. Do not append the
     // launching shell's INCLUDE/LIB/LIBPATH/PATH: those values can silently
     // redirect headers, libraries, metadata, or helper tools away from the
-    // portable bundle. Explicit empty LIBPATH also masks an inherited value
-    // because process launch otherwise inherits unspecified environment names.
+    // portable bundle. Explicit empty metadata variables also mask vcvars state
+    // inherited from a Developer Command Prompt. Portable discovery resolves
+    // the selected VC/SDK roots directly and does not consume those ambient
+    // metadata aliases.
     return MsvcToolchain{
         .identity = ToolchainIdentity{
             .compiler = compiler,
@@ -105,6 +107,12 @@ std::expected<MsvcToolchain, ToolchainError> discover_portable_toolchain(
             EnvironmentVariable{"INCLUDE", joined_environment(include_prefixes)},
             EnvironmentVariable{"LIB", joined_environment(lib_prefixes)},
             EnvironmentVariable{"LIBPATH", {}},
+            EnvironmentVariable{"VCToolsInstallDir", {}},
+            EnvironmentVariable{"WindowsSdkDir", {}},
+            EnvironmentVariable{"WindowsSDKVersion", {}},
+            EnvironmentVariable{"UniversalCRTSdkDir", {}},
+            EnvironmentVariable{"UCRTVersion", {}},
+            EnvironmentVariable{"NETFXSDKDir", {}},
         },
     };
 }
