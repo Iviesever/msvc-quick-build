@@ -17,6 +17,7 @@
 #include "mqb/core/LinkCache.hpp"
 #include "mqb/core/LinkCacheFile.hpp"
 #include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
+#include "mqb/msvc/MsvcBaseAddressPolicy.hpp"
 #include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
 #include "mqb/msvc/MsvcFuzzerPolicy.hpp"
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
@@ -235,6 +236,22 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
 
     const fs::path working_directory =
         request.working_directory.value_or(fs::path{});
+
+    auto base_address_routing = msvc::MsvcBaseAddressPolicy::route(
+        toolchain_,
+        request.options.additional_arguments,
+        working_directory);
+    if (!base_address_routing) {
+        return std::unexpected(IncrementalLinkError{
+            .code = IncrementalLinkErrorCode::linker_parameter_invalid,
+            .message = "invalid native MSVC /BASE response-file policy: "
+                + base_address_routing.error().message,
+        });
+    }
+    if (base_address_routing->response_file) {
+        append_unique_path(linker_file_inputs, *base_address_routing->response_file);
+    }
+
     auto resolved_libraries = msvc::MsvcLibraryResolver::resolve(
         toolchain_,
         request.options,
