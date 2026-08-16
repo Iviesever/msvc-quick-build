@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
@@ -116,10 +117,22 @@ int main() {
     EnvironmentGuard ambient_include{"INCLUDE"};
     EnvironmentGuard ambient_lib{"LIB"};
     EnvironmentGuard ambient_libpath{"LIBPATH"};
+    EnvironmentGuard ambient_vc_tools{"VCToolsInstallDir"};
+    EnvironmentGuard ambient_sdk_dir{"WindowsSdkDir"};
+    EnvironmentGuard ambient_sdk_version{"WindowsSDKVersion"};
+    EnvironmentGuard ambient_ucrt_dir{"UniversalCRTSdkDir"};
+    EnvironmentGuard ambient_ucrt_version{"UCRTVersion"};
+    EnvironmentGuard ambient_netfx{"NETFXSDKDir"};
     ambient_path.set("ambient-path-a;ambient-path-b");
     ambient_include.set("ambient-include-a;ambient-include-b");
     ambient_lib.set("ambient-lib-a;ambient-lib-b");
     ambient_libpath.set("ambient-libpath-a;ambient-libpath-b");
+    ambient_vc_tools.set("ambient-vc-tools");
+    ambient_sdk_dir.set("ambient-sdk-dir");
+    ambient_sdk_version.set("ambient-sdk-version");
+    ambient_ucrt_dir.set("ambient-ucrt-dir");
+    ambient_ucrt_version.set("ambient-ucrt-version");
+    ambient_netfx.set("ambient-netfx-sdk");
 
     TemporaryDirectory fixture;
     const fs::path portable = fixture.path() / "portable_msvc";
@@ -163,8 +176,8 @@ int main() {
                "portable discovery should select the lexicographically latest VC tools version");
         expect(!result->identity.binary_stamp.empty(),
                "compiler identity should include a binary and effective-environment stamp");
-        expect(result->environment.size() == 4,
-               "portable discovery should provide deterministic PATH/INCLUDE/LIB/LIBPATH overrides");
+        expect(result->environment.size() == 10,
+               "portable discovery should own all effective search and toolchain metadata variables");
 
         const auto* path = find_environment(*result, "PATH");
         const auto* include = find_environment(*result, "INCLUDE");
@@ -180,6 +193,19 @@ int main() {
                "portable LIB must not inherit ambient library roots");
         expect(libpath != nullptr && libpath->value.empty(),
                "portable LIBPATH must explicitly mask ambient metadata roots");
+
+        for (const std::string_view metadata_name : {
+                 "VCToolsInstallDir",
+                 "WindowsSdkDir",
+                 "WindowsSDKVersion",
+                 "UniversalCRTSdkDir",
+                 "UCRTVersion",
+                 "NETFXSDKDir",
+             }) {
+            const auto* metadata = find_environment(*result, metadata_name);
+            expect(metadata != nullptr && metadata->value.empty(),
+                   "portable discovery must explicitly mask ambient vcvars metadata");
+        }
 
         const std::string environment_stamp =
             mqb::msvc::effective_toolchain_environment_stamp(result->environment);
@@ -214,10 +240,16 @@ int main() {
         ambient_include.set("ambient-include-b;ambient-include-a");
         ambient_lib.set("ambient-lib-b;ambient-lib-a");
         ambient_libpath.set("ambient-libpath-b;ambient-libpath-a");
+        ambient_vc_tools.set("ambient-vc-tools-mutated");
+        ambient_sdk_dir.set("ambient-sdk-dir-mutated");
+        ambient_sdk_version.set("ambient-sdk-version-mutated");
+        ambient_ucrt_dir.set("ambient-ucrt-dir-mutated");
+        ambient_ucrt_version.set("ambient-ucrt-version-mutated");
+        ambient_netfx.set("ambient-netfx-sdk-mutated");
         const auto after_ambient_mutation = locator.discover(options);
         expect(after_ambient_mutation.has_value()
                    && after_ambient_mutation->identity.binary_stamp == result->identity.binary_stamp,
-               "portable ambient search-environment mutation must not perturb effective identity");
+               "portable ambient search/metadata mutation must not perturb effective identity");
 
         expect(result->standard_library_modules.std
                    && *result->standard_library_modules.std == std_source.lexically_normal(),
