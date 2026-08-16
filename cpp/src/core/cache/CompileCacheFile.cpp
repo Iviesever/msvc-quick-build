@@ -34,11 +34,13 @@ static_assert(std::is_integral_v<FileTimeRep> && sizeof(FileTimeRep) <= sizeof(s
 constexpr std::array<std::uint8_t, 8> magic{
     'M', 'Q', 'B', 'C', 'A', 'C', 'H', 'E'};
 constexpr std::uint32_t legacy_format_version = 2;
-constexpr std::uint32_t format_version = 3;
+constexpr std::uint32_t module_scan_format_version = 3;
+constexpr std::uint32_t format_version = 4;
 constexpr std::size_t max_cache_file_size = 64u * 1024u * 1024u;
 constexpr std::uint32_t max_string_size = 4u * 1024u * 1024u;
 constexpr std::uint32_t max_output_count = 100000u;
 constexpr std::uint32_t max_dependency_count = 100000u;
+constexpr std::uint32_t max_include_search_root_count = 100000u;
 
 [[nodiscard]] CompileCacheFileError make_error(
     const CompileCacheFileErrorCode code,
@@ -260,6 +262,7 @@ serialize(const fs::path& file, const CompileCacheEntry& entry) {
     }
     if (entry.outputs.size() > max_output_count
         || entry.dependencies.size() > max_dependency_count
+        || entry.include_search_roots.size() > max_include_search_root_count
         || (entry.module_scan
             && entry.module_scan->dependencies.size() > max_dependency_count)) {
         return std::unexpected(make_error(
@@ -308,6 +311,15 @@ serialize(const fs::path& file, const CompileCacheEntry& entry) {
         }
     }
 
+    writer.write_u32(static_cast<std::uint32_t>(entry.include_search_roots.size()));
+    for (const auto& root : entry.include_search_roots) {
+        if (root.empty() || !writer.write_path(root)) {
+            return std::unexpected(make_error(
+                CompileCacheFileErrorCode::file_write_failed, file, 0,
+                "include search root is empty or too long for cache format"));
+        }
+    }
+
     writer.write_u8(entry.module_scan ? 1u : 0u);
     if (entry.module_scan) {
         const auto& evidence = *entry.module_scan;
@@ -351,7 +363,9 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
     }
     auto version = reader.read_u32();
     if (!version) return std::unexpected(version.error());
-    if (*version != legacy_format_version && *version != format_version) {
+    if (*version != legacy_format_version
+        && *version != module_scan_format_version
+        && *version != format_version) {
         return std::unexpected(make_error(
             CompileCacheFileErrorCode::unsupported_version,
             file,
@@ -415,8 +429,26 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
         dependencies.push_back(std::move(*dependency));
     }
 
+    std::vector<fs::path> include_search_roots;
+    if (*version >= format_version) {
+        auto root_count = reader.read_u32();
+        if (!root_count) return std::unexpected(root_count.error());
+        if (*root_count > max_include_search_root_count) {
+            return std::unexpected(reader.corrupt("include search root count exceeds safety limit"));
+        }
+        include_search_roots.reserve(*root_count);
+        for (std::uint32_t index = 0; index < *root_count; ++index) {
+            auto root = reader.read_path();
+            if (!root) return std::unexpected(root.error());
+            if (root->empty()) {
+                return std::unexpected(reader.corrupt("include search root is empty"));
+            }
+            include_search_roots.push_back(std::move(*root));
+        }
+    }
+
     std::optional<ModuleScanEvidence> module_scan;
-    if (*version == format_version) {
+    if (*version >= module_scan_format_version) {
         auto present = reader.read_u8();
         if (!present) return std::unexpected(present.error());
         if (*present > 1u) {
@@ -473,6 +505,7 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
         }),
         .outputs = std::move(outputs),
         .dependencies = std::move(dependencies),
+        .include_search_roots = std::move(include_search_roots),
         .module_scan = std::move(module_scan),
     };
 }
