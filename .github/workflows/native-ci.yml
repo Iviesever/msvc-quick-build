@@ -134,6 +134,14 @@ jobs:
             -RepoRoot $PWD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify OpenMP runtime policy
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/verify_openmp_runtime_policy.ps1') `
+            -MqbPath (Join-Path $PWD 'native-out/debug/mqb.exe') `
+            -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify linker side-output repair
         shell: pwsh
         run: |
