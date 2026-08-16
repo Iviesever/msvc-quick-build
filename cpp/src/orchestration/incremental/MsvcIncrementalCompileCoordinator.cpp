@@ -5,6 +5,7 @@
 #include <expected>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -56,7 +57,21 @@ void add_reason_once(
 [[nodiscard]] bool same_path(
     const std::filesystem::path& left,
     const std::filesystem::path& right) {
-    return left == right || left.lexically_normal() == right.lexically_normal();
+    if (left == right || left.lexically_normal() == right.lexically_normal()) {
+        return true;
+    }
+    std::error_code error_code;
+    return std::filesystem::equivalent(left, right, error_code) && !error_code;
+}
+
+[[nodiscard]] bool same_ordered_paths(
+    const std::span<const std::filesystem::path> left,
+    const std::span<const std::filesystem::path> right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (!same_path(left[index], right[index])) return false;
+    }
+    return true;
 }
 
 [[nodiscard]] bool has_include_search_freshness_marker(
@@ -211,11 +226,27 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         output_snapshots,
         dependency_snapshots);
 
+    const auto current_include_search_roots = msvc::include_search_roots(
+        request.options,
+        toolchain_.environment,
+        request.working_directory);
+
     // Cache entries sealed before Include Search Resolution Freshness contain
-    // only file dependencies. New entries always include at least the source
-    // directory namespace. Force one conservative reseal after upgrading so a
-    // pre-fix cache cannot preserve the exact stale warm hit this closure fixes.
+    // only file dependencies. New entries always contain directory namespace
+    // evidence. Force one conservative reseal after upgrading so a pre-fix
+    // cache cannot preserve the exact stale warm hit this closure fixes.
     if (cached_entry && !has_include_search_freshness_marker(*cached_entry)) {
+        add_reason_once(result.validation.reasons, BuildReason::dependency_changed);
+    }
+
+    // CompilerOptions already identify typed/native /I ordering, but vcvars
+    // INCLUDE is ambient toolchain environment rather than argv. Compare the
+    // exact ordered roots persisted by cache v4 so root replacement/removal is
+    // freshness even when all previously resolved headers still exist.
+    if (cached_entry
+        && !same_ordered_paths(
+            cached_entry->include_search_roots,
+            current_include_search_roots)) {
         add_reason_once(result.validation.reasons, BuildReason::dependency_changed);
     }
 
