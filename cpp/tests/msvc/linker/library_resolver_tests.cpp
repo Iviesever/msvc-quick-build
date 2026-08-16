@@ -13,6 +13,7 @@
 #include "mqb/msvc/MsvcLibraryResolver.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/msvc/MsvcWholeArchivePolicy.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace {
 
@@ -102,6 +103,35 @@ int main() {
                && from_current->files.size() == 1
                && from_current->files.front() == (work / "local.lib").lexically_normal(),
            "working directory should be searched before toolchain LIB fallback");
+
+    const fs::path unicode_library_dir = tree.root / fs::path{u8"库目录/日本語Lib"};
+    const fs::path unicode_library = unicode_library_dir / "unicode.lib";
+    touch(unicode_library);
+    mqb::LinkOptions unicode_options;
+    unicode_options.library_directories = {unicode_library_dir};
+    unicode_options.libraries = {"unicode"};
+    const auto unicode_resolved = mqb::msvc::MsvcLibraryResolver::resolve(
+        toolchain, unicode_options, work);
+    expect(unicode_resolved.has_value()
+               && unicode_resolved->files.size() == 1
+               && mqb::platform::windows::path_identity_key(unicode_resolved->files.front())
+                   == mqb::platform::windows::path_identity_key(unicode_library),
+           "Unicode library directories should resolve without changing non-ASCII path bytes");
+
+#ifdef _WIN32
+    mqb::LinkOptions unicode_alias_options;
+    unicode_alias_options.library_directories = {
+        tree.root / fs::path{u8"库目录/日本語lib"},
+    };
+    unicode_alias_options.libraries = {"UNICODE.LIB"};
+    const auto unicode_alias_resolved = mqb::msvc::MsvcLibraryResolver::resolve(
+        toolchain, unicode_alias_options, work);
+    expect(unicode_alias_resolved.has_value()
+               && unicode_alias_resolved->files.size() == 1
+               && mqb::platform::windows::path_identity_key(unicode_alias_resolved->files.front())
+                   == mqb::platform::windows::path_identity_key(unicode_library),
+           "the same Unicode library path with different ASCII casing should keep one Windows identity");
+#endif
 
     mqb::LinkOptions missing_options;
     missing_options.libraries = {"does-not-exist"};
