@@ -180,12 +180,16 @@ inline void append_environment_include_roots(
 // into the existing compile/module-scan dependency evidence. Warm validation
 // only stats them; it never launches cl.exe or /scanDependencies.
 //
-// Source and previously included-header directories are deliberately watched
-// as conservative quote-include roots. Ordered /I and /external:I roots are
-// watched directly, and for a dependency resolved below a later root we also
-// watch the corresponding parent directory (or its deepest existing ancestor)
-// in every higher-priority root. This catches a new same-name header appearing
-// without changing argv or the previously resolved file.
+// Ordinary source/header directories are conservative quote-include roots.
+// The synthetic PCH creator is the exception: its source lives beside MQB-owned
+// outputs and contains no textual includes, so watching that artifact directory
+// would make its own first build alter its freshness evidence. Its forced PCH
+// header and every transitive include are still represented by resolved-header
+// parent directories below. Ordered /I and /external:I roots are watched
+// directly, and for a dependency resolved below a later root we also watch the
+// corresponding parent directory (or its deepest existing ancestor) in every
+// higher-priority root. This catches a new same-name header appearing without
+// changing argv or the previously resolved file.
 [[nodiscard]] inline std::vector<std::filesystem::path>
 include_search_freshness_directories(
     const std::span<const std::filesystem::path> resolved_includes,
@@ -199,7 +203,11 @@ include_search_freshness_directories(
     const fs::path working = effective_working_directory(working_directory);
     const fs::path absolute_source = absolute_search_path(source, working);
     std::vector<fs::path> ordered_roots;
-    append_unique(ordered_roots, absolute_source.parent_path());
+    const bool synthetic_pch_creator = options.precompiled_header
+        && options.precompiled_header->role == PrecompiledHeaderRole::create;
+    if (!synthetic_pch_creator) {
+        append_unique(ordered_roots, absolute_source.parent_path());
+    }
     for (const auto& include_directory : options.include_directories) {
         append_unique(
             ordered_roots,
