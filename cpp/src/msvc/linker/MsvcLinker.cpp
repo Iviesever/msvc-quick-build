@@ -1,11 +1,13 @@
 #include "mqb/msvc/MsvcLinker.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace mqb::msvc {
 namespace {
@@ -83,6 +85,149 @@ void suppress_ambient_linker_options(
         character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
     }
     return body;
+}
+
+[[nodiscard]] bool ascii_iequals(
+    const std::string_view left,
+    const std::string_view right) noexcept {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        const auto a = static_cast<unsigned char>(left[index]);
+        const auto b = static_cast<unsigned char>(right[index]);
+        if (std::tolower(a) != std::tolower(b)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] std::size_t find_ascii_icase(
+    const std::string_view text,
+    const std::string_view needle,
+    const std::size_t from = 0) noexcept {
+    if (needle.empty() || from > text.size() || needle.size() > text.size() - from) {
+        return std::string_view::npos;
+    }
+    for (std::size_t index = from; index + needle.size() <= text.size(); ++index) {
+        if (ascii_iequals(text.substr(index, needle.size()), needle)) {
+            return index;
+        }
+    }
+    return std::string_view::npos;
+}
+
+[[nodiscard]] std::string windows_path_key(const fs::path& path) {
+    std::string key = path.lexically_normal().generic_string();
+    std::transform(
+        key.begin(),
+        key.end(),
+        key.begin(),
+        [](const unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    return key;
+}
+
+void add_unique_path(std::vector<fs::path>& paths, const fs::path& path) {
+    const std::string key = windows_path_key(path);
+    const auto duplicate = std::find_if(
+        paths.begin(),
+        paths.end(),
+        [&](const fs::path& existing) {
+            return windows_path_key(existing) == key;
+        });
+    if (duplicate == paths.end()) {
+        paths.push_back(path.lexically_normal());
+    }
+}
+
+[[nodiscard]] std::optional<std::size_t> absolute_windows_path_start(
+    const std::string_view line,
+    const std::size_t before) noexcept {
+    if (before > line.size()) {
+        return std::nullopt;
+    }
+
+    for (std::size_t cursor = before; cursor > 0; --cursor) {
+        const std::size_t index = cursor - 1;
+        if (index + 2 < before
+            && std::isalpha(static_cast<unsigned char>(line[index])) != 0
+            && line[index + 1] == ':'
+            && (line[index + 2] == '\\' || line[index + 2] == '/')) {
+            return index;
+        }
+    }
+
+    for (std::size_t cursor = before; cursor > 1; --cursor) {
+        const std::size_t index = cursor - 2;
+        if (line[index] == '\\' && line[index + 1] == '\\') {
+            if (index == 0
+                || std::isspace(static_cast<unsigned char>(line[index - 1])) != 0
+                || line[index - 1] == '"') {
+                return index;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] bool has_user_progress_output(const LinkOptions& options) {
+    return std::any_of(
+        options.additional_arguments.begin(),
+        options.additional_arguments.end(),
+        [](const std::string& argument) {
+            const std::string body = linker_option_body_upper(argument);
+            return body.starts_with("VERBOSE") || body == "TIME";
+        });
+}
+
+[[nodiscard]] bool already_reports_library_search(const LinkOptions& options) {
+    return std::any_of(
+        options.additional_arguments.begin(),
+        options.additional_arguments.end(),
+        [](const std::string& argument) {
+            const std::string body = linker_option_body_upper(argument);
+            return body == "VERBOSE" || body == "VERBOSE:LIB";
+        });
+}
+
+[[nodiscard]] bool has_lnk_diagnostic(const std::string_view line) noexcept {
+    std::size_t from = 0;
+    while (from < line.size()) {
+        const std::size_t marker = line.find("LNK", from);
+        if (marker == std::string_view::npos) {
+            return false;
+        }
+        if (marker + 7 <= line.size()
+            && std::isdigit(static_cast<unsigned char>(line[marker + 3])) != 0
+            && std::isdigit(static_cast<unsigned char>(line[marker + 4])) != 0
+            && std::isdigit(static_cast<unsigned char>(line[marker + 5])) != 0
+            && std::isdigit(static_cast<unsigned char>(line[marker + 6])) != 0) {
+            return true;
+        }
+        from = marker + 3;
+    }
+    return false;
+}
+
+[[nodiscard]] std::string keep_lnk_diagnostics(const std::string_view text) {
+    std::string filtered;
+    std::size_t begin = 0;
+    while (begin < text.size()) {
+        const std::size_t newline = text.find('\n', begin);
+        const std::size_t end = newline == std::string_view::npos ? text.size() : newline + 1;
+        const std::string_view line = text.substr(begin, end - begin);
+        if (has_lnk_diagnostic(line)) {
+            filtered.append(line);
+        }
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        begin = newline + 1;
+    }
+    return filtered;
 }
 
 } // namespace
@@ -233,6 +378,51 @@ std::vector<fs::path> MsvcLinker::required_side_output_paths(
     return paths;
 }
 
+std::vector<fs::path> MsvcLinker::observed_library_paths(
+    const std::string_view stdout_text) {
+    std::vector<fs::path> paths;
+    std::size_t begin = 0;
+    while (begin < stdout_text.size()) {
+        const std::size_t newline = stdout_text.find('\n', begin);
+        const std::size_t end = newline == std::string_view::npos
+            ? stdout_text.size()
+            : newline;
+        const std::string_view line = stdout_text.substr(begin, end - begin);
+
+        std::size_t search_from = 0;
+        while (search_from < line.size()) {
+            const std::size_t extension = find_ascii_icase(line, ".lib", search_from);
+            if (extension == std::string_view::npos) {
+                break;
+            }
+            const std::size_t path_end = extension + 4;
+            if (auto path_start = absolute_windows_path_start(line, extension)) {
+                const fs::path candidate = path_from_utf8(
+                    line.substr(*path_start, path_end - *path_start));
+                if (candidate.is_absolute()) {
+                    add_unique_path(paths, candidate);
+                }
+            }
+            search_from = path_end;
+        }
+
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        begin = newline + 1;
+    }
+    return paths;
+}
+
+void MsvcLinker::sanitize_library_observation_output(
+    process::ProcessResult& result,
+    const LinkOptions& options) {
+    if (has_user_progress_output(options)) {
+        return;
+    }
+    result.stdout_text = keep_lnk_diagnostics(result.stdout_text);
+}
+
 std::expected<std::vector<std::string>, LinkerError>
 MsvcLinker::build_arguments(const LinkInvocation& invocation) {
     if (invocation.options.target_kind == TargetKind::static_library) {
@@ -272,7 +462,7 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
 
     std::vector<std::string> arguments;
     arguments.reserve(
-        18
+        19
         + invocation.objects.size()
         + invocation.options.library_directories.size()
         + invocation.libraries.size()
@@ -311,6 +501,14 @@ MsvcLinker::build_arguments(const LinkInvocation& invocation) {
                 "additional linker argument must not be empty"));
         }
         arguments.push_back(argument);
+    }
+
+    if (invocation.observe_library_search
+        && !already_reports_library_search(invocation.options)) {
+        // Microsoft documents /VERBOSE:LIB as reporting each searched library
+        // and object with its full path. Keep this after raw user flags so the
+        // observation cannot be disabled by an earlier progress-mode switch.
+        arguments.emplace_back("/VERBOSE:LIB");
     }
 
     // Library/file-input changes already require a full link to avoid stale
