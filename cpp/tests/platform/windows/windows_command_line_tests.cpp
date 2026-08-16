@@ -62,6 +62,7 @@ void expect_round_trip(
 
 int main() {
     using mqb::platform::windows::path_identity_contains;
+    using mqb::platform::windows::path_identity_key;
     using mqb::platform::windows::quote_command_line_argument;
 
     expect(quote_command_line_argument(L"plain") == L"plain",
@@ -111,12 +112,26 @@ int main() {
         path_identity_contains(
             L"C:\\项目\\MQB",
             L"c:\\项目\\mqb\\src\\main.cpp"),
-        "project containment should preserve non-ASCII path bytes while folding ASCII case");
+        "project containment should preserve non-ASCII path components while folding ASCII case");
     expect(
         !path_identity_contains(
             L"C:\\项目\\MQB",
             L"C:\\項目\\MQB\\src\\main.cpp"),
-        "project containment must not locale-fold distinct non-ASCII path identities");
+        "project containment must not conflate distinct non-ASCII code points");
+
+    expect(
+        path_identity_key(L"C:\\Café\\Écho.cpp")
+            == path_identity_key(L"c:\\CAFÉ\\éCHO.cpp"),
+        "Windows Unicode case aliases must share one path identity key");
+    expect(
+        path_identity_contains(
+            L"C:\\Café\\Éditeur",
+            L"c:\\CAFÉ\\éditeur\\src\\main.cpp"),
+        "project containment must honor non-ASCII Windows case aliases");
+    expect(
+        path_identity_key(L"C:\\Ångström")
+            != path_identity_key(L"C:\\A\u030Angström"),
+        "ordinal path identity must not normalize canonically equivalent Unicode sequences");
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
