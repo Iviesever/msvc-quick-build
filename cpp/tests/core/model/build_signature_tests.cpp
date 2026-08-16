@@ -75,6 +75,20 @@ int main() {
     expect(mqb::BuildSignature::for_compile(normalized_unit, toolchain, options) == baseline,
            "lexically equivalent source paths should produce the same signature");
 
+    auto unicode_unit = unit;
+    unicode_unit.source = std::filesystem::path{u8"C:/项目/Source/Main.CPP"};
+    auto unicode_case_alias = unicode_unit;
+    unicode_case_alias.source = std::filesystem::path{u8"c:/项目/source/main.cpp"};
+    expect(mqb::BuildSignature::for_compile(unicode_case_alias, toolchain, options)
+               == mqb::BuildSignature::for_compile(unicode_unit, toolchain, options),
+           "Unicode source identity should fold ASCII path casing without narrowing non-ASCII bytes");
+
+    auto different_unicode_unit = unicode_unit;
+    different_unicode_unit.source = std::filesystem::path{u8"C:/項目/Source/Main.CPP"};
+    expect(mqb::BuildSignature::for_compile(different_unicode_unit, toolchain, options)
+               != mqb::BuildSignature::for_compile(unicode_unit, toolchain, options),
+           "distinct non-ASCII UTF-8 path bytes must remain distinct build identity");
+
     auto release_options = options;
     release_options.configuration = mqb::BuildConfiguration::release;
     expect(mqb::BuildSignature::for_compile(unit, toolchain, release_options) != baseline,
@@ -129,6 +143,14 @@ int main() {
     moved_ifc.outputs.back().path = "another-ifc/main.ifc";
     expect(mqb::BuildSignature::for_compile(moved_ifc, toolchain, options) != module_baseline,
            "planned compiled-module output path should participate in provider identity");
+
+    auto unicode_module = module_unit;
+    unicode_module.outputs.back().path = std::filesystem::path{u8"C:/项目/IFC/Math.IFC"};
+    auto unicode_module_alias = unicode_module;
+    unicode_module_alias.outputs.back().path = std::filesystem::path{u8"c:/项目/ifc/math.ifc"};
+    expect(mqb::BuildSignature::for_compile(unicode_module_alias, toolchain, options)
+               == mqb::BuildSignature::for_compile(unicode_module, toolchain, options),
+           "module provider artifact identity should share Windows ASCII-case folding");
 
     auto consumer = unit;
     consumer.module_references = {
@@ -215,6 +237,18 @@ int main() {
                != link_baseline,
            "enabling typed LTCG should invalidate downstream link identity");
 
+    const std::vector<std::filesystem::path> unicode_libraries{
+        std::filesystem::path{u8"C:/库/Runtime/Math.LIB"},
+    };
+    const std::vector<std::filesystem::path> unicode_library_aliases{
+        std::filesystem::path{u8"c:/库/runtime/math.lib"},
+    };
+    expect(mqb::BuildSignature::for_link(
+               objects, unicode_libraries, "bin/app.exe", linker, link_options)
+               == mqb::BuildSignature::for_link(
+                   objects, unicode_library_aliases, "bin/app.exe", linker, link_options),
+           "same resolved library path with different ASCII casing should keep one link recipe identity");
+
     const mqb::LibrarianIdentity librarian{
         .librarian = "toolchain/lib.exe",
         .version = "14.50.12345",
@@ -225,6 +259,13 @@ int main() {
     expect(mqb::BuildSignature::for_archive(objects, "bin/math.lib", librarian, true)
                != archive_baseline,
            "enabling typed LTCG should invalidate downstream archive identity");
+    const std::vector<std::filesystem::path> archive_case_alias{
+        std::filesystem::path{"BUILD/MAIN.OBJ"},
+    };
+    expect(mqb::BuildSignature::for_archive(
+               archive_case_alias, "BIN/MATH.LIB", librarian)
+               == archive_baseline,
+           "archive recipe identity should collapse ASCII path casing aliases");
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
