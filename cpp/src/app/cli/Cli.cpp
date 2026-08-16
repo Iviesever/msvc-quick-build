@@ -601,6 +601,11 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             options.libraries.emplace_back(*value);
             continue;
         }
+        if (argument == "-lib" || argument == "-LIB") {
+            return std::unexpected(error(
+                "'-lib' is not a librarian separator; use '/lib' for static-target librarian options, "
+                "or '-l <name>' / '-l<name>' for a link library"));
+        }
         if (argument == "-I" || argument.starts_with("-I")) {
             auto value = attached_or_next(arguments, index, argument, "-I");
             if (!value) return std::unexpected(value.error());
@@ -621,11 +626,6 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             if (value->empty()) return std::unexpected(error("empty library directory"));
             options.library_directories.emplace_back(std::string{*value});
             continue;
-        }
-        if (argument == "-lib" || argument == "-LIB") {
-            return std::unexpected(error(
-                "'-lib' is not a librarian separator; use '/lib' for static-target librarian options, "
-                "or '-l <name>' / '-l<name>' for a link library"));
         }
         if (argument == "-l" || argument.starts_with("-l")) {
             auto value = attached_or_next(arguments, index, argument, "-l");
