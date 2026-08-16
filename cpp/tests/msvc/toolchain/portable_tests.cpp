@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/process/Process.hpp"
@@ -175,7 +176,7 @@ int main() {
         expect(result->identity.version == "14.50.20000",
                "portable discovery should select the lexicographically latest VC tools version");
         expect(!result->identity.binary_stamp.empty(),
-               "compiler identity should include a binary and effective-environment stamp");
+               "compiler identity should include a binary and compiler-environment stamp");
         expect(result->environment.size() == 10,
                "portable discovery should own all effective search and toolchain metadata variables");
 
@@ -207,34 +208,51 @@ int main() {
                    "portable discovery must explicitly mask ambient vcvars metadata");
         }
 
-        const std::string environment_stamp =
-            mqb::msvc::effective_toolchain_environment_stamp(result->environment);
-        expect(result->identity.binary_stamp.ends_with(environment_stamp),
-               "portable compiler cache identity should seal the effective search environment");
+        const std::string compiler_stamp =
+            mqb::msvc::compiler_environment_stamp(result->environment);
+        const std::string linker_stamp =
+            mqb::msvc::linker_environment_stamp(result->environment);
+        expect(result->identity.binary_stamp.ends_with(compiler_stamp),
+               "portable compiler cache identity should seal compiler search environment");
+
+        auto linker_identity = mqb::msvc::MsvcLinker::identity(*result);
+        expect(linker_identity.has_value(),
+               "portable link.exe should expose a linker identity without launching it");
+        if (linker_identity) {
+            expect(linker_identity->binary_stamp.ends_with(linker_stamp),
+                   "portable linker cache identity should seal library/helper search environment");
+        }
 
         auto include_order_changed = result->environment;
         if (auto* effective_include = find_environment(include_order_changed, "INCLUDE")) {
             effective_include->value = "B;A";
         }
-        expect(mqb::msvc::effective_toolchain_environment_stamp(include_order_changed)
-                   != environment_stamp,
-               "effective INCLUDE replacement/order changes must change toolchain identity");
+        expect(mqb::msvc::compiler_environment_stamp(include_order_changed) != compiler_stamp,
+               "effective INCLUDE replacement/order changes must change compiler identity");
+        expect(mqb::msvc::linker_environment_stamp(include_order_changed) == linker_stamp,
+               "INCLUDE-only changes must not invalidate linker identity");
 
-        auto lib_order_changed = result->environment;
-        if (auto* effective_lib = find_environment(lib_order_changed, "LIB")) {
+        auto lib_order_changed = *result;
+        if (auto* effective_lib = find_environment(lib_order_changed.environment, "LIB")) {
             effective_lib->value = "B;A";
         }
-        expect(mqb::msvc::effective_toolchain_environment_stamp(lib_order_changed)
-                   != environment_stamp,
-               "effective LIB replacement/order changes must change toolchain identity");
+        expect(mqb::msvc::compiler_environment_stamp(lib_order_changed.environment) == compiler_stamp,
+               "LIB-only changes must not rebuild translation units");
+        expect(mqb::msvc::linker_environment_stamp(lib_order_changed.environment) != linker_stamp,
+               "effective LIB replacement/order changes must change linker identity");
+        const auto changed_linker_identity = mqb::msvc::MsvcLinker::identity(lib_order_changed);
+        expect(linker_identity && changed_linker_identity
+                   && changed_linker_identity->binary_stamp != linker_identity->binary_stamp,
+               "LIB order mutation must directly invalidate MsvcLinker identity");
 
         auto libpath_changed = result->environment;
         if (auto* effective_libpath = find_environment(libpath_changed, "LIBPATH")) {
             effective_libpath->value = "metadata-b;metadata-a";
         }
-        expect(mqb::msvc::effective_toolchain_environment_stamp(libpath_changed)
-                   != environment_stamp,
-               "effective LIBPATH changes must change toolchain identity");
+        expect(mqb::msvc::compiler_environment_stamp(libpath_changed) != compiler_stamp,
+               "effective LIBPATH changes must change compiler identity");
+        expect(mqb::msvc::linker_environment_stamp(libpath_changed) == linker_stamp,
+               "LIBPATH-only changes must not invalidate linker identity");
 
         ambient_path.set("ambient-path-b;ambient-path-a");
         ambient_include.set("ambient-include-b;ambient-include-a");
@@ -249,7 +267,13 @@ int main() {
         const auto after_ambient_mutation = locator.discover(options);
         expect(after_ambient_mutation.has_value()
                    && after_ambient_mutation->identity.binary_stamp == result->identity.binary_stamp,
-               "portable ambient search/metadata mutation must not perturb effective identity");
+               "portable ambient search/metadata mutation must not perturb compiler identity");
+        if (after_ambient_mutation) {
+            const auto after_linker_identity = mqb::msvc::MsvcLinker::identity(*after_ambient_mutation);
+            expect(linker_identity && after_linker_identity
+                       && after_linker_identity->binary_stamp == linker_identity->binary_stamp,
+                   "portable ambient search/metadata mutation must not perturb linker identity");
+        }
 
         expect(result->standard_library_modules.std
                    && *result->standard_library_modules.std == std_source.lexically_normal(),
