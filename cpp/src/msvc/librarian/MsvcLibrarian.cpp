@@ -6,6 +6,8 @@
 #include <system_error>
 #include <utility>
 
+#include "mqb/msvc/MsvcParameterEngine.hpp"
+
 namespace mqb::msvc {
 namespace {
 
@@ -21,6 +23,10 @@ namespace fs = std::filesystem;
 [[nodiscard]] std::string path_to_utf8(const fs::path& path) {
     const auto bytes = path.generic_u8string();
     return std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
+[[nodiscard]] std::string machine_argument(const Architecture architecture) {
+    return architecture == Architecture::x86 ? "/MACHINE:X86" : "/MACHINE:X64";
 }
 
 [[nodiscard]] fs::path temporary_archive_path(const fs::path& output) {
@@ -81,12 +87,34 @@ MsvcLibrarian::build_arguments(const ArchiveInvocation& invocation) {
         return std::unexpected(failure(
             LibrarianErrorCode::invalid_request, "archive output path is empty"));
     }
+
+    auto routed = MsvcParameterEngine::route_librarian(invocation.additional_arguments);
+    if (!routed) {
+        return std::unexpected(failure(
+            LibrarianErrorCode::invalid_request,
+            "invalid native MSVC librarian argument '" + routed.error().argument
+                + "': " + routed.error().message));
+    }
+    if (routed->architecture && *routed->architecture != invocation.architecture) {
+        return std::unexpected(failure(
+            LibrarianErrorCode::invalid_request,
+            "native MSVC librarian /MACHINE conflicts with the typed target architecture"));
+    }
+
+    const bool effective_ltcg = invocation.link_time_code_generation
+        || routed->link_time_code_generation.value_or(false);
+
     std::vector<std::string> arguments;
-    arguments.reserve(invocation.objects.size() + 3);
+    arguments.reserve(invocation.objects.size() + routed->passthrough.size() + 4);
     arguments.emplace_back("/NOLOGO");
-    if (invocation.link_time_code_generation) {
+    arguments.push_back(machine_argument(invocation.architecture));
+    if (effective_ltcg) {
         arguments.emplace_back("/LTCG");
     }
+    arguments.insert(
+        arguments.end(),
+        routed->passthrough.begin(),
+        routed->passthrough.end());
     arguments.push_back("/OUT:" + path_to_utf8(invocation.output));
     for (const auto& object : invocation.objects) {
         if (object.empty()) {
