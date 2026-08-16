@@ -35,7 +35,7 @@ namespace path_identity_detail {
 [[nodiscard]] inline std::optional<std::wstring> filesystem_uppercase(
     const std::wstring& value) {
     if (value.empty()) return std::wstring{};
-    if (value.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    if (value.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
         return std::nullopt;
     }
 
