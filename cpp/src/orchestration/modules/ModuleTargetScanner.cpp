@@ -42,17 +42,11 @@ namespace fs = std::filesystem;
     return std::nullopt;
 }
 
-[[nodiscard]] std::optional<FileSnapshot> snapshot_path(
-    const fs::path& path,
-    const bool require_regular_file) {
+[[nodiscard]] std::optional<FileSnapshot> snapshot_regular_file(const fs::path& path) {
     if (path.empty()) return std::nullopt;
     std::error_code error_code;
     const auto status = fs::status(path, error_code);
-    if (error_code) return std::nullopt;
-    const bool supported_type = require_regular_file
-        ? fs::is_regular_file(status)
-        : (fs::is_regular_file(status) || fs::is_directory(status));
-    if (!supported_type) return std::nullopt;
+    if (error_code || !fs::is_regular_file(status)) return std::nullopt;
     const auto modified = fs::last_write_time(path, error_code);
     if (error_code) return std::nullopt;
     return FileSnapshot{
@@ -62,12 +56,19 @@ namespace fs = std::filesystem;
     };
 }
 
-[[nodiscard]] std::optional<FileSnapshot> snapshot_regular_file(const fs::path& path) {
-    return snapshot_path(path, true);
-}
-
 [[nodiscard]] std::optional<FileSnapshot> snapshot_file_or_directory(const fs::path& path) {
-    return snapshot_path(path, false);
+    if (path.empty()) return std::nullopt;
+    // Module-scan evidence admits both file and directory dependencies. Its
+    // identity is existence + mtime, so last_write_time() alone provides the
+    // required warm-path probe and avoids a redundant preceding status().
+    std::error_code error_code;
+    const auto modified = fs::last_write_time(path, error_code);
+    if (error_code) return std::nullopt;
+    return FileSnapshot{
+        .path = path,
+        .exists = true,
+        .modified = modified,
+    };
 }
 
 [[nodiscard]] bool same_path(const fs::path& left, const fs::path& right) {
