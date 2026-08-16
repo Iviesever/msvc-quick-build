@@ -7,6 +7,7 @@
 
 #include "mqb/core/FileSnapshot.hpp"
 #include "mqb/discovery/SourceDiscovery.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::discovery::detail {
 
@@ -20,22 +21,31 @@ struct DiscoveryRequestIdentity {
     std::vector<std::filesystem::path> excluded_sources;
 
     [[nodiscard]] bool operator==(const DiscoveryRequestIdentity& other) const {
-        if (project_root != other.project_root
-            || entry != other.entry
-            || include_directories != other.include_directories
-            || excluded_directories != other.excluded_directories
-            || extra_sources != other.extra_sources
-            || excluded_sources != other.excluded_sources
-            || forced_includes.size() != other.forced_includes.size()) {
-            return false;
-        }
-        for (std::size_t index = 0; index < forced_includes.size(); ++index) {
-            if (forced_includes[index].lexically_normal()
-                != other.forced_includes[index].lexically_normal()) {
+        const auto same_path = [](const std::filesystem::path& left, const std::filesystem::path& right) {
+            return mqb::platform::windows::path_identity_key(left)
+                == mqb::platform::windows::path_identity_key(right);
+        };
+        const auto same_paths = [&](
+                                    const std::vector<std::filesystem::path>& left,
+                                    const std::vector<std::filesystem::path>& right) {
+            if (left.size() != right.size()) {
                 return false;
             }
-        }
-        return true;
+            for (std::size_t index = 0; index < left.size(); ++index) {
+                if (!same_path(left[index], right[index])) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        return same_path(project_root, other.project_root)
+            && same_path(entry, other.entry)
+            && same_paths(include_directories, other.include_directories)
+            && same_paths(forced_includes, other.forced_includes)
+            && same_paths(excluded_directories, other.excluded_directories)
+            && same_paths(extra_sources, other.extra_sources)
+            && same_paths(excluded_sources, other.excluded_sources);
     }
 };
 
