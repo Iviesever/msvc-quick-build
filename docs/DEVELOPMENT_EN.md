@@ -2,7 +2,7 @@
 
 **[简体中文](DEVELOPMENT.md) | English**
 
-This document covers **repository development and validation** only. User installation and usage live in the root [`README_EN.md`](../README_EN.md); architecture boundaries live in [`ARCHITECTURE_EN.md`](ARCHITECTURE_EN.md).
+This document covers **repository development and validation** only. User installation and usage live in the root [`README.md`](../README.md); architecture boundaries live in [`ARCHITECTURE_EN.md`](ARCHITECTURE_EN.md).
 
 ## Requirements
 
