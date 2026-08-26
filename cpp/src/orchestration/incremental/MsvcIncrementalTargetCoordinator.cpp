@@ -57,7 +57,8 @@ using Clock = std::chrono::steady_clock;
 
 [[nodiscard]] IncrementalCompileRequest compile_request_for(
     const TargetSourceRequest& source,
-    const CompilerOptions& options) {
+    const CompilerOptions& options,
+    const bool force_rebuild) {
     TranslationUnit unit;
     unit.source = source.source;
     unit.kind = TranslationUnitKind::source;
@@ -72,6 +73,7 @@ using Clock = std::chrono::steady_clock;
         .cache_file = source.artifacts.compile_cache,
         .source_dependencies_file = source.artifacts.dependencies,
         .working_directory = source.source.parent_path(),
+        .force_rebuild = force_rebuild,
     };
 }
 
@@ -150,7 +152,10 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
         request.max_parallel_compiles,
         [&](const std::size_t index) {
             const auto& source = request.sources[index];
-            auto compile_request = compile_request_for(source, request.compiler_options);
+            auto compile_request = compile_request_for(
+                source,
+                request.compiler_options,
+                request.force_downstream_rebuild);
             attempts[index].emplace(compile_coordinator_.run(compile_request));
             return attempts[index]->has_value();
         });

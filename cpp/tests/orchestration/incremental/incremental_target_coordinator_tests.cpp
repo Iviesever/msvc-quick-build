@@ -331,6 +331,46 @@ int main() {
     expect(runner.link_calls() == 1,
            "warm target should not invoke the linker runner");
 
+    auto forced_request = request;
+    forced_request.force_downstream_rebuild = true;
+    const auto forced = target_coordinator.run(forced_request);
+    expect(forced.has_value(), "upstream rebuild should force the complete target successfully");
+    if (forced) {
+        expect(forced->any_compiled,
+               "upstream rebuild should force every target consumer to compile");
+        expect(forced->link.linked,
+               "upstream rebuild should link exactly once after forced consumers finish");
+        expect(std::all_of(
+                   forced->compiles.begin(),
+                   forced->compiles.end(),
+                   [](const mqb::orchestration::TargetCompileResult& compile) {
+                       return std::find(
+                                  compile.result.validation.reasons.begin(),
+                                  compile.result.validation.reasons.end(),
+                                  mqb::BuildReason::explicit_rebuild)
+                           != compile.result.validation.reasons.end();
+                   }),
+               "upstream rebuild should retain explicit evidence on every forced consumer");
+    }
+    expect(runner.compile_calls() == 8,
+           "upstream rebuild should compile all four consumers exactly once more");
+    expect(runner.link_calls() == 2,
+           "upstream rebuild should add exactly one link invocation");
+
+    const auto warm_after_force = target_coordinator.run(request);
+    expect(warm_after_force.has_value(),
+           "ordinary warm target after upstream forcing should succeed");
+    if (warm_after_force) {
+        expect(!warm_after_force->any_compiled,
+               "upstream forcing must not poison the next warm compile check");
+        expect(!warm_after_force->link.linked,
+               "upstream forcing must not poison the next warm link check");
+    }
+    expect(runner.compile_calls() == 8,
+           "post-force warm target should not launch more compiler processes");
+    expect(runner.link_calls() == 2,
+           "post-force warm target should not launch another linker process");
+
     {
         auto invalid = request;
         invalid.max_parallel_compiles = 0;

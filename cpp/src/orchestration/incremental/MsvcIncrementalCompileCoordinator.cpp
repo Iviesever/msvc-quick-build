@@ -162,88 +162,92 @@ std::expected<IncrementalCompileResult, IncrementalCompileError>
 MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request) const {
     IncrementalCompileResult result;
 
-    std::optional<CompileCacheEntry> cached_entry;
-    auto loaded_cache = CompileCacheFile::load(request.cache_file);
-    if (!loaded_cache) {
-        result.warnings.push_back(IncrementalCompileWarning{
-            .code = IncrementalCompileWarningCode::cache_load_failed,
-            .path = request.cache_file,
-            .message = loaded_cache.error().message,
-        });
+    // An upstream coordinator may already own the invalidation decision (for
+    // example, a successfully rebuilt MQB-owned PCH). In that case old cache
+    // state cannot make this unit reusable, so avoid probing it and reseal the
+    // normal compile cache from the compiler result below.
+    if (request.force_rebuild) {
+        result.validation.reasons.push_back(BuildReason::explicit_rebuild);
     } else {
-        cached_entry = std::move(*loaded_cache);
-    }
+        std::optional<CompileCacheEntry> cached_entry;
+        auto loaded_cache = CompileCacheFile::load(request.cache_file);
+        if (!loaded_cache) {
+            result.warnings.push_back(IncrementalCompileWarning{
+                .code = IncrementalCompileWarningCode::cache_load_failed,
+                .path = request.cache_file,
+                .message = loaded_cache.error().message,
+            });
+        } else {
+            cached_entry = std::move(*loaded_cache);
+        }
 
-    auto source_snapshot = detail::snapshot_regular_file(request.unit.source);
-    append_snapshot_warning(
-        result.warnings,
-        request.unit.source,
-        std::move(source_snapshot.failure));
-
-    std::vector<FileSnapshot> output_snapshots;
-    output_snapshots.reserve(request.unit.outputs.size());
-    for (const auto& output : request.unit.outputs) {
-        auto output_snapshot = detail::snapshot_regular_file(output.path);
+        auto source_snapshot = detail::snapshot_regular_file(request.unit.source);
         append_snapshot_warning(
             result.warnings,
-            output.path,
-            std::move(output_snapshot.failure));
-        output_snapshots.push_back(std::move(output_snapshot.snapshot));
-    }
+            request.unit.source,
+            std::move(source_snapshot.failure));
 
-    std::vector<FileSnapshot> dependency_snapshots;
-    if (cached_entry) {
-        dependency_snapshots.reserve(cached_entry->dependencies.size());
-        for (const auto& dependency : cached_entry->dependencies) {
-            auto dependency_snapshot = detail::snapshot_file_or_directory(dependency);
+        std::vector<FileSnapshot> output_snapshots;
+        output_snapshots.reserve(request.unit.outputs.size());
+        for (const auto& output : request.unit.outputs) {
+            auto output_snapshot = detail::snapshot_regular_file(output.path);
             append_snapshot_warning(
                 result.warnings,
-                dependency,
-                std::move(dependency_snapshot.failure));
-            dependency_snapshots.push_back(std::move(dependency_snapshot.snapshot));
+                output.path,
+                std::move(output_snapshot.failure));
+            output_snapshots.push_back(std::move(output_snapshot.snapshot));
         }
-    }
 
-    result.validation = CompileCacheValidator::validate(
-        request.unit,
-        toolchain_.identity,
-        request.options,
-        cached_entry,
-        source_snapshot.snapshot,
-        output_snapshots,
-        dependency_snapshots);
+        std::vector<FileSnapshot> dependency_snapshots;
+        if (cached_entry) {
+            dependency_snapshots.reserve(cached_entry->dependencies.size());
+            for (const auto& dependency : cached_entry->dependencies) {
+                auto dependency_snapshot = detail::snapshot_file_or_directory(dependency);
+                append_snapshot_warning(
+                    result.warnings,
+                    dependency,
+                    std::move(dependency_snapshot.failure));
+                dependency_snapshots.push_back(std::move(dependency_snapshot.snapshot));
+            }
+        }
 
-    const auto current_include_search_roots = msvc::include_search_roots(
-        request.options,
-        toolchain_.environment,
-        request.working_directory);
+        result.validation = CompileCacheValidator::validate(
+            request.unit,
+            toolchain_.identity,
+            request.options,
+            cached_entry,
+            source_snapshot.snapshot,
+            output_snapshots,
+            dependency_snapshots);
 
-    // Cache migration is owned by BuildSignature's compile domain. The v5
-    // domain invalidates pre-closure entries exactly once, including recipes
-    // with zero include roots and zero directory freshness evidence. Do not
-    // infer cache generation from whether those evidence vectors are empty.
+        const auto current_include_search_roots = msvc::include_search_roots(
+            request.options,
+            toolchain_.environment,
+            request.working_directory);
 
-    // CompilerOptions already identify typed/native /I ordering, but vcvars
-    // INCLUDE is ambient toolchain environment rather than argv. Compare the
-    // exact ordered roots persisted by cache v4 so root replacement/removal is
-    // freshness even when all previously resolved headers still exist.
-    if (cached_entry
-        && !same_ordered_paths(
-            cached_entry->include_search_roots,
-            current_include_search_roots)) {
-        add_reason_once(result.validation.reasons, BuildReason::dependency_changed);
-    }
+        // Cache migration is owned by BuildSignature's compile domain. The v5
+        // domain invalidates pre-closure entries exactly once, including recipes
+        // with zero include roots and zero directory freshness evidence. Do not
+        // infer cache generation from whether those evidence vectors are empty.
 
-    if (request.force_rebuild) {
-        add_reason_once(result.validation.reasons, BuildReason::explicit_rebuild);
-    }
+        // CompilerOptions already identify typed/native /I ordering, but vcvars
+        // INCLUDE is ambient toolchain environment rather than argv. Compare the
+        // exact ordered roots persisted by cache v4 so root replacement/removal is
+        // freshness even when all previously resolved headers still exist.
+        if (cached_entry
+            && !same_ordered_paths(
+                cached_entry->include_search_roots,
+                current_include_search_roots)) {
+            add_reason_once(result.validation.reasons, BuildReason::dependency_changed);
+        }
 
-    // The validator is authoritative for incremental freshness. Once it says
-    // this compile is reusable there is no action for the generic planner to
-    // derive, so return directly on the hot no-op path. Cold/miss paths still
-    // flow through BuildPlanner and retain all existing structural validation.
-    if (result.validation.reusable()) {
-        return result;
+        // The validator is authoritative for incremental freshness. Once it says
+        // this compile is reusable there is no action for the generic planner to
+        // derive, so return directly on the hot no-op path. Cold/miss paths still
+        // flow through BuildPlanner and retain all existing structural validation.
+        if (result.validation.reusable()) {
+            return result;
+        }
     }
 
     const std::array<CompilePlanItem, 1> items{
