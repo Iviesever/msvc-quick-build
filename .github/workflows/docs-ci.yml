@@ -12,13 +12,6 @@ on:
       - 'tests/docs/**'
       - '.github/workflows/docs-ci.yml'
   pull_request:
-    paths:
-      - 'README*.md'
-      - 'CONTRIBUTING*.md'
-      - 'docs/**'
-      - 'cpp/README*.md'
-      - 'tests/docs/**'
-      - '.github/workflows/docs-ci.yml'
 
 concurrency:
   group: docs-${{ github.event.pull_request.number || github.ref }}

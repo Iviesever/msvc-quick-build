@@ -7,22 +7,68 @@ on:
     paths:
       - 'VERSION'
       - 'cpp/**'
+      - 'tests/ci/**'
       - 'tests/native/**'
+      - 'tests/selfhost/**'
       - '.github/workflows/native-ci.yml'
   pull_request:
-    paths:
-      - 'VERSION'
-      - 'cpp/**'
-      - 'tests/native/**'
-      - '.github/workflows/native-ci.yml'
+
+permissions:
+  contents: read
+  pull-requests: read
 
 concurrency:
   group: native-cpp-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  classify-native-impact:
+    name: Classify native impact
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      required: ${{ steps.classify.outputs.required }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify native-impact classifier
+        shell: pwsh
+        run: ./tests/ci/verify_native_ci_impact_classifier.ps1 -RepoRoot $PWD
+
+      - name: Classify changed paths
+        id: classify
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ('${{ github.event_name }}' -eq 'push') {
+            'required=true' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $jsonLines = @(
+            gh api "repos/$env:GITHUB_REPOSITORY/pulls/${{ github.event.pull_request.number }}/files" `
+              --paginate `
+              --slurp
+          )
+          $apiExitCode = $LASTEXITCODE
+          if ($apiExitCode -ne 0) {
+            throw 'Failed to enumerate pull-request files.'
+          }
+
+          $required = & ./tests/ci/resolve_native_ci_impact.ps1 `
+            -ExpectedChangedFileCount ([int]'${{ github.event.pull_request.changed_files }}') `
+            -PullRequestFilesJson ($jsonLines -join [Environment]::NewLine) `
+            -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "required=$required" >> $env:GITHUB_OUTPUT
+
   build-current:
     name: Build current Debug MQB + shared test library
+    needs: classify-native-impact
+    if: needs.classify-native-impact.outputs.required == 'true'
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
@@ -282,6 +328,7 @@ jobs:
     name: Native C++ gate
     if: always()
     needs:
+      - classify-native-impact
       - build-current
       - test-shard
     runs-on: ubuntu-latest
@@ -289,12 +336,25 @@ jobs:
       - name: Require build and every shard
         shell: bash
         env:
+          NATIVE_REQUIRED: ${{ needs.classify-native-impact.outputs.required }}
           BUILD_RESULT: ${{ needs.build-current.result }}
           TEST_RESULT: ${{ needs.test-shard.result }}
         run: |
           set -euo pipefail
+          echo "native-required: $NATIVE_REQUIRED"
           echo "build-current: $BUILD_RESULT"
           echo "test-shard:    $TEST_RESULT"
+
+          if [[ "$NATIVE_REQUIRED" == "false" ]]; then
+            [[ "$BUILD_RESULT" == "skipped" && "$TEST_RESULT" == "skipped" ]]
+            exit 0
+          fi
+
+          if [[ "$NATIVE_REQUIRED" != "true" ]]; then
+            echo "Unexpected native-impact classification: $NATIVE_REQUIRED"
+            exit 1
+          fi
+
           if [[ "$BUILD_RESULT" != "success" || "$TEST_RESULT" != "success" ]]; then
             exit 1
           fi

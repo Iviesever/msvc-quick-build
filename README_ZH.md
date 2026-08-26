@@ -43,6 +43,12 @@ MQB 面向希望保留 MSVC 原生行为、又不想先把每个中小型 Window
 
 这是有意的取舍：MQB 放弃跨平台广度，换取对单一工具链的深度建模，包括 MSVC dependency metadata、IFC provider、原生 linker/librarian 边界、Windows path identity，以及 project-local build state。
 
+## 性能与可复现实验证据
+
+MQB 的构建系统对比让 MQB 与 CMake + Ninja 使用同一份生成源码树、MSVC toolchain、编译参数与并发上限。计时样本不包含 CMake configure，直接调用 Ninja，并通过多轮测量报告 cold、no-op、单 TU、公共头文件和 PCH 头文件场景的中位数。
+
+已发布结果只代表所记录机器与工具链上的工程证据，不是通用排行榜结论。完整 methodology、可复现 harness、环境信息与实测结果见 [`docs/BUILD_SYSTEM_BENCHMARK_ZH.md`](docs/BUILD_SYSTEM_BENCHMARK_ZH.md)。
+
 ## MQB 负责什么
 
 - `.c`、`.cpp`、`.cc`、`.cxx` 的原生 MSVC 构建。
