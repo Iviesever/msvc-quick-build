@@ -11,6 +11,10 @@ $classifier = Join-Path $RepoRoot 'tests/ci/classify_native_ci_impact.ps1'
 if (-not (Test-Path -LiteralPath $classifier -PathType Leaf)) {
     throw "Native-impact classifier is missing: $classifier"
 }
+$resolver = Join-Path $RepoRoot 'tests/ci/resolve_native_ci_impact.ps1'
+if (-not (Test-Path -LiteralPath $resolver -PathType Leaf)) {
+    throw "Native-impact resolver is missing: $resolver"
+}
 
 $cases = @(
     @{ Name = 'version'; Expected = 'true'; Paths = @('VERSION') },
@@ -40,6 +44,62 @@ foreach ($case in $cases) {
     }
 }
 
+$resolverCases = @(
+    @{
+        Name = 'complete documentation response'
+        Expected = 'false'
+        Count = 2
+        Json = '[[{"filename":"README.md"}],[{"filename":"docs/ARCHITECTURE.md"}]]'
+    },
+    @{
+        Name = 'rename from native path'
+        Expected = 'true'
+        Count = 1
+        Json = '[[{"filename":"docs/retired.cpp","previous_filename":"cpp/src/retired.cpp"}]]'
+    },
+    @{
+        Name = 'rename into native path'
+        Expected = 'true'
+        Count = 1
+        Json = '[[{"filename":"cpp/src/promoted.cpp","previous_filename":"docs/promoted.cpp"}]]'
+    }
+)
+
+foreach ($case in $resolverCases) {
+    $actual = (& $resolver `
+        -ExpectedChangedFileCount $case.Count `
+        -PullRequestFilesJson $case.Json `
+        -RepoRoot $RepoRoot).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        $failures.Add("$($case.Name): resolver exited with $LASTEXITCODE")
+        continue
+    }
+    if ($actual -ne $case.Expected) {
+        $failures.Add("$($case.Name): expected '$($case.Expected)', got '$actual'")
+    }
+}
+
+$rejectedCases = @(
+    @{ Name = 'truncated response'; Count = 3; Json = '[[{"filename":"README.md"},{"filename":"docs/ARCHITECTURE.md"}]]' },
+    @{ Name = 'empty response'; Count = 0; Json = '[]' },
+    @{ Name = 'non-array response'; Count = 1; Json = '{"filename":"README.md"}' },
+    @{ Name = 'non-array page'; Count = 1; Json = '[{"filename":"README.md"}]' },
+    @{ Name = 'missing filename'; Count = 1; Json = '[[{"status":"modified"}]]' }
+)
+
+foreach ($case in $rejectedCases) {
+    try {
+        $null = & $resolver `
+            -ExpectedChangedFileCount $case.Count `
+            -PullRequestFilesJson $case.Json `
+            -RepoRoot $RepoRoot
+        $failures.Add("$($case.Name): resolver accepted an incomplete or malformed response")
+    }
+    catch {
+        continue
+    }
+}
+
 if ($failures.Count -gt 0) {
     Write-Host 'Native-impact classifier verification FAILED:' -ForegroundColor Red
     foreach ($failure in $failures) {
@@ -48,4 +108,4 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 
-Write-Host "Native-impact classifier verification passed for $($cases.Count) cases." -ForegroundColor Green
+Write-Host "Native-impact classifier verification passed for $($cases.Count + $resolverCases.Count + $rejectedCases.Count) cases." -ForegroundColor Green

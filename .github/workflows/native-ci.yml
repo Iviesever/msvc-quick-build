@@ -48,16 +48,20 @@ jobs:
             exit 0
           }
 
-          $paths = @(
+          $jsonLines = @(
             gh api "repos/$env:GITHUB_REPOSITORY/pulls/${{ github.event.pull_request.number }}/files" `
               --paginate `
-              --jq '.[] | .filename, (.previous_filename // empty)'
+              --slurp
           )
-          if ($LASTEXITCODE -ne 0) {
+          $apiExitCode = $LASTEXITCODE
+          if ($apiExitCode -ne 0) {
             throw 'Failed to enumerate pull-request files.'
           }
 
-          $required = & ./tests/ci/classify_native_ci_impact.ps1 -ChangedPath $paths
+          $required = & ./tests/ci/resolve_native_ci_impact.ps1 `
+            -ExpectedChangedFileCount ([int]'${{ github.event.pull_request.changed_files }}') `
+            -PullRequestFilesJson ($jsonLines -join [Environment]::NewLine) `
+            -RepoRoot $PWD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "required=$required" >> $env:GITHUB_OUTPUT
 
