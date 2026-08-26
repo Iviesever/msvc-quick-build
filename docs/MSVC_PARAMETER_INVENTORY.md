@@ -1,5 +1,7 @@
 # Exact MSVC parameter inventory
 
+**English | [简体中文](MSVC_PARAMETER_INVENTORY_ZH.md)**
+
 MQB's parameter-engine coverage gate is derived from immutable MicrosoftDocs Git blob snapshots rather than a hand-maintained representative list.
 
 `tests/native/verify_msvc_parameter_inventory.ps1` parses the official compiler, LINK, and LIB option tables, expands option variants that are explicitly enumerated in the reference (for example `[-]`, `/favor:<...>`, `/vd{...}`, and `/ZH:[...]`), and adds independently documented command-line forms such as LINK `/DEBUG:FULL`, `/DEBUG:NONE`, `/DEBUG:FASTLINK`, LIB response files, and `/WX:NO`.
