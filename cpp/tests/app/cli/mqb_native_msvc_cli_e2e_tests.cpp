@@ -350,6 +350,19 @@ void verify_native_candidate_e2e(const fs::path& mqb_executable) {
         "int main() { std::printf(\"native=%d\\n\", NATIVE_VALUE); return NATIVE_VALUE == 7 ? 0 : 1; }\n");
 
     mqb::platform::windows::WindowsProcessRunner runner;
+    auto duplicate_source = run_process(
+        runner,
+        mqb_executable,
+        tree.root,
+        {"main.cpp", "MAIN.CPP", "--no-discover"});
+    expect(duplicate_source.has_value(), "duplicate source validation should launch");
+    if (duplicate_source) {
+        expect(duplicate_source->exit_code == 2
+                   && duplicate_source->stderr_text.find("source file was provided more than once")
+                       != std::string::npos,
+               "Windows path-identity aliases should be rejected as duplicate sources");
+    }
+
     const fs::path map_file = tree.root / "native.map";
     auto build = run_process(
         runner,

@@ -33,7 +33,7 @@ C++ Modules and Header Units are deliberately outside the first comparison matri
 The harness is intentionally conservative about what it calls comparable:
 
 1. **Same physical source tree per iteration.** MQB state lives in `.mqb/`; CMake/Ninja state lives in `cmake-build/`.
-2. **Same MSVC environment.** If `cl.exe` is not already available, the harness imports the latest x64 Visual Studio developer environment with `vswhere` + `VsDevCmd.bat` before running either system.
+2. **Same clean MSVC environment.** The harness first resolves the requested benchmark tools, snapshots the caller's process environment, removes inherited Visual Studio/Windows SDK `PATH` entries plus `CL`/`LINK` option-injection variables, imports the latest x64 Visual Studio developer environment with `vswhere` + `VsDevCmd.bat`, and restores the caller's environment in `finally`. It also verifies that `cl.exe` and `link.exe` resolve from the selected Visual Studio installation.
 3. **Same explicit parallel ceiling.** `-Jobs N` becomes MQB `-j N` and Ninja `-j N`.
 4. **Aligned release compiler/linker policy.** The generated CMake target uses the same core MSVC release flags used by MQB for this fixture: `/utf-8`, `/W3`, `/EHsc`, `/permissive-`, `/Zc:__cplusplus`, `/Zc:preprocessor`, `/diagnostics:column`, `/O2`, `/Oi`, `/MD`, `/Z7`, `/DNDEBUG`, and `/std:c++23preview`; release link policy uses `/INCREMENTAL:NO`, `/OPT:REF`, `/OPT:ICF`, x64, and console subsystem.
 5. **Build-system dependency work remains visible.** CMake/Ninja may add its own dependency-tracking arguments and MQB may use its own metadata paths. Those are part of the systems being compared and are not manually removed.
@@ -66,7 +66,7 @@ Requirements:
 - Ninja;
 - the MQB executable under test.
 
-If the terminal is not already a Visual Studio developer shell, the script attempts to import the latest installed x64 MSVC environment automatically.
+The script deliberately filters inherited Visual Studio/Windows SDK paths and MSVC option-injection variables before importing one fresh x64 MSVC environment. This prevents removed or mixed installations, or unequal `CL`/`LINK` flags, from contaminating either build path.
 
 Use `-KeepWorktree` when debugging the generated fixtures. Otherwise the temporary fixture tree is removed after the run.
 
@@ -78,7 +78,7 @@ The JSON report records:
 - tool version strings where available;
 - Windows / PowerShell / CPU-width / MSVC environment metadata;
 - translation-unit count, iterations, jobs, architecture, and configuration;
-- every raw build sample with execution order;
+- every raw build sample with execution order, plus MQB phase timings and compile/link cache counters;
 - CMake configure samples and medians, separately from build time;
 - per-scenario MQB and CMake/Ninja medians;
 - MQB absolute and percentage deltas relative to CMake/Ninja;
@@ -90,6 +90,6 @@ For `mqb_delta_pct_vs_cmake_ninja`, a negative value means the MQB sample had lo
 
 `.github/workflows/build-system-evidence.yml` runs a small correctness-sized fixture on relevant pull requests. It builds the current MQB product from the repository, runs one comparison iteration with a small TU count, and uploads the JSON report.
 
-That workflow proves that the comparison harness remains executable and that both build paths produce correct programs. It is **not** a stable performance leaderboard: hosted runner placement, system load, antivirus state, filesystem caches, and VM noise can materially move wall-clock numbers.
+That workflow proves that the comparison harness remains executable, both build paths produce correct programs, and every MQB scenario performs the expected cold/no-op/incremental cache transition. It is **not** a stable performance leaderboard: hosted runner placement, system load, antivirus state, filesystem caches, and VM noise can materially move wall-clock numbers.
 
 For publishable measurements, run multiple iterations on a named physical machine, keep the full JSON, and report the machine and toolchain alongside the medians.

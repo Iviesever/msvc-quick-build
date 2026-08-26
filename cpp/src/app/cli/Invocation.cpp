@@ -6,11 +6,13 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "Diagnostics.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::app {
 namespace {
@@ -114,6 +116,8 @@ resolve_invocation(mqb::cli::Options& options) {
 
     std::vector<fs::path> requested_sources;
     requested_sources.reserve(options.build.sources.size());
+    std::unordered_set<std::string> requested_source_keys;
+    requested_source_keys.reserve(options.build.sources.size());
     for (const auto& requested_source : options.build.sources) {
         auto source = absolute_path_from(invocation_directory, requested_source, "source file");
         if (!source) {
@@ -123,13 +127,12 @@ resolve_invocation(mqb::cli::Options& options) {
         if (!validated) {
             return std::unexpected(validated.error());
         }
-        for (const auto& previous : requested_sources) {
-            error_code.clear();
-            if (fs::equivalent(previous, *validated, error_code) && !error_code) {
-                return std::unexpected(
-                    "source file was provided more than once: "
-                    + diagnostics::path_text(*validated));
-            }
+        const std::string identity =
+            mqb::platform::windows::path_identity_key(*validated);
+        if (!requested_source_keys.insert(identity).second) {
+            return std::unexpected(
+                "source file was provided more than once: "
+                + diagnostics::path_text(*validated));
         }
         requested_sources.push_back(std::move(*validated));
     }
