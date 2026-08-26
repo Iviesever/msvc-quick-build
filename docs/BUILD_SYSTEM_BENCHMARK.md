@@ -86,6 +86,19 @@ The JSON report records:
 
 For `mqb_delta_pct_vs_cmake_ninja`, a negative value means the MQB sample had lower wall-clock time. The ratio is provided for convenience, but neither field should be quoted without the machine/tool/methodology metadata from the same report.
 
+## Issue #129 measured evidence
+
+Issue #129 used this contract for a same-machine 100-TU, 5-iteration, 32-worker before/after study. CMake 4.1.2, Ninja 1.13.1, MSVC 19.51.36248, the selected Visual Studio installation, Windows SDK, operating system, CPU width, and harness policy were unchanged. The MQB binary hash necessarily changed because the candidate contains the optimization.
+
+| Scenario | Before MQB median | After MQB median | After Ninja median | After MQB delta vs Ninja |
+|---|---:|---:|---:|---:|
+| `ordinary-cold` | 2503.64 ms | 686.00 ms | 792.07 ms | -13.39% |
+| `pch-cold` | 2853.43 ms | 1018.69 ms | 996.74 ms | +2.20% |
+
+The selected product change removes redundant `vcvarsall.bat` environment capture when the caller already has a complete developer environment. It still runs one `vswhere.exe` query to bind ambient paths to a registered Visual Studio installation. On this machine, ordinary cold time fell by 1817.64 ms (72.60%) and PCH cold time fell by 1834.73 ms (64.30%). PCH cold remained 21.96 ms slower than direct Ninja; this is retained as an honest remaining gap, not treated as a threshold failure or a cross-machine claim.
+
+The complete raw reports, including all 80 samples per report, MQB phase timings, tool hashes, and exact cache counters, are retained as [`benchmark-before.json`](20260826-195200-cold-build-overhead/benchmark-before.json) and [`benchmark-after.json`](20260826-195200-cold-build-overhead/benchmark-after.json).
+
 ## CI contract
 
 `.github/workflows/build-system-evidence.yml` runs a small correctness-sized fixture on relevant pull requests. It builds the current MQB product from the repository, runs one comparison iteration with a small TU count, and uploads the JSON report.

@@ -1,5 +1,10 @@
 #include "VisualStudioToolchainDiscovery.hpp"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -18,21 +23,27 @@ namespace fs = std::filesystem;
 using process::ProcessSpec;
 
 [[nodiscard]] std::optional<fs::path> default_vswhere_path() {
-    if (const auto program_files_x86 = environment_path("ProgramFiles(x86)")) {
-        return *program_files_x86 / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
-    }
-    return std::nullopt;
+    wchar_t windows_directory[MAX_PATH]{};
+    const UINT size = ::GetWindowsDirectoryW(windows_directory, MAX_PATH);
+    if (size == 0 || size >= MAX_PATH) return std::nullopt;
+    return fs::path{windows_directory}.root_path()
+        / "Program Files (x86)"
+        / "Microsoft Visual Studio"
+        / "Installer"
+        / "vswhere.exe";
 }
 
 [[nodiscard]] std::vector<fs::path> visual_studio_fallbacks() {
     std::vector<fs::path> candidates;
-    const auto program_files = environment_path("ProgramFiles");
-    if (!program_files) return candidates;
+    wchar_t windows_directory[MAX_PATH]{};
+    const UINT size = ::GetWindowsDirectoryW(windows_directory, MAX_PATH);
+    if (size == 0 || size >= MAX_PATH) return candidates;
+    const fs::path program_files = fs::path{windows_directory}.root_path() / "Program Files";
 
     for (const std::string_view version : {"18", "2022"}) {
         for (const std::string_view edition : {"Community", "Professional", "Enterprise", "BuildTools"}) {
             candidates.push_back(
-                *program_files
+                program_files
                 / "Microsoft Visual Studio"
                 / std::string{version}
                 / std::string{edition});
@@ -41,7 +52,9 @@ using process::ProcessSpec;
     return candidates;
 }
 
-[[nodiscard]] std::expected<fs::path, ToolchainError> locate_visual_studio(
+} // namespace
+
+std::expected<fs::path, ToolchainError> locate_visual_studio_installation(
     process::ProcessRunner& runner,
     const DiscoveryOptions& options) {
     std::optional<fs::path> vswhere = options.vswhere_path;
@@ -80,12 +93,10 @@ using process::ProcessSpec;
         "no Visual Studio installation was found"));
 }
 
-} // namespace
-
 std::expected<MsvcToolchain, ToolchainError> discover_visual_studio_toolchain(
     process::ProcessRunner& runner,
     const DiscoveryOptions& options) {
-    auto installation = locate_visual_studio(runner, options);
+    auto installation = locate_visual_studio_installation(runner, options);
     if (!installation) return std::unexpected(installation.error());
 
     const fs::path vcvarsall = *installation / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat";

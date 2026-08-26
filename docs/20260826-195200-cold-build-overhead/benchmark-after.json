@@ -1,0 +1,1969 @@
+{
+  "schema_version": 1,
+  "generated_utc": "2026-08-26T13:02:08.8662748Z",
+  "methodology": {
+    "translation_units": 100,
+    "iterations": 5,
+    "jobs": 32,
+    "target_architecture": "x64",
+    "build_configuration": "release",
+    "cpp_standard_flag": "/std:c++23preview",
+    "same_source_tree_per_iteration": true,
+    "alternating_execution_order": true,
+    "cmake_generator": "Ninja",
+    "cmake_configure_excluded_from_build_timings": true,
+    "ninja_invoked_directly": true,
+    "pch_uses_native_build_system_mechanism": true,
+    "note": "This is machine-specific reproducible evidence, not a universal performance claim."
+  },
+  "environment": {
+    "os_version": "Microsoft Windows NT 10.0.22631.0",
+    "powershell": "7.6.0",
+    "processor_identifier": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "logical_processors": 32,
+    "physical_memory_bytes": 16894455808,
+    "msvc_environment_isolated": true,
+    "vsdevcmd_imported": true,
+    "visual_studio_installation": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community",
+    "cl_path_verified": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\HostX64\\x64\\cl.exe",
+    "link_path_verified": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\HostX64\\x64\\link.exe",
+    "vctools_version": "14.51.36231",
+    "windows_sdk_version": "10.0.26100.0\\"
+  },
+  "tools": {
+    "mqb": {
+      "path": "D:\\program\\build项目\\native-dev\\release\\mqb.exe",
+      "sha256": "64433520634730b64be54145a2ddf608361f0e6ab888fb6656b0715147765b52",
+      "file_version": "",
+      "product_version": ""
+    },
+    "cmake": {
+      "identity": {
+        "path": "C:\\Program Files\\CMake\\bin\\cmake.exe",
+        "sha256": "bce3d4c9e2bb3eab0c90eae3fe7ea9626d9dc35263194adc9132cf5349d628a3",
+        "file_version": "4.1.2",
+        "product_version": "4.1.2"
+      },
+      "version": "cmake version 4.1.2"
+    },
+    "ninja": {
+      "identity": {
+        "path": "C:\\Users\\Iviesever\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Ninja-build.Ninja_Microsoft.Winget.Source_8wekyb3d8bbwe\\ninja.exe",
+        "sha256": "2df494116decdae84d74c02373119176bbfc4797a6f49a6c709d85d961d6a0d8",
+        "file_version": "",
+        "product_version": ""
+      },
+      "version": "1.13.1"
+    },
+    "cl": {
+      "identity": {
+        "path": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\HostX64\\x64\\cl.exe",
+        "sha256": "dc8426b8760d92cf757df3d10b9f0244a95b454ff43194a58161568a0ec70d53",
+        "file_version": "19.51.36248.0",
+        "product_version": "14.51.36248.0"
+      },
+      "version": "用法: cl [ 选项... ] 文件名... [ /link 链接选项... ]"
+    }
+  },
+  "cmake_configure_samples": [
+    {
+      "iteration": 1,
+      "fixture": "ordinary",
+      "elapsed_ms": 1209.946
+    },
+    {
+      "iteration": 1,
+      "fixture": "pch",
+      "elapsed_ms": 887.27
+    },
+    {
+      "iteration": 2,
+      "fixture": "ordinary",
+      "elapsed_ms": 862.371
+    },
+    {
+      "iteration": 2,
+      "fixture": "pch",
+      "elapsed_ms": 887.126
+    },
+    {
+      "iteration": 3,
+      "fixture": "ordinary",
+      "elapsed_ms": 877.896
+    },
+    {
+      "iteration": 3,
+      "fixture": "pch",
+      "elapsed_ms": 888.442
+    },
+    {
+      "iteration": 4,
+      "fixture": "ordinary",
+      "elapsed_ms": 876.011
+    },
+    {
+      "iteration": 4,
+      "fixture": "pch",
+      "elapsed_ms": 824.793
+    },
+    {
+      "iteration": 5,
+      "fixture": "ordinary",
+      "elapsed_ms": 849.737
+    },
+    {
+      "iteration": 5,
+      "fixture": "pch",
+      "elapsed_ms": 842.584
+    }
+  ],
+  "cmake_configure_summary": [
+    {
+      "fixture": "ordinary",
+      "samples": 5,
+      "median_ms": 876.011
+    },
+    {
+      "fixture": "pch",
+      "samples": 5,
+      "median_ms": 887.126
+    }
+  ],
+  "samples": [
+    {
+      "iteration": 1,
+      "scenario": "ordinary-cold",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 815.201,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 1,
+      "scenario": "ordinary-cold",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 693.638,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.711,
+          "compile": 541.542,
+          "link": 55.163,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 684.21
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 101
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 1,
+      "scenario": "ordinary-no-op",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 28.47,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.548,
+          "compile": 10.303,
+          "link": 3.067,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 22.869
+        },
+        "cache": {
+          "compile": {
+            "hits": 101,
+            "misses": 0
+          },
+          "link": {
+            "hits": 1,
+            "misses": 0
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 1,
+      "scenario": "ordinary-no-op",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 25.067,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 1,
+      "scenario": "ordinary-single-tu",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 118.314,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 1,
+      "scenario": "ordinary-single-tu",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 93.416,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.571,
+          "compile": 43.837,
+          "link": 34.317,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 88.198
+        },
+        "cache": {
+          "compile": {
+            "hits": 100,
+            "misses": 1
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 1,
+      "scenario": "ordinary-public-header",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 490.885,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.534,
+          "compile": 430.025,
+          "link": 45.409,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 485.772
+        },
+        "cache": {
+          "compile": {
+            "hits": 1,
+            "misses": 100
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 1,
+      "scenario": "ordinary-public-header",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 753.634,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 1,
+      "scenario": "pch-cold",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 1012.758,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 1,
+      "scenario": "pch-cold",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 1018.694,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.474,
+          "compile": 879.413,
+          "link": 42.645,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 1011.52
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 102
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 1,
+      "scenario": "pch-no-op",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 29.416,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.476,
+          "compile": 12.888,
+          "link": 2.885,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 25.239
+        },
+        "cache": {
+          "compile": {
+            "hits": 102,
+            "misses": 0
+          },
+          "link": {
+            "hits": 1,
+            "misses": 0
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 1,
+      "scenario": "pch-no-op",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 41.1,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 1,
+      "scenario": "pch-single-tu",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 127.458,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 1,
+      "scenario": "pch-single-tu",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 103.762,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.531,
+          "compile": 45.556,
+          "link": 43.039,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 98.505
+        },
+        "cache": {
+          "compile": {
+            "hits": 101,
+            "misses": 1
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 1,
+      "scenario": "pch-header",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 915.627,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.51,
+          "compile": 851.071,
+          "link": 50.188,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 911.057
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 102
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 1,
+      "scenario": "pch-header",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 1107.442,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 2,
+      "scenario": "ordinary-cold",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 657.799,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.519,
+          "compile": 511.565,
+          "link": 50.484,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 651.919
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 101
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 2,
+      "scenario": "ordinary-cold",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 760.461,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 2,
+      "scenario": "ordinary-no-op",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 33.193,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 2,
+      "scenario": "ordinary-no-op",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 26.97,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.539,
+          "compile": 10.115,
+          "link": 2.922,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 22.711
+        },
+        "cache": {
+          "compile": {
+            "hits": 101,
+            "misses": 0
+          },
+          "link": {
+            "hits": 1,
+            "misses": 0
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 2,
+      "scenario": "ordinary-single-tu",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 93.885,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.527,
+          "compile": 39.696,
+          "link": 40.452,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 89.55
+        },
+        "cache": {
+          "compile": {
+            "hits": 100,
+            "misses": 1
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 2,
+      "scenario": "ordinary-single-tu",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 126.607,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 2,
+      "scenario": "ordinary-public-header",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 764.07,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 2,
+      "scenario": "ordinary-public-header",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 543.275,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.532,
+          "compile": 486.34,
+          "link": 41.541,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 538.1
+        },
+        "cache": {
+          "compile": {
+            "hits": 1,
+            "misses": 100
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 2,
+      "scenario": "pch-cold",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 1013.84,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.509,
+          "compile": 872.249,
+          "link": 45.339,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 1009.547
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 102
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 2,
+      "scenario": "pch-cold",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 904.81,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 2,
+      "scenario": "pch-no-op",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 34.477,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 2,
+      "scenario": "pch-no-op",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 32.953,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.494,
+          "compile": 15.385,
+          "link": 3.085,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 28.349
+        },
+        "cache": {
+          "compile": {
+            "hits": 102,
+            "misses": 0
+          },
+          "link": {
+            "hits": 1,
+            "misses": 0
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 2,
+      "scenario": "pch-single-tu",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 99.424,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.486,
+          "compile": 44.978,
+          "link": 40.445,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 95.436
+        },
+        "cache": {
+          "compile": {
+            "hits": 101,
+            "misses": 1
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 2,
+      "scenario": "pch-single-tu",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 143.819,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 2,
+      "scenario": "pch-header",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 948.022,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 2,
+      "scenario": "pch-header",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 896.307,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.479,
+          "compile": 833.126,
+          "link": 48.224,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 891.374
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 102
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "scenario": "ordinary-cold",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 764.579,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 3,
+      "scenario": "ordinary-cold",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 709.162,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.532,
+          "compile": 570.855,
+          "link": 45.428,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 704.574
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 101
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "scenario": "ordinary-no-op",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 25.961,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.569,
+          "compile": 8.431,
+          "link": 2.886,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 21.871
+        },
+        "cache": {
+          "compile": {
+            "hits": 101,
+            "misses": 0
+          },
+          "link": {
+            "hits": 1,
+            "misses": 0
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "scenario": "ordinary-no-op",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 46.135,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 3,
+      "scenario": "ordinary-single-tu",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 117.47,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 3,
+      "scenario": "ordinary-single-tu",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 98.629,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.589,
+          "compile": 42.343,
+          "link": 42.415,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 94.33
+        },
+        "cache": {
+          "compile": {
+            "hits": 100,
+            "misses": 1
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "scenario": "ordinary-public-header",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 580.22,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.531,
+          "compile": 521.004,
+          "link": 43.632,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 574.684
+        },
+        "cache": {
+          "compile": {
+            "hits": 1,
+            "misses": 100
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "scenario": "ordinary-public-header",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 764.726,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 3,
+      "scenario": "pch-cold",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 1002.276,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 3,
+      "scenario": "pch-cold",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 1042.032,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.51,
+          "compile": 902.031,
+          "link": 45.332,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 1036.836
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 102
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "scenario": "pch-no-op",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 30.661,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.488,
+          "compile": 12.291,
+          "link": 3.713,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 26.318
+        },
+        "cache": {
+          "compile": {
+            "hits": 102,
+            "misses": 0
+          },
+          "link": {
+            "hits": 1,
+            "misses": 0
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "scenario": "pch-no-op",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 39.154,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 3,
+      "scenario": "pch-single-tu",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 117.768,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 3,
+      "scenario": "pch-single-tu",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 98.436,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.562,
+          "compile": 41.837,
+          "link": 42.951,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 94.341
+        },
+        "cache": {
+          "compile": {
+            "hits": 101,
+            "misses": 1
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "scenario": "pch-header",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 882.072,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.492,
+          "compile": 813.432,
+          "link": 53.95,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 877.019
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 102
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "scenario": "pch-header",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 936.732,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 4,
+      "scenario": "ordinary-cold",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 685.998,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.54,
+          "compile": 536.33,
+          "link": 45.846,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 679.132
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 101
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 4,
+      "scenario": "ordinary-cold",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 832.129,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 4,
+      "scenario": "ordinary-no-op",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 40.288,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 4,
+      "scenario": "ordinary-no-op",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 25.554,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.505,
+          "compile": 9.432,
+          "link": 2.899,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 21.803
+        },
+        "cache": {
+          "compile": {
+            "hits": 101,
+            "misses": 0
+          },
+          "link": {
+            "hits": 1,
+            "misses": 0
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 4,
+      "scenario": "ordinary-single-tu",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 97.956,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.529,
+          "compile": 42.457,
+          "link": 42.001,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 93.907
+        },
+        "cache": {
+          "compile": {
+            "hits": 100,
+            "misses": 1
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 4,
+      "scenario": "ordinary-single-tu",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 124.78,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 4,
+      "scenario": "ordinary-public-header",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 771.815,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 4,
+      "scenario": "ordinary-public-header",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 523.741,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.539,
+          "compile": 463.999,
+          "link": 44.735,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 518.849
+        },
+        "cache": {
+          "compile": {
+            "hits": 1,
+            "misses": 100
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 4,
+      "scenario": "pch-cold",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 1031.959,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.491,
+          "compile": 890.266,
+          "link": 44.577,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 1027.292
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 102
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 4,
+      "scenario": "pch-cold",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 996.738,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 4,
+      "scenario": "pch-no-op",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 32.378,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 4,
+      "scenario": "pch-no-op",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 30.582,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.453,
+          "compile": 12.905,
+          "link": 2.983,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 26.433
+        },
+        "cache": {
+          "compile": {
+            "hits": 102,
+            "misses": 0
+          },
+          "link": {
+            "hits": 1,
+            "misses": 0
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 4,
+      "scenario": "pch-single-tu",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 98.979,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.506,
+          "compile": 45.657,
+          "link": 39.387,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 94.649
+        },
+        "cache": {
+          "compile": {
+            "hits": 101,
+            "misses": 1
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 4,
+      "scenario": "pch-single-tu",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 119.417,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 4,
+      "scenario": "pch-header",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 968.682,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 4,
+      "scenario": "pch-header",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 879.597,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.542,
+          "compile": 818.317,
+          "link": 46.264,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 874.582
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 102
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 5,
+      "scenario": "ordinary-cold",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 792.068,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 5,
+      "scenario": "ordinary-cold",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 685.761,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.594,
+          "compile": 542.816,
+          "link": 46.999,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 680.68
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 101
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 5,
+      "scenario": "ordinary-no-op",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 27.758,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.59,
+          "compile": 9.412,
+          "link": 3.313,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 22.813
+        },
+        "cache": {
+          "compile": {
+            "hits": 101,
+            "misses": 0
+          },
+          "link": {
+            "hits": 1,
+            "misses": 0
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 5,
+      "scenario": "ordinary-no-op",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 34.455,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 5,
+      "scenario": "ordinary-single-tu",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 128.33,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 5,
+      "scenario": "ordinary-single-tu",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 97.55,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.536,
+          "compile": 42.369,
+          "link": 41.528,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 93.546
+        },
+        "cache": {
+          "compile": {
+            "hits": 100,
+            "misses": 1
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 5,
+      "scenario": "ordinary-public-header",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 522.76,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.528,
+          "compile": 460.178,
+          "link": 47.97,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 517.683
+        },
+        "cache": {
+          "compile": {
+            "hits": 1,
+            "misses": 100
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 5,
+      "scenario": "ordinary-public-header",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 802.651,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 5,
+      "scenario": "pch-cold",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 923.539,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 5,
+      "scenario": "pch-cold",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 981.221,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.473,
+          "compile": 844.237,
+          "link": 43.666,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 976.583
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 102
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 5,
+      "scenario": "pch-no-op",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 30.304,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.505,
+          "compile": 12.924,
+          "link": 3.039,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 25.79
+        },
+        "cache": {
+          "compile": {
+            "hits": 102,
+            "misses": 0
+          },
+          "link": {
+            "hits": 1,
+            "misses": 0
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 5,
+      "scenario": "pch-no-op",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 32.314,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 5,
+      "scenario": "pch-single-tu",
+      "system": "cmake+ninja",
+      "execution_order": 1,
+      "elapsed_ms": 116.434,
+      "mqb_timing": null
+    },
+    {
+      "iteration": 5,
+      "scenario": "pch-single-tu",
+      "system": "mqb",
+      "execution_order": 2,
+      "elapsed_ms": 97.635,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.458,
+          "compile": 44.666,
+          "link": 39.348,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 93.486
+        },
+        "cache": {
+          "compile": {
+            "hits": 101,
+            "misses": 1
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 5,
+      "scenario": "pch-header",
+      "system": "mqb",
+      "execution_order": 1,
+      "elapsed_ms": 893.197,
+      "mqb_timing": {
+        "type": "mqb.timings",
+        "schema_version": 1,
+        "unit": "ms",
+        "phases": {
+          "discovery": 0.0,
+          "dependency_scan": 0.0,
+          "compile_queue": 0.523,
+          "compile": 831.534,
+          "link": 47.273,
+          "archive": 0.0,
+          "run_startup": 0.0,
+          "total": 888.316
+        },
+        "cache": {
+          "compile": {
+            "hits": 0,
+            "misses": 102
+          },
+          "link": {
+            "hits": 0,
+            "misses": 1
+          },
+          "archive": {
+            "hits": 0,
+            "misses": 0
+          }
+        }
+      }
+    },
+    {
+      "iteration": 5,
+      "scenario": "pch-header",
+      "system": "cmake+ninja",
+      "execution_order": 2,
+      "elapsed_ms": 953.66,
+      "mqb_timing": null
+    }
+  ],
+  "comparison": [
+    {
+      "scenario": "ordinary-cold",
+      "samples_per_system": 5,
+      "mqb_median_ms": 685.998,
+      "cmake_ninja_median_ms": 792.068,
+      "mqb_delta_ms_vs_cmake_ninja": -106.07,
+      "mqb_delta_pct_vs_cmake_ninja": -13.39,
+      "cmake_ninja_over_mqb_ratio": 1.155
+    },
+    {
+      "scenario": "ordinary-no-op",
+      "samples_per_system": 5,
+      "mqb_median_ms": 26.97,
+      "cmake_ninja_median_ms": 34.455,
+      "mqb_delta_ms_vs_cmake_ninja": -7.485,
+      "mqb_delta_pct_vs_cmake_ninja": -21.72,
+      "cmake_ninja_over_mqb_ratio": 1.278
+    },
+    {
+      "scenario": "ordinary-single-tu",
+      "samples_per_system": 5,
+      "mqb_median_ms": 97.55,
+      "cmake_ninja_median_ms": 124.78,
+      "mqb_delta_ms_vs_cmake_ninja": -27.23,
+      "mqb_delta_pct_vs_cmake_ninja": -21.82,
+      "cmake_ninja_over_mqb_ratio": 1.279
+    },
+    {
+      "scenario": "ordinary-public-header",
+      "samples_per_system": 5,
+      "mqb_median_ms": 523.741,
+      "cmake_ninja_median_ms": 764.726,
+      "mqb_delta_ms_vs_cmake_ninja": -240.985,
+      "mqb_delta_pct_vs_cmake_ninja": -31.51,
+      "cmake_ninja_over_mqb_ratio": 1.46
+    },
+    {
+      "scenario": "pch-cold",
+      "samples_per_system": 5,
+      "mqb_median_ms": 1018.694,
+      "cmake_ninja_median_ms": 996.738,
+      "mqb_delta_ms_vs_cmake_ninja": 21.956,
+      "mqb_delta_pct_vs_cmake_ninja": 2.2,
+      "cmake_ninja_over_mqb_ratio": 0.978
+    },
+    {
+      "scenario": "pch-no-op",
+      "samples_per_system": 5,
+      "mqb_median_ms": 30.582,
+      "cmake_ninja_median_ms": 34.477,
+      "mqb_delta_ms_vs_cmake_ninja": -3.895,
+      "mqb_delta_pct_vs_cmake_ninja": -11.3,
+      "cmake_ninja_over_mqb_ratio": 1.127
+    },
+    {
+      "scenario": "pch-single-tu",
+      "samples_per_system": 5,
+      "mqb_median_ms": 98.979,
+      "cmake_ninja_median_ms": 119.417,
+      "mqb_delta_ms_vs_cmake_ninja": -20.438,
+      "mqb_delta_pct_vs_cmake_ninja": -17.11,
+      "cmake_ninja_over_mqb_ratio": 1.206
+    },
+    {
+      "scenario": "pch-header",
+      "samples_per_system": 5,
+      "mqb_median_ms": 893.197,
+      "cmake_ninja_median_ms": 953.66,
+      "mqb_delta_ms_vs_cmake_ninja": -60.463,
+      "mqb_delta_pct_vs_cmake_ninja": -6.34,
+      "cmake_ninja_over_mqb_ratio": 1.068
+    }
+  ],
+  "retained_worktree": null
+}
