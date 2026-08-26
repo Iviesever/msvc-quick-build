@@ -43,6 +43,12 @@ MQB is for developers who want MSVC-native behavior without turning every small 
 
 The tradeoff is deliberate: MQB gives up cross-platform breadth to model one toolchain deeply, including MSVC dependency metadata, IFC providers, native linker/librarian boundaries, Windows path identity, and project-local build state.
 
+## Performance and reproducible evidence
+
+MQB's build-system comparisons use the same generated source tree, MSVC toolchain, compiler flags, and worker ceiling for MQB and CMake + Ninja. CMake configuration is excluded from timed samples, Ninja is invoked directly, and repeated measurements report medians across cold, no-op, single-TU, public-header, and PCH-header scenarios.
+
+Published results are evidence for the recorded machine and toolchain, not a universal leaderboard claim. The complete methodology, reproducible harness, environment details, and measured results are in [`docs/BUILD_SYSTEM_BENCHMARK.md`](docs/BUILD_SYSTEM_BENCHMARK.md).
+
 ## What MQB handles
 
 - Native MSVC builds for `.c`, `.cpp`, `.cc`, and `.cxx`.

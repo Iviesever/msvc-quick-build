@@ -99,6 +99,12 @@ README、架构、配置、安装说明、自举说明和 release notes 等用�
 4. Release notes 由 GitHub 根据自上一个 tag 以来的 PR/commit 历史生成，不再保存在源码树中；
 5. publication 阶段不 rebuild binary。
 
+### v5.3.0 溯源例外
+
+`v5.3.0` 是正常发布路径的一次已记录例外。GitHub Actions runner 排队延迟期间，其发布包由 release commit `9b0de6b424fb7e3bc0719c46f26fa8e01d902cc0` 在本机构建并发布。随后同一 exact commit 通过了 [Native Release run 32989116200](https://github.com/Iviesever/msvc-quick-build/actions/runs/32989116200)，但该 run 检测到 Release 已存在，因此按设计跳过 publication。
+
+已发布 ZIP 的 SHA-256 是 `2bec70c09380cbd9b6749c5c504845a306e332ed29628590ebc5a214533affe3`；后续 workflow artifact 的 SHA-256 是 `ec95ff280f6a5bf8a1f3d5fd3bf6cf66b2a0b676ae01de22baac3e9fb5d5da63`。两者的七文件 manifest 相同，但 archive 与 `mqb.exe` 并非 byte-identical。`v5.3.0` tag 和资产保持不可变；`v5.3.1` 恢复由 exact-commit `Native Release` workflow 完成 publication。
+
 Release workflow 自身的修复也可以重新触发同一版本的 gate，用于恢复一次失败但尚未发布的 release。若同版本 GitHub Release 已经存在，publication 会安全跳过；若只存在 tag 而没有 Release，则失败关闭，不猜测或覆盖历史状态。
 
 已有 Release/tag 与二进制资产保持不可变，不会被 workflow 覆盖。

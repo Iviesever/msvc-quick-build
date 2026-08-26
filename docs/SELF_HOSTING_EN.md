@@ -99,6 +99,12 @@ Normal stable publication is driven by a change to the root `VERSION` file:
 4. GitHub generates release notes from PR/commit history since the previous tag, so release notes no longer live in the source tree;
 5. publication does not rebuild the binary.
 
+### v5.3.0 provenance exception
+
+`v5.3.0` is a documented exception to the normal publication path. During a GitHub Actions runner-queue delay, its package was built and published locally from release commit `9b0de6b424fb7e3bc0719c46f26fa8e01d902cc0`. The exact commit later passed [Native Release run 32989116200](https://github.com/Iviesever/msvc-quick-build/actions/runs/32989116200), but that run detected the existing Release and correctly skipped publication.
+
+The published ZIP has SHA-256 `2bec70c09380cbd9b6749c5c504845a306e332ed29628590ebc5a214533affe3`; the later workflow artifact has SHA-256 `ec95ff280f6a5bf8a1f3d5fd3bf6cf66b2a0b676ae01de22baac3e9fb5d5da63`. Their seven-file manifests match, but the archives and `mqb.exe` binaries are not byte-identical. The `v5.3.0` tag and assets remain immutable; `v5.3.1` restores publication by the exact-commit `Native Release` workflow.
+
 A release-workflow repair may also rerun the same version gate to recover from a failed, not-yet-published release. If that version's GitHub Release already exists, publication is skipped safely. If only the tag exists without a Release, the workflow fails closed instead of guessing or overwriting historical state.
 
 Existing Releases/tags and binary assets remain immutable and are never overwritten by the workflow.
