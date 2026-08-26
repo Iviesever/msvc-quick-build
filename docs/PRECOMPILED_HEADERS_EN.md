@@ -1,5 +1,7 @@
 # First-class PCH
 
+**[简体中文](PRECOMPILED_HEADERS.md) | English**
+
 MQB treats MSVC precompiled headers as a first-class build artifact instead of exposing raw `/Yc`, `/Yu`, and `/Fp` switches as an escape hatch.
 
 ## Quick start
