@@ -221,6 +221,7 @@ int main() {
 
     auto forced_request = request;
     forced_request.force_rebuild = true;
+    write_text(cache_file, "not an MQB cache file");
     const auto forced = coordinator.run(forced_request);
     expect(forced.has_value(), "explicit rebuild request should compile successfully");
     if (forced) {
@@ -232,6 +233,10 @@ int main() {
                "explicit rebuild should be visible as explicit_rebuild");
         expect(!has_reason(forced->validation, mqb::BuildReason::compiler_options_changed),
                "explicit rebuild must not masquerade as a compile-signature change");
+        expect(!has_reason(forced->validation, mqb::BuildReason::missing_cache_entry),
+               "authoritative explicit rebuild should not inspect stale cache metadata");
+        expect(forced->warnings.empty(),
+               "authoritative explicit rebuild should bypass stale cache load warnings");
     }
     expect(runner.calls == 2,
            "explicit rebuild should invoke the compiler exactly once");

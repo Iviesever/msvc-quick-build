@@ -99,6 +99,21 @@ Issue #129 按本契约完成了同机 100 TU、5 iterations、32 workers 的 be
 
 完整 raw report 保留为 [`benchmark-before.json`](20260826-195200-cold-build-overhead/benchmark-before.json) 与 [`benchmark-after.json`](20260826-195200-cold-build-overhead/benchmark-after.json)，其中包含每份报告的全部 80 个样本、MQB phase timings、tool hashes 与 exact cache counters。
 
+## Issue #130 实测证据
+
+Issue #130 继续使用同一套 100 TU、5 iterations、32 workers 契约，测量普通公共头文件与配置 PCH 头文件的重建路径。Before/after 报告中的 Windows、PowerShell、CPU、Visual Studio、MSVC 19.51.36248、Windows SDK、CMake 4.1.2、Ninja 1.13.1 以及 harness policy 元数据完全一致；只有包含优化代码的 MQB candidate hash 按预期不同。
+
+| 场景 | Before MQB median | After MQB median | After Ninja median | After MQB 相对 Ninja 差值 |
+|---|---:|---:|---:|---:|
+| `ordinary-public-header` | 560.50 ms | 516.70 ms | 697.13 ms | -25.88% |
+| `pch-header` | 874.50 ms | 875.38 ms | 895.90 ms | -2.29% |
+
+本次产品改动刻意保持很小的语义范围：MQB 自有的 PCH creator 成功重建且 `.pch` 已存在后，每个 consumer 都已经必然需要编译。MQB 现在把这个确定的决定传播给所有 consumer，跳过读取和快照陈旧 consumer cache 状态；编译器、依赖读取器、cache 写入与单次链接路径保持不变。确定性测试证明 creator 先于 consumer、所有 consumer 均失效、只发生一次 link/archive，并且下一轮恢复 no-op。
+
+代表性 median PCH compile phase 从 815.975 ms 变为 812.467 ms，但 PCH wall-clock 只变化了 +0.88 ms（+0.10%）。本轮数据不构成可测量的端到端提速，也不应被表述成提速：该场景由必需的并行 MSVC 编译主导，普通工作站波动大于删除掉的 MQB bookkeeping。普通公共头文件路径保持正确，并在 after 报告中继续明显快于 direct Ninja。No-op 与 single-TU 样本也保持精确的 cache-transition 契约；其小幅时间变化只按测量波动处理，不作为产品结论。
+
+完整的 80-sample 报告、raw execution order、MQB phase timings、tool hashes、environment identity 与 exact cache counters 保留为 [`benchmark-before.json`](20260826-220833-header-rebuild-paths/benchmark-before.json) 与 [`benchmark-after.json`](20260826-220833-header-rebuild-paths/benchmark-after.json)。
+
 ## CI 契约
 
 `.github/workflows/build-system-evidence.yml` 会在相关 pull request 上运行一个小规模 correctness fixture。它从当前仓库源码构建 MQB，使用较小 TU 数执行一次对比，并上传 JSON 报告。

@@ -99,6 +99,21 @@ The selected product change removes redundant `vcvarsall.bat` environment captur
 
 The complete raw reports, including all 80 samples per report, MQB phase timings, tool hashes, and exact cache counters, are retained as [`benchmark-before.json`](20260826-195200-cold-build-overhead/benchmark-before.json) and [`benchmark-after.json`](20260826-195200-cold-build-overhead/benchmark-after.json).
 
+## Issue #130 measured evidence
+
+Issue #130 repeated the same 100-TU, 5-iteration, 32-worker contract for ordinary public-header and configured PCH-header rebuilds. The before/after reports have identical Windows, PowerShell, CPU, Visual Studio, MSVC 19.51.36248, Windows SDK, CMake 4.1.2, Ninja 1.13.1, and harness policy metadata; only the expected MQB candidate hash differs.
+
+| Scenario | Before MQB median | After MQB median | After Ninja median | After MQB delta vs Ninja |
+|---|---:|---:|---:|---:|
+| `ordinary-public-header` | 560.50 ms | 516.70 ms | 697.13 ms | -25.88% |
+| `pch-header` | 874.50 ms | 875.38 ms | 895.90 ms | -2.29% |
+
+The selected product change is semantic and narrow: once the owned PCH creator has successfully rebuilt and the `.pch` exists, every consumer compile is already mandatory. MQB now propagates that authoritative decision to every consumer and skips loading and snapshotting stale consumer cache state, while retaining the normal compiler, dependency-reader, cache-write, and single-link path. Deterministic tests prove creator-before-consumer ordering, all-consumer invalidation, exactly one link/archive, and a following no-op.
+
+The representative median PCH compile phase moved from 815.975 ms to 812.467 ms, but PCH wall-clock moved by only +0.88 ms (+0.10%). That is not a measurable end-to-end speedup on this run and must not be presented as one: required parallel MSVC compilation dominates the scenario and normal workstation variance is larger than the removed MQB bookkeeping. The ordinary public-header path remained correct and materially faster than direct Ninja in the after report. No-op and single-TU samples also retained their exact cache-transition contracts; their small timing movements are treated as measurement variance rather than product claims.
+
+The complete 80-sample reports, raw execution order, MQB phase timings, tool hashes, environment identity, and exact cache counters are retained as [`benchmark-before.json`](20260826-220833-header-rebuild-paths/benchmark-before.json) and [`benchmark-after.json`](20260826-220833-header-rebuild-paths/benchmark-after.json).
+
 ## CI contract
 
 `.github/workflows/build-system-evidence.yml` runs a small correctness-sized fixture on relevant pull requests. It builds the current MQB product from the repository, runs one comparison iteration with a small TU count, and uploads the JSON report.

@@ -66,6 +66,18 @@ run_process(
         || result.stderr_text.find(text) != std::string::npos;
 }
 
+[[nodiscard]] std::size_t occurrence_count(
+    const std::string_view text,
+    const std::string_view needle) {
+    std::size_t count = 0;
+    for (std::size_t position = 0;
+         (position = text.find(needle, position)) != std::string_view::npos;
+         position += needle.size()) {
+        ++count;
+    }
+    return count;
+}
+
 struct TempTree {
     fs::path root;
     ~TempTree() {
@@ -183,6 +195,29 @@ int main(const int argc, char* argv[]) {
                "PCH rebuild should invalidate all ordinary PCH consumers");
         expect(contains(*header_changed, "[link] pch_app.exe"),
                "PCH creator rebuild should force downstream relink");
+
+        const auto creator_position = header_changed->stdout_text.find("[pch]");
+        const auto main_position = header_changed->stdout_text.find("[compile] main.cpp");
+        const auto worker_position = header_changed->stdout_text.find("[compile] worker.cpp");
+        const auto link_position = header_changed->stdout_text.find("[link] pch_app.exe");
+        expect(creator_position < main_position && creator_position < worker_position,
+               "PCH creator must finish before either consumer compile is reported");
+        expect(main_position < link_position && worker_position < link_position,
+               "every PCH consumer must finish before the target link is reported");
+        expect(occurrence_count(header_changed->stdout_text, "[link] pch_app.exe") == 1,
+               "PCH header change should link exactly once");
+    }
+
+    auto post_header_warm = run_process(runner, mqb_executable, tree.root, build_args());
+    expect(post_header_warm.has_value(), "post-header warm PCH build should launch");
+    if (post_header_warm) {
+        if (post_header_warm->exit_code != 0) dump_failure(*post_header_warm);
+        expect(post_header_warm->exit_code == 0, "post-header warm PCH build should succeed");
+        expect(contains(*post_header_warm, "[up-to-date] pch")
+                   && contains(*post_header_warm, "[up-to-date] main.cpp")
+                   && contains(*post_header_warm, "[up-to-date] worker.cpp")
+                   && contains(*post_header_warm, "[up-to-date] pch_app.exe"),
+               "PCH header rebuild should reseal creator, consumers, and link cache for the next no-op");
     }
 
     std::error_code remove_error;
@@ -561,6 +596,79 @@ int main(const int argc, char* argv[]) {
         expect(static_build->exit_code == 0, "ordinary C++ static target should support first-class PCH");
         expect(fs::is_regular_file(tree.root / ".mqb/bin/pch_static.lib"),
                "static PCH build should produce archive containing the synthetic creator object");
+    }
+
+    rewrite_after_tick(
+        pch_header,
+        "#pragma once\n"
+        "struct PchValue { int value; };\n"
+        "inline constexpr int pch_bias = 12;\n");
+    auto static_header_changed = run_process(
+        runner,
+        mqb_executable,
+        tree.root,
+        {"build", "static_source.cpp", "--env", "vs", "--no-discover", "--debug",
+         "--type", "static", "--pch", "include/pch.hpp", "-o", "pch_static"});
+    expect(static_header_changed.has_value(), "static PCH header rebuild should launch");
+    if (static_header_changed) {
+        if (static_header_changed->exit_code != 0) dump_failure(*static_header_changed);
+        expect(static_header_changed->exit_code == 0, "static PCH header rebuild should succeed");
+        expect(contains(*static_header_changed, "[pch]")
+                   && contains(*static_header_changed, "[compile] static_source.cpp")
+                   && contains(*static_header_changed, "[archive] pch_static.lib"),
+               "static PCH rebuild should compile its consumer and archive exactly once");
+        expect(occurrence_count(static_header_changed->stdout_text, "[archive] pch_static.lib") == 1,
+               "static PCH header rebuild should archive exactly once");
+    }
+
+    write_text(
+        tree.root / "pch_dll.cpp",
+        "extern \"C\" __declspec(dllexport) int pch_dll_value() { return pch_bias; }\n");
+    const std::vector<std::string> dll_build_args{
+        "build", "pch_dll.cpp", "--env", "vs", "--no-discover", "--debug",
+        "--type", "dll", "--pch", "include/pch.hpp", "-o", "pch_dll",
+    };
+    auto dll_build = run_process(runner, mqb_executable, tree.root, dll_build_args);
+    expect(dll_build.has_value(), "DLL PCH build should launch");
+    if (dll_build) {
+        if (dll_build->exit_code != 0) dump_failure(*dll_build);
+        expect(dll_build->exit_code == 0, "ordinary C++ DLL target should support first-class PCH");
+        expect(fs::is_regular_file(tree.root / ".mqb/bin/pch_dll.dll"),
+               "DLL PCH build should produce the requested DLL");
+    }
+
+    rewrite_after_tick(
+        pch_header,
+        "#pragma once\n"
+        "struct PchValue { int value; };\n"
+        "inline constexpr int pch_bias = 13;\n");
+    auto dll_header_changed = run_process(runner, mqb_executable, tree.root, dll_build_args);
+    expect(dll_header_changed.has_value(), "DLL PCH header rebuild should launch");
+    if (dll_header_changed) {
+        if (dll_header_changed->exit_code != 0) dump_failure(*dll_header_changed);
+        expect(dll_header_changed->exit_code == 0, "DLL PCH header rebuild should succeed");
+        expect(contains(*dll_header_changed, "[pch]")
+                   && contains(*dll_header_changed, "[compile] pch_dll.cpp")
+                   && contains(*dll_header_changed, "[link] pch_dll.dll"),
+               "DLL PCH rebuild should compile its consumer and link exactly once");
+        const auto creator_position = dll_header_changed->stdout_text.find("[pch]");
+        const auto consumer_position = dll_header_changed->stdout_text.find("[compile] pch_dll.cpp");
+        const auto link_position = dll_header_changed->stdout_text.find("[link] pch_dll.dll");
+        expect(creator_position < consumer_position && consumer_position < link_position,
+               "DLL PCH creator, consumer, and link should retain the required order");
+        expect(occurrence_count(dll_header_changed->stdout_text, "[link] pch_dll.dll") == 1,
+               "DLL PCH header rebuild should link exactly once");
+    }
+
+    auto dll_warm = run_process(runner, mqb_executable, tree.root, dll_build_args);
+    expect(dll_warm.has_value(), "post-header warm DLL PCH build should launch");
+    if (dll_warm) {
+        if (dll_warm->exit_code != 0) dump_failure(*dll_warm);
+        expect(dll_warm->exit_code == 0, "post-header warm DLL PCH build should succeed");
+        expect(contains(*dll_warm, "[up-to-date] pch")
+                   && contains(*dll_warm, "[up-to-date] pch_dll.cpp")
+                   && contains(*dll_warm, "[up-to-date] pch_dll.dll"),
+               "DLL PCH rebuild should reseal creator, consumer, and link cache for the next no-op");
     }
 
     if (failures != 0) {
