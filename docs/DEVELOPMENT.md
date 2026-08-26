@@ -2,7 +2,7 @@
 
 **简体中文 | [English](DEVELOPMENT_EN.md)**
 
-本文只说明**如何在仓库里开发和验证 MQB**。用户安装与使用见根目录 [`README.md`](../README.md)；架构边界见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
+本文只说明**如何在仓库里开发和验证 MQB**。用户安装与使用见根目录 [`README_ZH.md`](../README_ZH.md)；架构边界见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
 
 ## 要求
 
