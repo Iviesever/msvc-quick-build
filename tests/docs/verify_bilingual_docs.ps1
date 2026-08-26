@@ -40,7 +40,8 @@ $pairs = @(
     @{ English = 'docs/MSVC_PARAMETER_ENGINE.md'; Chinese = 'docs/MSVC_PARAMETER_ENGINE_ZH.md' },
     @{ English = 'docs/MSVC_PARAMETER_INVENTORY.md'; Chinese = 'docs/MSVC_PARAMETER_INVENTORY_ZH.md' },
     @{ English = 'docs/PERFORMANCE_GOVERNANCE.md'; Chinese = 'docs/PERFORMANCE_GOVERNANCE_ZH.md' },
-    @{ English = 'docs/WARM_FAST_PATH.md'; Chinese = 'docs/WARM_FAST_PATH_ZH.md' }
+    @{ English = 'docs/WARM_FAST_PATH.md'; Chinese = 'docs/WARM_FAST_PATH_ZH.md' },
+    @{ English = 'docs/BUILD_SYSTEM_BENCHMARK.md'; Chinese = 'docs/BUILD_SYSTEM_BENCHMARK_ZH.md' }
 )
 
 $failures = [System.Collections.Generic.List[string]]::new()

@@ -34,6 +34,7 @@ This is the authoritative index for MQB's maintained documentation.
 | Developing MQB | [`DEVELOPMENT_EN.md`](DEVELOPMENT_EN.md) | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
 | Self-hosting and release contract | [`SELF_HOSTING_EN.md`](SELF_HOSTING_EN.md) | [`SELF_HOSTING.md`](SELF_HOSTING.md) |
 | Performance governance | [`PERFORMANCE_GOVERNANCE.md`](PERFORMANCE_GOVERNANCE.md) | [`PERFORMANCE_GOVERNANCE_ZH.md`](PERFORMANCE_GOVERNANCE_ZH.md) |
+| Build-system comparison methodology | [`BUILD_SYSTEM_BENCHMARK.md`](BUILD_SYSTEM_BENCHMARK.md) | [`BUILD_SYSTEM_BENCHMARK_ZH.md`](BUILD_SYSTEM_BENCHMARK_ZH.md) |
 | Contributing | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | [`../CONTRIBUTING_ZH.md`](../CONTRIBUTING_ZH.md) |
 
 ## Language parity rule

@@ -1,0 +1,85 @@
+name: Build System Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'tests/native/benchmark_build_systems.ps1'
+      - 'docs/BUILD_SYSTEM_BENCHMARK.md'
+      - 'docs/BUILD_SYSTEM_BENCHMARK_ZH.md'
+      - 'docs/README.md'
+      - 'docs/README_ZH.md'
+      - 'tests/docs/verify_bilingual_docs.ps1'
+      - '.github/workflows/build-system-evidence.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: build-system-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-harness:
+    name: Verify MQB and CMake/Ninja comparison harness
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Acquire pinned MQB seed
+        id: seed
+        shell: pwsh
+        run: |
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD `
+            -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$seed" >> $env:GITHUB_OUTPUT
+
+      - name: Build current Release MQB
+        id: current
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath 'VERSION' -Raw).Trim()
+          $output = Join-Path $PWD 'native-out/build-system-evidence/mqb.exe'
+          $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+            -RepoRoot $PWD `
+            -Version "$version-evidence" `
+            -Configuration Release `
+            -Clean `
+            -OutputPath $output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+            throw "Release MQB build output missing: $mqb"
+          }
+          "path=$mqb" >> $env:GITHUB_OUTPUT
+
+      - name: Show comparison tool versions
+        shell: pwsh
+        run: |
+          cmake --version
+          ninja --version
+
+      - name: Run correctness-sized comparison
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/benchmark_build_systems.ps1') `
+            -MqbPath '${{ steps.current.outputs.path }}' `
+            -Iterations 1 `
+            -TranslationUnits 8 `
+            -Jobs 2 `
+            -OutputPath (Join-Path $PWD 'build-system-comparison.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload comparison evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-system-comparison
+          path: build-system-comparison.json
+          if-no-files-found: error
+          retention-days: 14
