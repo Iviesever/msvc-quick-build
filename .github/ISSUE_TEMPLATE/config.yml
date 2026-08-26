@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/Iviesever/msvc-quick-build#documentation
+    about: Check the configuration, architecture, installation, and development documentation before opening an issue.
