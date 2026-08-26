@@ -10,6 +10,7 @@ dist/
 # Local worktrees / caches
 .worktrees/
 .cache/
+docs/archive/
 
 # 编译中间产物和可执行文件
 *.exe

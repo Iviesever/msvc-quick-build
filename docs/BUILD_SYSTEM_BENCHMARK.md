@@ -97,7 +97,7 @@ Issue #129 used this contract for a same-machine 100-TU, 5-iteration, 32-worker 
 
 The selected product change removes redundant `vcvarsall.bat` environment capture when the caller already has a complete developer environment. It still runs one `vswhere.exe` query to bind ambient paths to a registered Visual Studio installation. On this machine, ordinary cold time fell by 1817.64 ms (72.60%) and PCH cold time fell by 1834.73 ms (64.30%). PCH cold remained 21.96 ms slower than direct Ninja; this is retained as an honest remaining gap, not treated as a threshold failure or a cross-machine claim.
 
-The complete raw reports, including all 80 samples per report, MQB phase timings, tool hashes, and exact cache counters, are retained as [`benchmark-before.json`](20260826-195200-cold-build-overhead/benchmark-before.json) and [`benchmark-after.json`](20260826-195200-cold-build-overhead/benchmark-after.json).
+The complete raw reports, including all 80 samples per report, MQB phase timings, tool hashes, and exact cache counters, are retained in the local ignored archive `docs/archive/20260826-195200-cold-build-overhead/` and are intentionally not published in the repository.
 
 ## Issue #130 measured evidence
 
@@ -112,7 +112,7 @@ The selected product change is semantic and narrow: once the owned PCH creator h
 
 The representative median PCH compile phase moved from 815.975 ms to 812.467 ms, but PCH wall-clock moved by only +0.88 ms (+0.10%). That is not a measurable end-to-end speedup on this run and must not be presented as one: required parallel MSVC compilation dominates the scenario and normal workstation variance is larger than the removed MQB bookkeeping. The ordinary public-header path remained correct and materially faster than direct Ninja in the after report. No-op and single-TU samples also retained their exact cache-transition contracts; their small timing movements are treated as measurement variance rather than product claims.
 
-The complete 80-sample reports, raw execution order, MQB phase timings, tool hashes, environment identity, and exact cache counters are retained as [`benchmark-before.json`](20260826-220833-header-rebuild-paths/benchmark-before.json) and [`benchmark-after.json`](20260826-220833-header-rebuild-paths/benchmark-after.json).
+The complete 80-sample reports, raw execution order, MQB phase timings, tool hashes, environment identity, and exact cache counters are retained in the local ignored archive `docs/archive/20260826-220833-header-rebuild-paths/` and are intentionally not published in the repository.
 
 ## CI contract
 

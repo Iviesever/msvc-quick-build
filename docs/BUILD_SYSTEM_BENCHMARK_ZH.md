@@ -97,7 +97,7 @@ Issue #129 按本契约完成了同机 100 TU、5 iterations、32 workers 的 be
 
 本次 product change 在调用者已有完整 developer environment 时移除重复的 `vcvarsall.bat` 环境捕获，但仍执行一次 `vswhere.exe` 查询，把 ambient path 绑定到已注册的 Visual Studio 安装。在本机上，ordinary cold 减少 1817.64 ms（72.60%），PCH cold 减少 1834.73 ms（64.30%）。PCH cold 仍比 direct Ninja 慢 21.96 ms；这里如实保留这个剩余差距，不把它当成 threshold failure，也不把单机结果外推成跨机器结论。
 
-完整 raw report 保留为 [`benchmark-before.json`](20260826-195200-cold-build-overhead/benchmark-before.json) 与 [`benchmark-after.json`](20260826-195200-cold-build-overhead/benchmark-after.json)，其中包含每份报告的全部 80 个样本、MQB phase timings、tool hashes 与 exact cache counters。
+完整 raw report 保存在本地且被忽略的归档目录 `docs/archive/20260826-195200-cold-build-overhead/` 中，其中包含每份报告的全部 80 个样本、MQB phase timings、tool hashes 与 exact cache counters；这些文件不会发布到仓库。
 
 ## Issue #130 实测证据
 
@@ -112,7 +112,7 @@ Issue #130 继续使用同一套 100 TU、5 iterations、32 workers 契约，测
 
 代表性 median PCH compile phase 从 815.975 ms 变为 812.467 ms，但 PCH wall-clock 只变化了 +0.88 ms（+0.10%）。本轮数据不构成可测量的端到端提速，也不应被表述成提速：该场景由必需的并行 MSVC 编译主导，普通工作站波动大于删除掉的 MQB bookkeeping。普通公共头文件路径保持正确，并在 after 报告中继续明显快于 direct Ninja。No-op 与 single-TU 样本也保持精确的 cache-transition 契约；其小幅时间变化只按测量波动处理，不作为产品结论。
 
-完整的 80-sample 报告、raw execution order、MQB phase timings、tool hashes、environment identity 与 exact cache counters 保留为 [`benchmark-before.json`](20260826-220833-header-rebuild-paths/benchmark-before.json) 与 [`benchmark-after.json`](20260826-220833-header-rebuild-paths/benchmark-after.json)。
+完整的 80-sample 报告、raw execution order、MQB phase timings、tool hashes、environment identity 与 exact cache counters 保存在本地且被忽略的归档目录 `docs/archive/20260826-220833-header-rebuild-paths/` 中；这些文件不会发布到仓库。
 
 ## CI 契约
 
