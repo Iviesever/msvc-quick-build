@@ -1,5 +1,7 @@
 # MSVC Parameter Engine
 
+**English | [简体中文](MSVC_PARAMETER_ENGINE_ZH.md)**
+
 MQB does not try to rename every MSVC switch into a second property system. Instead, every native MSVC option that enters MQB must have one deterministic ownership result before the compiler, linker, or librarian is launched.
 
 ## Ownership model

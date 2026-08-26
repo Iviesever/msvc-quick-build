@@ -1,10 +1,12 @@
 # First-class PCH
 
-MQB treats MSVC precompiled headers as a first-class build artifact rather than as raw `/Yc`, `/Yu`, and `/Fp` escape hatches.
+**简体中文 | [English](PRECOMPILED_HEADERS_EN.md)**
 
-## Quick start
+MQB 把 MSVC 预编译头视为一等 build artifact，而不是把原始 `/Yc`、`/Yu`、`/Fp` switch 暴露成 escape hatch。
 
-Project configuration:
+## 快速开始
+
+项目配置：
 
 ```json
 {
@@ -16,30 +18,30 @@ Project configuration:
 }
 ```
 
-CLI:
+CLI：
 
 ```powershell
 mqb build --pch include/pch.hpp
 mqb run --pch include/pch.hpp
 ```
 
-Disable an inherited PCH policy:
+关闭从项目或 profile 继承的 PCH：
 
 ```powershell
 mqb build --profile dev --no-pch
 ```
 
-`build.pch` accepts either a non-empty header path string or `false`. Boolean `true` is rejected because enabling PCH without naming its header would leave its identity ambiguous.
+`build.pch` 接受非空 header path string 或 `false`。Boolean `true` 会被拒绝，因为在不指定 header 的情况下启用 PCH 会使其 identity 不明确。
 
-## Precedence and path bases
+## 优先级与路径基准
 
-PCH policy is a scalar build policy and follows the same precedence as other scalar project settings:
+PCH 是 scalar build policy，遵循普通 scalar precedence：
 
 ```text
 explicit CLI > selected profile > base mqb.json > disabled default
 ```
 
-Examples:
+示例：
 
 ```json
 {
@@ -70,52 +72,52 @@ mqb build --profile dev --no-pch  # disabled
 mqb build --profile clean         # disabled
 ```
 
-Paths in `mqb.json` and profiles are resolved relative to the directory containing `mqb.json`. A path supplied by `--pch` is resolved relative to the invocation directory.
+来自 `mqb.json` 和 profile 的 PCH 路径相对包含 `mqb.json` 的目录解析；`--pch` 路径相对 invocation directory 解析。
 
-## Ownership model
+## Ownership 模型
 
-When PCH is enabled, MQB owns the entire structural contract:
+启用 first-class PCH 后，MQB 拥有完整的 structural contract：
 
-- the synthetic PCH creator translation unit;
-- the `.pch` artifact path;
-- the paired creator `.obj`;
-- `/FI<header>`;
-- `/Yc<header>` on the creator;
-- `/Yu<header>` on consumers;
-- `/Fp<artifact>`;
-- incremental PCH cache metadata and dependency tracking.
+- synthetic creator translation unit；
+- `.pch` artifact path；
+- 配对 creator `.obj`；
+- `/FI<header>`；
+- creator 上的 `/Yc<header>`；
+- consumer 上的 `/Yu<header>`；
+- `/Fp<artifact>`；
+- incremental PCH cache metadata 与 dependency tracking。
 
-The same normalized header identity is used for `/FI`, `/Yc`, and `/Yu`. Raw PCH structural switches remain rejected by the MSVC Parameter Engine so that user arguments cannot silently compete with MQB-owned artifact routing.
+`/FI`、`/Yc`、`/Yu` 使用同一个 normalized header identity。原始 PCH structural switches 继续由 MSVC Parameter Engine 拒绝，因此用户参数不能静默地与 MQB-owned artifact routing 竞争。
 
-The synthetic creator source is generated under `.mqb/pch/` and is written only when its fixed contents differ, so a normal warm invocation does not invalidate the PCH merely by touching the generated source.
+Synthetic creator 生成在 `.mqb/pch/` 下，并且只有固定内容发生变化时才重写。因此普通 warm invocation 不会仅因为触碰 generated source 而使 PCH 失效。
 
-## Build graph and cache behavior
+## Build graph 与 cache 行为
 
-A PCH creator is built before ordinary PCH consumers through the existing incremental compile coordinator. Its compile action produces two owned outputs atomically:
+Creator 通过现有 incremental compile coordinator 在普通 PCH consumer 之前构建。它的 compile action 拥有两个输出：
 
 ```text
 creator.obj
 project.pch
 ```
 
-The creator cache records the header/include dependencies reported by MSVC `/sourceDependencies`. The `.pch` is also an explicit dependency of every consumer compile cache entry.
+Creator cache 记录 MSVC `/sourceDependencies` 产生的 header/include dependencies。`.pch` 也会作为每个 consumer compile cache entry 的显式 dependency 被记录。
 
-Consequences:
+因此：
 
-- a fully warm build reuses the creator, every consumer object, and the downstream target;
-- changing only an ordinary source recompiles that source without rebuilding the PCH;
-- changing the PCH header or one of its tracked dependencies rebuilds the PCH and invalidates consumers;
-- deleting the `.pch` invalidates the creator cache and repairs the missing artifact;
-- changing typed/raw compile semantics that participate in the creator signature rebuilds the PCH;
-- changing the target name, configuration, or architecture selects separate PCH artifact state.
+- 完全 warm 的 build 会复用 creator、所有 consumer object 和下游 target；
+- 仅修改普通 source 时，只重编该 source，不重建 PCH；
+- 修改 PCH header 或其 tracked dependency 会重建 PCH，并使 consumer 失效；
+- 删除 `.pch` 会使 creator cache 失效并修复缺失 artifact；
+- 修改参与 creator identity 的 compile semantics 会重建 PCH；
+- target name、build configuration、architecture 会选择彼此独立的 PCH state。
 
-The paired creator object is deliberately retained as a downstream target input. Executable/DLL links include it, and static-library targets archive it. This preserves the MSVC PCH object/debug-information contract instead of treating `.pch` as a standalone link-independent file.
+Creator object 会有意保留为下游 target input。Executable/DLL link 会包含它，static-library target 会归档它。这样保留 MSVC PCH object/debug-information contract，而不是假设 `.pch` 与 link 无关。
 
-If the creator is rebuilt, MQB forces the downstream link/archive even before normal object freshness checks could otherwise decide that the target is warm.
+Creator 一旦重建，MQB 会强制下游 link/archive，即使普通 object freshness 本来会认为 target 仍是 warm。
 
 ## Generated state
 
-For target `app`, Debug, x64, MQB uses:
+对于 target `app`、Debug、x64：
 
 ```text
 .mqb/
@@ -135,31 +137,31 @@ For target `app`, Debug, x64, MQB uses:
                └─ creator.mqbcache
 ```
 
-All of these are writable MQB-owned state and remain under the project `.mqb/` root.
+这些路径全部是 project `.mqb/` root 下的 writable MQB-owned state。
 
-## Current boundary
+## 当前边界
 
-The first-class PCH pipeline currently supports ordinary C++ source sets for executable, DLL, and static-library targets.
+First-class PCH 当前支持 executable、DLL、static-library target 的普通 C++ source set。
 
-MQB fails closed when PCH is combined with:
+当 PCH 与以下情况组合时，MQB 会 fail closed：
 
-- a C translation unit;
-- a target that requires the Modules/Header Unit pipeline.
+- C translation unit；
+- 需要 Modules/Header Unit pipeline 的 target。
 
-These combinations are rejected before trying to approximate incompatible graph semantics. They can be enabled later only when MQB can model and validate their artifact/dependency behavior explicitly.
+MQB 不会近似处理这些组合。只有当其 artifact 与 dependency semantics 能被显式建模并验证时，才应在未来启用。
 
-## Diagnostics and timing
+## Diagnostics 与 timing
 
-Cold/rebuilt PCH work is reported as:
+Cold 或 rebuilt PCH work 会显示为：
 
 ```text
 [pch] include/pch.hpp ...
 ```
 
-A warm creator is reported as:
+Warm creator 会显示为：
 
 ```text
 [up-to-date] pch include/pch.hpp
 ```
 
-PCH creator work contributes to compile timing/cache counters. It is not hidden as linker or generic setup time.
+PCH creator work 会计入 compile timing 与 cache counters，而不会被隐藏成 generic setup 或 link work。

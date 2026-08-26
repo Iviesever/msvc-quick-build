@@ -1,0 +1,41 @@
+name: Documentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'README*.md'
+      - 'CONTRIBUTING*.md'
+      - 'docs/**'
+      - 'cpp/README*.md'
+      - 'tests/docs/**'
+      - '.github/workflows/docs-ci.yml'
+  pull_request:
+    paths:
+      - 'README*.md'
+      - 'CONTRIBUTING*.md'
+      - 'docs/**'
+      - 'cpp/README*.md'
+      - 'tests/docs/**'
+      - '.github/workflows/docs-ci.yml'
+
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bilingual-parity:
+    name: Bilingual documentation parity
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify bilingual documentation
+        shell: pwsh
+        run: ./tests/docs/verify_bilingual_docs.ps1 -RepoRoot $PWD

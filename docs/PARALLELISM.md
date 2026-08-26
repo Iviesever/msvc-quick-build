@@ -1,5 +1,7 @@
 # MQB 并行调度契约
 
+**简体中文 | [English](PARALLELISM_EN.md)**
+
 MQB 的并行度是**执行策略**，不属于编译/链接配方，也不参与 cache identity。
 
 ## CLI

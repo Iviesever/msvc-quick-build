@@ -1,5 +1,7 @@
 # MQB Performance Governance
 
+**English | [简体中文](PERFORMANCE_GOVERNANCE_ZH.md)**
+
 Performance work in MQB is measured against the existing `--timings=json` instrumentation. Hosted-runner wall-clock time is deliberately **not** a correctness gate, but a performance PR must still provide reproducible before/after evidence.
 
 ## Required review evidence

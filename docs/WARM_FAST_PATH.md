@@ -1,5 +1,7 @@
 # Persistent Warm Fast Path
 
+**English | [简体中文](WARM_FAST_PATH_ZH.md)**
+
 MQB's compile/link/archive caches already avoid repeated tool invocations, but a fully warm build can still spend time recursively indexing a project and rereading source/header text before those downstream caches are consulted. The persistent source-discovery cache removes that repeated front-half work without weakening discovery correctness.
 
 ## Scope

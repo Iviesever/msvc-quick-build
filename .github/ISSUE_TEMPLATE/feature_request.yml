@@ -1,0 +1,66 @@
+name: Feature request
+description: Propose a focused improvement to MQB's Windows + MSVC workflow
+title: "feat: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        MQB is deliberately specialized for Windows + MSVC. Strong proposals start from a concrete developer problem and explain why it belongs in MQB's focused model.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow or correctness problem are you trying to solve?
+      placeholder: Describe the current friction before describing the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest product behavior that would solve the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: Show the desired CLI, mqb.json, or build behavior when useful.
+      render: text
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI / project UX
+        - Configuration / profiles
+        - Incremental build / cache
+        - MSVC compiler / linker / librarian
+        - C++ Modules / Header Units
+        - PCH
+        - Toolchain discovery
+        - Windows platform behavior
+        - Performance
+        - Documentation / packaging
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or alternative designs have you considered?
+
+  - type: checkboxes
+    id: fit
+    attributes:
+      label: Scope fit
+      options:
+        - label: This request is compatible with MQB's Windows + MSVC focus.
+          required: true

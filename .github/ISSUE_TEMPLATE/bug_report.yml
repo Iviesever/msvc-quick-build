@@ -1,0 +1,88 @@
+name: Bug report
+description: Report a reproducible MQB correctness, compatibility, or tooling problem
+title: "bug: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve MQB. Minimal reproductions are especially useful for build-system issues.
+
+  - type: input
+    id: mqb-version
+    attributes:
+      label: MQB version
+      description: Release/tag or commit SHA you tested.
+      placeholder: v5.2.0 or commit SHA
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2, build ...
+    validations:
+      required: true
+
+  - type: input
+    id: msvc
+    attributes:
+      label: MSVC / Visual Studio toolset
+      description: Include the Visual Studio / Build Tools edition and MSVC toolset version if known.
+      placeholder: Visual Studio 2022 / MSVC 19.xx
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Reproduction command
+      description: Show the exact mqb command and any relevant mqb.json settings.
+      render: powershell
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Describe the smallest source tree or sequence of edits that reproduces the problem. Link a repository if that is easier.
+      placeholder: |
+        1. Create ...
+        2. Run ...
+        3. Change ...
+        4. Run again ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics / verbose output
+      description: Paste relevant output, especially when `-v` clarifies the failure.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I reduced the report as far as reasonably possible.
+          required: false
