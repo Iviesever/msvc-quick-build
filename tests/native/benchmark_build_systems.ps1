@@ -64,12 +64,65 @@ function Invoke-CapturedProcess {
     }
 }
 
-function Import-MsvcX64Environment {
-    $cl = Get-Command cl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -ne $cl -and ([string]::IsNullOrWhiteSpace($env:VSCMD_ARG_TGT_ARCH) -or $env:VSCMD_ARG_TGT_ARCH -eq 'x64')) {
-        return $false
+function Get-ProcessEnvironmentSnapshot {
+    $snapshot = @{}
+    foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
+        $snapshot[[string]$entry.Key] = [string]$entry.Value
+    }
+    return $snapshot
+}
+
+function Restore-ProcessEnvironmentSnapshot {
+    param([Parameter(Mandatory = $true)][hashtable]$Snapshot)
+
+    foreach ($key in @([Environment]::GetEnvironmentVariables('Process').Keys)) {
+        if (-not $Snapshot.ContainsKey([string]$key)) {
+            [Environment]::SetEnvironmentVariable([string]$key, $null, 'Process')
+        }
+    }
+    foreach ($entry in $Snapshot.GetEnumerator()) {
+        [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Process')
+    }
+}
+
+function Clear-MsvcProcessEnvironment {
+    $names = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in @(
+        'INCLUDE', 'LIB', 'LIBPATH', 'CL', '_CL_', 'LINK', '_LINK_',
+        'VCToolsInstallDir', 'VCToolsVersion',
+        'WindowsSdkDir', 'WindowsSDKVersion', 'WindowsSdkBinPath', 'WindowsSdkVerBinPath',
+        'UniversalCRTSdkDir', 'UCRTVersion',
+        'NETFXSDKDir', 'VSINSTALLDIR', 'VCINSTALLDIR', 'VisualStudioVersion', 'DevEnvDir',
+        'ExtensionSdkDir', 'FrameworkDir', 'FrameworkVersion', 'FrameworkVersion32',
+        'Framework40Version', 'WindowsLibPath', '__VSCMD_PREINIT_PATH', 'CommandPromptType'
+    )) {
+        [void]$names.Add($name)
     }
 
+    foreach ($key in @([Environment]::GetEnvironmentVariables('Process').Keys)) {
+        $name = [string]$key
+        if ($name -match '^(?i:VSCMD_)' -or $name -match '(?i)^VS\d+COMNTOOLS$') {
+            [void]$names.Add($name)
+        }
+    }
+
+    foreach ($name in $names) {
+        [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+    }
+
+    $filteredPath = @(
+        ([Environment]::GetEnvironmentVariable('PATH', 'Process') -split ';') |
+            Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_) -and
+                $_ -notmatch '(?i)[\\/]Microsoft Visual Studio[\\/]' -and
+                $_ -notmatch '(?i)[\\/]Windows Kits[\\/]' -and
+                $_ -notmatch '(?i)[\\/]Microsoft SDKs[\\/]Windows[\\/]'
+            }
+    ) -join ';'
+    [Environment]::SetEnvironmentVariable('PATH', $filteredPath, 'Process')
+}
+
+function Import-MsvcX64Environment {
     $candidates = [System.Collections.Generic.List[string]]::new()
     $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
     if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
@@ -81,7 +134,7 @@ function Import-MsvcX64Environment {
 
     $vswhere = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
     if ([string]::IsNullOrWhiteSpace($vswhere)) {
-        throw 'cl.exe is not available and vswhere.exe could not be found.'
+        throw 'vswhere.exe could not be found.'
     }
 
     $installationPath = @(
@@ -109,11 +162,32 @@ function Import-MsvcX64Environment {
         [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
     }
 
-    $cl = Get-Command cl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -eq $cl) {
-        throw 'VsDevCmd.bat completed but cl.exe is still unavailable.'
+    $toolRoot = [System.IO.Path]::GetFullPath(([string]$installationPath)).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    $toolPaths = @{}
+    foreach ($toolName in @('cl.exe', 'link.exe')) {
+        $tool = Get-Command $toolName -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $tool) {
+            throw "VsDevCmd.bat completed but $toolName is still unavailable."
+        }
+        $toolPath = [System.IO.Path]::GetFullPath($tool.Source)
+        if (-not $toolPath.StartsWith($toolRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "$toolName did not resolve from the selected Visual Studio installation: $toolPath"
+        }
+        $toolPaths[$toolName] = $toolPath
     }
-    return $true
+
+    foreach ($name in @('CL', '_CL_', 'LINK', '_LINK_')) {
+        if (-not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($name, 'Process'))) {
+            throw "MSVC option injection variable remained set after isolation: $name"
+        }
+    }
+
+    return [PSCustomObject]@{
+        imported = $true
+        installation_path = [string]$installationPath
+        cl_path = [string]$toolPaths['cl.exe']
+        link_path = [string]$toolPaths['link.exe']
+    }
 }
 
 function Get-FirstOutputLine {
@@ -346,11 +420,62 @@ function Invoke-MqbBuild {
     if ($UsePch) {
         $arguments += @('--pch', 'pch.hpp')
     }
+    $arguments += '--timings=json'
 
     $result = Invoke-CapturedProcess -FilePath $MqbExe -Arguments $arguments -WorkingDirectory $Root -Measure
     $executable = Resolve-MqbExecutableOutput -Root $Root -Target $Target
     Assert-ExecutableRuns -Executable $executable -WorkingDirectory $Root
-    return $result.elapsed_ms
+
+    $timingLines = @($result.output | Where-Object { $_ -match '^\{"type":"mqb\.timings"' })
+    if ($timingLines.Count -ne 1) {
+        throw "Expected exactly one MQB JSON timing record, found $($timingLines.Count)."
+    }
+    try {
+        $timing = $timingLines[0] | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "Failed to parse MQB JSON timing record: $($_.Exception.Message)"
+    }
+
+    return [PSCustomObject]@{
+        elapsed_ms = $result.elapsed_ms
+        timing = $timing
+    }
+}
+
+function Assert-MqbCacheTransition {
+    param(
+        [Parameter(Mandatory = $true)][string]$Scenario,
+        [Parameter(Mandatory = $true)][object]$Timing,
+        [Parameter(Mandatory = $true)][int]$TranslationUnitCount
+    )
+
+    $ordinarySources = $TranslationUnitCount + 1
+    $pchSources = $TranslationUnitCount + 2
+    $expected = switch ($Scenario) {
+        'ordinary-cold' { @($ordinarySources, 0, 1, 0) }
+        'ordinary-no-op' { @(0, $ordinarySources, 0, 1) }
+        'ordinary-single-tu' { @(1, ($ordinarySources - 1), 1, 0) }
+        'ordinary-public-header' { @($TranslationUnitCount, 1, 1, 0) }
+        'pch-cold' { @($pchSources, 0, 1, 0) }
+        'pch-no-op' { @(0, $pchSources, 0, 1) }
+        'pch-single-tu' { @(1, ($pchSources - 1), 1, 0) }
+        'pch-header' { @($pchSources, 0, 1, 0) }
+        default { throw "Unknown MQB cache-transition scenario: $Scenario" }
+    }
+
+    $actual = @(
+        [int]$Timing.cache.compile.misses,
+        [int]$Timing.cache.compile.hits,
+        [int]$Timing.cache.link.misses,
+        [int]$Timing.cache.link.hits
+    )
+    $labels = @('compile misses', 'compile hits', 'link misses', 'link hits')
+    for ($index = 0; $index -lt $expected.Count; ++$index) {
+        if ($actual[$index] -ne $expected[$index]) {
+            throw "MQB cache-transition mismatch for '$Scenario': expected $($labels[$index])=$($expected[$index]), got $($actual[$index])."
+        }
+    }
 }
 
 function Invoke-NinjaBuild {
@@ -385,11 +510,14 @@ if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Get-FullPath $OutputPath
 }
 
-$vsEnvironmentImported = Import-MsvcX64Environment
 $MqbPath = Resolve-ApplicationPath $MqbPath
 $CMakePath = Resolve-ApplicationPath $CMakePath
 $NinjaPath = Resolve-ApplicationPath $NinjaPath
-$clPath = Resolve-ApplicationPath 'cl.exe'
+$processEnvironmentSnapshot = Get-ProcessEnvironmentSnapshot
+try {
+    Clear-MsvcProcessEnvironment
+    $vsEnvironment = Import-MsvcX64Environment
+    $clPath = $vsEnvironment.cl_path
 
 $cmakeVersionLine = Get-FirstOutputLine -FilePath $CMakePath -Arguments @('--version')
 $ninjaVersionLine = Get-FirstOutputLine -FilePath $NinjaPath -Arguments @('--version')
@@ -410,7 +538,11 @@ $environment = [PSCustomObject]@{
     processor_identifier = [string]$env:PROCESSOR_IDENTIFIER
     logical_processors = [Environment]::ProcessorCount
     physical_memory_bytes = $computerMemory
-    vsdevcmd_imported = $vsEnvironmentImported
+    msvc_environment_isolated = $true
+    vsdevcmd_imported = $vsEnvironment.imported
+    visual_studio_installation = $vsEnvironment.installation_path
+    cl_path_verified = $vsEnvironment.cl_path
+    link_path_verified = $vsEnvironment.link_path
     vctools_version = [string]$env:VCToolsVersion
     windows_sdk_version = [string]$env:WindowsSDKVersion
 }
@@ -487,14 +619,21 @@ try {
                     $system = [string]$order[$orderIndex]
                     Write-Host ("[{0}] iteration {1}/{2}: {3}" -f $system, $iteration, $Iterations, $scenario)
 
+                    $mqbTiming = $null
                     $elapsed = if ($system -eq 'mqb') {
-                        Invoke-MqbBuild `
+                        $measurement = Invoke-MqbBuild `
                             -MqbExe $MqbPath `
                             -Root $root `
                             -Sources $sources `
                             -Target $fixture.target `
                             -JobCount $Jobs `
                             -UsePch $fixture.use_pch
+                        Assert-MqbCacheTransition `
+                            -Scenario $scenario `
+                            -Timing $measurement.timing `
+                            -TranslationUnitCount $TranslationUnits
+                        $mqbTiming = $measurement.timing
+                        $measurement.elapsed_ms
                     } else {
                         Invoke-NinjaBuild `
                             -NinjaExe $NinjaPath `
@@ -510,6 +649,7 @@ try {
                         system = $system
                         execution_order = $orderIndex + 1
                         elapsed_ms = [double]$elapsed
+                        mqb_timing = $mqbTiming
                     })
                 }
             }
@@ -608,4 +748,8 @@ finally {
     } else {
         Remove-Item -LiteralPath $benchmarkRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+}
+finally {
+    Restore-ProcessEnvironmentSnapshot -Snapshot $processEnvironmentSnapshot
 }

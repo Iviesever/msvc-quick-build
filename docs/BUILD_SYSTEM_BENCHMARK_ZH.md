@@ -33,7 +33,7 @@ C++ Modules 与 Header Units 有意不放进第一版对比矩阵。它们的支
 脚本对“可比较”的定义采取偏保守策略：
 
 1. **每次 iteration 使用同一份物理源码树。** MQB 状态放在 `.mqb/`；CMake/Ninja 状态放在 `cmake-build/`。
-2. **使用同一个 MSVC 环境。** 如果当前终端没有 `cl.exe`，脚本会先通过 `vswhere` + `VsDevCmd.bat` 导入最新安装的 x64 Visual Studio 开发环境，再运行两套系统。
+2. **使用同一个干净的 MSVC 环境。** 脚本先解析指定的测量工具并保存调用者的进程环境，移除继承的 Visual Studio/Windows SDK `PATH` 项及 `CL`/`LINK` 选项注入变量，再通过 `vswhere` + `VsDevCmd.bat` 导入最新安装的 x64 Visual Studio 开发环境；两套系统完成后，脚本会在 `finally` 中恢复调用者环境。脚本还会验证 `cl.exe` 和 `link.exe` 确实来自选中的 Visual Studio 安装。
 3. **显式使用同一并行上限。** `-Jobs N` 分别映射为 MQB `-j N` 与 Ninja `-j N`。
 4. **对齐 Release 编译/链接策略。** 生成的 CMake target 使用与本 fixture 中 MQB 相同的核心 MSVC Release 参数：`/utf-8`、`/W3`、`/EHsc`、`/permissive-`、`/Zc:__cplusplus`、`/Zc:preprocessor`、`/diagnostics:column`、`/O2`、`/Oi`、`/MD`、`/Z7`、`/DNDEBUG`、`/std:c++23preview`；Release link 策略使用 `/INCREMENTAL:NO`、`/OPT:REF`、`/OPT:ICF`、x64 与 console subsystem。
 5. **构建系统自己的 dependency 工作保留在测量中。** CMake/Ninja 可能加入自己的依赖跟踪参数，MQB 也会使用自己的 metadata 路径；这些属于被比较系统本身，不会人为移除。
@@ -66,7 +66,7 @@ C++ Modules 与 Header Units 有意不放进第一版对比矩阵。它们的支
 - Ninja；
 - 待测的 MQB executable。
 
-如果当前终端不是 Visual Studio Developer Shell，脚本会尝试自动导入最新安装的 x64 MSVC 环境。
+脚本会先过滤继承的 Visual Studio/Windows SDK 路径及 MSVC 选项注入变量，再全新导入一次 x64 MSVC 环境，避免已卸载或混合版本的安装，以及不对等的 `CL`/`LINK` 参数污染任一构建路径。
 
 调试生成 fixture 时可使用 `-KeepWorktree`。否则运行结束后会删除临时 fixture 树。
 
@@ -78,7 +78,7 @@ JSON 报告记录：
 - 可取得的工具版本字符串；
 - Windows / PowerShell / CPU width / MSVC 环境信息；
 - translation unit 数、iterations、jobs、architecture 与 configuration；
-- 每一个原始 build sample 及其 execution order；
+- 每一个原始 build sample 及其 execution order，以及 MQB 的阶段计时和 compile/link cache 计数；
 - 与 build 时间分离记录的 CMake configure samples 和 median；
 - 每个场景下 MQB 与 CMake/Ninja 的 median；
 - MQB 相对 CMake/Ninja 的绝对差值与百分比差值；
@@ -90,6 +90,6 @@ JSON 报告记录：
 
 `.github/workflows/build-system-evidence.yml` 会在相关 pull request 上运行一个小规模 correctness fixture。它从当前仓库源码构建 MQB，使用较小 TU 数执行一次对比，并上传 JSON 报告。
 
-这个 workflow 证明对比 harness 仍可执行，而且两条构建路径都能产生正确程序。它**不是**稳定的性能排行榜：hosted runner 的 VM 分配、系统负载、杀毒状态、文件系统缓存等都会明显影响 wall-clock 数字。
+这个 workflow 证明对比 harness 仍可执行、两条构建路径都能产生正确程序，并且 MQB 的每个 cold/no-op/incremental 场景都发生了预期的 cache transition。它**不是**稳定的性能排行榜：hosted runner 的 VM 分配、系统负载、杀毒状态、文件系统缓存等都会明显影响 wall-clock 数字。
 
 真正用于公开引用的测量，应在明确说明的物理机器上运行多次，保留完整 JSON，并把机器与 toolchain 信息和 median 一起发布。
