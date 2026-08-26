@@ -83,6 +83,8 @@ $rejectedCases = @(
     @{ Name = 'truncated response'; Count = 3; Json = '[[{"filename":"README.md"},{"filename":"docs/ARCHITECTURE.md"}]]' },
     @{ Name = 'empty response'; Count = 0; Json = '[]' },
     @{ Name = 'non-array response'; Count = 1; Json = '{"filename":"README.md"}' },
+    @{ Name = 'truncated JSON'; Count = 1; Json = '[[{"filename":"README.md"}]' },
+    @{ Name = 'trailing-comma JSON'; Count = 1; Json = '[[{"filename":"README.md"}], ]' },
     @{ Name = 'non-array page'; Count = 1; Json = '[{"filename":"README.md"}]' },
     @{ Name = 'missing filename'; Count = 1; Json = '[[{"status":"modified"}]]' }
 )

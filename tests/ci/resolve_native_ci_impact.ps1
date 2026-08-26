@@ -25,6 +25,22 @@ if (-not ($json.StartsWith('[', [System.StringComparison]::Ordinal) -and
     throw 'Pull-request files response must be a JSON array.'
 }
 
+$jsonDocument = $null
+try {
+    $jsonDocument = [System.Text.Json.JsonDocument]::Parse($json)
+    if ($jsonDocument.RootElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) {
+        throw 'Pull-request files response must be a JSON array.'
+    }
+}
+catch {
+    throw "Pull-request files response is not strict JSON: $($_.Exception.Message)"
+}
+finally {
+    if ($null -ne $jsonDocument) {
+        $jsonDocument.Dispose()
+    }
+}
+
 $pages = ConvertFrom-Json -InputObject $json -Depth 20 -NoEnumerate
 $files = [System.Collections.Generic.List[object]]::new()
 foreach ($page in $pages) {
