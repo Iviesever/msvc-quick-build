@@ -1,5 +1,7 @@
 # MQB Parallelism Contract
 
+**[简体中文](PARALLELISM.md) | English**
+
 MQB parallelism is an **execution policy**. It is not part of the compile/link recipe and never participates in cache identity.
 
 ## CLI
