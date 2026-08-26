@@ -1,5 +1,7 @@
 # MSVC parameter coverage contract
 
+**English | [简体中文](MSVC_PARAMETER_COVERAGE_ZH.md)**
+
 MQB treats parameter coverage as three different correctness layers. A green result at one layer must not be used as evidence that the later layers are complete.
 
 ## Layer 1 — Official canonical option coverage
