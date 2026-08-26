@@ -1,42 +1,101 @@
 # MQB — MSVC Quick Build
 
-**简体中文 | [English](README_EN.md)**
+**English | [简体中文](README_ZH.md)**
 
-MQB 是面向 **Windows + MSVC** 的原生 C/C++ 构建工具。给它一个项目入口或源文件，它负责源码发现、增量编译、Modules/Header Units 依赖排序、链接/归档，以及可选的构建后运行。
+[![Native C++](https://github.com/Iviesever/msvc-quick-build/actions/workflows/native-ci.yml/badge.svg)](https://github.com/Iviesever/msvc-quick-build/actions/workflows/native-ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Iviesever/msvc-quick-build)](https://github.com/Iviesever/msvc-quick-build/releases/latest)
+[![License](https://img.shields.io/github/license/Iviesever/msvc-quick-build)](LICENSE)
+[![C++23](https://img.shields.io/badge/C%2B%2B-23-00599C)](cpp/README_EN.md)
 
-最新稳定版与下载：[GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases/latest)
+**A native C++23 build system focused on Windows + MSVC.**
 
-## 安装
+MQB turns a source file or project entry into a native MSVC build without requiring a generator step. It owns source discovery, incremental compile/link/archive decisions, C++ Modules and Header Units ordering, first-class PCH, toolchain discovery, and optional execution after a successful build.
 
-要求：Windows x64，以及 Visual Studio / Visual Studio Build Tools 中的 MSVC C++ toolchain。
+```powershell
+# One source file
+mqb run main.cpp
 
-从 GitHub Releases 下载 Windows x64 ZIP，解压后运行：
+# A project with mqb.json or one conventional main under root/src
+mqb build
+mqb run
+
+# Pass arguments to the built program
+mqb run -- input.txt "hello world" 42
+```
+
+> MQB is intentionally specialized. It does **not** try to replace CMake for large cross-platform ecosystems; it focuses on making native MSVC development direct, predictable, and fast to iterate on.
+
+**Latest stable release:** [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases/latest)
+
+## Why MQB?
+
+MQB is for developers who want MSVC-native behavior without turning every small or medium Windows C++ project into a meta-build project first.
+
+| | MQB | CMake |
+|---|---|---|
+| Primary scope | Windows + MSVC | Cross-platform |
+| Single-source build | `mqb run main.cpp` | Usually requires project configuration |
+| Build execution | Direct MSVC toolchain orchestration | Generates/configures another build system |
+| Native MSVC arguments | First-class CLI/config input | Supported through CMake abstractions / generator-specific escape hatches |
+| C++ Modules / Header Units | P1689-driven MSVC pipeline | Supported, broader ecosystem scope |
+| Cross-platform portability | No | Yes |
+| Ecosystem size | Small and focused | Large and mature |
+
+The tradeoff is deliberate: MQB gives up cross-platform breadth to model one toolchain deeply, including MSVC dependency metadata, IFC providers, native linker/librarian boundaries, Windows path identity, and project-local build state.
+
+## What MQB handles
+
+- Native MSVC builds for `.c`, `.cpp`, `.cc`, and `.cxx`.
+- `mqb build` / `mqb run` project commands with fail-closed default-entry resolution.
+- Versioned `mqb.json` configuration and explicit named profiles.
+- Header freshness and incremental compilation from MSVC `/sourceDependencies`.
+- Independent compile, link, and archive caches.
+- Bounded parallel scan/compile with `-j / --jobs` and resource-aware automatic parallelism.
+- `exe`, `dll`, and `static` target kinds.
+- First-class MSVC PCH for ordinary C++ targets.
+- Project-local named modules and header units.
+- External/prebuilt named-module IFC providers.
+- MSVC toolchain-owned `import std` / `import std.compat`.
+- P1689 `/scanDependencies` topology and transitive IFC closure.
+- Native MSVC compiler, linker, and librarian arguments with explicit `/link` and `/lib` boundaries.
+- Visual Studio and portable MSVC toolchain discovery.
+- Unicode-safe Windows path/artifact identity.
+- All MQB-owned writable state under the project `.mqb/` directory.
+- Self-hosting, native CI, installer/package gates, and release automation.
+
+## Installation
+
+Requirements:
+
+- Windows x64
+- Visual Studio or Visual Studio Build Tools with the MSVC C++ toolchain
+
+Download the Windows x64 ZIP from [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases/latest), extract it, then run:
 
 ```powershell
 .\install.bat
 ```
 
-默认安装到 `%USERPROFILE%\bin`。重新打开终端后验证：
+The default install directory is `%USERPROFILE%\bin`. Open a new terminal and verify:
 
 ```powershell
 mqb --help
 ```
 
-安装、PATH 与卸载行为见 [`docs/INSTALLATION.md`](docs/INSTALLATION.md)。
+See [`docs/INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) for installation, PATH, and uninstall behavior.
 
-## 快速开始
+## Quick start
 
-### 构建 / 运行项目
+### Build and run a project
 
-对于根目录或 `src/` 下只有一个 conventional `main.{c,cpp,cc,cxx}` 的简单项目：
+For a simple project with exactly one conventional `main.{c,cpp,cc,cxx}` under the project root or `src/`:
 
 ```powershell
 mqb build
 mqb run
-mqb run -- input.txt "hello world" 42
 ```
 
-正式项目可在 `mqb.json` 中设置稳定的默认入口：
+For a stable project entry, add `mqb.json`:
 
 ```json
 {
@@ -47,15 +106,28 @@ mqb run -- input.txt "hello world" 42
 }
 ```
 
-显式 source 永远优先于 `build.entry`：
+An explicit source always wins over `build.entry`:
 
 ```powershell
 mqb run tools/tool.cpp
 ```
 
+The original source-first form is also supported:
+
+```powershell
+mqb main.cpp
+mqb main.cpp --run
+```
+
+A single entry source enables smart discovery by default. Multiple positional sources form an exact source set:
+
+```powershell
+mqb build main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
+```
+
 ### Named profiles
 
-常用构建策略可以声明成显式命名 profile，而不用重复一长串 CLI 参数：
+Keep reusable build policy in `mqb.json` instead of repeating a long CLI sequence:
 
 ```json
 {
@@ -88,11 +160,17 @@ mqb build --profile release
 mqb run --profile dev -- input.txt
 ```
 
-第一版 profile 是**单个显式 overlay**：一次只能选择一个，没有继承、没有多 profile 叠加，也没有隐式默认 profile。优先级为 `CLI > selected profile > base mqb.json > built-in`；list 输入按 base → profile → CLI 追加。Profile 不能设置 `build.entry`，因此切换构建策略不会悄悄切换项目入口。
+Profiles are a **single explicit overlay**: one profile per invocation, no inheritance, no multi-profile stacking, and no implicit default profile. Precedence is:
+
+```text
+CLI > selected profile > base mqb.json > built-in defaults
+```
+
+List inputs append in base → profile → CLI order. Profiles cannot set `build.entry`, so switching build policy cannot silently switch the project entry.
 
 ### First-class PCH
 
-普通 C++ target 可以把 MSVC 预编译头交给 MQB 作为一等构建产物管理：
+Ordinary C++ targets can hand precompiled headers to MQB as owned build artifacts:
 
 ```json
 {
@@ -104,33 +182,12 @@ mqb run --profile dev -- input.txt
 }
 ```
 
-也可以直接从 CLI 启用或覆盖：
-
 ```powershell
 mqb build --pch include/pch.hpp
 mqb build --profile dev --no-pch
 ```
 
-PCH 是 scalar policy，遵循 `CLI > selected profile > base mqb.json > disabled default`。MQB 自己拥有 synthetic creator、`.pch`、配对 creator `.obj`、`/FI`、`/Yc` / `/Yu` 与 `/Fp`，并把 `.pch` 纳入 consumer cache dependency；raw PCH structural switches 不与这套模型竞争。当前 first-class PCH 支持普通 C++ 的 `exe` / `dll` / `static` target，C TU 和需要 Modules/Header Units pipeline 的 target 会 fail closed。详见 [`docs/PRECOMPILED_HEADERS.md`](docs/PRECOMPILED_HEADERS.md)。
-
-### Source-first 兼容形式
-
-原有直接构建形式继续支持：
-
-```powershell
-mqb main.cpp
-mqb main.cpp --run
-```
-
-单入口默认启用 smart discovery；可写构建状态统一放在项目 `.mqb/` 下。
-
-### 精确多源文件
-
-```powershell
-mqb build main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
-```
-
-多个 positional sources 表示精确 source set，不再自动扩展源码集合。
+MQB owns the synthetic creator, `.pch`, paired creator `.obj`, `/FI`, `/Yc` / `/Yu`, and `/Fp`, and records the `.pch` in consumer cache dependency identity. See [`docs/PRECOMPILED_HEADERS_EN.md`](docs/PRECOMPILED_HEADERS_EN.md).
 
 ### Target kinds
 
@@ -140,63 +197,110 @@ mqb build api.cpp --type dll -o codec
 mqb build math.cpp vector.cpp --type static -o math
 ```
 
-支持 `exe`、`dll`、`static`。`mqb run` 只适用于 executable target。
+Supported target kinds are `exe`, `dll`, and `static`. `mqb run` applies only to executable targets.
 
-### 原生 linker / librarian 参数
+### Native MSVC arguments
 
-Executable / DLL 构建使用 `/link` 把其后的 build argv 交给 `link.exe`：
+Compiler arguments can be passed directly. Executable/DLL builds use `/link` as the explicit linker boundary:
 
 ```powershell
 mqb build foo.cpp /O2 /link /DEBUG:FULL /STACK:8388608
 ```
 
-Static target 使用独立的 `/lib` boundary，把其后的参数交给 `lib.exe`：
+Static targets use the dedicated `/lib` librarian boundary:
 
 ```powershell
 mqb build foo.cpp --type static /lib /WX /EXPORT:foo
 ```
 
-`/lib` 是 **static librarian boundary 的唯一公开拼写**（`/LIB` 同样接受）；`-lib` / `-LIB` 明确拒绝，以免与 MQB 的 `-l <name>` / `-l<name>` library shorthand 冲突。Librarian policy 也可以配置：
+`/lib` (case-insensitive) is the only public static-librarian boundary. `-lib` / `-LIB` are rejected to avoid collision with MQB's `-l <name>` / `-l<name>` library shorthand.
+
+Librarian policy can also live in config:
 
 ```json
 {
   "version": 1,
   "build": {
+    "entry": "src/math.cpp",
     "type": "static",
-    "librarian_args": ["/WX", "/EXPORT:foo"]
+    "librarian_args": ["/WX"]
   }
 }
 ```
 
-`librarian_args` 与其他 list policy 一样按 base config → selected profile → CLI `/lib` 顺序追加；它只允许用于 static target，并进入 archive recipe/cache identity。
+## C++ Modules and Header Units
 
-## 核心能力
+MQB does not infer module ordering from filenames. It asks MSVC for dependency truth and builds a typed provider graph:
 
-- `mqb build` / `mqb run` 项目命令与 fail-closed 默认入口解析。
-- `mqb.json` named profiles 与 `base < profile < CLI` 分层解析。
-- 普通 C++ target 的 first-class MSVC PCH、独立 PCH cache 与自动 consumer invalidation。
-- `.c` / `.cpp` / `.cc` / `.cxx` 原生 MSVC 构建。
-- Visual Studio 与 portable MSVC toolchain discovery。
-- 基于 `/sourceDependencies` 的 header freshness 与增量编译。
-- compile / link / archive 独立缓存。
-- `-j / --jobs` 有界并行 scan/compile。
-- `exe` / `dll` / `static` typed targets。
-- typed runtime、LTCG、subsystem policy。
-- 原生 MSVC compiler/linker/librarian 参数，以及 `/link` / `/lib` 明确分界。
-- project-local named modules 与 header units。
-- external/prebuilt named-module IFC providers。
-- MSVC toolchain-owned `import std` / `import std.compat`。
-- P1689 `/scanDependencies` 驱动的 module topology 与 transitive IFC closure。
-- Windows Unicode-safe artifact/path identity。
-- 所有 writable build state 收敛到项目 `.mqb/`。
+```text
+selected sources
+      ↓
+/scanDependencies
+      ↓
+P1689 rules
+      ↓
+provider resolution
+      ↓
+dependency graph
+      ↓
+parallel compile waves
+      ↓
+incremental final link
+```
 
-> 当前边界：first-class PCH 暂不与 C TU 或 Modules/Header Units pipeline 混用；需要 Modules/Header Units pipeline 的 `static` target 仍会显式拒绝。普通 C++ PCH 与普通静态库构建不受影响。
+Provider kinds include:
+
+- project-local named modules;
+- project-local header units;
+- explicit external/prebuilt IFC providers;
+- MSVC toolchain-owned `std` / `std.compat` providers.
+
+External IFCs can be declared in `mqb.json`:
+
+```json
+{
+  "version": 1,
+  "modules": {
+    "external": {
+      "vendor.math": "third_party/ifc/vendor.math.ifc"
+    }
+  }
+}
+```
+
+Provider ambiguity, conflicts, cycles, and unresolved requirements fail closed rather than being guessed.
+
+## Incremental-build model
+
+MQB treats compile, link, and archive reuse as separate correctness decisions. Build identity includes the inputs that materially affect the artifact, such as source/TU identity, selected toolchain, typed build policy, ordered native arguments, module/IFC requirements, resolved libraries, and required outputs.
+
+Two principles drive the cache design:
+
+1. **correctness before cache-hit rate** — ambiguous identity rebuilds instead of guessing;
+2. **toolchain metadata is dependency truth** — header freshness comes from `/sourceDependencies`, while module topology comes from `/scanDependencies` / P1689.
+
+All writable state is project-local:
+
+```text
+.mqb/
+├─ obj/
+├─ deps/
+├─ scan/
+├─ ifc/
+├─ cache/
+│  ├─ compile/
+│  ├─ link/
+│  └─ archive/
+└─ bin/
+```
+
+See [`docs/ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) for the complete data flow and ownership model.
 
 ## `mqb.json`
 
-MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成为 project root，也成为 `.mqb/` 根目录。
+MQB searches upward from the invocation directory for the nearest `mqb.json`. The directory containing it becomes both the project root and the `.mqb/` root.
 
-最小配置：
+Minimal configuration:
 
 ```json
 {
@@ -204,7 +308,7 @@ MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成�
 }
 ```
 
-常见配置：
+A common configuration:
 
 ```json
 {
@@ -221,41 +325,11 @@ MQB 从执行目录向上查找最近的 `mqb.json`。该文件所在目录成�
 }
 ```
 
-静态库可以声明 librarian policy：
+Config/profile paths resolve relative to the directory containing `mqb.json`; CLI paths resolve relative to the invocation directory. Unknown fields, wrong types, duplicate keys, and unsupported schema versions fail closed.
 
-```json
-{
-  "version": 1,
-  "build": {
-    "entry": "src/math.cpp",
-    "type": "static",
-    "librarian_args": ["/WX"]
-  }
-}
-```
+See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for the complete schema and precedence rules.
 
-`build.entry` 相对 `mqb.json` 解析，仅在 `mqb build` / `mqb run` 没有显式 positional source 时使用。若未设置，MQB 只在 project root 与 `src/` 中寻找 conventional `main.{c,cpp,cc,cxx}`；必须恰好命中一个，否则明确报错。
-
-`build.pch` 可为非空 header 路径或 `false`。配置/profile 中的 PCH 路径相对 `mqb.json`；CLI `--pch` 路径相对 invocation directory。Profile 可覆盖或用 `pch: false` 关闭 base PCH，CLI `--pch` / `--no-pch` 再覆盖 profile。
-
-Named profile 也声明在同一配置文件中，并用 `--profile <name>` 显式选择。Profile 内路径同样相对 `mqb.json`，native compiler/linker/librarian arguments 仍经过统一的 MSVC Parameter Engine；profile 名本身不是额外 cache 维度，最终生效的构建语义才决定 cache identity。
-
-External/prebuilt module IFC 也可在配置中声明：
-
-```json
-{
-  "version": 1,
-  "modules": {
-    "external": {
-      "vendor.math": "third_party/ifc/vendor.math.ifc"
-    }
-  }
-}
-```
-
-完整字段、profiles、路径基准、CLI/config precedence 和 module provider 规则见 [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md)。PCH artifact、ownership 与 invalidation 模型见 [`docs/PRECOMPILED_HEADERS.md`](docs/PRECOMPILED_HEADERS.md)。
-
-## 常用 CLI
+## Common CLI
 
 ```text
 mqb build [source...] [options]
@@ -263,59 +337,74 @@ mqb run [source...] [options] [-- program-args...]
 mqb <source...> [options]
 ```
 
-| 选项 | 作用 |
+| Option | Purpose |
 |---|---|
-| `--profile <name>` | 选择 `mqb.json` 中一个 named profile |
-| `--pch <header>` / `--no-pch` | 启用/覆盖 first-class PCH，或关闭继承的 PCH policy |
-| `--debug` / `--release` | 构建配置 |
-| `--std <14|17|20|23|latest>` | C++ 标准 |
-| `--type <exe|dll|static>` | target kind |
-| `--x86` / `--x64` | 目标架构 |
+| `--profile <name>` | Select one named profile from `mqb.json` |
+| `--pch <header>` / `--no-pch` | Enable/override first-class PCH or disable inherited PCH policy |
+| `--debug` / `--release` | Build configuration |
+| `--std <14|17|20|23|latest>` | C++ standard |
+| `--type <exe|dll|static>` | Target kind |
+| `--x86` / `--x64` | Target architecture |
 | `--runtime <MD|MDd|MT|MTd>` | MSVC runtime |
 | `--ltcg` / `--no-ltcg` | LTCG |
 | `--subsystem <console|windows>` | PE subsystem |
-| `-j, --jobs <N>` | 最大并发 scan/compile 数 |
-| `-o, --output <name>` | 目标名 |
-| `--discover` / `--no-discover` | source discovery |
-| `--module-ifc <name=path>` | external/prebuilt named-module IFC |
-| `-I <dir>` | include directory |
-| `-D <value>` | preprocessor definition |
-| `-L <dir>` / `--lib-path <dir>` | library search directory |
-| `-l <name>` / `--lib <name>` | library |
-| `/option` / `-option` | 原生 MSVC compiler 参数 |
-| `/link <...>` | 后续 build 参数路由到 linker |
-| `/lib <...>` | static target：后续 build 参数路由到 librarian；`-lib` 不支持 |
-| `--compiler-arg <arg>` | 原样 compiler argv element |
-| `--linker-arg <arg>` | 原样 linker argv element |
-| `--env <auto|vs|portable>` | toolchain selection |
-| `--run` | source-first 兼容形式：构建后运行 executable |
-| `-v, --verbose` | 详细输出 |
-| `-h, --help` | 完整 CLI 帮助 |
-| `--` | `mqb run` / `--run` 后续参数传给目标程序 |
+| `-j, --jobs <N>` | Maximum concurrent scan/compile jobs |
+| `-o, --output <name>` | Target name |
+| `--discover` / `--no-discover` | Source discovery |
+| `--module-ifc <name=path>` | External/prebuilt named-module IFC |
+| `-I <dir>` | Include directory |
+| `-D <value>` | Preprocessor definition |
+| `-L <dir>` / `--lib-path <dir>` | Library search directory |
+| `-l <name>` / `--lib <name>` | Library |
+| `/option` / `-option` | Native MSVC compiler argument |
+| `/link <...>` | Route following build arguments to `link.exe` |
+| `/lib <...>` | Static target: route following arguments to `lib.exe` |
+| `--compiler-arg <arg>` | Raw compiler argv element |
+| `--linker-arg <arg>` | Raw linker argv element |
+| `--env <auto|vs|portable>` | Toolchain selection |
+| `--run` | Source-first compatibility form: run executable after build |
+| `-v, --verbose` | Verbose output |
+| `-h, --help` | Complete CLI help |
+| `--` | Pass remaining arguments to the target program under `mqb run` / `--run` |
 
-完整参数列表以当前 binary 的 `mqb --help` 为准。
+Use the current binary's `mqb --help` as the complete CLI reference.
 
-## 文档
+## Current boundaries
 
-| 主题 | 文档 |
-|---|---|
-| `mqb.json` 配置、profiles 与 precedence | [`docs/MQB_CONFIG.md`](docs/MQB_CONFIG.md) |
-| First-class PCH ownership、cache 与 invalidation | [`docs/PRECOMPILED_HEADERS.md`](docs/PRECOMPILED_HEADERS.md) |
-| 安装、PATH、卸载 | [`docs/INSTALLATION.md`](docs/INSTALLATION.md) |
-| 架构与 Modules/cache 模型 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
-| 开发 MQB | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
-| 自举与发布门禁 | [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) |
-| C++ 源码目录契约 | [`cpp/README.md`](cpp/README.md) |
-| 历史版本与发布说明 | [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases) |
+MQB deliberately fails closed where ownership is not yet modeled safely:
 
-## 开发
+- first-class PCH does not mix with C translation units;
+- first-class PCH does not mix with targets requiring the Modules/Header Units pipeline;
+- `static` targets requiring the Modules/Header Units pipeline are currently rejected;
+- MQB is Windows + MSVC only.
+
+Ordinary C++ PCH and ordinary static-library builds are unaffected by the module/static limitation.
+
+## Documentation
+
+| Topic | English | 简体中文 |
+|---|---|---|
+| Configuration, profiles, precedence | [`MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) | [`MQB_CONFIG.md`](docs/MQB_CONFIG.md) |
+| Precompiled headers | [`PRECOMPILED_HEADERS_EN.md`](docs/PRECOMPILED_HEADERS_EN.md) | [`PRECOMPILED_HEADERS.md`](docs/PRECOMPILED_HEADERS.md) |
+| Installation | [`INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) | [`INSTALLATION.md`](docs/INSTALLATION.md) |
+| Architecture | [`ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| Developing MQB | [`DEVELOPMENT_EN.md`](docs/DEVELOPMENT_EN.md) | [`DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
+| Self-hosting / release gates | [`SELF_HOSTING_EN.md`](docs/SELF_HOSTING_EN.md) | [`SELF_HOSTING.md`](docs/SELF_HOSTING.md) |
+| C++ source-layout contract | [`cpp/README_EN.md`](cpp/README_EN.md) | [`cpp/README.md`](cpp/README.md) |
+| Release history | [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases) | [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases) |
+
+## Development
+
+MQB is itself a native C++23 product and has a self-hosted development path:
 
 ```powershell
 .\tests\native\develop.ps1
 ```
 
-贡献者流程见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
+See [`docs/DEVELOPMENT_EN.md`](docs/DEVELOPMENT_EN.md) for contributor workflow and repository gates.
+
+Bug reports, reproducible compatibility cases, and focused pull requests are welcome. If MQB's MSVC / C++ Modules work is useful or interesting to you, starring the repository is an easy way to follow its development.
 
 ## License
 
-Apache License 2.0（SPDX: `Apache-2.0`）。完整条款见 [`LICENSE`](LICENSE)。
+Apache License 2.0 (SPDX: `Apache-2.0`). See [`LICENSE`](LICENSE) for the full terms.
