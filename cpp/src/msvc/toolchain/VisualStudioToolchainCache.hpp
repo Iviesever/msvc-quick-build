@@ -15,6 +15,11 @@ reuse_visual_studio_toolchain_cache(
     const std::filesystem::path& cache_file,
     const DiscoveryOptions& options);
 
+[[nodiscard]] std::optional<MsvcToolchain>
+adopt_ambient_visual_studio_toolchain(
+    process::ProcessRunner& runner,
+    const DiscoveryOptions& options);
+
 void save_visual_studio_toolchain_cache_best_effort(
     const std::filesystem::path& cache_file,
     const DiscoveryOptions& options,

@@ -43,6 +43,17 @@ MsvcToolchainLocator::discover(const DiscoveryOptions& options) const {
         }
     }
 
+    if (auto ambient = detail::adopt_ambient_visual_studio_toolchain(runner_, options)) {
+        if (cache_file) {
+            detail::save_visual_studio_toolchain_cache_best_effort(
+                *cache_file,
+                options,
+                *ambient);
+        }
+        seal_compiler_environment_identity(*ambient);
+        return std::move(*ambient);
+    }
+
     auto discovered = detail::discover_visual_studio_toolchain(runner_, options);
     if (discovered && cache_file) {
         // Persist raw compiler-binary evidence. Compiler environment identity is

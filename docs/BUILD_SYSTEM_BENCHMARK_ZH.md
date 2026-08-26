@@ -86,6 +86,19 @@ JSON 报告记录：
 
 对于 `mqb_delta_pct_vs_cmake_ninja`，负值表示 MQB 的 wall-clock time 更低。Ratio 只是便于阅读；任何数字都不应脱离同一报告里的机器、工具链和方法信息单独引用。
 
+## Issue #129 实测证据
+
+Issue #129 按本契约完成了同机 100 TU、5 iterations、32 workers 的 before/after 测量。CMake 4.1.2、Ninja 1.13.1、MSVC 19.51.36248、选定的 Visual Studio 安装、Windows SDK、操作系统、CPU width 与 harness policy 均未变化。由于 candidate 包含本次优化，MQB binary hash 必然与 baseline 不同。
+
+| 场景 | Before MQB median | After MQB median | After Ninja median | After MQB 相对 Ninja 差值 |
+|---|---:|---:|---:|---:|
+| `ordinary-cold` | 2503.64 ms | 686.00 ms | 792.07 ms | -13.39% |
+| `pch-cold` | 2853.43 ms | 1018.69 ms | 996.74 ms | +2.20% |
+
+本次 product change 在调用者已有完整 developer environment 时移除重复的 `vcvarsall.bat` 环境捕获，但仍执行一次 `vswhere.exe` 查询，把 ambient path 绑定到已注册的 Visual Studio 安装。在本机上，ordinary cold 减少 1817.64 ms（72.60%），PCH cold 减少 1834.73 ms（64.30%）。PCH cold 仍比 direct Ninja 慢 21.96 ms；这里如实保留这个剩余差距，不把它当成 threshold failure，也不把单机结果外推成跨机器结论。
+
+完整 raw report 保留为 [`benchmark-before.json`](20260826-195200-cold-build-overhead/benchmark-before.json) 与 [`benchmark-after.json`](20260826-195200-cold-build-overhead/benchmark-after.json)，其中包含每份报告的全部 80 个样本、MQB phase timings、tool hashes 与 exact cache counters。
+
 ## CI 契约
 
 `.github/workflows/build-system-evidence.yml` 会在相关 pull request 上运行一个小规模 correctness fixture。它从当前仓库源码构建 MQB，使用较小 TU 数执行一次对比，并上传 JSON 报告。

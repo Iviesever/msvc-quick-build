@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "ToolchainDiscoveryPrimitives.hpp"
+#include "VisualStudioToolchainDiscovery.hpp"
+#include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::msvc::detail {
@@ -157,13 +159,29 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
     const fs::path& vc_tools_root) {
     std::vector<fs::path> roots;
     append_unique_existing_root(roots, visual_studio_root(vc_tools_root));
+
+    wchar_t windows_directory[MAX_PATH]{};
+    const UINT windows_directory_size = ::GetWindowsDirectoryW(
+        windows_directory,
+        MAX_PATH);
+    if (windows_directory_size == 0
+        || windows_directory_size >= MAX_PATH) {
+        return roots;
+    }
+    append_unique_existing_root(roots, fs::path{windows_directory});
+    const fs::path windows_kits_root = stable_path(
+        fs::path{windows_directory}.root_path()
+        / "Program Files (x86)"
+        / "Windows Kits");
     for (const auto name : {"WindowsSdkDir", "UniversalCRTSdkDir", "NETFXSDKDir"}) {
         if (const auto* variable = find_environment(environment, name);
             variable != nullptr && !variable->value.empty()) {
-            append_unique_existing_root(roots, detail::path_from_utf8(variable->value));
+            fs::path sdk_root = stable_path(detail::path_from_utf8(variable->value));
+            if (path_inside_root(windows_kits_root, sdk_root)) {
+                append_unique_existing_root(roots, std::move(sdk_root));
+            }
         }
     }
-    if (const auto system_root = detail::environment_path("SystemRoot")) append_unique_existing_root(roots, *system_root);
     return roots;
 }
 
@@ -426,6 +444,128 @@ void save_visual_studio_cache_best_effort(
     }
 }
 
+[[nodiscard]] std::optional<MsvcToolchain> try_adopt_ambient_visual_studio_toolchain(
+    process::ProcessRunner& runner,
+    const DiscoveryOptions& options) {
+    try {
+        if (options.preference == ToolchainPreference::portable
+            || options.vswhere_path
+            || options.cmd_path) {
+            return std::nullopt;
+        }
+
+        const auto target_marker = detail::environment_value("VSCMD_ARG_TGT_ARCH");
+        const auto host_marker = detail::environment_value("VSCMD_ARG_HOST_ARCH");
+        if (!target_marker || target_marker->empty()
+            || !environment_name_equal(
+                *target_marker,
+                detail::architecture_name(options.target_architecture))
+            || !host_marker || host_marker->empty()
+            || !environment_name_equal(
+                *host_marker,
+                detail::architecture_name(options.host_architecture))) {
+            return std::nullopt;
+        }
+
+        const auto tools_path = detail::environment_path("VCToolsInstallDir");
+        if (!tools_path || tools_path->empty()) {
+            return std::nullopt;
+        }
+
+        fs::path vc_tools_root = stable_path(*tools_path);
+        std::error_code error_code;
+        if (!fs::is_directory(vc_tools_root, error_code) || error_code) {
+            return std::nullopt;
+        }
+
+        const std::string vc_tools_version = detail::path_to_utf8(vc_tools_root.filename());
+        if (vc_tools_version.empty()) {
+            return std::nullopt;
+        }
+
+        auto installation = detail::locate_visual_studio_installation(runner, options);
+        if (!installation) {
+            return std::nullopt;
+        }
+        const auto latest_tools = detail::latest_directory(
+            stable_path(*installation) / "VC" / "Tools" / "MSVC");
+        if (!latest_tools || !same_path(*latest_tools, vc_tools_root)) {
+            return std::nullopt;
+        }
+
+        const ToolPaths paths = tool_paths(vc_tools_root, options);
+        for (const auto& file : {paths.compiler, paths.linker, paths.librarian}) {
+            error_code.clear();
+            if (!fs::is_regular_file(file, error_code) || error_code) {
+                return std::nullopt;
+            }
+        }
+
+        const auto path_val = detail::environment_value("PATH");
+        if (!path_val || path_val->empty()) {
+            return std::nullopt;
+        }
+
+        std::vector<EnvironmentVariable> environment;
+        for (const auto name : {
+                 "INCLUDE",
+                 "LIB",
+                 "LIBPATH",
+                 "VCToolsInstallDir",
+                 "WindowsSdkDir",
+                 "WindowsSDKVersion",
+                 "UniversalCRTSdkDir",
+                 "UCRTVersion",
+                 "NETFXSDKDir",
+             }) {
+            if (const auto val = detail::environment_value(name)) {
+                environment.push_back(EnvironmentVariable{.name = name, .value = *val});
+            }
+        }
+
+        if (!environment_is_cacheable(environment, vc_tools_root)) {
+            return std::nullopt;
+        }
+
+        auto stamp = detail::binary_stamp(paths.compiler);
+        if (!stamp) {
+            return std::nullopt;
+        }
+
+        environment.push_back(EnvironmentVariable{.name = "PATH", .value = *path_val});
+
+        MsvcToolchain toolchain{
+            .identity = ToolchainIdentity{
+                .compiler = paths.compiler,
+                .version = vc_tools_version,
+                .binary_stamp = std::move(*stamp),
+            },
+            .linker = paths.linker,
+            .librarian = paths.librarian,
+            .vc_tools_root = vc_tools_root,
+            .standard_library_modules = detail::discover_standard_library_modules(vc_tools_root),
+            .source = ToolchainSource::visual_studio,
+            .environment = std::move(environment),
+            .reused = false,
+        };
+
+        if (!toolchain_environment_detail::selected_sdk_version_is_latest(
+                toolchain.environment,
+                "WindowsSdkDir",
+                "WindowsSDKVersion")
+            || !toolchain_environment_detail::selected_sdk_version_is_latest(
+                toolchain.environment,
+                "UniversalCRTSdkDir",
+                "UCRTVersion")) {
+            return std::nullopt;
+        }
+
+        return toolchain;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 } // namespace
 
 std::optional<std::filesystem::path>
@@ -438,6 +578,13 @@ reuse_visual_studio_toolchain_cache(
     const std::filesystem::path& cache_file,
     const DiscoveryOptions& options) {
     return try_reuse_visual_studio_cache(cache_file, options);
+}
+
+std::optional<MsvcToolchain>
+adopt_ambient_visual_studio_toolchain(
+    process::ProcessRunner& runner,
+    const DiscoveryOptions& options) {
+    return try_adopt_ambient_visual_studio_toolchain(runner, options);
 }
 
 void save_visual_studio_toolchain_cache_best_effort(
