@@ -393,6 +393,8 @@ Ordinary C++ PCH and ordinary static-library builds are unaffected by the module
 | C++ source-layout contract | [`cpp/README_EN.md`](cpp/README_EN.md) | [`cpp/README.md`](cpp/README.md) |
 | Release history | [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases) | [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases) |
 
+Full bilingual documentation index: [`docs/README.md`](docs/README.md) ([简体中文](docs/README_ZH.md)).
+
 ## Development
 
 MQB is itself a native C++23 product and has a self-hosted development path:

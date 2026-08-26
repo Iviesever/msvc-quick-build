@@ -393,6 +393,8 @@ MQB 在尚未安全建模 ownership 的位置会有意 fail closed：
 | C++ 源码目录契约 | [`cpp/README_EN.md`](cpp/README_EN.md) | [`cpp/README.md`](cpp/README.md) |
 | Release 历史 | [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases) | [GitHub Releases](https://github.com/Iviesever/msvc-quick-build/releases) |
 
+完整双语文档索引：[`docs/README_ZH.md`](docs/README_ZH.md)（[English](docs/README.md)）。
+
 ## 开发
 
 MQB 自身也是一个原生 C++23 产品，并具有 self-hosted development path：
