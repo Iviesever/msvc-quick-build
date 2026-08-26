@@ -1,5 +1,7 @@
 # Contributing to MQB
 
+**English | [简体中文](CONTRIBUTING_ZH.md)**
+
 Thanks for taking the time to improve MQB.
 
 MQB is intentionally focused on **Windows + MSVC**. The most useful contributions are reproducible correctness cases, compatibility fixes, focused performance improvements, documentation corrections, and changes that deepen the existing MSVC-native model without weakening ownership boundaries.
