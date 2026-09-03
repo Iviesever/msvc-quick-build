@@ -52,12 +52,15 @@ struct IncrementalArchiveError {
     std::optional<msvc::LibrarianError> librarian_error;
 };
 
-struct IncrementalArchiveResult {
+struct IncrementalArchiveInspection {
     ArchiveCacheValidation validation;
     BuildPlan plan;
+    std::vector<IncrementalArchiveWarning> warnings;
+};
+
+struct IncrementalArchiveResult : IncrementalArchiveInspection {
     bool archived{false};
     std::optional<process::ProcessResult> process;
-    std::vector<IncrementalArchiveWarning> warnings;
 };
 
 class MsvcIncrementalArchiveCoordinator {
@@ -66,6 +69,11 @@ public:
         const msvc::MsvcToolchain& toolchain,
         msvc::MsvcLibrarian& librarian)
         : toolchain_(toolchain), librarian_(librarian) {}
+
+    // Read librarian/cache freshness and derive the exact BuildPlan without
+    // launching lib.exe or mutating archive cache/output state.
+    [[nodiscard]] std::expected<IncrementalArchiveInspection, IncrementalArchiveError>
+    inspect(const IncrementalArchiveRequest& request) const;
 
     [[nodiscard]] std::expected<IncrementalArchiveResult, IncrementalArchiveError>
     run(const IncrementalArchiveRequest& request) const;
