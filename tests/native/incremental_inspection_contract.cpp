@@ -200,7 +200,7 @@ int main() {
     const fs::path header = fixture.path() / "compile" / "value.hpp";
     const fs::path object = fixture.path() / "compile" / "main.obj";
     const fs::path dependencies = fixture.path() / "compile" / "main.deps.json";
-    const fs::path compile_cache = fixture.path() / "compile" / "main.mqbcache";
+    const fs::path compile_cache = fixture.path() / "compile-cache" / "main.mqbcache";
     write_text(source, "#include \"value.hpp\"\nint main() { return VALUE; }\n");
     write_text(header, "#pragma once\n#define VALUE 0\n");
 
