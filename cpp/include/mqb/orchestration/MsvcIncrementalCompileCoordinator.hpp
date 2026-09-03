@@ -55,12 +55,15 @@ struct IncrementalCompileError {
     std::optional<msvc::CompileExecutorError> compile_error;
 };
 
-struct IncrementalCompileResult {
+struct IncrementalCompileInspection {
     CompileCacheValidation validation;
     BuildPlan plan;
+    std::vector<IncrementalCompileWarning> warnings;
+};
+
+struct IncrementalCompileResult : IncrementalCompileInspection {
     bool compiled{false};
     std::optional<process::ProcessResult> process;
-    std::vector<IncrementalCompileWarning> warnings;
 };
 
 class MsvcIncrementalCompileCoordinator {
@@ -69,6 +72,11 @@ public:
         const msvc::MsvcToolchain& toolchain,
         msvc::MsvcCompileExecutor& executor)
         : toolchain_(toolchain), executor_(executor) {}
+
+    // Read cache/filesystem evidence and produce the exact incremental decision
+    // without launching cl.exe or mutating cache/output state.
+    [[nodiscard]] std::expected<IncrementalCompileInspection, IncrementalCompileError>
+    inspect(const IncrementalCompileRequest& request) const;
 
     [[nodiscard]] std::expected<IncrementalCompileResult, IncrementalCompileError>
     run(const IncrementalCompileRequest& request) const;
