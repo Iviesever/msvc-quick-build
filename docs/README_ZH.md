@@ -13,6 +13,7 @@
 | 项目概览 / 快速开始 | [`../README.md`](../README.md) | [`../README_ZH.md`](../README_ZH.md) |
 | 安装 | [`INSTALLATION_EN.md`](INSTALLATION_EN.md) | [`INSTALLATION.md`](INSTALLATION.md) |
 | `mqb.json`、profiles、precedence | [`MQB_CONFIG_EN.md`](MQB_CONFIG_EN.md) | [`MQB_CONFIG.md`](MQB_CONFIG.md) |
+| 构建计划检查 | [`BUILD_PLAN_EN.md`](BUILD_PLAN_EN.md) | [`BUILD_PLAN.md`](BUILD_PLAN.md) |
 | First-class PCH | [`PRECOMPILED_HEADERS_EN.md`](PRECOMPILED_HEADERS_EN.md) | [`PRECOMPILED_HEADERS.md`](PRECOMPILED_HEADERS.md) |
 | 并行调度与 P1689 warm scan reuse | [`PARALLELISM_EN.md`](PARALLELISM_EN.md) | [`PARALLELISM.md`](PARALLELISM.md) |
 
