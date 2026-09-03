@@ -32,6 +32,7 @@
       "src/app/diagnostics/PerformanceTimings.cpp",
       "src/app/cli/Invocation.cpp",
       "src/app/targets/CompdbCommand.cpp",
+      "src/app/targets/PlanCommand.cpp",
       "src/app/targets/ModuleCliTarget.cpp",
       "src/app/project/ProjectSetup.cpp",
       "src/app/targets/StaticCliTarget.cpp",
