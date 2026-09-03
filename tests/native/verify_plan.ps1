@@ -112,8 +112,8 @@ Assert-NoMqbState -ProjectRoot $ordinary -Context 'cold ordinary plan'
 Assert-True ([string]$cold.pipeline -eq 'ordinary') 'ordinary plan should identify its pipeline'
 Assert-True ([int]$cold.summary.planned -eq 3) `
     'cold ordinary plan should schedule 2 compiles + 1 link'
-$compileSteps = Step-ByKind -Plan $cold -Kind 'compile'
-$linkSteps = Step-ByKind -Plan $cold -Kind 'link'
+$compileSteps = @(Step-ByKind -Plan $cold -Kind 'compile')
+$linkSteps = @(Step-ByKind -Plan $cold -Kind 'link')
 Assert-True ($compileSteps.Count -eq 2) 'cold ordinary plan should contain two compiles'
 Assert-True ($linkSteps.Count -eq 1) 'cold ordinary plan should contain one link'
 $expectedSourceDir = [System.IO.Path]::GetFullPath((Join-Path $ordinary 'src')).TrimEnd('\')
@@ -297,12 +297,12 @@ Assert-True ([string]$moduleCold.pipeline -eq 'modules') `
     'module plan should identify its pipeline'
 Assert-True ([string]$moduleCold.module_graph.status -eq 'pending') `
     'cold module plan should report a pending graph'
-$moduleColdScans = Step-ByKind -Plan $moduleCold -Kind 'module_scan'
+$moduleColdScans = @(Step-ByKind -Plan $moduleCold -Kind 'module_scan')
 Assert-True ($moduleColdScans.Count -eq 2) `
     'cold named-module plan should contain one scan per requested source'
-Assert-True ((Step-ByKind -Plan $moduleCold -Kind 'compile').Count -eq 0) `
+Assert-True (@(Step-ByKind -Plan $moduleCold -Kind 'compile').Count -eq 0) `
     'cold module plan must not guess compile waves'
-Assert-True ((Step-ByKind -Plan $moduleCold -Kind 'link').Count -eq 0) `
+Assert-True (@(Step-ByKind -Plan $moduleCold -Kind 'link').Count -eq 0) `
     'cold module plan must not guess link work'
 foreach ($scan in $moduleColdScans) {
     Assert-True ([string]$scan.status -eq 'planned') `
@@ -336,11 +336,11 @@ Assert-True ([string]$moduleWarm.module_graph.status -eq 'ready') `
     'warm module plan should expose a ready graph'
 Assert-True (@($moduleWarm.module_graph.compile_levels).Count -eq 2) `
     'provider/consumer module graph should contain two levels'
-Assert-True ((Step-ByKind -Plan $moduleWarm -Kind 'module_scan').Count -eq 2) `
+Assert-True (@(Step-ByKind -Plan $moduleWarm -Kind 'module_scan').Count -eq 2) `
     'warm module plan should retain scan observability'
-Assert-True ((Step-ByKind -Plan $moduleWarm -Kind 'compile').Count -eq 2) `
+Assert-True (@(Step-ByKind -Plan $moduleWarm -Kind 'compile').Count -eq 2) `
     'warm module plan should contain provider and consumer compiles'
-Assert-True ((Step-ByKind -Plan $moduleWarm -Kind 'link').Count -eq 1) `
+Assert-True (@(Step-ByKind -Plan $moduleWarm -Kind 'link').Count -eq 1) `
     'warm module plan should contain final link inspection'
 Assert-NoProcessesOnWarmPlan -Plan $moduleWarm -Context 'warm module plan'
 
@@ -363,7 +363,7 @@ Assert-True ($beforeModuleRepair -eq $afterModuleRepair) `
     'module IFC repair plan mutated state'
 Assert-True ([string]$moduleRepair.module_graph.status -eq 'ready') `
     'missing IFC should not invalidate reusable topology'
-$repairCompiles = Step-ByKind -Plan $moduleRepair -Kind 'compile'
+$repairCompiles = @(Step-ByKind -Plan $moduleRepair -Kind 'compile')
 Assert-True (@($repairCompiles | Where-Object { $_.status -eq 'planned' }).Count -eq 2) `
     'missing provider IFC should plan provider and consumer'
 $repairProvider = @(Step-ByRole -Plan $moduleRepair -Role 'module_interface')[0]
@@ -378,7 +378,7 @@ Assert-True ((@($repairConsumer.process.arguments) -contains '/reference')) `
     'consumer repair recipe should expose /reference'
 Assert-True ((@($repairConsumer.process.arguments) -join "`n") -match 'math=.*\.ifc') `
     'consumer repair recipe should map math to the provider IFC'
-Assert-True ((Step-ByKind -Plan $moduleRepair -Kind 'link')[0].status -eq 'planned') `
+Assert-True (@(Step-ByKind -Plan $moduleRepair -Kind 'link')[0].status -eq 'planned') `
     'provider repair should plan final relink'
 
 $moduleRepairBuild = Invoke-MqbCaptured -WorkingDirectory $module -Arguments $moduleBuildArgs
@@ -401,9 +401,9 @@ Assert-True ([string]$moduleStale.module_graph.status -eq 'pending') `
 Assert-True (@(Step-ByKind -Plan $moduleStale -Kind 'module_scan' |
     Where-Object { $_.status -eq 'planned' }).Count -eq 1) `
     'one changed module source should plan exactly one scan'
-Assert-True ((Step-ByKind -Plan $moduleStale -Kind 'compile').Count -eq 0) `
+Assert-True (@(Step-ByKind -Plan $moduleStale -Kind 'compile').Count -eq 0) `
     'stale topology must suppress obsolete compile graph'
-Assert-True ((Step-ByKind -Plan $moduleStale -Kind 'link').Count -eq 0) `
+Assert-True (@(Step-ByKind -Plan $moduleStale -Kind 'link').Count -eq 0) `
     'stale topology must suppress obsolete link decision'
 $textModule = Invoke-MqbCaptured -WorkingDirectory $module -Arguments @(
     'plan', 'src/main.cpp', 'modules/math.ixx', '--no-discover',
@@ -440,7 +440,7 @@ Assert-True ([string]$headerCold.pipeline -eq 'modules') `
     'Header Unit source should route to module-aware plan'
 Assert-True ([string]$headerCold.module_graph.status -eq 'pending') `
     'cold Header Unit plan should wait for consumer P1689'
-Assert-True ((Step-ByKind -Plan $headerCold -Kind 'module_scan').Count -eq 1) `
+Assert-True (@(Step-ByKind -Plan $headerCold -Kind 'module_scan').Count -eq 1) `
     'cold Header Unit plan should scan the requested consumer only'
 
 $headerBuildArgs = @(
@@ -495,7 +495,7 @@ Assert-True ((@($plannedHeaderConsumer.process.arguments) -contains '/headerUnit
     'Header Unit consumer recipe should preserve /headerUnit:quote'
 Assert-True ((@($plannedHeaderConsumer.process.arguments) -join "`n") -match 'util\.hpp=.*\.ifc') `
     'Header Unit consumer recipe should map the header name to its IFC'
-Assert-True ((Step-ByKind -Plan $headerRepair -Kind 'link')[0].status -eq 'planned') `
+Assert-True (@(Step-ByKind -Plan $headerRepair -Kind 'link')[0].status -eq 'planned') `
     'Header Unit repair should plan final relink'
 
 $global:LASTEXITCODE = 0
