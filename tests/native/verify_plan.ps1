@@ -58,7 +58,9 @@ function Step-ByKind {
 function Step-ByRole {
     param([object]$Plan, [string]$Role)
     return @($Plan.steps | Where-Object {
-        $_.PSObject.Properties['role'] -and [string]$_.role -eq $Role
+        [string]$_.kind -eq 'compile' -and
+        $_.PSObject.Properties['role'] -and
+        [string]$_.role -eq $Role
     })
 }
 
