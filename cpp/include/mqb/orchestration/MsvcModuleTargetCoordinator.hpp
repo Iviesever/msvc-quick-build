@@ -13,6 +13,7 @@
 #include "mqb/modules/ModuleDependencyGraph.hpp"
 #include "mqb/msvc/MsvcModuleDependencyScanner.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
+#include "mqb/orchestration/MsvcIncrementalModuleScanCoordinator.hpp"
 #include "mqb/orchestration/MsvcModuleCompileCoordinator.hpp"
 #include "mqb/orchestration/ParallelismPolicy.hpp"
 #include "mqb/orchestration/TargetTimings.hpp"
@@ -36,6 +37,35 @@ struct IncrementalModuleTargetRequest {
 struct ModuleTargetScanResult {
     std::filesystem::path source;
     msvc::ModuleScanResult result;
+};
+
+struct ModuleTargetScanInspection {
+    std::filesystem::path source;
+    IncrementalModuleScanInspection result;
+    // Requested project sources are reported first in request order. Any
+    // selected VC Tools std/std.compat provider is appended and marked here so
+    // user-facing introspection can distinguish project and toolchain ownership.
+    bool toolchain_owned{false};
+};
+
+struct IncrementalModuleTargetInspection {
+    std::vector<ModuleTargetScanInspection> scans;
+    // These stages remain absent whenever any required P1689 scan is stale or
+    // missing. A dependency graph cannot be inferred honestly until every
+    // required scan document is reusable.
+    std::optional<modules::ModuleDependencyPlan> plan;
+    std::optional<ModuleCompileWaveRequest> compile_request;
+    std::optional<ModuleCompileWaveInspection> compiles;
+    std::optional<IncrementalLinkRequest> link_request;
+    std::optional<IncrementalLinkInspection> link;
+
+    [[nodiscard]] bool graph_ready() const noexcept {
+        return plan.has_value();
+    }
+
+    [[nodiscard]] bool scan_required() const noexcept {
+        return !graph_ready();
+    }
 };
 
 enum class IncrementalModuleTargetErrorCode {
@@ -90,6 +120,13 @@ public:
         : scanner_(scanner),
           compile_coordinator_(compile_coordinator),
           link_coordinator_(link_coordinator) {}
+
+    // Inspect the complete module target without launching cl.exe/link.exe or
+    // mutating scan, compile, link, or output state. Cold/stale scan evidence
+    // yields scan recipes only; warm trustworthy P1689 continues through graph,
+    // compile-wave, and final-link inspection.
+    [[nodiscard]] std::expected<IncrementalModuleTargetInspection, IncrementalModuleTargetError>
+    inspect(const IncrementalModuleTargetRequest& request) const;
 
     [[nodiscard]] std::expected<IncrementalModuleTargetResult, IncrementalModuleTargetError>
     run(const IncrementalModuleTargetRequest& request) const;
