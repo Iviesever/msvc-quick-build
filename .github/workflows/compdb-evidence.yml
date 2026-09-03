@@ -11,7 +11,14 @@ on:
       - 'cpp/src/app/targets/CompdbCommand.hpp'
       - 'cpp/include/mqb/msvc/MsvcCompileExecutor.hpp'
       - 'cpp/include/mqb/msvc/MsvcCompiler.hpp'
+      - 'cpp/include/mqb/msvc/MsvcModuleDependencyScanner.hpp'
       - 'cpp/src/msvc/compiler/**'
+      - 'cpp/src/msvc/modules/**'
+      - 'cpp/include/mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp'
+      - 'cpp/include/mqb/orchestration/MsvcIncrementalModuleScanCoordinator.hpp'
+      - 'cpp/include/mqb/orchestration/MsvcModuleCompileCoordinator.hpp'
+      - 'cpp/include/mqb/orchestration/MsvcModuleTargetCoordinator.hpp'
+      - 'cpp/src/orchestration/modules/**'
       - 'tests/native/assert_cpp_layout.ps1'
       - 'tests/native/verify_compdb.ps1'
       - '.github/workflows/compdb-evidence.yml'
@@ -28,7 +35,7 @@ jobs:
   verify-compdb:
     name: Verify compile_commands.json contract
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
