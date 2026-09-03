@@ -200,7 +200,7 @@ inspect_pch(
     }
 
     state.compile_request = *compile_request;
-    state.inspection.recipe_request = recipe_request_for(*compile_request);
+    state.inspection.compile_request = recipe_request_for(*compile_request);
     state.inspection.compile = std::move(*compile);
 
     // Compile freshness normally observes the creator source by path + timestamp.
