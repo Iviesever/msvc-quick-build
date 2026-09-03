@@ -46,6 +46,12 @@ public:
     MsvcCompileExecutor(const MsvcToolchain& toolchain, process::ProcessRunner& runner)
         : toolchain_(toolchain), runner_(runner) {}
 
+    // Pure modeling entry point for future compdb/plan consumers. It performs
+    // typed request validation and returns the same MsvcCompileRecipe used by
+    // real execution, but does not touch outputs, cache state, or cl.exe.
+    [[nodiscard]] std::expected<MsvcCompileRecipe, CompileExecutorError>
+    build_recipe(const CompileExecutionRequest& request) const;
+
     [[nodiscard]] std::expected<CompileExecutionResult, CompileExecutorError>
     execute(const CompileExecutionRequest& request) const;
 

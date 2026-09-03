@@ -33,9 +33,40 @@ void suppress_ambient_compiler_options(
     environment.push_back(process::EnvironmentVariable{"_CL_", {}, true});
 }
 
-[[nodiscard]] std::expected<process::ProcessResult, CompilerError> run_compiler(
+[[nodiscard]] std::expected<void, CompilerError> prepare_recipe_outputs(
+    const MsvcCompileRecipe& recipe) {
+    if (const auto* invocation = std::get_if<CompileInvocation>(&recipe.invocation)) {
+        auto prepared = prepare_parent_directory(invocation->object, "object");
+        if (!prepared) return std::unexpected(prepared.error());
+        if (invocation->source_dependencies) {
+            prepared = prepare_parent_directory(*invocation->source_dependencies, "sourceDependencies");
+            if (!prepared) return std::unexpected(prepared.error());
+        }
+        if (invocation->module_interface_output) {
+            prepared = prepare_parent_directory(*invocation->module_interface_output, "module interface");
+            if (!prepared) return std::unexpected(prepared.error());
+        }
+        return {};
+    }
+
+    const auto& invocation = std::get<HeaderUnitCompileInvocation>(recipe.invocation);
+    auto prepared = prepare_parent_directory(invocation.interface_output, "header-unit interface");
+    if (!prepared) return std::unexpected(prepared.error());
+    if (invocation.source_dependencies) {
+        prepared = prepare_parent_directory(*invocation.source_dependencies, "sourceDependencies");
+        if (!prepared) return std::unexpected(prepared.error());
+    }
+    if (invocation.object) {
+        prepared = prepare_parent_directory(*invocation.object, "header-unit object");
+        if (!prepared) return std::unexpected(prepared.error());
+    }
+    return {};
+}
+
+} // namespace
+
+process::ProcessSpec make_compiler_process_spec(
     const MsvcToolchain& toolchain,
-    process::ProcessRunner& runner,
     std::vector<std::string> arguments,
     const std::optional<fs::path>& working_directory) {
     process::ProcessSpec spec{
@@ -48,7 +79,17 @@ void suppress_ambient_compiler_options(
         .capture_stderr = true,
     };
     suppress_ambient_compiler_options(spec.environment);
-    auto result = runner.run(spec);
+    return spec;
+}
+
+std::expected<process::ProcessResult, CompilerError>
+execute_compile_recipe(
+    process::ProcessRunner& runner,
+    const MsvcCompileRecipe& recipe) {
+    auto prepared = prepare_recipe_outputs(recipe);
+    if (!prepared) return std::unexpected(prepared.error());
+
+    auto result = runner.run(recipe.process);
     if (!result) {
         return std::unexpected(CompilerError{
             .code = CompilerErrorCode::process_failed,
@@ -62,46 +103,6 @@ void suppress_ambient_compiler_options(
         .message = "MSVC compiler returned a non-zero exit code",
         .process_result = std::move(*result),
     });
-}
-
-} // namespace
-
-std::expected<process::ProcessResult, CompilerError>
-execute_compile(
-    const MsvcToolchain& toolchain,
-    process::ProcessRunner& runner,
-    const CompileInvocation& invocation,
-    std::vector<std::string> arguments) {
-    auto prepared = prepare_parent_directory(invocation.object, "object");
-    if (!prepared) return std::unexpected(prepared.error());
-    if (invocation.source_dependencies) {
-        prepared = prepare_parent_directory(*invocation.source_dependencies, "sourceDependencies");
-        if (!prepared) return std::unexpected(prepared.error());
-    }
-    if (invocation.module_interface_output) {
-        prepared = prepare_parent_directory(*invocation.module_interface_output, "module interface");
-        if (!prepared) return std::unexpected(prepared.error());
-    }
-    return run_compiler(toolchain, runner, std::move(arguments), invocation.working_directory);
-}
-
-std::expected<process::ProcessResult, CompilerError>
-execute_header_unit_compile(
-    const MsvcToolchain& toolchain,
-    process::ProcessRunner& runner,
-    const HeaderUnitCompileInvocation& invocation,
-    std::vector<std::string> arguments) {
-    auto prepared = prepare_parent_directory(invocation.interface_output, "header-unit interface");
-    if (!prepared) return std::unexpected(prepared.error());
-    if (invocation.source_dependencies) {
-        prepared = prepare_parent_directory(*invocation.source_dependencies, "sourceDependencies");
-        if (!prepared) return std::unexpected(prepared.error());
-    }
-    if (invocation.object) {
-        prepared = prepare_parent_directory(*invocation.object, "header-unit object");
-        if (!prepared) return std::unexpected(prepared.error());
-    }
-    return run_compiler(toolchain, runner, std::move(arguments), invocation.working_directory);
 }
 
 } // namespace mqb::msvc::detail

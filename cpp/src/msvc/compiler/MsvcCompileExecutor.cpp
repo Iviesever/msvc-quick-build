@@ -90,8 +90,8 @@ void add_interface_dependency(
 
 } // namespace
 
-std::expected<CompileExecutionResult, CompileExecutorError>
-MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
+std::expected<MsvcCompileRecipe, CompileExecutorError>
+MsvcCompileExecutor::build_recipe(const CompileExecutionRequest& request) const {
     if (request.unit.source.empty()) {
         return std::unexpected(invalid_request("translation unit source path is empty"));
     }
@@ -118,8 +118,6 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
     const bool header_unit_producer = request.unit.header_unit.has_value();
     const bool pch_creator = request.options.precompiled_header
         && request.options.precompiled_header->role == PrecompiledHeaderRole::create;
-    const bool pch_consumer = request.options.precompiled_header
-        && request.options.precompiled_header->role == PrecompiledHeaderRole::use;
 
     if (header_unit_producer) {
         if (request.unit.kind != TranslationUnitKind::source) {
@@ -184,10 +182,6 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
             return std::unexpected(invalid_request(
                 "only a typed PCH creator may expose a precompiled-header artifact"));
         }
-        if (pch_consumer && !regular_file(request.options.precompiled_header->artifact)) {
-            return std::unexpected(invalid_request(
-                "PCH consumer requires an existing MQB-owned precompiled-header artifact"));
-        }
     }
 
     for (const auto& output : request.unit.outputs) {
@@ -199,8 +193,7 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
         }
     }
 
-    MsvcCompiler compiler{toolchain_, runner_};
-    auto compiled = [&]() -> std::expected<process::ProcessResult, CompilerError> {
+    std::expected<MsvcCompileRecipe, CompilerError> compiler_recipe = [&]() {
         if (header_unit_producer) {
             HeaderUnitCompileInvocation invocation;
             invocation.header_name = request.unit.header_unit->header_name;
@@ -209,7 +202,7 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
             invocation.source_dependencies = request.source_dependencies_file;
             invocation.options = request.options;
             invocation.working_directory = request.working_directory;
-            return compiler.compile_header_unit(invocation);
+            return MsvcCompiler::build_header_unit_recipe(toolchain_, invocation);
         }
 
         CompileInvocation invocation;
@@ -224,9 +217,34 @@ MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
         invocation.header_unit_references = request.unit.header_unit_references;
         invocation.options = request.options;
         invocation.working_directory = request.working_directory;
-        return compiler.compile(invocation);
+        return MsvcCompiler::build_recipe(toolchain_, invocation);
     }();
 
+    if (!compiler_recipe) {
+        return std::unexpected(CompileExecutorError{
+            .code = CompileExecutorErrorCode::compiler_failed,
+            .message = "failed to construct MSVC compile recipe",
+            .compiler_error = compiler_recipe.error(),
+        });
+    }
+
+    return std::move(*compiler_recipe);
+}
+
+std::expected<CompileExecutionResult, CompileExecutorError>
+MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
+    auto recipe = build_recipe(request);
+    if (!recipe) return std::unexpected(recipe.error());
+
+    const bool pch_consumer = request.options.precompiled_header
+        && request.options.precompiled_header->role == PrecompiledHeaderRole::use;
+    if (pch_consumer && !regular_file(request.options.precompiled_header->artifact)) {
+        return std::unexpected(invalid_request(
+            "PCH consumer requires an existing MQB-owned precompiled-header artifact"));
+    }
+
+    MsvcCompiler compiler{toolchain_, runner_};
+    auto compiled = compiler.execute_recipe(*recipe);
     if (!compiled) {
         return std::unexpected(CompileExecutorError{
             .code = CompileExecutorErrorCode::compiler_failed,

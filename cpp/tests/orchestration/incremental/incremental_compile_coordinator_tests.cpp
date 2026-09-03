@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <fstream>
@@ -74,6 +75,34 @@ void write_text(const fs::path& path, const std::string_view text) {
         }
     }
     return result;
+}
+
+[[nodiscard]] bool same_environment_variable(
+    const mqb::process::EnvironmentVariable& left,
+    const mqb::process::EnvironmentVariable& right) {
+    return left.name == right.name
+        && left.value == right.value
+        && left.remove == right.remove;
+}
+
+[[nodiscard]] bool same_process_spec(
+    const mqb::process::ProcessSpec& left,
+    const mqb::process::ProcessSpec& right) {
+    if (left.executable != right.executable
+        || left.arguments != right.arguments
+        || left.working_directory != right.working_directory
+        || left.inherit_environment != right.inherit_environment
+        || left.capture_stdout != right.capture_stdout
+        || left.capture_stderr != right.capture_stderr
+        || left.environment.size() != right.environment.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.environment.size(); ++index) {
+        if (!same_environment_variable(left.environment[index], right.environment[index])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 class CompilerLikeRunner final : public mqb::process::ProcessRunner {
@@ -189,6 +218,28 @@ int main() {
         .source_dependencies_file = dependencies,
         .working_directory = fixture.path(),
     };
+    const mqb::msvc::CompileExecutionRequest execution_request{
+        .unit = request.unit,
+        .options = request.options,
+        .source_dependencies_file = request.source_dependencies_file,
+        .working_directory = request.working_directory,
+    };
+
+    const auto modeled_before_cold = executor.build_recipe(execution_request);
+    expect(modeled_before_cold.has_value(),
+           "compile recipe should be constructible before cache validation or execution");
+    expect(!fs::exists(object) && !fs::exists(dependencies) && !fs::exists(cache_file),
+           "pure recipe construction must not create outputs, dependency metadata, or cache state");
+
+    mqb::process::ProcessSpec modeled_process;
+    bool captured_modeled_process = false;
+    if (modeled_before_cold) {
+        modeled_process = modeled_before_cold->process;
+        captured_modeled_process = true;
+        expect(modeled_before_cold->toolchain.version == toolchain.identity.version
+                   && modeled_before_cold->toolchain.binary_stamp == toolchain.identity.binary_stamp,
+               "compile recipe should retain the selected toolchain identity");
+    }
 
     const auto cold = coordinator.run(request);
     expect(cold.has_value(), "cold incremental compile should succeed");
@@ -204,6 +255,10 @@ int main() {
                "ordinary missing cache should not be reported as a warning");
     }
     expect(runner.calls == 1, "cold build should launch the compiler exactly once");
+    if (captured_modeled_process) {
+        expect(same_process_spec(modeled_process, runner.last_spec),
+               "actual compiler execution must consume the exact modeled ProcessSpec contract");
+    }
     expect(fs::is_regular_file(cache_file),
            "successful cold build should persist cache metadata");
 
@@ -218,6 +273,16 @@ int main() {
     }
     expect(runner.calls == 1,
            "warm cache hit should not invoke the compiler again");
+
+    const auto modeled_on_warm_state = executor.build_recipe(execution_request);
+    expect(modeled_on_warm_state.has_value(),
+           "the same compile recipe must remain constructible when cache state is warm");
+    if (captured_modeled_process && modeled_on_warm_state) {
+        expect(same_process_spec(modeled_on_warm_state->process, modeled_process),
+               "cold-state and warm-state recipe construction must be identical");
+    }
+    expect(runner.calls == 1,
+           "explicit recipe inspection on warm state must not launch the compiler");
 
     auto forced_request = request;
     forced_request.force_rebuild = true;
@@ -286,6 +351,22 @@ int main() {
     }
     expect(runner.calls == 4,
            "configuration transition should invoke the compiler once");
+
+    const mqb::msvc::CompileExecutionRequest release_execution_request{
+        .unit = release_request.unit,
+        .options = release_request.options,
+        .source_dependencies_file = release_request.source_dependencies_file,
+        .working_directory = release_request.working_directory,
+    };
+    const auto modeled_release = executor.build_recipe(release_execution_request);
+    expect(modeled_release.has_value(),
+           "release policy should also produce an inspectable compile recipe");
+    if (captured_modeled_process && modeled_release) {
+        expect(!same_process_spec(modeled_release->process, modeled_process),
+               "a real compiler policy change should produce a different recipe");
+    }
+    expect(runner.calls == 4,
+           "modeling a release recipe must not launch the compiler");
 
     std::error_code ignored;
     fs::remove(cache_file, ignored);

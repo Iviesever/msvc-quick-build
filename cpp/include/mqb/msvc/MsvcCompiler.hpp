@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "mqb/core/CompilerOptions.hpp"
@@ -53,6 +54,16 @@ struct CompilerError {
     std::optional<process::ProcessResult> process_result;
 };
 
+// A pure, inspectable MSVC compile recipe. It binds the selected toolchain,
+// typed invocation, and exact process contract without creating directories,
+// writing cache state, or launching cl.exe. Execution and future introspection
+// surfaces consume this same value so compiler argv has one authority.
+struct MsvcCompileRecipe {
+    ToolchainIdentity toolchain;
+    std::variant<CompileInvocation, HeaderUnitCompileInvocation> invocation;
+    process::ProcessSpec process;
+};
+
 class MsvcCompiler {
 public:
     MsvcCompiler(const MsvcToolchain& toolchain, process::ProcessRunner& runner)
@@ -63,6 +74,19 @@ public:
 
     [[nodiscard]] static std::expected<std::vector<std::string>, CompilerError>
     build_header_unit_arguments(const HeaderUnitCompileInvocation& invocation);
+
+    [[nodiscard]] static std::expected<MsvcCompileRecipe, CompilerError>
+    build_recipe(
+        const MsvcToolchain& toolchain,
+        const CompileInvocation& invocation);
+
+    [[nodiscard]] static std::expected<MsvcCompileRecipe, CompilerError>
+    build_header_unit_recipe(
+        const MsvcToolchain& toolchain,
+        const HeaderUnitCompileInvocation& invocation);
+
+    [[nodiscard]] std::expected<process::ProcessResult, CompilerError>
+    execute_recipe(const MsvcCompileRecipe& recipe) const;
 
     [[nodiscard]] std::expected<process::ProcessResult, CompilerError>
     compile(const CompileInvocation& invocation) const;

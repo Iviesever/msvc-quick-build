@@ -1,6 +1,8 @@
 #pragma once
 
 #include <expected>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -8,18 +10,14 @@
 
 namespace mqb::msvc::detail {
 
-[[nodiscard]] std::expected<process::ProcessResult, CompilerError>
-execute_compile(
+[[nodiscard]] process::ProcessSpec make_compiler_process_spec(
     const MsvcToolchain& toolchain,
-    process::ProcessRunner& runner,
-    const CompileInvocation& invocation,
-    std::vector<std::string> arguments);
+    std::vector<std::string> arguments,
+    const std::optional<std::filesystem::path>& working_directory);
 
 [[nodiscard]] std::expected<process::ProcessResult, CompilerError>
-execute_header_unit_compile(
-    const MsvcToolchain& toolchain,
+execute_compile_recipe(
     process::ProcessRunner& runner,
-    const HeaderUnitCompileInvocation& invocation,
-    std::vector<std::string> arguments);
+    const MsvcCompileRecipe& recipe);
 
 } // namespace mqb::msvc::detail
