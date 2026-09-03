@@ -95,6 +95,7 @@
       "src/orchestration/modules/ModuleTargetLinkRequestFactory.cpp",
       "src/orchestration/modules/ModuleTargetPreparation.cpp",
       "src/orchestration/modules/ModuleTargetScanner.cpp",
+      "src/orchestration/modules/MsvcIncrementalModuleScanCoordinator.cpp",
       "src/orchestration/modules/MsvcModuleCompileCoordinator.cpp",
       "src/orchestration/modules/MsvcModuleTargetCoordinator.cpp",
       "src/orchestration/modules/StandardLibraryModuleProvider.cpp",
