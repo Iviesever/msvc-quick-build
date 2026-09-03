@@ -134,7 +134,7 @@ Assert-True ([int]$warm.summary.planned -eq 0) 'warm ordinary plan should schedu
 Assert-True ([int]$warm.summary.up_to_date -eq 3) 'warm ordinary plan should report all steps up-to-date'
 foreach ($step in @($warm.steps)) {
     Assert-True ([string]$step.status -eq 'up_to_date') 'warm step should be up-to-date'
-    Assert-True ($null -eq $step.process) 'up-to-date step should not claim an execution recipe'
+    Assert-True ($null -eq $step.PSObject.Properties['process']) 'up-to-date step should not claim an execution recipe'
 }
 
 $compdb = Invoke-MqbCaptured -WorkingDirectory $ordinary -Arguments @(
