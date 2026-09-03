@@ -24,7 +24,6 @@ namespace fs = std::filesystem;
 struct ArchiveInspectionState {
     IncrementalArchiveInspection inspection;
     LibrarianIdentity librarian_identity;
-    std::optional<msvc::ArchiveInvocation> invocation;
 };
 
 [[nodiscard]] std::string snapshot_failure_message(
@@ -166,7 +165,7 @@ inspect_archive(
         });
     }
 
-    state.invocation = msvc::ArchiveInvocation{
+    state.inspection.invocation = msvc::ArchiveInvocation{
         .objects = action->objects,
         .output = action->output,
         .working_directory = request.working_directory,
@@ -192,15 +191,17 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
     if (!inspected) return std::unexpected(inspected.error());
 
     IncrementalArchiveResult result;
-    result.validation = std::move(inspected->inspection.validation);
-    result.plan = std::move(inspected->inspection.plan);
-    result.warnings = std::move(inspected->inspection.warnings);
+    result.validation = inspected->inspection.validation;
+    result.plan = inspected->inspection.plan;
+    result.warnings = inspected->inspection.warnings;
+    result.invocation = inspected->inspection.invocation;
 
-    if (!inspected->invocation) {
+    if (!inspected->inspection.invocation) {
         return result;
     }
 
-    auto archived = librarian_.archive(*inspected->invocation);
+    const msvc::ArchiveInvocation invocation = *inspected->inspection.invocation;
+    auto archived = librarian_.archive(invocation);
     if (!archived) {
         return std::unexpected(IncrementalArchiveError{
             .code = IncrementalArchiveErrorCode::archive_failed,
@@ -211,7 +212,6 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
     result.archived = true;
     result.process = std::move(*archived);
 
-    const auto& invocation = *inspected->invocation;
     const ArchiveCacheEntry entry{
         .librarian = inspected->librarian_identity,
         .signature = BuildSignature::for_archive(
