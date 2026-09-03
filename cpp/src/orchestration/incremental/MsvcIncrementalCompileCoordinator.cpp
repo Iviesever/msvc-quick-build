@@ -162,22 +162,6 @@ std::expected<IncrementalCompileResult, IncrementalCompileError>
 MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request) const {
     IncrementalCompileResult result;
 
-    msvc::CompileExecutionRequest execution_request{
-        .unit = request.unit,
-        .options = request.options,
-        .source_dependencies_file = request.source_dependencies_file,
-        .working_directory = request.working_directory,
-    };
-    auto recipe = executor_.build_recipe(execution_request);
-    if (!recipe) {
-        return std::unexpected(IncrementalCompileError{
-            .code = IncrementalCompileErrorCode::compile_failed,
-            .message = "failed to construct MSVC compile recipe",
-            .compile_error = recipe.error(),
-        });
-    }
-    result.recipe = std::move(*recipe);
-
     // An upstream coordinator may already own the invalidation decision (for
     // example, a successfully rebuilt MQB-owned PCH). In that case old cache
     // state cannot make this unit reusable, so avoid probing it and reseal the
@@ -259,9 +243,8 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
 
         // The validator is authoritative for incremental freshness. Once it says
         // this compile is reusable there is no action for the generic planner to
-        // derive, so return directly on the hot no-op path. Recipe construction
-        // already happened above, so a warm hit remains fully inspectable without
-        // launching the compiler.
+        // derive, so return directly on the hot no-op path. Cold/miss paths still
+        // flow through BuildPlanner and retain all existing structural validation.
         if (result.validation.reusable()) {
             return result;
         }
@@ -287,7 +270,13 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         return result;
     }
 
-    auto executed = executor_.execute(*result.recipe);
+    msvc::CompileExecutionRequest execution_request{
+        .unit = request.unit,
+        .options = request.options,
+        .source_dependencies_file = request.source_dependencies_file,
+        .working_directory = request.working_directory,
+    };
+    auto executed = executor_.execute(execution_request);
     if (!executed) {
         return std::unexpected(IncrementalCompileError{
             .code = IncrementalCompileErrorCode::compile_failed,

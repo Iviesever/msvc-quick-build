@@ -58,9 +58,6 @@ struct IncrementalCompileError {
 struct IncrementalCompileResult {
     CompileCacheValidation validation;
     BuildPlan plan;
-    // Present for every successful cold, warm, and forced invocation. A cache
-    // hit therefore remains inspectable without launching cl.exe.
-    std::optional<msvc::CompileExecutionRecipe> recipe;
     bool compiled{false};
     std::optional<process::ProcessResult> process;
     std::vector<IncrementalCompileWarning> warnings;

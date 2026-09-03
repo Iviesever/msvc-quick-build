@@ -221,9 +221,28 @@ int main() {
         .source_dependencies_file = dependencies,
         .working_directory = fixture.path(),
     };
+    const mqb::msvc::CompileExecutionRequest execution_request{
+        .unit = request.unit,
+        .options = request.options,
+        .source_dependencies_file = request.source_dependencies_file,
+        .working_directory = request.working_directory,
+    };
 
-    mqb::process::ProcessSpec cold_recipe_process;
-    bool captured_cold_recipe = false;
+    const auto modeled_before_cold = executor.build_recipe(execution_request);
+    expect(modeled_before_cold.has_value(),
+           "compile recipe should be constructible before cache validation or execution");
+    expect(!fs::exists(object) && !fs::exists(dependencies) && !fs::exists(cache_file),
+           "pure recipe construction must not create outputs, dependency metadata, or cache state");
+
+    mqb::process::ProcessSpec modeled_process;
+    bool captured_modeled_process = false;
+    if (modeled_before_cold) {
+        modeled_process = modeled_before_cold->compiler.process;
+        captured_modeled_process = true;
+        expect(modeled_before_cold->compiler.toolchain.version == toolchain.identity.version
+                   && modeled_before_cold->compiler.toolchain.binary_stamp == toolchain.identity.binary_stamp,
+               "compile recipe should retain the selected toolchain identity");
+    }
 
     const auto cold = coordinator.run(request);
     expect(cold.has_value(), "cold incremental compile should succeed");
@@ -237,19 +256,12 @@ int main() {
                "cold cache should explain missing object output");
         expect(cold->warnings.empty(),
                "ordinary missing cache should not be reported as a warning");
-        expect(cold->recipe.has_value(),
-               "cold compile result should expose its first-class compile recipe");
-        if (cold->recipe) {
-            cold_recipe_process = cold->recipe->compiler.process;
-            captured_cold_recipe = true;
-            expect(same_process_spec(cold_recipe_process, runner.last_spec),
-                   "executed compiler ProcessSpec must exactly match the exposed cold recipe");
-            expect(cold->recipe->compiler.toolchain.version == toolchain.identity.version
-                       && cold->recipe->compiler.toolchain.binary_stamp == toolchain.identity.binary_stamp,
-                   "compile recipe should retain the selected toolchain identity");
-        }
     }
     expect(runner.calls == 1, "cold build should launch the compiler exactly once");
+    if (captured_modeled_process) {
+        expect(same_process_spec(modeled_process, runner.last_spec),
+               "actual compiler execution must consume the exact modeled ProcessSpec contract");
+    }
     expect(fs::is_regular_file(cache_file),
            "successful cold build should persist cache metadata");
 
@@ -261,15 +273,19 @@ int main() {
                "unchanged warm cache should produce an empty build plan");
         expect(warm->validation.reusable(),
                "unchanged warm cache should be reusable");
-        expect(warm->recipe.has_value(),
-               "warm cache hit should still expose a complete compile recipe");
-        if (captured_cold_recipe && warm->recipe) {
-            expect(same_process_spec(warm->recipe->compiler.process, cold_recipe_process),
-                   "cache hit and cache miss must expose the exact same compiler recipe");
-        }
     }
     expect(runner.calls == 1,
            "warm cache hit should not invoke the compiler again");
+
+    const auto modeled_on_warm_state = executor.build_recipe(execution_request);
+    expect(modeled_on_warm_state.has_value(),
+           "the same compile recipe must remain constructible when cache state is warm");
+    if (captured_modeled_process && modeled_on_warm_state) {
+        expect(same_process_spec(modeled_on_warm_state->compiler.process, modeled_process),
+               "cold-state and warm-state recipe construction must be identical");
+    }
+    expect(runner.calls == 1,
+           "explicit recipe inspection on warm state must not launch the compiler");
 
     auto forced_request = request;
     forced_request.force_rebuild = true;
@@ -289,8 +305,6 @@ int main() {
                "authoritative explicit rebuild should not inspect stale cache metadata");
         expect(forced->warnings.empty(),
                "authoritative explicit rebuild should bypass stale cache load warnings");
-        expect(forced->recipe.has_value(),
-               "forced rebuild should preserve the same first-class recipe contract");
     }
     expect(runner.calls == 2,
            "explicit rebuild should invoke the compiler exactly once");
@@ -305,8 +319,6 @@ int main() {
                "cache should be reusable immediately after a successful explicit rebuild");
         expect(!has_reason(warm_after_force->validation, mqb::BuildReason::explicit_rebuild),
                "explicit rebuild reason must be request-local rather than persisted");
-        expect(warm_after_force->recipe.has_value(),
-               "post-force warm cache hit should remain inspectable");
     }
     expect(runner.calls == 2,
            "post-force ordinary warm hit should not invoke the compiler");
@@ -324,8 +336,6 @@ int main() {
                    *corrupt,
                    mqb::orchestration::IncrementalCompileWarningCode::cache_load_failed),
                "corrupt metadata should remain visible as a cache_load_failed warning");
-        expect(corrupt->recipe.has_value(),
-               "corrupt-cache rebuild should still expose its compile recipe");
     }
     expect(runner.calls == 3,
            "corrupt metadata should invoke the compiler exactly once more");
@@ -341,15 +351,25 @@ int main() {
                    release->validation,
                    mqb::BuildReason::compiler_options_changed),
                "configuration transition should report compiler_options_changed");
-        expect(release->recipe.has_value(),
-               "configuration transition should expose the effective release compile recipe");
-        if (captured_cold_recipe && release->recipe) {
-            expect(!same_process_spec(release->recipe->compiler.process, cold_recipe_process),
-                   "a real compiler policy change should produce a different first-class recipe");
-        }
     }
     expect(runner.calls == 4,
            "configuration transition should invoke the compiler once");
+
+    const mqb::msvc::CompileExecutionRequest release_execution_request{
+        .unit = release_request.unit,
+        .options = release_request.options,
+        .source_dependencies_file = release_request.source_dependencies_file,
+        .working_directory = release_request.working_directory,
+    };
+    const auto modeled_release = executor.build_recipe(release_execution_request);
+    expect(modeled_release.has_value(),
+           "release policy should also produce an inspectable compile recipe");
+    if (captured_modeled_process && modeled_release) {
+        expect(!same_process_spec(modeled_release->compiler.process, modeled_process),
+               "a real compiler policy change should produce a different recipe");
+    }
+    expect(runner.calls == 4,
+           "modeling a release recipe must not launch the compiler");
 
     std::error_code ignored;
     fs::remove(cache_file, ignored);
