@@ -38,6 +38,31 @@ struct ModuleCompileWaveRequest {
     ParallelismPolicy max_parallel_compiles{};
 };
 
+struct ModuleCompileInspection {
+    std::filesystem::path source;
+    // This is the exact typed request that real execution would pass to the
+    // incremental compile coordinator after graph references and downstream
+    // invalidation have been projected for this node.
+    IncrementalCompileRequest request;
+    IncrementalCompileInspection result;
+};
+
+struct HeaderUnitCompileInspection {
+    std::filesystem::path source;
+    std::string header_name;
+    HeaderUnitLookupMethod lookup_method{HeaderUnitLookupMethod::quote};
+    IncrementalCompileRequest request;
+    IncrementalCompileInspection result;
+};
+
+struct ModuleCompileWaveInspection {
+    // Results preserve request order; graph level and worker completion order
+    // never leak into the public introspection surface.
+    std::vector<ModuleCompileInspection> compiles;
+    std::vector<HeaderUnitCompileInspection> header_unit_compiles;
+    bool any_planned{false};
+};
+
 struct ModuleCompileResult {
     std::filesystem::path source;
     IncrementalCompileResult result;
@@ -64,6 +89,7 @@ enum class ModuleCompileErrorCode {
     duplicate_reference,
     invalid_header_unit,
     scheduling_failed,
+    inspection_failed,
     compile_failed,
 };
 
@@ -91,6 +117,11 @@ public:
     explicit MsvcModuleCompileCoordinator(
         MsvcIncrementalCompileCoordinator& compile_coordinator)
         : compile_coordinator_(compile_coordinator) {}
+
+    // Resolve graph-level provider propagation and inspect every resulting
+    // compile request without launching cl.exe or mutating output/cache state.
+    [[nodiscard]] std::expected<ModuleCompileWaveInspection, ModuleCompileError>
+    inspect(const ModuleCompileWaveRequest& request) const;
 
     [[nodiscard]] std::expected<ModuleCompileWaveResult, ModuleCompileError>
     run(const ModuleCompileWaveRequest& request) const;
