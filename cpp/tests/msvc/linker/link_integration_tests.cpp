@@ -1,7 +1,9 @@
 #include <chrono>
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -12,6 +14,7 @@
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
+#include "mqb/process/Process.hpp"
 
 namespace {
 
@@ -32,6 +35,43 @@ struct TempTree {
         fs::remove_all(root, ignored);
     }
 };
+
+class RecordingRunner final : public mqb::process::ProcessRunner {
+public:
+    std::optional<mqb::process::ProcessSpec> last_spec;
+
+    std::expected<mqb::process::ProcessResult, mqb::process::ProcessError>
+    run(const mqb::process::ProcessSpec& spec) override {
+        last_spec = spec;
+        return mqb::process::ProcessResult{.exit_code = 0};
+    }
+};
+
+[[nodiscard]] bool same_environment(
+    const std::vector<mqb::process::EnvironmentVariable>& left,
+    const std::vector<mqb::process::EnvironmentVariable>& right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (left[index].name != right[index].name
+            || left[index].value != right[index].value
+            || left[index].remove != right[index].remove) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool same_process_spec(
+    const mqb::process::ProcessSpec& left,
+    const mqb::process::ProcessSpec& right) {
+    return left.executable == right.executable
+        && left.arguments == right.arguments
+        && left.working_directory == right.working_directory
+        && same_environment(left.environment, right.environment)
+        && left.inherit_environment == right.inherit_environment
+        && left.capture_stdout == right.capture_stdout
+        && left.capture_stderr == right.capture_stderr;
+}
 
 } // namespace
 
@@ -73,6 +113,37 @@ int main() {
                "linker identity should name the discovered link.exe");
         expect(!linker_identity->binary_stamp.empty(),
                "linker identity should include a binary stamp");
+    }
+
+    // A pure MsvcLinkRecipe must describe the exact ProcessSpec that the real
+    // MsvcLinker::link() path hands to its ProcessRunner. This locks `mqb plan`
+    // to the production linker authority without executing link.exe.
+    {
+        mqb::msvc::LinkInvocation parity;
+        parity.objects = {tree.root / "parity" / "input.obj"};
+        parity.output = tree.root / "parity" / "plan.exe";
+        parity.working_directory = tree.root;
+        parity.options.configuration = mqb::BuildConfiguration::debug;
+        parity.options.architecture = mqb::Architecture::x64;
+        parity.options.subsystem = mqb::LinkSubsystem::console;
+        parity.options.additional_arguments = {"/MAP"};
+        parity.force_full_link = true;
+        parity.observe_library_search = true;
+
+        auto recipe = mqb::msvc::MsvcLinker::build_recipe(*toolchain, parity);
+        expect(recipe.has_value(), "pure link recipe construction should succeed");
+
+        RecordingRunner recording_runner;
+        mqb::msvc::MsvcLinker recording_linker{*toolchain, recording_runner};
+        auto modeled_execution = recording_linker.link(parity);
+        expect(modeled_execution.has_value(),
+               "recorded production link path should accept parity invocation");
+        expect(recording_runner.last_spec.has_value(),
+               "production link path should hand one ProcessSpec to the runner");
+        if (recipe && recording_runner.last_spec) {
+            expect(same_process_spec(recipe->process, *recording_runner.last_spec),
+                   "pure link recipe must exactly match production link ProcessSpec");
+        }
     }
 
     mqb::msvc::MsvcCompiler compiler{*toolchain, runner};
