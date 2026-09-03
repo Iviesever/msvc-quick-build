@@ -65,14 +65,6 @@ struct PlanStep {
         bytes.size()};
 }
 
-[[nodiscard]] fs::path absolute_from(
-    const fs::path& base,
-    const fs::path& path) {
-    return path.is_absolute()
-        ? path.lexically_normal()
-        : (base / path).lexically_normal();
-}
-
 [[nodiscard]] std::string json_escape(const std::string_view value) {
     std::ostringstream escaped;
     escaped << std::hex << std::uppercase;
@@ -413,9 +405,13 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
     const bool static_target =
         context->options.build.target_kind == mqb::TargetKind::static_library;
     if (static_target) {
-        if (!context->options.linker_arguments.empty()) {
+        if (context->project.subsystem_explicit
+            || !context->options.library_directories.empty()
+            || !context->options.libraries.empty()
+            || !context->options.linker_arguments.empty()) {
             diagnostics::print_error(
-                "native MSVC linker policy is not valid for static-library targets; use /lib");
+                "static-library targets do not accept linker-only policy "
+                "(subsystem, library paths/libraries, or linker args)");
             return 2;
         }
         auto librarian_capabilities = validate_tool_capabilities(
