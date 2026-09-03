@@ -33,6 +33,14 @@ namespace {
 
 namespace fs = std::filesystem;
 
+struct LinkInspectionState {
+    IncrementalLinkInspection inspection;
+    LinkerIdentity linker_identity;
+    std::vector<fs::path> declared_linker_file_inputs;
+    std::optional<fs::path> requested_map_output;
+    std::optional<msvc::LinkInvocation> invocation;
+};
+
 [[nodiscard]] std::string snapshot_failure_message(
     const detail::IncrementalFileSnapshotFailure& failure) {
     const char* prefix = nullptr;
@@ -162,19 +170,20 @@ void collect_existing_side_output(
     return {};
 }
 
-} // namespace
+[[nodiscard]] std::expected<LinkInspectionState, IncrementalLinkError>
+inspect_link(
+    const IncrementalLinkRequest& request,
+    const msvc::MsvcToolchain& toolchain) {
+    LinkInspectionState state;
 
-std::expected<IncrementalLinkResult, IncrementalLinkError>
-MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const {
-    IncrementalLinkResult result;
-
-    auto linker_identity = msvc::MsvcLinker::identity(toolchain_);
+    auto linker_identity = msvc::MsvcLinker::identity(toolchain);
     if (!linker_identity) {
         return std::unexpected(link_failure(
             IncrementalLinkErrorCode::linker_identity_failed,
             "failed to identify MSVC linker",
             linker_identity.error()));
     }
+    state.linker_identity = std::move(*linker_identity);
 
     auto linker_file_routing = msvc::MsvcParameterEngine::linker_file_inputs(
         request.options.additional_arguments,
@@ -196,7 +205,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     // observation includes the exact link.exe as a file input. Pre-observation
     // caches lack it, so the first upgraded build must relink and seal LINK's
     // real library-search evidence instead of incorrectly reusing stale state.
-    append_unique_path(linker_file_inputs, toolchain_.linker);
+    append_unique_path(linker_file_inputs, toolchain.linker);
 
     auto default_library_routing = msvc::MsvcDefaultLibraryPolicy::route(
         request.options.additional_arguments);
@@ -225,7 +234,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         request.working_directory.value_or(fs::path{});
 
     auto base_address_routing = msvc::MsvcBaseAddressPolicy::route(
-        toolchain_,
+        toolchain,
         request.options.additional_arguments,
         working_directory);
     if (!base_address_routing) {
@@ -240,7 +249,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     }
 
     auto resolved_libraries = msvc::MsvcLibraryResolver::resolve(
-        toolchain_,
+        toolchain,
         request.options,
         working_directory);
     if (!resolved_libraries) {
@@ -254,7 +263,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     }
 
     auto resolved_default_libraries = msvc::MsvcLibraryResolver::resolve_available(
-        toolchain_,
+        toolchain,
         default_library_routing->effective_libraries,
         request.options.library_directories,
         working_directory);
@@ -273,7 +282,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         LinkOptions whole_archive_options = request.options;
         whole_archive_options.libraries = whole_archive_routing->libraries;
         auto resolved_whole_archive_libraries = msvc::MsvcLibraryResolver::resolve(
-            toolchain_,
+            toolchain,
             whole_archive_options,
             working_directory);
         if (!resolved_whole_archive_libraries) {
@@ -297,9 +306,9 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
                 *request.options.address_sanitizer_runtime_library,
                 request.options.architecture,
                 request.options.target_kind,
-                toolchain_.identity.version);
+                toolchain.identity.version);
         auto resolved_asan_libraries = msvc::MsvcLibraryResolver::resolve(
-            toolchain_,
+            toolchain,
             asan_options,
             working_directory);
         if (!resolved_asan_libraries) {
@@ -324,7 +333,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             LinkOptions vcasan_options = request.options;
             vcasan_options.libraries = {vcasan_library};
             auto resolved_vcasan_library = msvc::MsvcLibraryResolver::resolve(
-                toolchain_,
+                toolchain,
                 vcasan_options,
                 working_directory);
             if (!resolved_vcasan_library) {
@@ -351,7 +360,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             LinkOptions fuzzer_options = request.options;
             fuzzer_options.libraries = {fuzzer_library};
             auto resolved_fuzzer_library = msvc::MsvcLibraryResolver::resolve(
-                toolchain_,
+                toolchain,
                 fuzzer_options,
                 working_directory);
             if (!resolved_fuzzer_library) {
@@ -378,7 +387,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         }
         if (!candidates.empty()) {
             auto resolved_openmp_libraries = msvc::MsvcLibraryResolver::resolve_available(
-                toolchain_,
+                toolchain,
                 candidates,
                 request.options.library_directories,
                 working_directory);
@@ -399,13 +408,12 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     // merged only for validation; after a real LINK pass the cache is rebuilt
     // from this set plus the newly observed search evidence, so removed object
     // directives cannot linger forever.
-    const std::vector<fs::path> declared_linker_file_inputs = linker_file_inputs;
+    state.declared_linker_file_inputs = linker_file_inputs;
 
-    const std::optional<fs::path> requested_map_output =
-        msvc::MsvcLinker::map_file_path(
-            request.output,
-            request.options,
-            working_directory);
+    state.requested_map_output = msvc::MsvcLinker::map_file_path(
+        request.output,
+        request.options,
+        working_directory);
 
     // PDB and external-manifest files are conditionally emitted by real LINK
     // configurations. Observe them when present, seal them into the cache, and
@@ -417,13 +425,13 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         collect_existing_side_output(
             msvc::MsvcLinker::program_database_path(request.output),
             existing_observed_side_outputs,
-            result.warnings);
+            state.inspection.warnings);
     }
     if (msvc::MsvcLinker::external_manifest_enabled(request.options)) {
         collect_existing_side_output(
             msvc::MsvcLinker::manifest_file_path(request.output),
             existing_observed_side_outputs,
-            result.warnings);
+            state.inspection.warnings);
     }
 
     std::optional<LinkCacheEntry> cached_entry;
@@ -431,7 +439,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     if (loaded) {
         cached_entry = std::move(*loaded);
     } else {
-        result.warnings.push_back(IncrementalLinkWarning{
+        state.inspection.warnings.push_back(IncrementalLinkWarning{
             .code = IncrementalLinkWarningCode::cache_load_failed,
             .path = request.cache_file,
             .message = loaded.error().message,
@@ -442,7 +450,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         std::vector<fs::path> cached_observed_inputs;
         cached_observed_inputs.reserve(cached_entry->file_inputs.size());
         for (const auto& cached_input : cached_entry->file_inputs) {
-            if (contains_windows_path(declared_linker_file_inputs, cached_input)
+            if (contains_windows_path(state.declared_linker_file_inputs, cached_input)
                 || contains_windows_path(resolved_libraries->files, cached_input)) {
                 continue;
             }
@@ -450,7 +458,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         }
 
         auto refreshed_observed = msvc::MsvcLibraryResolver::refresh_observed(
-            toolchain_,
+            toolchain,
             cached_observed_inputs,
             request.options.library_directories,
             working_directory,
@@ -469,7 +477,7 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
 
     auto output_snapshot_result = detail::snapshot_regular_file(request.output);
     if (output_snapshot_result.failure) {
-        result.warnings.push_back(IncrementalLinkWarning{
+        state.inspection.warnings.push_back(IncrementalLinkWarning{
             .code = IncrementalLinkWarningCode::file_snapshot_failed,
             .path = request.output,
             .message = snapshot_failure_message(*output_snapshot_result.failure),
@@ -478,25 +486,28 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     FileSnapshot output_snapshot = std::move(output_snapshot_result.snapshot);
 
     std::vector<FileSnapshot> object_snapshots;
-    snapshot_inputs(request.objects, object_snapshots, result.warnings);
+    snapshot_inputs(request.objects, object_snapshots, state.inspection.warnings);
 
     std::vector<FileSnapshot> library_snapshots;
-    snapshot_inputs(resolved_libraries->files, library_snapshots, result.warnings);
+    snapshot_inputs(resolved_libraries->files, library_snapshots, state.inspection.warnings);
 
     std::vector<FileSnapshot> file_input_snapshots;
-    snapshot_inputs(linker_file_inputs, file_input_snapshots, result.warnings);
+    snapshot_inputs(linker_file_inputs, file_input_snapshots, state.inspection.warnings);
 
     std::vector<FileSnapshot> side_output_snapshots;
     if (cached_entry) {
-        snapshot_inputs(cached_entry->side_outputs, side_output_snapshots, result.warnings);
+        snapshot_inputs(
+            cached_entry->side_outputs,
+            side_output_snapshots,
+            state.inspection.warnings);
     }
 
-    result.validation = LinkCacheValidator::validate(
+    state.inspection.validation = LinkCacheValidator::validate(
         request.objects,
         resolved_libraries->files,
         linker_file_inputs,
         request.output,
-        *linker_identity,
+        state.linker_identity,
         request.options,
         cached_entry,
         output_snapshot,
@@ -511,13 +522,13 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         // even when that output has already disappeared. PDB/manifest evidence
         // is migration-sealed only when the current filesystem proves LINK had
         // produced it under the same link identity.
-        if (requested_map_output
-            && !contains_path(cached_entry->side_outputs, *requested_map_output)) {
-            add_reason(result.validation.reasons, BuildReason::missing_output);
+        if (state.requested_map_output
+            && !contains_path(cached_entry->side_outputs, *state.requested_map_output)) {
+            add_reason(state.inspection.validation.reasons, BuildReason::missing_output);
         }
         for (const auto& observed : existing_observed_side_outputs) {
             if (!contains_path(cached_entry->side_outputs, observed)) {
-                add_reason(result.validation.reasons, BuildReason::missing_output);
+                add_reason(state.inspection.validation.reasons, BuildReason::missing_output);
                 break;
             }
         }
@@ -526,15 +537,15 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     // A reusable link validation is already the final no-op decision. Avoid
     // materializing a generic LinkPlanItem/BuildPlan on the hot path; misses
     // still pass through BuildPlanner and keep its structural checks.
-    if (result.validation.reusable()) {
-        return result;
+    if (state.inspection.validation.reusable()) {
+        return state;
     }
 
     const LinkPlanItem plan_item{
         .objects = request.objects,
         .output = request.output,
         .libraries = resolved_libraries->files,
-        .cache_validation = result.validation,
+        .cache_validation = state.inspection.validation,
     };
     auto plan = BuildPlanner::plan_link(plan_item);
     if (!plan) {
@@ -544,19 +555,19 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
             .planner_error = plan.error(),
         });
     }
-    result.plan = std::move(*plan);
-    if (result.plan.empty()) {
-        return result;
+    state.inspection.plan = std::move(*plan);
+    if (state.inspection.plan.empty()) {
+        return state;
     }
 
-    if (result.plan.actions.size() != 1) {
+    if (state.inspection.plan.actions.size() != 1) {
         return std::unexpected(IncrementalLinkError{
             .code = IncrementalLinkErrorCode::planning_failed,
             .message = "single-target link coordinator expected exactly one build action",
         });
     }
 
-    const auto* action = std::get_if<LinkAction>(&result.plan.actions.front());
+    const auto* action = std::get_if<LinkAction>(&state.inspection.plan.actions.front());
     if (action == nullptr) {
         return std::unexpected(IncrementalLinkError{
             .code = IncrementalLinkErrorCode::planning_failed,
@@ -564,18 +575,45 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         });
     }
 
-    msvc::LinkInvocation invocation{
+    state.invocation = msvc::LinkInvocation{
         .objects = action->objects,
         .output = action->output,
         .libraries = action->libraries,
         .options = request.options,
         .working_directory = working_directory,
-        .force_full_link = result.validation.library_inputs_changed
-            || result.validation.file_inputs_changed
+        .force_full_link = state.inspection.validation.library_inputs_changed
+            || state.inspection.validation.file_inputs_changed
             || linker_file_routing->requires_full_link
             || request.options.address_sanitizer_runtime_library.has_value(),
         .observe_library_search = true,
     };
+    return state;
+}
+
+} // namespace
+
+std::expected<IncrementalLinkInspection, IncrementalLinkError>
+MsvcIncrementalLinkCoordinator::inspect(const IncrementalLinkRequest& request) const {
+    auto state = inspect_link(request, toolchain_);
+    if (!state) return std::unexpected(state.error());
+    return std::move(state->inspection);
+}
+
+std::expected<IncrementalLinkResult, IncrementalLinkError>
+MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const {
+    auto inspected = inspect_link(request, toolchain_);
+    if (!inspected) return std::unexpected(inspected.error());
+
+    IncrementalLinkResult result;
+    result.validation = std::move(inspected->inspection.validation);
+    result.plan = std::move(inspected->inspection.plan);
+    result.warnings = std::move(inspected->inspection.warnings);
+
+    if (!inspected->invocation) {
+        return result;
+    }
+
+    const auto& invocation = *inspected->invocation;
     auto linked = linker_.link(invocation);
     if (!linked) {
         return std::unexpected(link_failure(
@@ -593,44 +631,45 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
 
     std::vector<fs::path> side_outputs;
     side_outputs.reserve(
-        (requested_map_output ? 1u : 0u)
+        (inspected->requested_map_output ? 1u : 0u)
         + (msvc::MsvcLinker::program_database_enabled(request.options) ? 1u : 0u)
         + (msvc::MsvcLinker::external_manifest_enabled(request.options) ? 1u : 0u)
         + (request.options.target_kind == TargetKind::dynamic_library ? 2u : 0u));
 
-    if (requested_map_output) {
-        auto recorded = require_side_output(*requested_map_output, side_outputs);
+    if (inspected->requested_map_output) {
+        auto recorded = require_side_output(*inspected->requested_map_output, side_outputs);
         if (!recorded) {
             return std::unexpected(recorded.error());
         }
     }
     if (msvc::MsvcLinker::program_database_enabled(request.options)) {
         collect_existing_side_output(
-            msvc::MsvcLinker::program_database_path(action->output),
+            msvc::MsvcLinker::program_database_path(invocation.output),
             side_outputs,
             result.warnings);
     }
     if (msvc::MsvcLinker::external_manifest_enabled(request.options)) {
         collect_existing_side_output(
-            msvc::MsvcLinker::manifest_file_path(action->output),
+            msvc::MsvcLinker::manifest_file_path(invocation.output),
             side_outputs,
             result.warnings);
     }
 
     if (request.options.target_kind == TargetKind::dynamic_library) {
         collect_existing_side_output(
-            msvc::MsvcLinker::import_library_path(action->output),
+            msvc::MsvcLinker::import_library_path(invocation.output),
             side_outputs,
             result.warnings);
         collect_existing_side_output(
-            msvc::MsvcLinker::export_file_path(action->output),
+            msvc::MsvcLinker::export_file_path(invocation.output),
             side_outputs,
             result.warnings);
     }
 
-    std::vector<fs::path> sealed_linker_file_inputs = declared_linker_file_inputs;
+    std::vector<fs::path> sealed_linker_file_inputs =
+        inspected->declared_linker_file_inputs;
     for (const auto& observed : observed_libraries) {
-        if (contains_windows_path(action->libraries, observed)) {
+        if (contains_windows_path(invocation.libraries, observed)) {
             continue;
         }
         std::error_code error_code;
@@ -641,16 +680,16 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     }
 
     const LinkCacheEntry new_entry{
-        .linker = *linker_identity,
+        .linker = inspected->linker_identity,
         .signature = BuildSignature::for_link(
-            action->objects,
-            action->libraries,
-            action->output,
-            *linker_identity,
+            invocation.objects,
+            invocation.libraries,
+            invocation.output,
+            inspected->linker_identity,
             request.options),
-        .objects = action->objects,
-        .output = action->output,
-        .libraries = action->libraries,
+        .objects = invocation.objects,
+        .output = invocation.output,
+        .libraries = invocation.libraries,
         .file_inputs = std::move(sealed_linker_file_inputs),
         .side_outputs = std::move(side_outputs),
     };
