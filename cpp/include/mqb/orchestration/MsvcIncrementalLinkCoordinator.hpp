@@ -57,12 +57,15 @@ struct IncrementalLinkError {
     std::optional<msvc::LinkerError> linker_error;
 };
 
-struct IncrementalLinkResult {
+struct IncrementalLinkInspection {
     LinkCacheValidation validation;
     BuildPlan plan;
+    std::vector<IncrementalLinkWarning> warnings;
+};
+
+struct IncrementalLinkResult : IncrementalLinkInspection {
     bool linked{false};
     std::optional<process::ProcessResult> process;
-    std::vector<IncrementalLinkWarning> warnings;
 };
 
 class MsvcIncrementalLinkCoordinator {
@@ -71,6 +74,11 @@ public:
         const msvc::MsvcToolchain& toolchain,
         msvc::MsvcLinker& linker)
         : toolchain_(toolchain), linker_(linker) {}
+
+    // Resolve linker/library freshness and derive the exact BuildPlan without
+    // launching link.exe or mutating link cache/output state.
+    [[nodiscard]] std::expected<IncrementalLinkInspection, IncrementalLinkError>
+    inspect(const IncrementalLinkRequest& request) const;
 
     [[nodiscard]] std::expected<IncrementalLinkResult, IncrementalLinkError>
     run(const IncrementalLinkRequest& request) const;
