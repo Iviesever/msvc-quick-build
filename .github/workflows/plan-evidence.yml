@@ -1,4 +1,4 @@
-name: Compilation Database Evidence
+name: Build Plan Evidence
 
 on:
   pull_request:
@@ -7,28 +7,37 @@ on:
       - 'cpp/src/app/main.cpp'
       - 'cpp/src/app/targets/BuildIntrospectionSetup.cpp'
       - 'cpp/src/app/targets/BuildIntrospectionSetup.hpp'
-      - 'cpp/src/app/targets/CompdbCommand.cpp'
-      - 'cpp/src/app/targets/CompdbCommand.hpp'
-      - 'cpp/include/mqb/msvc/MsvcCompileExecutor.hpp'
+      - 'cpp/src/app/targets/PlanCommand.cpp'
+      - 'cpp/src/app/targets/PlanCommand.hpp'
       - 'cpp/include/mqb/msvc/MsvcCompiler.hpp'
+      - 'cpp/include/mqb/msvc/MsvcCompileExecutor.hpp'
+      - 'cpp/include/mqb/msvc/MsvcLinker.hpp'
       - 'cpp/src/msvc/compiler/**'
+      - 'cpp/src/msvc/linker/**'
+      - 'cpp/include/mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp'
+      - 'cpp/include/mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp'
+      - 'cpp/include/mqb/orchestration/MsvcIncrementalPchCoordinator.hpp'
+      - 'cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp'
+      - 'cpp/src/orchestration/incremental/MsvcIncrementalLinkCoordinator.cpp'
+      - 'cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp'
+      - 'cpp/src/core/**'
       - 'tests/native/assert_cpp_layout.ps1'
-      - 'tests/native/verify_compdb.ps1'
-      - '.github/workflows/compdb-evidence.yml'
+      - 'tests/native/verify_plan.ps1'
+      - '.github/workflows/plan-evidence.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: compdb-evidence-${{ github.event.pull_request.number || github.ref }}
+  group: plan-evidence-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  verify-compdb:
-    name: Verify compile_commands.json contract
+  verify-plan:
+    name: Verify side-effect-free build plan
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -49,11 +58,11 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content -LiteralPath 'VERSION' -Raw).Trim()
-          $output = Join-Path $PWD 'native-out/compdb-candidate/mqb.exe'
+          $output = Join-Path $PWD 'native-out/plan-candidate/mqb.exe'
           $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
             -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
             -RepoRoot $PWD `
-            -Version "$version-compdb" `
+            -Version "$version-plan" `
             -Configuration Release `
             -Clean `
             -OutputPath $output
@@ -63,10 +72,10 @@ jobs:
           }
           "path=$mqb" >> $env:GITHUB_OUTPUT
 
-      - name: Verify compilation database contract
+      - name: Verify build plan contract
         shell: pwsh
         run: |
-          & (Join-Path $PWD 'tests/native/verify_compdb.ps1') `
+          & (Join-Path $PWD 'tests/native/verify_plan.ps1') `
             -MqbPath '${{ steps.current.outputs.path }}' `
             -RepoRoot $PWD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

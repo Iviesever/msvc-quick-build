@@ -13,19 +13,12 @@
 #include <utility>
 #include <vector>
 
+#include "BuildIntrospectionSetup.hpp"
 #include "Cli.hpp"
 #include "Diagnostics.hpp"
-#include "Invocation.hpp"
-#include "ProjectSetup.hpp"
 #include "mqb/core/Artifact.hpp"
-#include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
-#include "mqb/discovery/SourceDiscovery.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
-#include "mqb/msvc/MsvcParameterCapabilities.hpp"
-#include "mqb/msvc/MsvcParameterEngine.hpp"
-#include "mqb/msvc/MsvcToolchainLocator.hpp"
-#include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 
@@ -61,9 +54,12 @@ struct CompilationDatabaseEntry {
     return fs::path{bytes};
 }
 
-[[nodiscard]] bool is_module_interface_source(const fs::path& path) {
-    const auto kind = mqb::classify_translation_unit_path(path);
-    return kind && *kind == mqb::TranslationUnitKind::module_interface;
+[[nodiscard]] fs::path absolute_from(
+    const fs::path& base,
+    const fs::path& path) {
+    return path.is_absolute()
+        ? path.lexically_normal()
+        : (base / path).lexically_normal();
 }
 
 [[nodiscard]] std::string json_escape(const std::string_view value) {
@@ -90,63 +86,6 @@ struct CompilationDatabaseEntry {
         }
     }
     return escaped.str();
-}
-
-[[nodiscard]] fs::path absolute_from(
-    const fs::path& base,
-    const fs::path& path) {
-    return path.is_absolute()
-        ? path.lexically_normal()
-        : (base / path).lexically_normal();
-}
-
-[[nodiscard]] bool inside_project(
-    const fs::path& project_root,
-    const fs::path& path) {
-    return mqb::platform::windows::path_identity_contains(project_root, path);
-}
-
-void add_portable_root_if_missing(
-    std::vector<fs::path>& roots,
-    const fs::path& candidate) {
-    if (candidate.empty()) return;
-    const fs::path normalized = candidate.lexically_normal();
-    const std::string candidate_key = mqb::platform::windows::path_identity_key(normalized);
-    const bool present = std::any_of(
-        roots.begin(),
-        roots.end(),
-        [&](const fs::path& root) {
-            return mqb::platform::windows::path_identity_key(root) == candidate_key;
-        });
-    if (!present) roots.push_back(normalized);
-}
-
-[[nodiscard]] bool validate_compiler_capabilities(
-    const std::vector<std::string>& arguments,
-    const std::string_view vc_tools_version) {
-    for (const auto& argument : arguments) {
-        const auto capability = mqb::msvc::MsvcParameterCapabilities::inspect(
-            mqb::msvc::ParameterTool::compiler,
-            argument,
-            vc_tools_version);
-        if (capability.lifecycle == mqb::msvc::ParameterLifecycle::active) continue;
-
-        std::string message = "MSVC compiler option '" + argument + "' is ";
-        message += mqb::msvc::to_string(capability.lifecycle);
-        message += " for toolset ";
-        message += vc_tools_version;
-        if (!capability.guidance.empty()) {
-            message += ": ";
-            message += capability.guidance;
-        }
-        if (capability.lifecycle == mqb::msvc::ParameterLifecycle::deprecated) {
-            diagnostics::print_warning(message);
-            continue;
-        }
-        diagnostics::print_error(message);
-        return false;
-    }
-    return true;
 }
 
 [[nodiscard]] std::expected<ParsedCompdbOptions, std::string>
@@ -228,9 +167,8 @@ write_database_file(
     const fs::path& output,
     const std::string_view content) {
     std::error_code error_code;
-    const fs::path parent = output.parent_path();
-    if (!parent.empty()) {
-        fs::create_directories(parent, error_code);
+    if (!output.parent_path().empty()) {
+        fs::create_directories(output.parent_path(), error_code);
         if (error_code) {
             return std::unexpected("failed to create compilation database output directory");
         }
@@ -240,7 +178,6 @@ write_database_file(
     temporary += ".tmp-";
     temporary += std::to_string(
         std::chrono::steady_clock::now().time_since_epoch().count());
-
     {
         std::ofstream stream{temporary, std::ios::binary | std::ios::trunc};
         if (!stream) {
@@ -274,6 +211,15 @@ write_database_file(
     return {};
 }
 
+int print_setup_error(const BuildIntrospectionError& error) {
+    if (error.config_error) {
+        diagnostics::print_config_error(*error.config_error);
+    } else {
+        diagnostics::print_error(error.message);
+    }
+    return error.exit_code;
+}
+
 } // namespace
 
 int run_compdb_command(const std::span<const std::string_view> arguments) {
@@ -282,198 +228,30 @@ int run_compdb_command(const std::span<const std::string_view> arguments) {
         diagnostics::print_error(parsed.error());
         return 2;
     }
-    auto options = std::move(parsed->build);
-    if (options.show_help) {
+    if (parsed->build.show_help) {
         std::cout << compdb_usage();
         return 0;
     }
 
-    auto invocation = resolve_invocation(options);
-    if (!invocation) {
-        diagnostics::print_error(invocation.error());
-        return 2;
-    }
-
-    auto project = prepare_project(options, invocation->directory);
-    if (!project) {
-        if (project.error().config_error) {
-            diagnostics::print_config_error(*project.error().config_error);
-        } else {
-            diagnostics::print_error(project.error().message);
-        }
-        return 2;
-    }
-
-    auto& project_config = project->config;
-    auto& effective = project->effective;
-    const fs::path& project_root = project->project_root;
-
-    if (invocation->requested_sources.empty()) {
-        auto entry = resolve_default_entry(
-            project_root,
-            project_config ? project_config->build.entry : std::nullopt);
-        if (!entry) {
-            diagnostics::print_error(entry.error());
-            return 2;
-        }
-        invocation->requested_sources.push_back(std::move(*entry));
-    }
-
-    const auto& requested_sources = invocation->requested_sources;
-    std::vector<fs::path> sources = requested_sources;
-    bool discovery_requires_module_pipeline = false;
-    if (options.discover_sources
-        && requested_sources.size() == 1
-        && !is_module_interface_source(requested_sources.front())) {
-        auto forced_includes = mqb::msvc::MsvcParameterEngine::forced_includes(
-            options.compiler_arguments);
-        if (!forced_includes) {
-            diagnostics::print_error(forced_includes.error().message);
-            return 2;
-        }
-        if (effective.precompiled_header) {
-            forced_includes->push_back(effective.precompiled_header->lexically_normal());
-        }
-
-        const fs::path& entry = requested_sources.front();
-        const bool project_scoped = inside_project(project_root, entry);
-        const fs::path discovery_root = project_scoped
-            ? project_root
-            : entry.parent_path();
-        mqb::discovery::Request discovery_request{
-            .project_root = discovery_root,
-            .entry = entry,
-            .include_directories = options.discovery_include_directories,
-            .forced_includes = std::move(*forced_includes),
-        };
-        if (project_scoped) {
-            discovery_request.excluded_directories = effective.discovery_exclude_directories;
-            discovery_request.extra_sources = effective.discovery_extra_sources;
-            discovery_request.excluded_sources = effective.discovery_exclude_sources;
-        }
-        auto discovered = mqb::discovery::SourceDiscovery::discover(discovery_request);
-        if (!discovered) {
-            diagnostics::print_error("source discovery failed: " + discovered.error().message);
-            return 2;
-        }
-        for (const auto& warning : discovered->warnings) {
-            diagnostics::print_warning("source discovery: " + warning.message);
-        }
-        discovery_requires_module_pipeline = discovered->requires_module_pipeline;
-        sources = std::move(discovered->sources);
-    }
-    options.build.sources = sources;
-
-    auto layout = mqb::ProjectArtifactLayout::create(project_root);
-    if (!layout) {
-        diagnostics::print_error(layout.error().message);
-        return 2;
-    }
-
-    std::vector<mqb::orchestration::TargetSourceRequest> target_sources;
-    target_sources.reserve(sources.size());
-    for (const auto& source : sources) {
-        auto artifacts = layout->for_source(source);
-        if (!artifacts) {
-            diagnostics::print_error(artifacts.error().message);
-            return 2;
-        }
-        target_sources.push_back(mqb::orchestration::TargetSourceRequest{
-            .source = source,
-            .artifacts = std::move(*artifacts),
-        });
-    }
-
-    add_portable_root_if_missing(options.portable_roots, project_root / "portable_msvc");
-    for (const auto& source : sources) {
-        add_portable_root_if_missing(options.portable_roots, source.parent_path() / "portable_msvc");
-    }
-
     mqb::platform::windows::WindowsProcessRunner runner;
-    mqb::msvc::MsvcToolchainLocator locator{runner};
-    mqb::msvc::DiscoveryOptions toolchain_discovery;
-    toolchain_discovery.target_architecture = options.build.architecture;
-    toolchain_discovery.host_architecture = mqb::Architecture::x64;
-    toolchain_discovery.preference = options.toolchain_preference;
-    toolchain_discovery.portable_roots = options.portable_roots;
-    std::string toolchain_cache_name = "vs-";
-    toolchain_cache_name += mqb::to_string(options.build.architecture);
-    toolchain_cache_name += ".cache";
-    toolchain_discovery.cache_file = layout->artifact_root()
-        / "cache"
-        / "toolchain"
-        / toolchain_cache_name;
+    auto context = prepare_build_introspection(
+        std::move(parsed->build),
+        runner);
+    if (!context) return print_setup_error(context.error());
 
-    auto toolchain = locator.discover(toolchain_discovery);
-    if (!toolchain) {
-        diagnostics::print_error(toolchain.error().message);
-        return 3;
-    }
-    if (!validate_compiler_capabilities(
-            options.compiler_arguments,
-            toolchain->identity.version)) {
-        return 2;
-    }
-
-    mqb::CompilerOptions compiler_options;
-    compiler_options.configuration = options.build.configuration;
-    compiler_options.architecture = options.build.architecture;
-    compiler_options.standard = options.build.standard;
-    compiler_options.runtime_library = options.runtime_override;
-    compiler_options.link_time_code_generation = effective.link_time_code_generation;
-    compiler_options.defines = std::move(options.defines);
-    compiler_options.include_directories = std::move(options.include_directories);
-    compiler_options.additional_arguments = std::move(options.compiler_arguments);
-    compiler_options.external_module_providers = options.external_module_providers;
-
-    const bool module_target = !compiler_options.external_module_providers.empty()
-        || discovery_requires_module_pipeline
-        || std::any_of(
-            target_sources.begin(),
-            target_sources.end(),
-            [](const mqb::orchestration::TargetSourceRequest& source) {
-                return is_module_interface_source(source.source);
-            });
-    if (module_target) {
+    if (context->module_target) {
         diagnostics::print_error(
             "mqb compdb currently supports ordinary C/C++ targets only; "
             "Modules/Header Units require P1689 graph materialization and are intentionally fail-closed");
         return 2;
     }
 
-    const std::string target_name = options.build.output_name.value_or(
-        diagnostics::path_text(requested_sources.front().stem()));
-    if (effective.precompiled_header) {
-        const auto c_source = std::find_if(
-            target_sources.begin(),
-            target_sources.end(),
-            [](const mqb::orchestration::TargetSourceRequest& source) {
-                return mqb::is_c_translation_unit_path(source.source);
-            });
-        if (c_source != target_sources.end()) {
-            diagnostics::print_error(
-                "first-class PCH currently requires an ordinary C++ source set");
-            return 2;
-        }
-        auto pch = layout->for_precompiled_header(
-            target_name,
-            options.build.configuration,
-            options.build.architecture);
-        if (!pch) {
-            diagnostics::print_error(pch.error().message);
-            return 2;
-        }
-        compiler_options.precompiled_header = mqb::PrecompiledHeaderBinding{
-            .header = effective.precompiled_header->lexically_normal(),
-            .artifact = pch->precompiled_header.lexically_normal(),
-            .role = mqb::PrecompiledHeaderRole::use,
-        };
-    }
+    const mqb::CompilerOptions compiler_options = context->consumer_compiler_options();
+    mqb::msvc::MsvcCompileExecutor executor{context->toolchain, runner};
 
-    mqb::msvc::MsvcCompileExecutor executor{*toolchain, runner};
     std::vector<CompilationDatabaseEntry> entries;
-    entries.reserve(target_sources.size());
-    for (const auto& source : target_sources) {
+    entries.reserve(context->target_sources.size());
+    for (const auto& source : context->target_sources) {
         const auto kind = mqb::classify_translation_unit_path(source.source);
         if (!kind || *kind != mqb::TranslationUnitKind::source) {
             diagnostics::print_error(
@@ -487,11 +265,13 @@ int run_compdb_command(const std::span<const std::string_view> arguments) {
         unit.outputs = {
             mqb::Artifact{source.artifacts.object, mqb::ArtifactKind::object},
         };
+        // Match the ordinary target coordinator exactly: each TU is compiled
+        // from its source directory, not from the project root.
         const mqb::msvc::CompileExecutionRequest request{
             .unit = std::move(unit),
             .options = compiler_options,
             .source_dependencies_file = source.artifacts.dependencies,
-            .working_directory = project_root,
+            .working_directory = source.source.parent_path(),
         };
         auto recipe = executor.build_recipe(request);
         if (!recipe) {
@@ -501,9 +281,11 @@ int run_compdb_command(const std::span<const std::string_view> arguments) {
         }
 
         CompilationDatabaseEntry entry;
-        entry.directory = absolute_from(invocation->directory, project_root);
-        entry.file = absolute_from(invocation->directory, source.source);
-        entry.output = absolute_from(project_root, source.artifacts.object);
+        entry.directory = absolute_from(
+            context->invocation.directory,
+            recipe->process.working_directory.value_or(source.source.parent_path()));
+        entry.file = absolute_from(context->invocation.directory, source.source);
+        entry.output = absolute_from(context->project.project_root, source.artifacts.object);
         entry.arguments.reserve(recipe->process.arguments.size() + 1u);
         entry.arguments.push_back(path_to_utf8(recipe->process.executable));
         entry.arguments.insert(
@@ -522,8 +304,8 @@ int run_compdb_command(const std::span<const std::string_view> arguments) {
         });
 
     const fs::path output = parsed->output
-        ? absolute_from(invocation->directory, *parsed->output)
-        : (project_root / "compile_commands.json").lexically_normal();
+        ? absolute_from(context->invocation.directory, *parsed->output)
+        : (context->project.project_root / "compile_commands.json").lexically_normal();
     const std::string content = render_compilation_database(entries);
     auto written = write_database_file(output, content);
     if (!written) {

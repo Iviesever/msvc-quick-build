@@ -101,8 +101,6 @@ foreach ($root in @($includeRoot, $srcRoot, $testsRoot)) {
     }
 }
 
-# Top-level directories are the architecture vocabulary. A new responsibility
-# must be introduced intentionally by changing this contract.
 Assert-DirectDirectories -Root $includeRoot -Allowed @(
     'config', 'core', 'discovery', 'json', 'modules', 'msvc',
     'orchestration', 'platform', 'process'
@@ -116,7 +114,6 @@ Assert-DirectDirectories -Root $testsRoot -Allowed @(
     'msvc', 'orchestration', 'platform', 'process'
 )
 
-# Executable composition.
 $appRoot = Join-Path $srcRoot 'app'
 Assert-DirectDirectories -Root $appRoot -Allowed @('cli', 'diagnostics', 'project', 'targets')
 Assert-ExactFiles -Root $appRoot -Expected @('Application.cpp', 'Application.hpp', 'main.cpp')
@@ -125,8 +122,10 @@ $appLeafFiles = [ordered]@{
     'diagnostics' = @('Diagnostics.cpp', 'Diagnostics.hpp', 'PerformanceTimings.cpp', 'PerformanceTimings.hpp')
     'project' = @('ProjectSetup.cpp', 'ProjectSetup.hpp')
     'targets' = @(
+        'BuildIntrospectionSetup.cpp', 'BuildIntrospectionSetup.hpp',
         'CompdbCommand.cpp', 'CompdbCommand.hpp',
         'ModuleCliTarget.cpp', 'ModuleCliTarget.hpp',
+        'PlanCommand.cpp', 'PlanCommand.hpp',
         'StaticCliTarget.cpp', 'StaticCliTarget.hpp'
     )
 }
@@ -141,8 +140,6 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'app') -LeafFiles ([ordered]@{
     'cli' = @('build_policy_cli_tests.cpp', 'cli_argument_tests.cpp', 'mqb_native_msvc_cli_e2e_tests.cpp')
 })
 
-# Project configuration. JSON grammar belongs to the json layer; config owns
-# only document loading, schema decoding, and effective-option resolution.
 Assert-LeafLayout -Root (Join-Path $srcRoot 'config') -LeafFiles ([ordered]@{
     'loading' = @('ProjectConfig.cpp')
     'resolution' = @('ProjectOptions.cpp')
@@ -153,9 +150,6 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'config') -LeafFiles ([ordered]@{
     'resolution' = @('project_options_tests.cpp')
 })
 
-# Source discovery. The public facade remains at the discovery root while
-# text analysis, persistent freshness state, indexing, and graph selection own
-# separate private leaves. Module syntax is lexical analysis, not traversal policy.
 $discoveryRoot = Join-Path $srcRoot 'discovery'
 Assert-DirectDirectories -Root $discoveryRoot -Allowed @('analysis', 'cache', 'indexing', 'selection')
 Assert-ExactFiles -Root $discoveryRoot -Expected @('SourceDiscovery.cpp')
@@ -183,8 +177,6 @@ Assert-ExactFiles -Root $discoveryTestsRoot -Expected @(
     'source_discovery_tests.cpp'
 )
 
-# Toolchain-independent core. Public headers stay in include/mqb/core as a
-# stable facade while implementation/test ownership is explicit.
 $coreLeafFiles = [ordered]@{
     'cache' = @(
         'ArchiveCache.cpp', 'ArchiveCacheFile.cpp',
@@ -212,8 +204,6 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'core') -LeafFiles ([ordered]@{
     )
 })
 
-# MSVC backend primitives. Keep include/mqb/msvc stable, but do not flatten
-# compiler, linker, librarian, module-scanning, parameter-routing, and toolchain discovery code.
 $msvcLeafFiles = [ordered]@{
     'compiler' = @(
         'CompilerArgumentBuilder.cpp', 'CompilerArgumentBuilder.hpp',
@@ -222,7 +212,7 @@ $msvcLeafFiles = [ordered]@{
         'MsvcCompileExecutor.cpp', 'MsvcCompiler.cpp', 'MsvcSourceDependenciesReader.cpp'
     )
     'librarian' = @('MsvcLibrarian.cpp')
-    'linker' = @('MsvcDefaultLibraryPolicy.cpp', 'MsvcLibraryResolver.cpp', 'MsvcLinker.cpp')
+    'linker' = @('MsvcDefaultLibraryPolicy.cpp', 'MsvcLibraryResolver.cpp', 'MsvcLinker.cpp', 'MsvcLinkRecipe.cpp')
     'modules' = @('MsvcModuleDependencyScanner.cpp')
     'parameters' = @(
         'MsvcParameterCapabilities.cpp',
@@ -258,8 +248,6 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'msvc') -LeafFiles ([ordered]@{
     'toolchain' = @('portable_tests.cpp', 'visual_studio_tests.cpp')
 })
 
-# Orchestration implementation responsibilities. Public facade headers remain
-# in include/mqb/orchestration for API stability.
 $orchestrationLeafFiles = [ordered]@{
     'incremental' = @(
         'IncrementalFileSnapshot.hpp',
