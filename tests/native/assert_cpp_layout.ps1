@@ -125,7 +125,9 @@ $appLeafFiles = [ordered]@{
         'BuildIntrospectionSetup.cpp', 'BuildIntrospectionSetup.hpp',
         'CompdbCommand.cpp', 'CompdbCommand.hpp',
         'ModuleCliTarget.cpp', 'ModuleCliTarget.hpp',
+        'ModulePlanCommand.cpp', 'ModulePlanCommand.hpp',
         'PlanCommand.cpp', 'PlanCommand.hpp',
+        'PlanOutput.cpp', 'PlanOutput.hpp', 'PlanSupport.hpp',
         'StaticCliTarget.cpp', 'StaticCliTarget.hpp'
     )
 }
