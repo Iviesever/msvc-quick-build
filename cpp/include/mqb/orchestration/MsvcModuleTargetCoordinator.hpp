@@ -121,6 +121,13 @@ public:
           compile_coordinator_(compile_coordinator),
           link_coordinator_(link_coordinator) {}
 
+    // Inspect module scans, provider graph, and compile waves without resolving
+    // or inspecting final-link policy. Cold/stale P1689 returns scan evidence
+    // only. This is the compile-side authority for graph-aware tooling such as
+    // compilation-database export.
+    [[nodiscard]] std::expected<IncrementalModuleTargetInspection, IncrementalModuleTargetError>
+    inspect_compilation(const IncrementalModuleTargetRequest& request) const;
+
     // Inspect the complete module target without launching cl.exe/link.exe or
     // mutating scan, compile, link, or output state. Cold/stale scan evidence
     // yields scan recipes only; warm trustworthy P1689 continues through graph,

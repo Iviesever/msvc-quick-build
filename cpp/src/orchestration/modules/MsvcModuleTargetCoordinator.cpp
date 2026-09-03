@@ -48,7 +48,7 @@ using Clock = std::chrono::steady_clock;
 } // namespace
 
 std::expected<IncrementalModuleTargetInspection, IncrementalModuleTargetError>
-MsvcModuleTargetCoordinator::inspect(
+MsvcModuleTargetCoordinator::inspect_compilation(
     const IncrementalModuleTargetRequest& request) const {
     auto preparation = detail::inspect_module_target_preparation(
         request,
@@ -61,8 +61,8 @@ MsvcModuleTargetCoordinator::inspect(
     result.scans = std::move(preparation->scans);
     if (!preparation->prepared) {
         // At least one required P1689 document is stale or missing. The scan
-        // recipes above are the complete honest plan at this point; provider
-        // graph, compile waves, and link decisions depend on their output.
+        // recipes above are the complete honest compile-side model; provider
+        // graph and compile waves depend on their output.
         return result;
     }
 
@@ -75,10 +75,34 @@ MsvcModuleTargetCoordinator::inspect(
             std::move(compiled.error())));
     }
 
+    result.plan = std::move(prepared.plan);
+    result.compile_request = std::move(prepared.compile_request);
+    result.compiles = std::move(*compiled);
+    return result;
+}
+
+std::expected<IncrementalModuleTargetInspection, IncrementalModuleTargetError>
+MsvcModuleTargetCoordinator::inspect(
+    const IncrementalModuleTargetRequest& request) const {
+    auto result = inspect_compilation(request);
+    if (!result) {
+        return std::unexpected(std::move(result.error()));
+    }
+    if (!result->graph_ready()) {
+        // Final link identity cannot be modeled until the provider graph and
+        // its object-producing compile requests are trustworthy.
+        return result;
+    }
+    if (!result->compile_request || !result->compiles) {
+        return std::unexpected(failure(
+            IncrementalModuleTargetErrorCode::compile_failed,
+            "module target compilation inspection completed without its typed request/result"));
+    }
+
     IncrementalLinkRequest link_request = detail::make_module_target_link_request(
         request,
-        prepared.compile_request,
-        compiled->any_planned);
+        *result->compile_request,
+        result->compiles->any_planned);
     auto linked = link_coordinator_.inspect(link_request);
     if (!linked) {
         return std::unexpected(link_failure(
@@ -86,11 +110,8 @@ MsvcModuleTargetCoordinator::inspect(
             std::move(linked.error())));
     }
 
-    result.plan = std::move(prepared.plan);
-    result.compile_request = std::move(prepared.compile_request);
-    result.compiles = std::move(*compiled);
-    result.link_request = std::move(link_request);
-    result.link = std::move(*linked);
+    result->link_request = std::move(link_request);
+    result->link = std::move(*linked);
     return result;
 }
 
