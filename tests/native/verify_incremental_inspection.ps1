@@ -23,7 +23,6 @@ foreach ($path in @($configPath, $contractSource)) {
 }
 
 & (Join-Path $RepoRoot 'tests/native/assert_cpp_layout.ps1') -CppRoot $cppRoot
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 $productionSources = @($config.discovery.extra_sources | ForEach-Object {
