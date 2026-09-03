@@ -9,7 +9,7 @@
 
 **专注 Windows + MSVC 的原生 C++23 构建系统。**
 
-MQB 可以直接把一个源文件或项目入口变成原生 MSVC 构建，不需要先经过 generator。它负责源码发现、增量编译/链接/归档决策、C++ Modules 与 Header Units 排序、一等 PCH、工具链发现，以及构建成功后的可选运行。
+MQB 可以直接把一个源文件或项目入口变成原生 MSVC 构建，不需要先经过 generator。它负责源码发现、增量编译/链接/归档决策、C++ Modules 与 Header Units 排序、一等 PCH、工具链发现、无副作用构建计划检查、精确编译数据库导出，以及构建成功后的可选运行。
 
 ```powershell
 # 单个源文件
@@ -18,6 +18,10 @@ mqb run main.cpp
 # 带 mqb.json，或根目录/src 下恰好有一个 conventional main 的项目
 mqb build
 mqb run
+
+# 不执行编译地查看计划，或导出精确编译器配方
+mqb plan --format text
+mqb compdb --output compile_commands.json
 
 # 向构建后的程序传参
 mqb run -- input.txt "hello world" 42
@@ -53,6 +57,8 @@ MQB 的构建系统对比让 MQB 与 CMake + Ninja 使用同一份生成源码�
 
 - `.c`、`.cpp`、`.cc`、`.cxx` 的原生 MSVC 构建。
 - `mqb build` / `mqb run` 项目命令与 fail-closed 默认入口解析。
+- 面向普通 target、PCH、static library、C++ Modules、Header Units 与最终 link decision 的无副作用 `mqb plan` 输出。
+- 基于精确 MSVC recipe 的确定性 `compile_commands.json` 导出；存在可复用 P1689 topology 时也覆盖 Modules 与 Header Units。
 - versioned `mqb.json` 配置与显式 named profiles。
 - 基于 MSVC `/sourceDependencies` 的 header freshness 与增量编译。
 - 相互独立的 compile、link、archive cache。
@@ -65,7 +71,7 @@ MQB 的构建系统对比让 MQB 与 CMake + Ninja 使用同一份生成源码�
 - P1689 `/scanDependencies` topology 与 transitive IFC closure。
 - 原生 MSVC compiler、linker、librarian 参数，以及显式 `/link` / `/lib` 边界。
 - Visual Studio 与 portable MSVC toolchain discovery。
-- Unicode-safe Windows path/artifact identity。
+- Unicode-safe Windows command line、path 与 artifact identity。
 - 所有 MQB-owned writable state 都位于项目 `.mqb/` 下。
 - self-hosting、native CI、installer/package gates 与 release automation。
 
@@ -130,6 +136,24 @@ mqb main.cpp --run
 ```powershell
 mqb build main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
 ```
+
+### 检查构建并导出编辑器元数据
+
+`mqb plan` 会解释 MQB 准备执行的工作，但不会运行 compiler、dependency scanner、linker 或 librarian，也不会创建或改写项目 `.mqb/` 状态：
+
+```powershell
+mqb plan
+mqb plan src/main.cpp modules/math.ixx --no-discover --std latest --format json
+```
+
+`mqb compdb` 使用与真实构建相同的精确 compile recipe，写出确定性的 `compile_commands.json`：
+
+```powershell
+mqb compdb
+mqb compdb src/main.cpp modules/math.ixx --no-discover --std latest
+```
+
+对于 Modules 与 Header Units，MQB 不会猜测 cold 或 stale topology。`mqb plan` 会报告精确的待执行 `/scanDependencies`；`mqb compdb` 则会 fail closed，直到一次成功构建产生可复用 P1689 evidence。详见 [`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md) 与 [`docs/COMPILATION_DATABASE.md`](docs/COMPILATION_DATABASE.md)。
 
 ### Named profiles
 
@@ -340,6 +364,8 @@ Config/profile 路径相对包含 `mqb.json` 的目录解析；CLI 路径相对 
 ```text
 mqb build [source...] [options]
 mqb run [source...] [options] [-- program-args...]
+mqb plan [source...] [options] [--format text|json]
+mqb compdb [source...] [options] [--output compile_commands.json]
 mqb <source...> [options]
 ```
 
@@ -382,6 +408,7 @@ MQB 在尚未安全建模 ownership 的位置会有意 fail closed：
 - first-class PCH 暂不与 C translation unit 混用；
 - first-class PCH 暂不与需要 Modules/Header Units pipeline 的 target 混用；
 - 当前仍拒绝需要 Modules/Header Units pipeline 的 `static` target；
+- module-aware `mqb compdb` 需要可复用 P1689 topology，不会自行运行 dependency scan 来制造它；
 - MQB 仅支持 Windows + MSVC。
 
 普通 C++ PCH 与普通 static-library build 不受 module/static 限制影响。
@@ -391,6 +418,8 @@ MQB 在尚未安全建模 ownership 的位置会有意 fail closed：
 | 主题 | English | 简体中文 |
 |---|---|---|
 | 配置、profiles、precedence | [`MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) | [`MQB_CONFIG.md`](docs/MQB_CONFIG.md) |
+| 构建计划检查 | [`BUILD_PLAN_EN.md`](docs/BUILD_PLAN_EN.md) | [`BUILD_PLAN.md`](docs/BUILD_PLAN.md) |
+| 编译数据库导出 | [`COMPILATION_DATABASE_EN.md`](docs/COMPILATION_DATABASE_EN.md) | [`COMPILATION_DATABASE.md`](docs/COMPILATION_DATABASE.md) |
 | 预编译头 | [`PRECOMPILED_HEADERS_EN.md`](docs/PRECOMPILED_HEADERS_EN.md) | [`PRECOMPILED_HEADERS.md`](docs/PRECOMPILED_HEADERS.md) |
 | 安装 | [`INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) | [`INSTALLATION.md`](docs/INSTALLATION.md) |
 | 架构 | [`ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) |

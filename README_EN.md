@@ -9,7 +9,7 @@
 
 **A native C++23 build system focused on Windows + MSVC.**
 
-MQB turns a source file or project entry into a native MSVC build without requiring a generator step. It owns source discovery, incremental compile/link/archive decisions, C++ Modules and Header Units ordering, first-class PCH, toolchain discovery, and optional execution after a successful build.
+MQB turns a source file or project entry into a native MSVC build without requiring a generator step. It owns source discovery, incremental compile/link/archive decisions, C++ Modules and Header Units ordering, first-class PCH, toolchain discovery, side-effect-free build-plan inspection, exact compilation-database export, and optional execution after a successful build.
 
 ```powershell
 # One source file
@@ -18,6 +18,10 @@ mqb run main.cpp
 # A project with mqb.json or one conventional main under root/src
 mqb build
 mqb run
+
+# Inspect work without compiling, or export exact compiler recipes
+mqb plan --format text
+mqb compdb --output compile_commands.json
 
 # Pass arguments to the built program
 mqb run -- input.txt "hello world" 42
@@ -53,6 +57,8 @@ Published results are evidence for the recorded machine and toolchain, not a uni
 
 - Native MSVC builds for `.c`, `.cpp`, `.cc`, and `.cxx`.
 - `mqb build` / `mqb run` project commands with fail-closed default-entry resolution.
+- Side-effect-free `mqb plan` output for ordinary targets, PCH, static libraries, C++ Modules, Header Units, and final link decisions.
+- Deterministic `compile_commands.json` export from exact MSVC recipes, including graph-aware Modules and Header Units when reusable P1689 topology exists.
 - Versioned `mqb.json` configuration and explicit named profiles.
 - Header freshness and incremental compilation from MSVC `/sourceDependencies`.
 - Independent compile, link, and archive caches.
@@ -65,7 +71,7 @@ Published results are evidence for the recorded machine and toolchain, not a uni
 - P1689 `/scanDependencies` topology and transitive IFC closure.
 - Native MSVC compiler, linker, and librarian arguments with explicit `/link` and `/lib` boundaries.
 - Visual Studio and portable MSVC toolchain discovery.
-- Unicode-safe Windows path/artifact identity.
+- Unicode-safe Windows command-line, path, and artifact identity.
 - All MQB-owned writable state under the project `.mqb/` directory.
 - Self-hosting, native CI, installer/package gates, and release automation.
 
@@ -130,6 +136,24 @@ A single entry source enables smart discovery by default. Multiple positional so
 ```powershell
 mqb build main.cpp src/math.cpp src/io.cpp --release -j 8 -o app
 ```
+
+### Inspect a build and export editor metadata
+
+`mqb plan` explains the work MQB would perform without running the compiler, dependency scanner, linker, or librarian, and without creating or rewriting project `.mqb/` state:
+
+```powershell
+mqb plan
+mqb plan src/main.cpp modules/math.ixx --no-discover --std latest --format json
+```
+
+`mqb compdb` writes a deterministic `compile_commands.json` from the same exact compile recipes used by real builds:
+
+```powershell
+mqb compdb
+mqb compdb src/main.cpp modules/math.ixx --no-discover --std latest
+```
+
+For Modules and Header Units, a cold or stale topology is not guessed. `mqb plan` reports the exact pending `/scanDependencies` work; `mqb compdb` fails closed until one successful build has produced reusable P1689 evidence. See [`docs/BUILD_PLAN_EN.md`](docs/BUILD_PLAN_EN.md) and [`docs/COMPILATION_DATABASE_EN.md`](docs/COMPILATION_DATABASE_EN.md).
 
 ### Named profiles
 
@@ -340,6 +364,8 @@ See [`docs/MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) for the complete schema and
 ```text
 mqb build [source...] [options]
 mqb run [source...] [options] [-- program-args...]
+mqb plan [source...] [options] [--format text|json]
+mqb compdb [source...] [options] [--output compile_commands.json]
 mqb <source...> [options]
 ```
 
@@ -382,6 +408,7 @@ MQB deliberately fails closed where ownership is not yet modeled safely:
 - first-class PCH does not mix with C translation units;
 - first-class PCH does not mix with targets requiring the Modules/Header Units pipeline;
 - `static` targets requiring the Modules/Header Units pipeline are currently rejected;
+- module-aware `mqb compdb` requires reusable P1689 topology and does not run dependency scans to manufacture it;
 - MQB is Windows + MSVC only.
 
 Ordinary C++ PCH and ordinary static-library builds are unaffected by the module/static limitation.
@@ -391,6 +418,8 @@ Ordinary C++ PCH and ordinary static-library builds are unaffected by the module
 | Topic | English | 简体中文 |
 |---|---|---|
 | Configuration, profiles, precedence | [`MQB_CONFIG_EN.md`](docs/MQB_CONFIG_EN.md) | [`MQB_CONFIG.md`](docs/MQB_CONFIG.md) |
+| Build-plan inspection | [`BUILD_PLAN_EN.md`](docs/BUILD_PLAN_EN.md) | [`BUILD_PLAN.md`](docs/BUILD_PLAN.md) |
+| Compilation database export | [`COMPILATION_DATABASE_EN.md`](docs/COMPILATION_DATABASE_EN.md) | [`COMPILATION_DATABASE.md`](docs/COMPILATION_DATABASE.md) |
 | Precompiled headers | [`PRECOMPILED_HEADERS_EN.md`](docs/PRECOMPILED_HEADERS_EN.md) | [`PRECOMPILED_HEADERS.md`](docs/PRECOMPILED_HEADERS.md) |
 | Installation | [`INSTALLATION_EN.md`](docs/INSTALLATION_EN.md) | [`INSTALLATION.md`](docs/INSTALLATION.md) |
 | Architecture | [`ARCHITECTURE_EN.md`](docs/ARCHITECTURE_EN.md) | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
