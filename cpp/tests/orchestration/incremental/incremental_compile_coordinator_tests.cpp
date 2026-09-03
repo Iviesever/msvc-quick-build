@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <fstream>
@@ -74,6 +75,34 @@ void write_text(const fs::path& path, const std::string_view text) {
         }
     }
     return result;
+}
+
+[[nodiscard]] bool same_environment_variable(
+    const mqb::process::EnvironmentVariable& left,
+    const mqb::process::EnvironmentVariable& right) {
+    return left.name == right.name
+        && left.value == right.value
+        && left.remove == right.remove;
+}
+
+[[nodiscard]] bool same_process_spec(
+    const mqb::process::ProcessSpec& left,
+    const mqb::process::ProcessSpec& right) {
+    if (left.executable != right.executable
+        || left.arguments != right.arguments
+        || left.working_directory != right.working_directory
+        || left.inherit_environment != right.inherit_environment
+        || left.capture_stdout != right.capture_stdout
+        || left.capture_stderr != right.capture_stderr
+        || left.environment.size() != right.environment.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.environment.size(); ++index) {
+        if (!same_environment_variable(left.environment[index], right.environment[index])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 class CompilerLikeRunner final : public mqb::process::ProcessRunner {
@@ -169,6 +198,9 @@ int main() {
         .librarian = "C:/fake/lib.exe",
         .vc_tools_root = "C:/fake",
         .source = mqb::msvc::ToolchainSource::visual_studio,
+        .environment = {
+            mqb::process::EnvironmentVariable{"INCLUDE", "C:/fake/include"},
+        },
     };
 
     CompilerLikeRunner runner;
@@ -190,6 +222,9 @@ int main() {
         .working_directory = fixture.path(),
     };
 
+    mqb::process::ProcessSpec cold_recipe_process;
+    bool captured_cold_recipe = false;
+
     const auto cold = coordinator.run(request);
     expect(cold.has_value(), "cold incremental compile should succeed");
     if (cold) {
@@ -202,6 +237,17 @@ int main() {
                "cold cache should explain missing object output");
         expect(cold->warnings.empty(),
                "ordinary missing cache should not be reported as a warning");
+        expect(cold->recipe.has_value(),
+               "cold compile result should expose its first-class compile recipe");
+        if (cold->recipe) {
+            cold_recipe_process = cold->recipe->compiler.process;
+            captured_cold_recipe = true;
+            expect(same_process_spec(cold_recipe_process, runner.last_spec),
+                   "executed compiler ProcessSpec must exactly match the exposed cold recipe");
+            expect(cold->recipe->compiler.toolchain.version == toolchain.identity.version
+                       && cold->recipe->compiler.toolchain.binary_stamp == toolchain.identity.binary_stamp,
+                   "compile recipe should retain the selected toolchain identity");
+        }
     }
     expect(runner.calls == 1, "cold build should launch the compiler exactly once");
     expect(fs::is_regular_file(cache_file),
@@ -215,6 +261,12 @@ int main() {
                "unchanged warm cache should produce an empty build plan");
         expect(warm->validation.reusable(),
                "unchanged warm cache should be reusable");
+        expect(warm->recipe.has_value(),
+               "warm cache hit should still expose a complete compile recipe");
+        if (captured_cold_recipe && warm->recipe) {
+            expect(same_process_spec(warm->recipe->compiler.process, cold_recipe_process),
+                   "cache hit and cache miss must expose the exact same compiler recipe");
+        }
     }
     expect(runner.calls == 1,
            "warm cache hit should not invoke the compiler again");
@@ -237,6 +289,8 @@ int main() {
                "authoritative explicit rebuild should not inspect stale cache metadata");
         expect(forced->warnings.empty(),
                "authoritative explicit rebuild should bypass stale cache load warnings");
+        expect(forced->recipe.has_value(),
+               "forced rebuild should preserve the same first-class recipe contract");
     }
     expect(runner.calls == 2,
            "explicit rebuild should invoke the compiler exactly once");
@@ -251,6 +305,8 @@ int main() {
                "cache should be reusable immediately after a successful explicit rebuild");
         expect(!has_reason(warm_after_force->validation, mqb::BuildReason::explicit_rebuild),
                "explicit rebuild reason must be request-local rather than persisted");
+        expect(warm_after_force->recipe.has_value(),
+               "post-force warm cache hit should remain inspectable");
     }
     expect(runner.calls == 2,
            "post-force ordinary warm hit should not invoke the compiler");
@@ -268,6 +324,8 @@ int main() {
                    *corrupt,
                    mqb::orchestration::IncrementalCompileWarningCode::cache_load_failed),
                "corrupt metadata should remain visible as a cache_load_failed warning");
+        expect(corrupt->recipe.has_value(),
+               "corrupt-cache rebuild should still expose its compile recipe");
     }
     expect(runner.calls == 3,
            "corrupt metadata should invoke the compiler exactly once more");
@@ -283,6 +341,12 @@ int main() {
                    release->validation,
                    mqb::BuildReason::compiler_options_changed),
                "configuration transition should report compiler_options_changed");
+        expect(release->recipe.has_value(),
+               "configuration transition should expose the effective release compile recipe");
+        if (captured_cold_recipe && release->recipe) {
+            expect(!same_process_spec(release->recipe->compiler.process, cold_recipe_process),
+                   "a real compiler policy change should produce a different first-class recipe");
+        }
     }
     expect(runner.calls == 4,
            "configuration transition should invoke the compiler once");
