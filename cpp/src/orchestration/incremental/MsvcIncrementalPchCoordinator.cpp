@@ -24,6 +24,7 @@ constexpr std::string_view creator_source_text =
 
 struct PchInspectionState {
     IncrementalPchInspection inspection;
+    IncrementalCompileRequest compile_request;
     // If a stale-but-timestamp-reusable creator source must be repaired, force
     // the execution recheck to compile even if the filesystem timestamp happens
     // to retain coarse equality after materialization. Public diagnostics still
@@ -168,6 +169,16 @@ make_compile_request(const IncrementalPchRequest& request) {
     };
 }
 
+[[nodiscard]] msvc::CompileExecutionRequest recipe_request_for(
+    const IncrementalCompileRequest& request) {
+    return msvc::CompileExecutionRequest{
+        .unit = request.unit,
+        .options = request.options,
+        .source_dependencies_file = request.source_dependencies_file,
+        .working_directory = request.working_directory,
+    };
+}
+
 [[nodiscard]] std::expected<PchInspectionState, IncrementalPchError>
 inspect_pch(
     const IncrementalPchRequest& request,
@@ -188,7 +199,8 @@ inspect_pch(
             compile.error()));
     }
 
-    state.inspection.compile_request = *compile_request;
+    state.compile_request = *compile_request;
+    state.inspection.recipe_request = recipe_request_for(*compile_request);
     state.inspection.compile = std::move(*compile);
 
     // Compile freshness normally observes the creator source by path + timestamp.
@@ -257,7 +269,7 @@ MsvcIncrementalPchCoordinator::run(const IncrementalPchRequest& request) const {
     auto creator = write_creator_if_needed(request.artifacts.source);
     if (!creator) return std::unexpected(creator.error());
 
-    IncrementalCompileRequest compile_request = inspected->inspection.compile_request;
+    IncrementalCompileRequest compile_request = inspected->compile_request;
     if (inspected->force_compile_after_materialization) {
         compile_request.force_rebuild = true;
     }
