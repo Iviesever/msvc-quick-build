@@ -5,6 +5,8 @@ on:
     paths:
       - 'cpp/mqb.json'
       - 'cpp/src/app/main.cpp'
+      - 'cpp/src/app/targets/BuildIntrospectionSetup.cpp'
+      - 'cpp/src/app/targets/BuildIntrospectionSetup.hpp'
       - 'cpp/src/app/targets/CompdbCommand.cpp'
       - 'cpp/src/app/targets/CompdbCommand.hpp'
       - 'cpp/include/mqb/msvc/MsvcCompileExecutor.hpp'
