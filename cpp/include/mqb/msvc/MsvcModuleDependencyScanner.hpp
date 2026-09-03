@@ -22,6 +22,15 @@ struct ModuleScanInvocation {
     std::optional<std::filesystem::path> working_directory;
 };
 
+// Pure, inspectable representation of the exact cl.exe /scanDependencies
+// contract. Construction does not prepare output directories, remove stale
+// metadata, write cache state, or launch a process.
+struct MsvcModuleScanRecipe {
+    ToolchainIdentity toolchain;
+    ModuleScanInvocation invocation;
+    process::ProcessSpec process;
+};
+
 struct ModuleScanResult {
     process::ProcessResult process;
     modules::P1689Document dependencies;
@@ -56,6 +65,14 @@ public:
 
     [[nodiscard]] static std::expected<std::vector<std::string>, ModuleScanError>
     build_arguments(const ModuleScanInvocation& invocation);
+
+    [[nodiscard]] static std::expected<MsvcModuleScanRecipe, ModuleScanError>
+    build_recipe(
+        const MsvcToolchain& toolchain,
+        const ModuleScanInvocation& invocation);
+
+    [[nodiscard]] std::expected<ModuleScanResult, ModuleScanError>
+    execute_recipe(const MsvcModuleScanRecipe& recipe) const;
 
     [[nodiscard]] std::expected<ModuleScanResult, ModuleScanError>
     scan(const ModuleScanInvocation& invocation) const;
