@@ -198,9 +198,6 @@ int main() {
         .librarian = "C:/fake/lib.exe",
         .vc_tools_root = "C:/fake",
         .source = mqb::msvc::ToolchainSource::visual_studio,
-        .environment = {
-            mqb::process::EnvironmentVariable{"INCLUDE", "C:/fake/include"},
-        },
     };
 
     CompilerLikeRunner runner;
