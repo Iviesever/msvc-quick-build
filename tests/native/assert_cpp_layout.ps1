@@ -265,6 +265,7 @@ $orchestrationLeafFiles = [ordered]@{
         'ModuleTargetLinkRequestFactory.cpp', 'ModuleTargetLinkRequestFactory.hpp',
         'ModuleTargetPreparation.cpp', 'ModuleTargetPreparation.hpp',
         'ModuleTargetScanner.cpp', 'ModuleTargetScanner.hpp',
+        'MsvcIncrementalModuleScanCoordinator.cpp',
         'MsvcModuleCompileCoordinator.cpp', 'MsvcModuleTargetCoordinator.cpp',
         'StandardLibraryModuleProvider.cpp', 'StandardLibraryModuleProvider.hpp'
     )

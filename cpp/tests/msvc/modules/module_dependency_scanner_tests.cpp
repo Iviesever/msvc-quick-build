@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -26,6 +27,32 @@ void expect(const bool condition, const std::string_view message) {
     const std::vector<std::string>& arguments,
     const std::string_view value) {
     return std::find(arguments.begin(), arguments.end(), value) != arguments.end();
+}
+
+[[nodiscard]] bool same_environment(
+    const std::vector<mqb::process::EnvironmentVariable>& left,
+    const std::vector<mqb::process::EnvironmentVariable>& right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (left[index].name != right[index].name
+            || left[index].value != right[index].value
+            || left[index].remove != right[index].remove) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool same_process_spec(
+    const mqb::process::ProcessSpec& left,
+    const mqb::process::ProcessSpec& right) {
+    return left.executable == right.executable
+        && left.arguments == right.arguments
+        && left.working_directory == right.working_directory
+        && same_environment(left.environment, right.environment)
+        && left.inherit_environment == right.inherit_environment
+        && left.capture_stdout == right.capture_stdout
+        && left.capture_stderr == right.capture_stderr;
 }
 
 [[nodiscard]] fs::path make_temp_root() {
@@ -159,6 +186,10 @@ int main() {
 
     MsvcToolchain toolchain;
     toolchain.identity.compiler = "fake-cl.exe";
+    toolchain.identity.version = "19.50.test";
+    toolchain.identity.binary_stamp = "fake-compiler-stamp";
+    toolchain.environment.push_back(
+        mqb::process::EnvironmentVariable{"PATH", "fake-toolchain-path", false});
     FakeRunner runner;
     MsvcModuleDependencyScanner scanner{toolchain, runner};
 
@@ -167,6 +198,38 @@ int main() {
     invocation.output_file = output;
     invocation.kind = TranslationUnitKind::module_interface;
     invocation.working_directory = root;
+
+    auto recipe = MsvcModuleDependencyScanner::build_recipe(toolchain, invocation);
+    expect(recipe.has_value(), "pure module scan recipe construction should succeed");
+    expect(runner.calls == 0, "pure module scan recipe construction must not launch cl.exe");
+    expect(!fs::exists(output.parent_path()),
+           "pure module scan recipe construction must not prepare output directories");
+    if (recipe) {
+        expect(recipe->toolchain.compiler == toolchain.identity.compiler
+                   && recipe->toolchain.version == toolchain.identity.version
+                   && recipe->toolchain.binary_stamp == toolchain.identity.binary_stamp,
+               "module scan recipe should bind the selected compiler identity");
+        expect(recipe->process.executable == toolchain.identity.compiler,
+               "module scan recipe should expose the selected cl.exe");
+        expect(recipe->process.working_directory == root,
+               "module scan recipe should preserve the requested working directory");
+        expect(contains(recipe->process.arguments, "/scanDependencies"),
+               "module scan recipe should expose /scanDependencies");
+        expect(std::any_of(
+                   recipe->process.environment.begin(),
+                   recipe->process.environment.end(),
+                   [](const auto& variable) {
+                       return variable.name == "CL" && variable.remove;
+                   }),
+               "module scan recipe should suppress ambient CL");
+        expect(std::any_of(
+                   recipe->process.environment.begin(),
+                   recipe->process.environment.end(),
+                   [](const auto& variable) {
+                       return variable.name == "_CL_" && variable.remove;
+                   }),
+               "module scan recipe should suppress ambient _CL_");
+    }
 
     {
         fs::create_directories(output.parent_path());
@@ -189,6 +252,22 @@ int main() {
                "scanner should launch the discovered compiler");
         expect(runner.last_spec.working_directory == root,
                "scanner should preserve the requested working directory");
+        if (recipe) {
+            expect(same_process_spec(recipe->process, runner.last_spec),
+                   "pure module scan recipe must exactly match production scan ProcessSpec");
+        }
+    }
+
+    if (recipe) {
+        auto different_toolchain = toolchain;
+        different_toolchain.identity.binary_stamp = "different-compiler-stamp";
+        MsvcModuleDependencyScanner different_scanner{different_toolchain, runner};
+        const int calls_before = runner.calls;
+        auto rejected = different_scanner.execute_recipe(*recipe);
+        expect(!rejected && rejected.error().code == ModuleScanErrorCode::invalid_request,
+               "scan recipe execution should reject a different compiler identity");
+        expect(runner.calls == calls_before,
+               "toolchain-mismatched scan recipe must fail before process launch");
     }
 
     {

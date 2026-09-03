@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "mqb/core/TranslationUnitClassifier.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::msvc {
 namespace {
@@ -70,6 +71,32 @@ void suppress_ambient_compiler_options(
     // variables entirely so scan and compile share the same launch contract.
     environment.push_back(process::EnvironmentVariable{"CL", {}, true});
     environment.push_back(process::EnvironmentVariable{"_CL_", {}, true});
+}
+
+[[nodiscard]] bool same_toolchain_identity(
+    const ToolchainIdentity& left,
+    const ToolchainIdentity& right) {
+    return mqb::platform::windows::path_identity_key(left.compiler)
+            == mqb::platform::windows::path_identity_key(right.compiler)
+        && left.version == right.version
+        && left.binary_stamp == right.binary_stamp;
+}
+
+[[nodiscard]] process::ProcessSpec make_scan_process_spec(
+    const MsvcToolchain& toolchain,
+    std::vector<std::string> arguments,
+    const std::optional<fs::path>& working_directory) {
+    process::ProcessSpec spec{
+        .executable = toolchain.identity.compiler,
+        .arguments = std::move(arguments),
+        .working_directory = working_directory,
+        .environment = toolchain.environment,
+        .inherit_environment = true,
+        .capture_stdout = true,
+        .capture_stderr = true,
+    };
+    suppress_ambient_compiler_options(spec.environment);
+    return spec;
 }
 
 [[nodiscard]] std::expected<void, ModuleScanError> prepare_output(
@@ -195,29 +222,38 @@ MsvcModuleDependencyScanner::build_arguments(const ModuleScanInvocation& invocat
     return arguments;
 }
 
-std::expected<ModuleScanResult, ModuleScanError>
-MsvcModuleDependencyScanner::scan(const ModuleScanInvocation& invocation) const {
+std::expected<MsvcModuleScanRecipe, ModuleScanError>
+MsvcModuleDependencyScanner::build_recipe(
+    const MsvcToolchain& toolchain,
+    const ModuleScanInvocation& invocation) {
     auto arguments = build_arguments(invocation);
-    if (!arguments) {
-        return std::unexpected(arguments.error());
+    if (!arguments) return std::unexpected(arguments.error());
+
+    return MsvcModuleScanRecipe{
+        .toolchain = toolchain.identity,
+        .invocation = invocation,
+        .process = make_scan_process_spec(
+            toolchain,
+            std::move(*arguments),
+            invocation.working_directory),
+    };
+}
+
+std::expected<ModuleScanResult, ModuleScanError>
+MsvcModuleDependencyScanner::execute_recipe(
+    const MsvcModuleScanRecipe& recipe) const {
+    if (!same_toolchain_identity(recipe.toolchain, toolchain_.identity)) {
+        return std::unexpected(failure(
+            ModuleScanErrorCode::invalid_request,
+            "MSVC module scan recipe was built for a different compiler toolchain"));
     }
 
-    auto prepared = prepare_output(invocation.output_file);
+    auto prepared = prepare_output(recipe.invocation.output_file);
     if (!prepared) {
         return std::unexpected(prepared.error());
     }
 
-    process::ProcessSpec spec;
-    spec.executable = toolchain_.identity.compiler;
-    spec.arguments = std::move(*arguments);
-    spec.working_directory = invocation.working_directory;
-    spec.environment = toolchain_.environment;
-    suppress_ambient_compiler_options(spec.environment);
-    spec.inherit_environment = true;
-    spec.capture_stdout = true;
-    spec.capture_stderr = true;
-
-    auto result = runner_.run(spec);
+    auto result = runner_.run(recipe.process);
     if (!result) {
         ModuleScanError error = failure(
             ModuleScanErrorCode::process_failed,
@@ -235,7 +271,9 @@ MsvcModuleDependencyScanner::scan(const ModuleScanInvocation& invocation) const 
     }
 
     std::error_code exists_error;
-    const bool exists = fs::is_regular_file(invocation.output_file, exists_error);
+    const bool exists = fs::is_regular_file(
+        recipe.invocation.output_file,
+        exists_error);
     if (exists_error || !exists) {
         ModuleScanError error = failure(
             ModuleScanErrorCode::output_missing,
@@ -244,7 +282,7 @@ MsvcModuleDependencyScanner::scan(const ModuleScanInvocation& invocation) const 
         return std::unexpected(std::move(error));
     }
 
-    auto text = read_text_file(invocation.output_file);
+    auto text = read_text_file(recipe.invocation.output_file);
     if (!text) {
         auto error = text.error();
         error.process_result = std::move(*result);
@@ -265,6 +303,13 @@ MsvcModuleDependencyScanner::scan(const ModuleScanInvocation& invocation) const 
         .process = std::move(*result),
         .dependencies = std::move(*dependencies),
     };
+}
+
+std::expected<ModuleScanResult, ModuleScanError>
+MsvcModuleDependencyScanner::scan(const ModuleScanInvocation& invocation) const {
+    auto recipe = build_recipe(toolchain_, invocation);
+    if (!recipe) return std::unexpected(recipe.error());
+    return execute_recipe(*recipe);
 }
 
 } // namespace mqb::msvc
