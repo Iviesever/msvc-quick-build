@@ -42,7 +42,6 @@ $root = Join-Path $RepoRoot 'native-out/build-plan-evidence'
 if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 New-Item -ItemType Directory -Path $root -Force | Out-Null
 
-# Ordinary executable: cold text/JSON plans predict two compiles + link without building.
 $ordinary = Join-Path $root 'ordinary-plan'
 New-Item -ItemType Directory -Path $ordinary -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $ordinary 'main.cpp') -Encoding utf8 -Value 'int helper(); int main() { return helper() == 7 ? 0 : 1; }'
@@ -74,7 +73,6 @@ foreach ($phase in $compilePhases) {
 }
 Assert-NoProducedBuildArtifacts -ProjectRoot $ordinary
 
-# Real build seals state; subsequent plan must be entirely up-to-date and remain read-only.
 $build = Invoke-MqbCaptured -WorkingDirectory $ordinary -Arguments @(
     'build', 'main.cpp', 'helper.cpp', '--no-discover', '--debug', '-o', 'plan_app'
 )
@@ -91,11 +89,13 @@ Assert-True (@($warmJson.phases | Where-Object status -ne 'up-to-date').Count -e
 $exeHashAfter = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
 Assert-True ($exeHashBefore -eq $exeHashAfter) 'warm plan mutated executable output'
 
-# PCH: cold plan predicts PCH creator, both forced consumer compiles, and final relink.
 $pch = Join-Path $root 'pch-plan'
 New-Item -ItemType Directory -Path (Join-Path $pch 'include') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $pch 'src') -Force | Out-Null
-Set-Content -LiteralPath (Join-Path $pch 'include/pch.hpp') -Encoding utf8 -Value '#pragma once`ninline constexpr int PCH_VALUE = 9;'
+Set-Content -LiteralPath (Join-Path $pch 'include/pch.hpp') -Encoding utf8 -Value @(
+    '#pragma once',
+    'inline constexpr int PCH_VALUE = 9;'
+)
 Set-Content -LiteralPath (Join-Path $pch 'src/main.cpp') -Encoding utf8 -Value 'int helper(); int main() { return helper() == PCH_VALUE ? 0 : 1; }'
 Set-Content -LiteralPath (Join-Path $pch 'src/helper.cpp') -Encoding utf8 -Value 'int helper() { return PCH_VALUE; }'
 Set-Content -LiteralPath (Join-Path $pch 'mqb.json') -Encoding utf8 -Value @'
@@ -133,7 +133,6 @@ Assert-True ($pchWarmRun.ExitCode -eq 0) "warm PCH plan failed:`n$($pchWarmRun.T
 $pchWarm = $pchWarmRun.Text | ConvertFrom-Json
 Assert-True (@($pchWarm.phases | Where-Object status -ne 'up-to-date').Count -eq 0) 'warm PCH plan should report all phases up-to-date'
 
-# Explicit scope boundaries fail closed rather than producing misleading plans.
 $staticRun = Invoke-MqbCaptured -WorkingDirectory $ordinary -Arguments @(
     'plan', 'main.cpp', 'helper.cpp', '--no-discover', '--type', 'static'
 )
