@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -50,6 +51,19 @@ struct CompilationDatabaseEntry {
     return std::string{
         reinterpret_cast<const char*>(bytes.data()),
         bytes.size()};
+}
+
+[[nodiscard]] fs::path path_from_utf8(const std::string_view value) {
+    std::u8string bytes;
+    bytes.assign(
+        reinterpret_cast<const char8_t*>(value.data()),
+        reinterpret_cast<const char8_t*>(value.data() + value.size()));
+    return fs::path{bytes};
+}
+
+[[nodiscard]] bool is_module_interface_source(const fs::path& path) {
+    const auto kind = mqb::classify_translation_unit_path(path);
+    return kind && *kind == mqb::TranslationUnitKind::module_interface;
 }
 
 [[nodiscard]] std::string json_escape(const std::string_view value) {
@@ -158,7 +172,7 @@ parse_compdb_arguments(const std::span<const std::string_view> arguments) {
             if (index + 1 >= arguments.size() || arguments[index + 1].empty()) {
                 return std::unexpected("mqb compdb --output requires a path");
             }
-            output = fs::u8path(arguments[++index]);
+            output = path_from_utf8(arguments[++index]);
             continue;
         }
         if (!native_tail && argument.starts_with("--output=")) {
@@ -169,7 +183,7 @@ parse_compdb_arguments(const std::span<const std::string_view> arguments) {
             if (value.empty()) {
                 return std::unexpected("mqb compdb --output requires a path");
             }
-            output = fs::u8path(value);
+            output = path_from_utf8(value);
             continue;
         }
         forwarded.push_back(argument);
@@ -310,7 +324,7 @@ int run_compdb_command(const std::span<const std::string_view> arguments) {
     bool discovery_requires_module_pipeline = false;
     if (options.discover_sources
         && requested_sources.size() == 1
-        && !mqb::cli::is_module_interface_source(requested_sources.front())) {
+        && !is_module_interface_source(requested_sources.front())) {
         auto forced_includes = mqb::msvc::MsvcParameterEngine::forced_includes(
             options.compiler_arguments);
         if (!forced_includes) {
@@ -418,7 +432,7 @@ int run_compdb_command(const std::span<const std::string_view> arguments) {
             target_sources.begin(),
             target_sources.end(),
             [](const mqb::orchestration::TargetSourceRequest& source) {
-                return mqb::cli::is_module_interface_source(source.source);
+                return is_module_interface_source(source.source);
             });
     if (module_target) {
         diagnostics::print_error(
