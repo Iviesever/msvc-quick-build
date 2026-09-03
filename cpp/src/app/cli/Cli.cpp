@@ -24,6 +24,14 @@ namespace {
     return Error{.message = std::move(message)};
 }
 
+[[nodiscard]] std::filesystem::path path_from_utf8(const std::string_view value) {
+    std::u8string bytes;
+    bytes.assign(
+        reinterpret_cast<const char8_t*>(value.data()),
+        reinterpret_cast<const char8_t*>(value.data() + value.size()));
+    return std::filesystem::path{bytes};
+}
+
 [[nodiscard]] bool is_legacy_option(const std::string_view argument) noexcept {
     return argument == "-config"
         || argument == "-std"
@@ -150,7 +158,7 @@ parse_external_module_provider(const std::string_view value) {
     }
     return ExternalModuleProvider{
         .logical_name = std::string{value.substr(0, separator)},
-        .interface_file = std::filesystem::u8path(value.substr(separator + 1)),
+        .interface_file = path_from_utf8(value.substr(separator + 1)),
     };
 }
 
@@ -357,7 +365,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             if (!value) return std::unexpected(value.error());
             auto selected = select_pch(options, PrecompiledHeaderPolicy{
                 .enabled = true,
-                .header = std::filesystem::u8path(*value),
+                .header = path_from_utf8(*value),
             });
             if (!selected) return std::unexpected(selected.error());
             continue;
@@ -367,7 +375,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             if (!value) return std::unexpected(value.error());
             auto selected = select_pch(options, PrecompiledHeaderPolicy{
                 .enabled = true,
-                .header = std::filesystem::u8path(*value),
+                .header = path_from_utf8(*value),
             });
             if (!selected) return std::unexpected(selected.error());
             continue;
@@ -574,19 +582,19 @@ parse_arguments(const std::span<const std::string_view> arguments) {
         if (argument == "--portable-root") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
-            options.portable_roots.emplace_back(std::string{*value});
+            options.portable_roots.push_back(path_from_utf8(*value));
             continue;
         }
         if (argument == "--lib-path") {
             auto value = require_value(arguments, index, argument);
             if (!value) return std::unexpected(value.error());
-            options.library_directories.emplace_back(std::string{*value});
+            options.library_directories.push_back(path_from_utf8(*value));
             continue;
         }
         if (argument.starts_with("--lib-path=")) {
             auto value = long_equals_value(argument, "--lib-path=");
             if (!value) return std::unexpected(value.error());
-            options.library_directories.emplace_back(std::string{*value});
+            options.library_directories.push_back(path_from_utf8(*value));
             continue;
         }
         if (argument == "--lib") {
@@ -610,7 +618,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto value = attached_or_next(arguments, index, argument, "-I");
             if (!value) return std::unexpected(value.error());
             if (value->empty()) return std::unexpected(error("empty include directory"));
-            options.include_directories.emplace_back(std::string{*value});
+            options.include_directories.push_back(path_from_utf8(*value));
             continue;
         }
         if (argument == "-D" || argument.starts_with("-D")) {
@@ -624,7 +632,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             auto value = attached_or_next(arguments, index, argument, "-L");
             if (!value) return std::unexpected(value.error());
             if (value->empty()) return std::unexpected(error("empty library directory"));
-            options.library_directories.emplace_back(std::string{*value});
+            options.library_directories.push_back(path_from_utf8(*value));
             continue;
         }
         if (argument == "-l" || argument.starts_with("-l")) {
@@ -652,7 +660,7 @@ parse_arguments(const std::span<const std::string_view> arguments) {
             return std::unexpected(error("unknown option '" + std::string{argument} + "'"));
         }
 
-        options.build.sources.emplace_back(std::string{argument});
+        options.build.sources.push_back(path_from_utf8(argument));
     }
 
     if (native_linker_tail && !native_linker_tail_has_argument) {
