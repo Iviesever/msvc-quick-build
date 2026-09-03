@@ -35,6 +35,7 @@
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
+#include "mqb/process/Process.hpp"
 
 namespace mqb::app {
 namespace {
@@ -104,7 +105,10 @@ void add_portable_root_if_missing(
         message += mqb::msvc::to_string(capability.lifecycle);
         message += " for toolset ";
         message += version;
-        if (!capability.guidance.empty()) message += ": " + capability.guidance;
+        if (!capability.guidance.empty()) {
+            message += ": ";
+            message += capability.guidance;
+        }
         if (capability.lifecycle == mqb::msvc::ParameterLifecycle::deprecated) {
             diagnostics::print_warning(message);
             continue;
