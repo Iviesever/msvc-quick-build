@@ -1,0 +1,67 @@
+name: Module Target Inspection Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/include/mqb/orchestration/MsvcModuleTargetCoordinator.hpp'
+      - 'cpp/include/mqb/orchestration/MsvcModuleCompileCoordinator.hpp'
+      - 'cpp/include/mqb/orchestration/MsvcIncrementalModuleScanCoordinator.hpp'
+      - 'cpp/include/mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp'
+      - 'cpp/src/orchestration/modules/ModuleTargetArtifactRegistry.cpp'
+      - 'cpp/src/orchestration/modules/ModuleTargetArtifactRegistry.hpp'
+      - 'cpp/src/orchestration/modules/ModuleTargetScanner.cpp'
+      - 'cpp/src/orchestration/modules/ModuleTargetScanner.hpp'
+      - 'cpp/src/orchestration/modules/ModuleTargetPreparation.cpp'
+      - 'cpp/src/orchestration/modules/ModuleTargetPreparation.hpp'
+      - 'cpp/src/orchestration/modules/ModuleTargetLinkRequestFactory.cpp'
+      - 'cpp/src/orchestration/modules/ModuleTargetLinkRequestFactory.hpp'
+      - 'cpp/src/orchestration/modules/StandardLibraryModuleProvider.cpp'
+      - 'cpp/src/orchestration/modules/StandardLibraryModuleProvider.hpp'
+      - 'cpp/src/orchestration/modules/MsvcModuleTargetCoordinator.cpp'
+      - 'cpp/src/orchestration/modules/MsvcModuleCompileCoordinator.cpp'
+      - 'cpp/src/orchestration/modules/MsvcIncrementalModuleScanCoordinator.cpp'
+      - 'cpp/src/orchestration/incremental/MsvcIncrementalLinkCoordinator.cpp'
+      - 'cpp/src/core/**'
+      - 'cpp/src/modules/**'
+      - 'cpp/src/msvc/**'
+      - 'cpp/mqb.json'
+      - 'tests/native/module_target_inspection_contract.cpp'
+      - 'tests/native/verify_module_target_inspection.ps1'
+      - 'tests/native/assert_cpp_layout.ps1'
+      - '.github/workflows/module-target-inspection-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: module-target-inspection-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-module-target-inspection:
+    name: Verify side-effect-free module target inspection
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Acquire pinned MQB seed
+        id: seed
+        shell: pwsh
+        run: |
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD `
+            -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$seed" >> $env:GITHUB_OUTPUT
+
+      - name: Verify module target inspection contract
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/verify_module_target_inspection.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+            -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
