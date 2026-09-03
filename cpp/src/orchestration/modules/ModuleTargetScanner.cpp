@@ -2,21 +2,13 @@
 
 #include <expected>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "mqb/core/BuildSignature.hpp"
-#include "mqb/core/CompileCache.hpp"
-#include "mqb/core/CompileCacheFile.hpp"
-#include "mqb/core/FileSnapshot.hpp"
-#include "mqb/modules/P1689.hpp"
-#include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/orchestration/BoundedWorkScheduler.hpp"
+#include "mqb/orchestration/MsvcIncrementalModuleScanCoordinator.hpp"
 
 namespace mqb::orchestration::detail {
 namespace {
@@ -42,126 +34,6 @@ namespace fs = std::filesystem;
     return std::nullopt;
 }
 
-[[nodiscard]] std::optional<FileSnapshot> snapshot_regular_file(const fs::path& path) {
-    if (path.empty()) return std::nullopt;
-    std::error_code error_code;
-    const auto status = fs::status(path, error_code);
-    if (error_code || !fs::is_regular_file(status)) return std::nullopt;
-    const auto modified = fs::last_write_time(path, error_code);
-    if (error_code) return std::nullopt;
-    return FileSnapshot{
-        .path = path,
-        .exists = true,
-        .modified = modified,
-    };
-}
-
-[[nodiscard]] std::optional<FileSnapshot> snapshot_file_or_directory(const fs::path& path) {
-    if (path.empty()) return std::nullopt;
-    // Module-scan evidence admits both file and directory dependencies. Its
-    // identity is existence + mtime, so last_write_time() alone provides the
-    // required warm-path probe and avoids a redundant preceding status().
-    std::error_code error_code;
-    const auto modified = fs::last_write_time(path, error_code);
-    if (error_code) return std::nullopt;
-    return FileSnapshot{
-        .path = path,
-        .exists = true,
-        .modified = modified,
-    };
-}
-
-[[nodiscard]] bool same_path(const fs::path& left, const fs::path& right) {
-    if (left == right || left.lexically_normal() == right.lexically_normal()) {
-        return true;
-    }
-    std::error_code error_code;
-    return fs::equivalent(left, right, error_code) && !error_code;
-}
-
-[[nodiscard]] bool same_ordered_paths(
-    const std::span<const fs::path> left,
-    const std::span<const fs::path> right) {
-    if (left.size() != right.size()) return false;
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        if (!same_path(left[index], right[index])) return false;
-    }
-    return true;
-}
-
-[[nodiscard]] std::optional<std::string> read_text_file(const fs::path& path) {
-    std::ifstream stream{path, std::ios::binary};
-    if (!stream) return std::nullopt;
-    std::string text{
-        std::istreambuf_iterator<char>{stream},
-        std::istreambuf_iterator<char>{}};
-    if (stream.bad()) return std::nullopt;
-    return text;
-}
-
-[[nodiscard]] std::optional<msvc::ModuleScanResult> try_reuse_scan(
-    const ModuleCompileSourceRequest& source,
-    const CompilerOptions& options,
-    const std::optional<fs::path>& working_directory,
-    msvc::MsvcModuleDependencyScanner& scanner) {
-    auto loaded = CompileCacheFile::load(source.artifacts.compile_cache);
-    if (!loaded || !*loaded || !(**loaded).module_scan) {
-        return std::nullopt;
-    }
-    const auto& entry = **loaded;
-    const auto& evidence = *entry.module_scan;
-
-    // Module-scan migration is encoded in BuildSignature's v2 scan domain.
-    // Old evidence fails signature validation exactly once; valid new evidence
-    // may legitimately have zero include roots and zero directory snapshots.
-    const auto current_roots = msvc::include_search_roots(
-        options,
-        scanner.toolchain().environment,
-        working_directory);
-    if (!same_ordered_paths(entry.include_search_roots, current_roots)) {
-        return std::nullopt;
-    }
-
-    const BuildSignature signature = BuildSignature::for_module_scan(
-        source.source,
-        source.kind,
-        scanner.toolchain().identity,
-        options);
-    auto source_snapshot = snapshot_regular_file(source.source);
-    auto output_snapshot = snapshot_regular_file(source.artifacts.module_dependencies);
-    if (!source_snapshot || !output_snapshot) {
-        return std::nullopt;
-    }
-
-    std::vector<FileSnapshot> dependency_snapshots;
-    dependency_snapshots.reserve(evidence.dependencies.size());
-    for (const auto& dependency : evidence.dependencies) {
-        auto snapshot = snapshot_file_or_directory(dependency.path);
-        if (!snapshot) return std::nullopt;
-        dependency_snapshots.push_back(std::move(*snapshot));
-    }
-
-    if (!ModuleScanEvidenceValidator::reusable(
-            evidence,
-            signature,
-            *source_snapshot,
-            *output_snapshot,
-            dependency_snapshots)) {
-        return std::nullopt;
-    }
-
-    auto text = read_text_file(source.artifacts.module_dependencies);
-    if (!text) return std::nullopt;
-    auto dependencies = modules::P1689Parser::parse(*text);
-    if (!dependencies) return std::nullopt;
-
-    return msvc::ModuleScanResult{
-        .process = process::ProcessResult{},
-        .dependencies = std::move(*dependencies),
-        .reused = true,
-    };
-}
-
 } // namespace
 
 std::expected<msvc::ModuleScanResult, msvc::ModuleScanError>
@@ -170,24 +42,19 @@ scan_module_source(
     const CompilerOptions& options,
     const fs::path& working_directory,
     msvc::MsvcModuleDependencyScanner& scanner) {
-    const auto effective_working_directory = working_directory_for(
-        working_directory,
-        source.source);
-    if (auto reused = try_reuse_scan(
-            source,
-            options,
-            effective_working_directory,
-            scanner)) {
-        return std::move(*reused);
-    }
-
-    return scanner.scan(msvc::ModuleScanInvocation{
+    MsvcIncrementalModuleScanCoordinator coordinator{scanner};
+    auto scanned = coordinator.run(IncrementalModuleScanRequest{
         .source = source.source,
-        .output_file = source.artifacts.module_dependencies,
+        .module_dependencies_file = source.artifacts.module_dependencies,
+        .compile_cache_file = source.artifacts.compile_cache,
         .options = options,
         .kind = source.kind,
-        .working_directory = effective_working_directory,
+        .working_directory = working_directory_for(
+            working_directory,
+            source.source),
     });
+    if (!scanned) return std::unexpected(scanned.error());
+    return std::move(scanned->result);
 }
 
 std::expected<ModuleTargetScanBatch, IncrementalModuleTargetError>
