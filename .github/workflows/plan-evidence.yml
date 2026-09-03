@@ -7,23 +7,32 @@ on:
       - 'cpp/src/app/main.cpp'
       - 'cpp/src/app/targets/BuildIntrospectionSetup.cpp'
       - 'cpp/src/app/targets/BuildIntrospectionSetup.hpp'
+      - 'cpp/src/app/targets/ModulePlanCommand.cpp'
+      - 'cpp/src/app/targets/ModulePlanCommand.hpp'
       - 'cpp/src/app/targets/PlanCommand.cpp'
       - 'cpp/src/app/targets/PlanCommand.hpp'
+      - 'cpp/src/app/targets/PlanOutput.cpp'
+      - 'cpp/src/app/targets/PlanOutput.hpp'
+      - 'cpp/src/app/targets/PlanSupport.hpp'
       - 'cpp/include/mqb/msvc/MsvcCompiler.hpp'
       - 'cpp/include/mqb/msvc/MsvcCompileExecutor.hpp'
       - 'cpp/include/mqb/msvc/MsvcLinker.hpp'
       - 'cpp/include/mqb/msvc/MsvcLibrarian.hpp'
+      - 'cpp/include/mqb/msvc/MsvcModuleDependencyScanner.hpp'
       - 'cpp/src/msvc/compiler/**'
       - 'cpp/src/msvc/linker/**'
       - 'cpp/src/msvc/librarian/**'
+      - 'cpp/src/msvc/modules/**'
       - 'cpp/include/mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp'
       - 'cpp/include/mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp'
       - 'cpp/include/mqb/orchestration/MsvcIncrementalArchiveCoordinator.hpp'
       - 'cpp/include/mqb/orchestration/MsvcIncrementalPchCoordinator.hpp'
-      - 'cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp'
-      - 'cpp/src/orchestration/incremental/MsvcIncrementalLinkCoordinator.cpp'
-      - 'cpp/src/orchestration/incremental/MsvcIncrementalArchiveCoordinator.cpp'
-      - 'cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp'
+      - 'cpp/include/mqb/orchestration/MsvcIncrementalModuleScanCoordinator.hpp'
+      - 'cpp/include/mqb/orchestration/MsvcModuleCompileCoordinator.hpp'
+      - 'cpp/include/mqb/orchestration/MsvcModuleTargetCoordinator.hpp'
+      - 'cpp/src/orchestration/incremental/**'
+      - 'cpp/src/orchestration/modules/**'
+      - 'cpp/src/modules/**'
       - 'cpp/tests/msvc/librarian/librarian_arguments_tests.cpp'
       - 'cpp/src/core/**'
       - 'tests/native/assert_cpp_layout.ps1'
@@ -42,7 +51,7 @@ jobs:
   verify-plan:
     name: Verify side-effect-free build plan
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
