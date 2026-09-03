@@ -43,12 +43,8 @@ using Clock = std::chrono::steady_clock;
     return std::nullopt;
 }
 
-} // namespace
-
-std::expected<ModuleTargetPreparation, IncrementalModuleTargetError>
-prepare_module_target(
-    const IncrementalModuleTargetRequest& request,
-    msvc::MsvcModuleDependencyScanner& scanner) {
+[[nodiscard]] std::expected<void, IncrementalModuleTargetError>
+validate_request(const IncrementalModuleTargetRequest& request) {
     if (request.sources.empty()) {
         return std::unexpected(failure(
             IncrementalModuleTargetErrorCode::no_sources,
@@ -59,9 +55,11 @@ prepare_module_target(
             IncrementalModuleTargetErrorCode::invalid_parallelism,
             "module target scan and compile parallelism must be automatic or a positive fixed worker count"));
     }
+    return {};
+}
 
-    const auto preparation_started = Clock::now();
-
+[[nodiscard]] std::expected<ModuleTargetArtifactRegistry, IncrementalModuleTargetError>
+register_requested_artifacts(const IncrementalModuleTargetRequest& request) {
     ModuleTargetArtifactRegistry artifacts{request.sources.size()};
     for (const auto& source : request.sources) {
         if (auto registered = artifacts.add_requested_source(source); !registered) {
@@ -71,30 +69,15 @@ prepare_module_target(
     if (auto registered = artifacts.add_target(request.target); !registered) {
         return std::unexpected(std::move(registered.error()));
     }
+    return artifacts;
+}
 
-    const auto scan_started = Clock::now();
-    auto scanned = scan_requested_module_sources(request, scanner);
-    if (!scanned) {
-        return std::unexpected(std::move(scanned.error()));
-    }
-
-    ModuleTargetPreparation prepared;
-    prepared.scans = std::move(scanned->scans);
-    std::vector<modules::ScannedModuleUnit> scanned_units = std::move(scanned->units);
-    std::vector<ModuleCompileSourceRequest> compile_sources = request.sources;
-    compile_sources.reserve(request.sources.size() + 2u);
-
-    if (auto injected = inject_standard_library_module_providers(
-            request,
-            scanner,
-            artifacts,
-            scanned_units,
-            compile_sources); !injected) {
-        return std::unexpected(std::move(injected.error()));
-    }
-    prepared.timings.dependency_scan = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        Clock::now() - scan_started);
-
+[[nodiscard]] std::expected<ModuleTargetPreparation, IncrementalModuleTargetError>
+finish_preparation(
+    const IncrementalModuleTargetRequest& request,
+    ModuleTargetArtifactRegistry& artifacts,
+    std::vector<modules::ScannedModuleUnit> scanned_units,
+    std::vector<ModuleCompileSourceRequest> compile_sources) {
     auto plan = modules::ModuleDependencyGraphBuilder::build(
         scanned_units,
         request.compiler_options.external_module_providers);
@@ -105,7 +88,9 @@ prepare_module_target(
         error.graph_error = plan.error();
         return std::unexpected(std::move(error));
     }
-    prepared.plan = *plan;
+
+    ModuleTargetPreparation prepared;
+    prepared.plan = std::move(*plan);
 
     std::vector<ModuleCompileHeaderUnitRequest> header_units;
     header_units.reserve(prepared.plan.header_units.size());
@@ -157,10 +142,106 @@ prepare_module_target(
         .working_directory = request.working_directory,
         .max_parallel_compiles = request.max_parallel_compiles,
     };
+    return prepared;
+}
 
+} // namespace
+
+std::expected<ModuleTargetPreparationInspection, IncrementalModuleTargetError>
+inspect_module_target_preparation(
+    const IncrementalModuleTargetRequest& request,
+    msvc::MsvcModuleDependencyScanner& scanner) {
+    if (auto validated = validate_request(request); !validated) {
+        return std::unexpected(std::move(validated.error()));
+    }
+
+    auto artifacts = register_requested_artifacts(request);
+    if (!artifacts) return std::unexpected(std::move(artifacts.error()));
+
+    auto inspected = inspect_requested_module_sources(request, scanner);
+    if (!inspected) return std::unexpected(std::move(inspected.error()));
+
+    ModuleTargetPreparationInspection result;
+    result.scans = std::move(inspected->scans);
+    if (!inspected->complete) {
+        return result;
+    }
+
+    std::vector<modules::ScannedModuleUnit> scanned_units =
+        std::move(inspected->units);
+    std::vector<ModuleCompileSourceRequest> compile_sources = request.sources;
+    compile_sources.reserve(request.sources.size() + 2u);
+
+    auto standard_modules_complete = inspect_standard_library_module_providers(
+        request,
+        scanner,
+        *artifacts,
+        scanned_units,
+        compile_sources,
+        result.scans);
+    if (!standard_modules_complete) {
+        return std::unexpected(std::move(standard_modules_complete.error()));
+    }
+    if (!*standard_modules_complete) {
+        return result;
+    }
+
+    auto prepared = finish_preparation(
+        request,
+        *artifacts,
+        std::move(scanned_units),
+        std::move(compile_sources));
+    if (!prepared) return std::unexpected(std::move(prepared.error()));
+    result.prepared = std::move(*prepared);
+    return result;
+}
+
+std::expected<ModuleTargetPreparation, IncrementalModuleTargetError>
+prepare_module_target(
+    const IncrementalModuleTargetRequest& request,
+    msvc::MsvcModuleDependencyScanner& scanner) {
+    if (auto validated = validate_request(request); !validated) {
+        return std::unexpected(std::move(validated.error()));
+    }
+
+    const auto preparation_started = Clock::now();
+
+    auto artifacts = register_requested_artifacts(request);
+    if (!artifacts) return std::unexpected(std::move(artifacts.error()));
+
+    const auto scan_started = Clock::now();
+    auto scanned = scan_requested_module_sources(request, scanner);
+    if (!scanned) return std::unexpected(std::move(scanned.error()));
+
+    std::vector<ModuleTargetScanResult> scans = std::move(scanned->scans);
+    std::vector<modules::ScannedModuleUnit> scanned_units =
+        std::move(scanned->units);
+    std::vector<ModuleCompileSourceRequest> compile_sources = request.sources;
+    compile_sources.reserve(request.sources.size() + 2u);
+
+    if (auto injected = inject_standard_library_module_providers(
+            request,
+            scanner,
+            *artifacts,
+            scanned_units,
+            compile_sources); !injected) {
+        return std::unexpected(std::move(injected.error()));
+    }
+    const auto dependency_scan = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - scan_started);
+
+    auto prepared = finish_preparation(
+        request,
+        *artifacts,
+        std::move(scanned_units),
+        std::move(compile_sources));
+    if (!prepared) return std::unexpected(std::move(prepared.error()));
+
+    prepared->scans = std::move(scans);
+    prepared->timings.dependency_scan = dependency_scan;
     const auto preparation_total = std::chrono::duration_cast<std::chrono::nanoseconds>(
         Clock::now() - preparation_started);
-    prepared.timings.compile_queue = preparation_total - prepared.timings.dependency_scan;
+    prepared->timings.compile_queue = preparation_total - dependency_scan;
     return prepared;
 }
 
