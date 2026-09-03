@@ -1,0 +1,69 @@
+name: Compilation Database Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/mqb.json'
+      - 'cpp/src/app/main.cpp'
+      - 'cpp/src/app/targets/CompdbCommand.cpp'
+      - 'cpp/src/app/targets/CompdbCommand.hpp'
+      - 'cpp/include/mqb/msvc/MsvcCompileExecutor.hpp'
+      - 'cpp/include/mqb/msvc/MsvcCompiler.hpp'
+      - 'cpp/src/msvc/compiler/**'
+      - 'tests/native/verify_compdb.ps1'
+      - '.github/workflows/compdb-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compdb-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-compdb:
+    name: Verify compile_commands.json contract
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Acquire pinned MQB seed
+        id: seed
+        shell: pwsh
+        run: |
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD `
+            -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$seed" >> $env:GITHUB_OUTPUT
+
+      - name: Build current Release MQB
+        id: current
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath 'VERSION' -Raw).Trim()
+          $output = Join-Path $PWD 'native-out/compdb-candidate/mqb.exe'
+          $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+            -RepoRoot $PWD `
+            -Version "$version-compdb" `
+            -Configuration Release `
+            -Clean `
+            -OutputPath $output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+            throw "Release MQB build output missing: $mqb"
+          }
+          "path=$mqb" >> $env:GITHUB_OUTPUT
+
+      - name: Verify compilation database contract
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/verify_compdb.ps1') `
+            -MqbPath '${{ steps.current.outputs.path }}' `
+            -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
