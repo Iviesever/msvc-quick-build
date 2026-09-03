@@ -92,6 +92,7 @@ int main() {
     using mqb::platform::windows::path_identity_contains;
     using mqb::platform::windows::path_identity_key;
     using mqb::platform::windows::quote_command_line_argument;
+    using mqb::platform::windows::utf16_to_utf8;
 
     expect(quote_command_line_argument(L"plain") == L"plain",
            "plain argument should not be quoted unnecessarily");
@@ -99,6 +100,24 @@ int main() {
            "empty argument must survive as an explicit argv element");
     expect(quote_command_line_argument(L"two words") == L"\"two words\"",
            "whitespace should force quoting");
+
+    const auto ascii_utf8 = utf16_to_utf8(L"plain");
+    expect(ascii_utf8.has_value() && *ascii_utf8 == "plain",
+           "UTF-16 ASCII argv should encode to identical UTF-8 text");
+    const auto unicode_utf8 = utf16_to_utf8(L"路径-日本語-测试-🙂");
+    expect(unicode_utf8.has_value() && *unicode_utf8 == "路径-日本語-测试-🙂",
+           "UTF-16 Unicode argv should preserve exact code points in UTF-8");
+    const auto empty_utf8 = utf16_to_utf8(L"");
+    expect(empty_utf8.has_value() && empty_utf8->empty(),
+           "empty UTF-16 argv should remain an explicit empty UTF-8 element");
+
+    const std::wstring embedded_nul{L'a', L'\0', L'b'};
+    expect(!utf16_to_utf8(embedded_nul).has_value(),
+           "embedded NUL must fail closed at the Windows argv encoding boundary");
+    const std::wstring unpaired_high_surrogate{
+        static_cast<wchar_t>(0xD800)};
+    expect(!utf16_to_utf8(unpaired_high_surrogate).has_value(),
+           "invalid UTF-16 surrogate input must fail closed instead of replacement encoding");
 
     expect_round_trip(
         L"C:\\Program Files\\MQB\\mqb.exe",
