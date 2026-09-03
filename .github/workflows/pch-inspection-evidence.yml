@@ -1,0 +1,52 @@
+name: PCH Inspection Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/include/mqb/orchestration/MsvcIncrementalPchCoordinator.hpp'
+      - 'cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp'
+      - 'cpp/include/mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp'
+      - 'cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp'
+      - 'cpp/src/core/**'
+      - 'cpp/src/msvc/**'
+      - 'cpp/mqb.json'
+      - 'tests/native/pch_inspection_contract.cpp'
+      - 'tests/native/verify_pch_inspection.ps1'
+      - 'tests/native/assert_cpp_layout.ps1'
+      - '.github/workflows/pch-inspection-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pch-inspection-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-pch-inspection:
+    name: Verify side-effect-free PCH inspection
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Acquire pinned MQB seed
+        id: seed
+        shell: pwsh
+        run: |
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD `
+            -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$seed" >> $env:GITHUB_OUTPUT
+
+      - name: Verify PCH inspection contract
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/verify_pch_inspection.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+            -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
