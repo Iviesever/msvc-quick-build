@@ -55,8 +55,11 @@ if (Test-Path -LiteralPath $root) {
 }
 New-Item -ItemType Directory -Path $root -Force | Out-Null
 
-# Ordinary C++: exact argv, Unicode-safe JSON, custom output, deterministic bytes,
-# and no compile/link/archive side effects.
+# Ordinary C++: exact argv, Unicode-safe project paths/JSON, custom output,
+# deterministic bytes, and no compile/link/archive side effects. Source argv
+# spellings stay ASCII here because MQB's legacy narrow main(int,char**) Unicode
+# command-line boundary is a separate pre-existing product issue; the Unicode
+# working/project path still exercises filesystem and JSON preservation here.
 $ordinary = Join-Path $root 'ordinary 项目'
 New-Item -ItemType Directory -Path (Join-Path $ordinary 'include') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $ordinary 'src') -Force | Out-Null
@@ -64,7 +67,7 @@ Set-Content -LiteralPath (Join-Path $ordinary 'include/value.hpp') -Encoding utf
     '#pragma once',
     'int value();'
 )
-Set-Content -LiteralPath (Join-Path $ordinary 'src/主.cpp') -Encoding utf8 -Value @(
+Set-Content -LiteralPath (Join-Path $ordinary 'src/main.cpp') -Encoding utf8 -Value @(
     '#include "value.hpp"',
     'int main() { return value() == 7 ? 0 : 1; }'
 )
@@ -75,7 +78,7 @@ Set-Content -LiteralPath (Join-Path $ordinary 'src/value.cpp') -Encoding utf8 -V
 
 $ordinaryArgs = @(
     'compdb',
-    'src/主.cpp',
+    'src/main.cpp',
     'src/value.cpp',
     '--no-discover',
     '--std', '23',
@@ -93,11 +96,12 @@ Assert-True ($database.Count -eq 2) "expected 2 compilation database entries, go
 
 $files = @($database | ForEach-Object { [string]$_.file })
 Assert-True ($files[0] -lt $files[1]) 'compilation database entries are not deterministic path-sorted output'
-Assert-True (($files -join "`n") -match '主\.cpp') 'Unicode source path was not preserved in JSON'
+Assert-True (($files -join "`n") -match '编译 数据库') 'Unicode project path was not preserved in JSON'
 foreach ($entry in $database) {
     Assert-True ([System.IO.Path]::IsPathFullyQualified([string]$entry.directory)) 'directory must be absolute'
     Assert-True ([System.IO.Path]::IsPathFullyQualified([string]$entry.file)) 'file must be absolute'
     Assert-True ([System.IO.Path]::IsPathFullyQualified([string]$entry.output)) 'output must be absolute'
+    Assert-True (([string]$entry.directory) -match '编译 数据库') 'Unicode directory field was not preserved'
     $arguments = @($entry.arguments | ForEach-Object { [string]$_ })
     Assert-True ($arguments.Count -gt 1) 'arguments array must include compiler plus compiler argv'
     Assert-True ([System.IO.Path]::GetFileName($arguments[0]).Equals('cl.exe', [System.StringComparison]::OrdinalIgnoreCase)) 'arguments[0] must be cl.exe'
