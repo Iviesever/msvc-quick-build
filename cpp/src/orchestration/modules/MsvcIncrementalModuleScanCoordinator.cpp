@@ -249,11 +249,12 @@ MsvcIncrementalModuleScanCoordinator::run(
     if (!inspection) return std::unexpected(inspection.error());
 
     if (inspection->reusable()) {
+        auto dependencies = *inspection->dependencies;
         return IncrementalModuleScanResult{
             .inspection = std::move(*inspection),
             .result = msvc::ModuleScanResult{
                 .process = process::ProcessResult{},
-                .dependencies = *inspection->dependencies,
+                .dependencies = std::move(dependencies),
                 .reused = true,
             },
             .scanned = false,
