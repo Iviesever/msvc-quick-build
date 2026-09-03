@@ -195,12 +195,13 @@ int main() {
         .source = mqb::msvc::ToolchainSource::visual_studio,
     };
 
-    // Compile inspection: cold plan is visible without cl.exe/cache/output side effects.
-    const fs::path source = fixture.path() / "compile" / "main.cpp";
-    const fs::path header = fixture.path() / "compile" / "value.hpp";
-    const fs::path object = fixture.path() / "compile" / "main.obj";
-    const fs::path dependencies = fixture.path() / "compile" / "main.deps.json";
-    const fs::path compile_cache = fixture.path() / "compile-cache" / "main.mqbcache";
+    // Keep compiler-visible input roots physically separate from generated
+    // outputs/state so fixture writes cannot mutate include-directory freshness.
+    const fs::path source = fixture.path() / "input" / "compile" / "main.cpp";
+    const fs::path header = fixture.path() / "input" / "compile" / "value.hpp";
+    const fs::path object = fixture.path() / "state" / "compile" / "main.obj";
+    const fs::path dependencies = fixture.path() / "state" / "compile" / "main.deps.json";
+    const fs::path compile_cache = fixture.path() / "state" / "compile-cache" / "main.mqbcache";
     write_text(source, "#include \"value.hpp\"\nint main() { return VALUE; }\n");
     write_text(header, "#pragma once\n#define VALUE 0\n");
 
