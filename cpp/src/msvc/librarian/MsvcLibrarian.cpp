@@ -1,6 +1,5 @@
 #include "mqb/msvc/MsvcLibrarian.hpp"
 
-#include <chrono>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -30,11 +29,10 @@ namespace fs = std::filesystem;
     return architecture == Architecture::x86 ? "/MACHINE:X86" : "/MACHINE:X64";
 }
 
-[[nodiscard]] fs::path temporary_archive_path(const fs::path& output) {
-    fs::path temporary = output;
-    temporary += ".tmp." + std::to_string(
-        std::chrono::steady_clock::now().time_since_epoch().count());
-    return temporary;
+[[nodiscard]] fs::path transaction_archive_path(const fs::path& output) {
+    fs::path transaction = output;
+    transaction += ".mqb-tmp";
+    return transaction;
 }
 
 void remove_if_present(const fs::path& path) noexcept {
@@ -129,16 +127,42 @@ MsvcLibrarian::build_arguments(const ArchiveInvocation& invocation) {
     return arguments;
 }
 
-std::expected<process::ProcessResult, LibrarianError>
-MsvcLibrarian::archive(const ArchiveInvocation& invocation) const {
-    if (invocation.objects.empty()) {
-        return std::unexpected(failure(
-            LibrarianErrorCode::invalid_request, "archive invocation has no object inputs"));
-    }
+std::expected<MsvcArchiveRecipe, LibrarianError>
+MsvcLibrarian::build_recipe(
+    const MsvcToolchain& toolchain,
+    const ArchiveInvocation& invocation) {
     if (invocation.output.empty()) {
         return std::unexpected(failure(
             LibrarianErrorCode::invalid_request, "archive output path is empty"));
     }
+
+    const fs::path transaction_output = transaction_archive_path(invocation.output);
+    ArchiveInvocation transaction_invocation = invocation;
+    transaction_invocation.output = transaction_output;
+    auto arguments = build_arguments(transaction_invocation);
+    if (!arguments) return std::unexpected(arguments.error());
+
+    process::ProcessSpec spec;
+    spec.executable = toolchain.librarian;
+    spec.arguments = std::move(*arguments);
+    spec.working_directory = invocation.working_directory;
+    spec.environment = toolchain.environment;
+    suppress_ambient_librarian_repro(spec.environment);
+    spec.inherit_environment = true;
+    spec.capture_stdout = true;
+    spec.capture_stderr = true;
+
+    return MsvcArchiveRecipe{
+        .invocation = invocation,
+        .transaction_output = transaction_output,
+        .process = std::move(spec),
+    };
+}
+
+std::expected<process::ProcessResult, LibrarianError>
+MsvcLibrarian::archive(const ArchiveInvocation& invocation) const {
+    auto recipe = build_recipe(toolchain_, invocation);
+    if (!recipe) return std::unexpected(recipe.error());
 
     std::error_code ec;
     if (!invocation.output.parent_path().empty()) {
@@ -149,26 +173,11 @@ MsvcLibrarian::archive(const ArchiveInvocation& invocation) const {
             invocation.output.parent_path()));
     }
 
-    const fs::path temporary_output = temporary_archive_path(invocation.output);
-    remove_if_present(temporary_output);
-    ArchiveInvocation temporary_invocation = invocation;
-    temporary_invocation.output = temporary_output;
-    auto arguments = build_arguments(temporary_invocation);
-    if (!arguments) return std::unexpected(arguments.error());
+    remove_if_present(recipe->transaction_output);
 
-    process::ProcessSpec spec;
-    spec.executable = toolchain_.librarian;
-    spec.arguments = std::move(*arguments);
-    spec.working_directory = invocation.working_directory;
-    spec.environment = toolchain_.environment;
-    suppress_ambient_librarian_repro(spec.environment);
-    spec.inherit_environment = true;
-    spec.capture_stdout = true;
-    spec.capture_stderr = true;
-
-    auto result = runner_.run(spec);
+    auto result = runner_.run(recipe->process);
     if (!result) {
-        remove_if_present(temporary_output);
+        remove_if_present(recipe->transaction_output);
         return std::unexpected(LibrarianError{
             .code = LibrarianErrorCode::process_failed,
             .message = "failed to launch MSVC librarian",
@@ -177,7 +186,7 @@ MsvcLibrarian::archive(const ArchiveInvocation& invocation) const {
         });
     }
     if (result->exit_code != 0) {
-        remove_if_present(temporary_output);
+        remove_if_present(recipe->transaction_output);
         return std::unexpected(LibrarianError{
             .code = LibrarianErrorCode::archive_failed,
             .message = "MSVC librarian returned a non-zero exit code",
@@ -187,35 +196,35 @@ MsvcLibrarian::archive(const ArchiveInvocation& invocation) const {
     }
 
     ec.clear();
-    if (!fs::is_regular_file(temporary_output, ec) || ec) {
-        remove_if_present(temporary_output);
+    if (!fs::is_regular_file(recipe->transaction_output, ec) || ec) {
+        remove_if_present(recipe->transaction_output);
         return std::unexpected(failure(
             LibrarianErrorCode::output_install_failed,
             "MSVC librarian succeeded without producing the temporary archive",
-            temporary_output));
+            recipe->transaction_output));
     }
 
     ec.clear();
     if (fs::exists(invocation.output, ec) && !ec) {
         fs::remove(invocation.output, ec);
         if (ec) {
-            remove_if_present(temporary_output);
+            remove_if_present(recipe->transaction_output);
             return std::unexpected(failure(
                 LibrarianErrorCode::output_install_failed,
                 "failed to remove previous static archive before replacement",
                 invocation.output));
         }
     } else if (ec) {
-        remove_if_present(temporary_output);
+        remove_if_present(recipe->transaction_output);
         return std::unexpected(failure(
             LibrarianErrorCode::output_install_failed,
             "failed to query previous static archive before replacement",
             invocation.output));
     }
 
-    fs::rename(temporary_output, invocation.output, ec);
+    fs::rename(recipe->transaction_output, invocation.output, ec);
     if (ec) {
-        remove_if_present(temporary_output);
+        remove_if_present(recipe->transaction_output);
         return std::unexpected(failure(
             LibrarianErrorCode::output_install_failed,
             "failed to install completed static archive",

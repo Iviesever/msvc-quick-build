@@ -23,10 +23,12 @@
 #include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcFuzzerPolicy.hpp"
+#include "mqb/msvc/MsvcLibrarian.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcOpenMpPolicy.hpp"
 #include "mqb/msvc/MsvcParameterCapabilities.hpp"
 #include "mqb/msvc/MsvcParameterEngine.hpp"
+#include "mqb/orchestration/MsvcIncrementalArchiveCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalPchCoordinator.hpp"
@@ -61,14 +63,6 @@ struct PlanStep {
     return std::string{
         reinterpret_cast<const char*>(bytes.data()),
         bytes.size()};
-}
-
-[[nodiscard]] fs::path absolute_from(
-    const fs::path& base,
-    const fs::path& path) {
-    return path.is_absolute()
-        ? path.lexically_normal()
-        : (base / path).lexically_normal();
 }
 
 [[nodiscard]] std::string json_escape(const std::string_view value) {
@@ -166,17 +160,20 @@ int print_setup_error(const BuildIntrospectionError& error) {
 }
 
 [[nodiscard]] std::expected<void, std::string>
-validate_linker_capabilities(
+validate_tool_capabilities(
+    const mqb::msvc::ParameterTool tool,
     const std::vector<std::string>& arguments,
     const std::string_view vc_tools_version) {
     for (const auto& argument : arguments) {
         const auto capability = mqb::msvc::MsvcParameterCapabilities::inspect(
-            mqb::msvc::ParameterTool::linker,
+            tool,
             argument,
             vc_tools_version);
         if (capability.lifecycle == mqb::msvc::ParameterLifecycle::active) continue;
 
-        std::string message = "MSVC linker option '" + argument + "' is ";
+        std::string message = "MSVC ";
+        message += mqb::msvc::to_string(tool);
+        message += " option '" + argument + "' is ";
         message += mqb::msvc::to_string(capability.lifecycle);
         message += " for toolset ";
         message += vc_tools_version;
@@ -318,6 +315,7 @@ void render_json_process(
            << "  \"toolchain\": {\"compiler\": \""
            << json_escape(path_to_utf8(context.toolchain.identity.compiler))
            << "\", \"linker\": \"" << json_escape(path_to_utf8(context.toolchain.linker))
+           << "\", \"librarian\": \"" << json_escape(path_to_utf8(context.toolchain.librarian))
            << "\", \"version\": \"" << json_escape(context.toolchain.identity.version)
            << "\"},\n"
            << "  \"steps\": [\n";
@@ -358,6 +356,17 @@ void render_json_process(
     return output.str();
 }
 
+void render_plan(
+    const PlanFormat format,
+    const BuildIntrospectionContext& context,
+    const std::vector<PlanStep>& steps) {
+    if (format == PlanFormat::json) {
+        std::cout << render_json(context, steps);
+    } else {
+        std::cout << render_text(context, steps);
+    }
+}
+
 } // namespace
 
 int run_plan_command(const std::span<const std::string_view> arguments) {
@@ -392,24 +401,41 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
             "Modules/Header Units require graph-aware inspection and are intentionally fail-closed");
         return 2;
     }
-    if (context->options.build.target_kind == mqb::TargetKind::static_library) {
-        diagnostics::print_error(
-            "mqb plan does not yet expose static-library execution recipes; "
-            "lib.exe uses an execution-time transactional temporary archive path, so exact argv is intentionally fail-closed");
-        return 2;
-    }
-    if (!context->options.librarian_arguments.empty()) {
-        diagnostics::print_error(
-            "native MSVC librarian policy is only valid for static-library targets");
-        return 2;
-    }
 
-    auto linker_capabilities = validate_linker_capabilities(
-        context->options.linker_arguments,
-        context->toolchain.identity.version);
-    if (!linker_capabilities) {
-        diagnostics::print_error(linker_capabilities.error());
-        return 2;
+    const bool static_target =
+        context->options.build.target_kind == mqb::TargetKind::static_library;
+    if (static_target) {
+        if (context->project.subsystem_explicit
+            || !context->options.library_directories.empty()
+            || !context->options.libraries.empty()
+            || !context->options.linker_arguments.empty()) {
+            diagnostics::print_error(
+                "static-library targets do not accept linker-only policy "
+                "(subsystem, library paths/libraries, or linker args)");
+            return 2;
+        }
+        auto librarian_capabilities = validate_tool_capabilities(
+            mqb::msvc::ParameterTool::librarian,
+            context->options.librarian_arguments,
+            context->toolchain.identity.version);
+        if (!librarian_capabilities) {
+            diagnostics::print_error(librarian_capabilities.error());
+            return 2;
+        }
+    } else {
+        if (!context->options.librarian_arguments.empty()) {
+            diagnostics::print_error(
+                "native MSVC librarian policy is only valid for static-library targets");
+            return 2;
+        }
+        auto linker_capabilities = validate_tool_capabilities(
+            mqb::msvc::ParameterTool::linker,
+            context->options.linker_arguments,
+            context->toolchain.identity.version);
+        if (!linker_capabilities) {
+            diagnostics::print_error(linker_capabilities.error());
+            return 2;
+        }
     }
 
     mqb::msvc::MsvcCompileExecutor compile_executor{context->toolchain, runner};
@@ -522,6 +548,58 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
         objects.push_back(source.artifacts.object);
     }
 
+    if (static_target) {
+        mqb::msvc::MsvcLibrarian librarian{context->toolchain, runner};
+        mqb::orchestration::MsvcIncrementalArchiveCoordinator archive_coordinator{
+            context->toolchain,
+            librarian};
+        const mqb::orchestration::IncrementalArchiveRequest archive_request{
+            .objects = objects,
+            .output = context->target_artifacts.executable,
+            .cache_file = context->target_artifacts.link_cache,
+            .working_directory = context->project.project_root,
+            .architecture = context->options.build.architecture,
+            .link_time_code_generation = context->project.effective.link_time_code_generation,
+            .additional_arguments = context->options.librarian_arguments,
+            .force_archive = pch_planned || any_compile_planned,
+        };
+        auto archive_inspection = archive_coordinator.inspect(archive_request);
+        if (!archive_inspection) {
+            diagnostics::print_error(archive_inspection.error().message);
+            return 5;
+        }
+
+        const bool archive_planned = !archive_inspection->plan.empty();
+        PlanStep archive_step{
+            .kind = "archive",
+            .label = display_path(
+                context->project.project_root,
+                context->target_artifacts.executable),
+            .planned = archive_planned,
+            .reasons = archive_inspection->validation.reasons,
+            .outputs = {context->target_artifacts.executable},
+        };
+        if (archive_planned) {
+            if (!archive_inspection->invocation) {
+                diagnostics::print_error(
+                    "mqb plan received an archive action without its typed librarian invocation");
+                return 5;
+            }
+            auto recipe = mqb::msvc::MsvcLibrarian::build_recipe(
+                context->toolchain,
+                *archive_inspection->invocation);
+            if (!recipe) {
+                diagnostics::print_error(
+                    "failed to model archive recipe: " + recipe.error().message);
+                return 5;
+            }
+            archive_step.process = std::move(recipe->process);
+        }
+        steps.push_back(std::move(archive_step));
+        render_plan(parsed->format, *context, steps);
+        return 0;
+    }
+
     mqb::LinkOptions link_options;
     link_options.configuration = context->options.build.configuration;
     link_options.architecture = context->options.build.architecture;
@@ -612,29 +690,25 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
     }
     steps.push_back(std::move(link_step));
 
-    if (parsed->format == PlanFormat::json) {
-        std::cout << render_json(*context, steps);
-    } else {
-        std::cout << render_text(*context, steps);
-    }
+    render_plan(parsed->format, *context, steps);
     return 0;
 }
 
 std::string_view plan_usage() noexcept {
     return R"(Usage:
   mqb plan [entry.cpp] [options] [MSVC-compiler-options] [/link linker-options...]
-  mqb plan [source...] [options] [MSVC-compiler-options] [/link linker-options...]
+  mqb plan [source...] [options] [MSVC-compiler-options] [/lib librarian-options...]
 
 Inspect the exact MQB incremental decision without compiling, linking, archiving,
 or mutating project .mqb state. The command reports cache hit/miss decisions,
-rebuild reasons, planned artifacts, and exact cl.exe/link.exe process recipes.
+rebuild reasons, planned artifacts, and exact cl.exe/link.exe/lib.exe process recipes.
 
 Plan-only options:
   --format <text|json>     Output format (default: text)
 
-Other options follow `mqb build`. The current slice supports ordinary executable
-and DLL targets, including first-class PCH creators/consumers. Modules/Header Units
-and static-library execution recipes fail closed instead of emitting approximate plans.
+Other options follow `mqb build`. Ordinary executable, DLL, and static-library
+C/C++ targets are supported, including first-class PCH creators/consumers.
+Modules/Header Units remain fail-closed until graph-aware inspection is available.
 )";
 }
 

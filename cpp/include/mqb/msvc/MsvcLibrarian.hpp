@@ -20,6 +20,8 @@ struct ArchiveInvocation {
     Architecture architecture{Architecture::x64};
     bool link_time_code_generation{false};
     std::vector<std::string> additional_arguments;
+
+    [[nodiscard]] bool operator==(const ArchiveInvocation&) const = default;
 };
 
 enum class LibrarianErrorCode {
@@ -39,6 +41,16 @@ struct LibrarianError {
     std::optional<process::ProcessResult> process_result;
 };
 
+// Pure representation of MQB's transactional lib.exe invocation. The public
+// invocation retains the final owned .lib path while process argv targets the
+// deterministic sibling transaction path that archive() installs atomically on
+// success. Construction does not touch the filesystem or launch lib.exe.
+struct MsvcArchiveRecipe {
+    ArchiveInvocation invocation;
+    std::filesystem::path transaction_output;
+    process::ProcessSpec process;
+};
+
 class MsvcLibrarian {
 public:
     MsvcLibrarian(const MsvcToolchain& toolchain, process::ProcessRunner& runner)
@@ -49,6 +61,11 @@ public:
 
     [[nodiscard]] static std::expected<std::vector<std::string>, LibrarianError>
     build_arguments(const ArchiveInvocation& invocation);
+
+    [[nodiscard]] static std::expected<MsvcArchiveRecipe, LibrarianError>
+    build_recipe(
+        const MsvcToolchain& toolchain,
+        const ArchiveInvocation& invocation);
 
     [[nodiscard]] std::expected<process::ProcessResult, LibrarianError>
     archive(const ArchiveInvocation& invocation) const;

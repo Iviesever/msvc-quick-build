@@ -56,6 +56,11 @@ struct IncrementalArchiveInspection {
     ArchiveCacheValidation validation;
     BuildPlan plan;
     std::vector<IncrementalArchiveWarning> warnings;
+    // Present exactly when the plan contains an ArchiveAction. This is the
+    // typed logical invocation consumed by MsvcLibrarian::build_recipe() and
+    // real archive execution, so introspection never reconstructs librarian
+    // routing/LTCG/architecture policy independently.
+    std::optional<msvc::ArchiveInvocation> invocation;
 };
 
 struct IncrementalArchiveResult : IncrementalArchiveInspection {

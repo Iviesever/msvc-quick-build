@@ -195,11 +195,16 @@ int main() {
         .source = mqb::msvc::ToolchainSource::visual_studio,
     };
 
-    // Compile inspection: cold plan is visible without cl.exe/cache/output side effects.
-    const fs::path source = fixture.path() / "compile" / "main.cpp";
-    const fs::path header = fixture.path() / "compile" / "value.hpp";
-    const fs::path object = fixture.path() / "compile" / "main.obj";
-    const fs::path dependencies = fixture.path() / "compile" / "main.deps.json";
+    // Keep compiler-visible input roots separate from writable object/dependency
+    // state. Creating build outputs inside an include-search root legitimately
+    // changes that directory's freshness timestamp and would make a fake warm
+    // hit invalid for the wrong reason.
+    const fs::path compile_input = fixture.path() / "compile-input";
+    const fs::path compile_state = fixture.path() / "compile-state";
+    const fs::path source = compile_input / "main.cpp";
+    const fs::path header = compile_input / "value.hpp";
+    const fs::path object = compile_state / "main.obj";
+    const fs::path dependencies = compile_state / "main.deps.json";
     const fs::path compile_cache = fixture.path() / "compile-cache" / "main.mqbcache";
     write_text(source, "#include \"value.hpp\"\nint main() { return VALUE; }\n");
     write_text(header, "#pragma once\n#define VALUE 0\n");
@@ -213,7 +218,7 @@ int main() {
     compiler_options.configuration = mqb::BuildConfiguration::debug;
     compiler_options.architecture = mqb::Architecture::x64;
     compiler_options.standard = mqb::CppStandard::cpp23;
-    compiler_options.include_directories = {header.parent_path()};
+    compiler_options.include_directories = {compile_input};
 
     CompilerRunner compiler_runner;
     compiler_runner.source = source;
@@ -340,7 +345,7 @@ int main() {
     expect(linker_runner.calls == 1,
            "cold link run should launch link.exe exactly once");
     expect(fs::is_regular_file(link_output) && fs::is_regular_file(link_cache),
-           "cold link run should create target and cache state");
+           "cold link run should create target output and link cache state");
 
     const std::string link_cache_before = read_text(link_cache);
     const std::string link_output_before = read_text(link_output);
@@ -358,10 +363,11 @@ int main() {
                && read_text(link_output) == link_output_before,
            "warm link inspection must not mutate cache or target content");
 
-    // Archive inspection: exact archive freshness is visible without lib.exe/cache writes.
-    const fs::path archive_object = fixture.path() / "archive" / "main.obj";
-    const fs::path archive_output = fixture.path() / "archive" / "main.lib";
-    const fs::path archive_cache = fixture.path() / "archive" / "main.archivecache";
+    // Archive inspection: exact archive freshness and the typed invocation are
+    // visible without lib.exe/cache/output side effects.
+    const fs::path archive_object = fixture.path() / "archive-input" / "main.obj";
+    const fs::path archive_output = fixture.path() / "archive-state" / "main.lib";
+    const fs::path archive_cache = fixture.path() / "archive-cache" / "main.archivecache";
     write_text(archive_object, "archive object input");
 
     LibrarianRunner librarian_runner;
@@ -376,6 +382,7 @@ int main() {
         .working_directory = fixture.path(),
         .architecture = mqb::Architecture::x64,
         .link_time_code_generation = false,
+        .additional_arguments = {"/WX"},
         .force_archive = false,
     };
 
@@ -394,6 +401,23 @@ int main() {
                    archive_cold_inspection->validation,
                    mqb::BuildReason::missing_output),
                "cold archive inspection should report missing archive output");
+        expect(archive_cold_inspection->invocation.has_value(),
+               "planned archive inspection should expose its typed invocation");
+        if (archive_cold_inspection->invocation) {
+            expect(archive_cold_inspection->invocation->output == archive_output,
+                   "archive inspection invocation should retain the final logical .lib output");
+            auto recipe = mqb::msvc::MsvcLibrarian::build_recipe(
+                toolchain,
+                *archive_cold_inspection->invocation);
+            expect(recipe.has_value(),
+                   "archive inspection invocation should build an exact transaction recipe");
+            if (recipe) {
+                expect(recipe->transaction_output.string().ends_with(".lib.mqb-tmp"),
+                       "archive recipe should expose deterministic transaction output");
+                expect(!fs::exists(recipe->transaction_output),
+                       "pure archive recipe modeling must not create transaction state");
+            }
+        }
     }
     expect(librarian_runner.calls == 0,
            "archive inspection must not launch lib.exe");
@@ -410,11 +434,15 @@ int main() {
         expect(archive_cold_run->plan.actions.size()
                    == archive_cold_inspection->plan.actions.size(),
                "archive run and cold inspection must expose the same plan cardinality");
+        expect(archive_cold_run->invocation == archive_cold_inspection->invocation,
+               "archive run and inspection must retain the same typed invocation");
     }
     expect(librarian_runner.calls == 1,
            "cold archive run should launch lib.exe exactly once");
     expect(fs::is_regular_file(archive_output) && fs::is_regular_file(archive_cache),
            "cold archive run should create archive and cache state");
+    expect(!fs::exists(fs::path{archive_output.string() + ".mqb-tmp"}),
+           "successful archive run should leave no deterministic transaction residue");
 
     const std::string archive_cache_before = read_text(archive_cache);
     const std::string archive_output_before = read_text(archive_output);
@@ -425,6 +453,8 @@ int main() {
                "warm archive inspection should report reusable cache state");
         expect(archive_warm_inspection->plan.empty(),
                "warm archive inspection should expose an empty plan");
+        expect(!archive_warm_inspection->invocation.has_value(),
+               "warm archive inspection should not claim an execution invocation");
     }
     expect(librarian_runner.calls == 1,
            "warm archive inspection must not launch lib.exe");
