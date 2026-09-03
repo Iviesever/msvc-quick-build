@@ -210,13 +210,75 @@ Assert-True ($moduleRun.ExitCode -eq 2) 'module plan should fail closed with exi
 Assert-True ($moduleRun.Text -match 'Modules/Header Units') 'module plan should explain graph-aware boundary'
 Assert-NoMqbState -ProjectRoot $module -Context 'module fail-closed plan'
 
+# Static-library planning must expose the exact deterministic transactional lib.exe
+# recipe while keeping the public output identity at the final .lib path.
 $static = Join-Path $root 'static'
-New-Item -ItemType Directory -Path $static -Force | Out-Null
-Set-Content -LiteralPath (Join-Path $static 'main.cpp') -Encoding utf8 -Value 'int value() { return 1; }'
-$staticRun = Invoke-MqbCaptured -WorkingDirectory $static -Arguments @('plan', 'main.cpp', '--no-discover', '--type', 'static', '--format', 'json')
-Assert-True ($staticRun.ExitCode -eq 2) 'static plan should fail closed with exit 2'
-Assert-True ($staticRun.Text -match 'transactional temporary archive path') 'static plan should explain exact lib.exe recipe boundary'
-Assert-NoMqbState -ProjectRoot $static -Context 'static fail-closed plan'
+New-Item -ItemType Directory -Path (Join-Path $static 'src') -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $static 'src/value.cpp') -Encoding utf8 -Value 'int value() { return 7; }'
+$staticPlanArgs = @(
+    'plan', 'src/value.cpp', '--no-discover', '--type', 'static', '--debug',
+    '-o', 'static_plan', '--format', 'json', '/lib', '/WX'
+)
+$staticColdRun = Invoke-MqbCaptured -WorkingDirectory $static -Arguments $staticPlanArgs
+$staticCold = Read-PlanJson -Run $staticColdRun -Context 'cold static plan'
+Assert-NoMqbState -ProjectRoot $static -Context 'cold static plan'
+Assert-True ([string]$staticCold.target.type -eq 'static') 'static plan should retain static target kind'
+Assert-True ([int]$staticCold.summary.planned -eq 2) 'cold static plan should schedule compile + archive'
+Assert-True ([int]$staticCold.summary.up_to_date -eq 0) 'cold static plan should have no reusable steps'
+$staticCompile = @(Step-ByKind -Plan $staticCold -Kind 'compile')
+$archiveSteps = @(Step-ByKind -Plan $staticCold -Kind 'archive')
+Assert-True ($staticCompile.Count -eq 1) 'cold static plan should contain one compile step'
+Assert-True ($archiveSteps.Count -eq 1) 'cold static plan should contain one archive step'
+$archiveStep = $archiveSteps[0]
+Assert-True ([System.IO.Path]::GetFileName([string]$archiveStep.process.executable).Equals('lib.exe', [System.StringComparison]::OrdinalIgnoreCase)) `
+    'static archive plan process must use lib.exe'
+$archiveArgs = @($archiveStep.process.arguments)
+Assert-True (($archiveArgs -join "`n") -match '/MACHINE:X64') 'static archive recipe should expose typed /MACHINE:X64'
+Assert-True (($archiveArgs -join "`n") -match '/WX') 'static archive recipe should preserve native /lib /WX'
+$outArgument = @($archiveArgs | Where-Object { $_ -like '/OUT:*' })
+Assert-True ($outArgument.Count -eq 1) 'static archive recipe should own exactly one /OUT'
+Assert-True ([string]$outArgument[0] -match '\.lib\.mqb-tmp$') `
+    'static archive process /OUT must use the deterministic transaction path'
+Assert-True ((@($archiveStep.process.environment | Where-Object { $_.name -eq 'LINK_REPRO' -and $_.remove }).Count -eq 1)) `
+    'static archive recipe must suppress ambient LINK_REPRO'
+Assert-True (@($archiveStep.outputs).Count -eq 1 -and [string]$archiveStep.outputs[0] -match '\.lib$') `
+    'static plan public output should remain the final .lib rather than the transaction path'
+
+$staticColdRun2 = Invoke-MqbCaptured -WorkingDirectory $static -Arguments $staticPlanArgs
+Assert-True ($staticColdRun2.ExitCode -eq 0) "second cold static plan failed:`n$($staticColdRun2.Text)"
+Assert-True ($staticColdRun.Text -eq $staticColdRun2.Text) `
+    'identical cold static plans should produce byte-identical JSON including transaction argv'
+Assert-NoMqbState -ProjectRoot $static -Context 'second cold static plan'
+
+$staticBuild = Invoke-MqbCaptured -WorkingDirectory $static -Arguments @(
+    'build', 'src/value.cpp', '--no-discover', '--type', 'static', '--debug',
+    '-o', 'static_plan', '/lib', '/WX'
+)
+Assert-True ($staticBuild.ExitCode -eq 0) "static build failed:`n$($staticBuild.Text)"
+$transactionResidue = @(Get-ChildItem -LiteralPath (Join-Path $static '.mqb') -Recurse -File -ErrorAction Stop |
+    Where-Object { $_.Name -like '*.mqb-tmp' })
+Assert-True ($transactionResidue.Count -eq 0) 'successful static build should leave no transaction archive residue'
+$beforeStaticWarm = Get-StateFingerprint -ProjectRoot $static
+$staticWarmRun = Invoke-MqbCaptured -WorkingDirectory $static -Arguments $staticPlanArgs
+$staticWarm = Read-PlanJson -Run $staticWarmRun -Context 'warm static plan'
+$afterStaticWarm = Get-StateFingerprint -ProjectRoot $static
+Assert-True ($beforeStaticWarm -eq $afterStaticWarm) 'warm static plan mutated sealed .mqb state'
+Assert-True ([int]$staticWarm.summary.planned -eq 0) 'warm static plan should schedule no work'
+Assert-True ([int]$staticWarm.summary.up_to_date -eq 2) 'warm static plan should report compile + archive up-to-date'
+foreach ($step in @($staticWarm.steps)) {
+    Assert-True ($null -eq $step.PSObject.Properties['process']) `
+        'up-to-date static plan steps should not claim an execution recipe'
+}
+
+Start-Sleep -Milliseconds 50
+Set-Content -LiteralPath (Join-Path $static 'src/value.cpp') -Encoding utf8 -Value 'int value() { return 8; }'
+$beforeStaticChanged = Get-StateFingerprint -ProjectRoot $static
+$staticChangedRun = Invoke-MqbCaptured -WorkingDirectory $static -Arguments $staticPlanArgs
+$staticChanged = Read-PlanJson -Run $staticChangedRun -Context 'changed static plan'
+$afterStaticChanged = Get-StateFingerprint -ProjectRoot $static
+Assert-True ($beforeStaticChanged -eq $afterStaticChanged) 'changed static plan mutated sealed .mqb state'
+Assert-True ([int]$staticChanged.summary.planned -eq 2) 'changed static source should plan compile + archive'
+Assert-True (@(Step-ByKind -Plan $staticChanged -Kind 'archive').Count -eq 1) 'changed static plan should retain one archive step'
 
 $global:LASTEXITCODE = 0
 Write-Host 'MQB plan evidence passed.'
