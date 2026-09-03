@@ -35,7 +35,7 @@ struct IncrementalPchInspection {
     // Exact typed execution request projected by the PCH coordinator. Future
     // introspection consumers can feed this directly into build_recipe()
     // without reproducing /Yc, /Fp, /FI, artifact, or working-directory policy.
-    msvc::CompileExecutionRequest recipe_request;
+    msvc::CompileExecutionRequest compile_request;
     IncrementalCompileInspection compile;
     // The synthetic creator is MQB-owned writable state. Inspection reports
     // whether execution would have to materialize/repair it, but never writes it.
