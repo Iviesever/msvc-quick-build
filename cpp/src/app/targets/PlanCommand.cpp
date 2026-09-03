@@ -3,21 +3,20 @@
 #include <algorithm>
 #include <expected>
 #include <filesystem>
-#include <iomanip>
 #include <iostream>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "BuildIntrospectionSetup.hpp"
 #include "Cli.hpp"
 #include "Diagnostics.hpp"
+#include "ModulePlanCommand.hpp"
+#include "PlanOutput.hpp"
+#include "PlanSupport.hpp"
 #include "mqb/core/Artifact.hpp"
-#include "mqb/core/BuildAction.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
 #include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
@@ -27,7 +26,6 @@
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcOpenMpPolicy.hpp"
 #include "mqb/msvc/MsvcParameterCapabilities.hpp"
-#include "mqb/msvc/MsvcParameterEngine.hpp"
 #include "mqb/orchestration/MsvcIncrementalArchiveCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
@@ -39,62 +37,15 @@ namespace {
 
 namespace fs = std::filesystem;
 
-enum class PlanFormat {
-    text,
-    json,
-};
-
 struct ParsedPlanOptions {
     mqb::cli::Options build;
-    PlanFormat format{PlanFormat::text};
+    plan::Format format{plan::Format::text};
 };
 
-struct PlanStep {
-    std::string kind;
-    std::string label;
-    bool planned{false};
-    std::vector<mqb::BuildReason> reasons;
-    std::vector<fs::path> outputs;
-    std::optional<mqb::process::ProcessSpec> process;
-};
-
-[[nodiscard]] std::string path_to_utf8(const fs::path& path) {
-    const auto bytes = path.lexically_normal().generic_u8string();
-    return std::string{
-        reinterpret_cast<const char*>(bytes.data()),
-        bytes.size()};
-}
-
-[[nodiscard]] std::string json_escape(const std::string_view value) {
-    std::ostringstream escaped;
-    escaped << std::hex << std::uppercase;
-    for (const unsigned char ch : value) {
-        switch (ch) {
-        case '"': escaped << "\\\""; break;
-        case '\\': escaped << "\\\\"; break;
-        case '\b': escaped << "\\b"; break;
-        case '\f': escaped << "\\f"; break;
-        case '\n': escaped << "\\n"; break;
-        case '\r': escaped << "\\r"; break;
-        case '\t': escaped << "\\t"; break;
-        default:
-            if (ch < 0x20u) {
-                escaped << "\\u00"
-                        << std::setw(2) << std::setfill('0')
-                        << static_cast<unsigned int>(ch);
-            } else {
-                escaped << static_cast<char>(ch);
-            }
-            break;
-        }
-    }
-    return escaped.str();
-}
-
-[[nodiscard]] std::expected<PlanFormat, std::string>
+[[nodiscard]] std::expected<plan::Format, std::string>
 parse_format(const std::string_view value) {
-    if (value == "text") return PlanFormat::text;
-    if (value == "json") return PlanFormat::json;
+    if (value == "text") return plan::Format::text;
+    if (value == "json") return plan::Format::json;
     return std::unexpected("mqb plan --format must be 'text' or 'json'");
 }
 
@@ -104,7 +55,7 @@ parse_plan_arguments(const std::span<const std::string_view> arguments) {
     forwarded.reserve(arguments.size() + 1u);
     forwarded.emplace_back("build");
 
-    PlanFormat format = PlanFormat::text;
+    plan::Format format = plan::Format::text;
     bool format_seen = false;
     bool native_tail = false;
     for (std::size_t index = 0; index < arguments.size(); ++index) {
@@ -117,10 +68,12 @@ parse_plan_arguments(const std::span<const std::string_view> arguments) {
         }
         if (!native_tail && argument == "--format") {
             if (format_seen) {
-                return std::unexpected("mqb plan --format may be specified only once");
+                return std::unexpected(
+                    "mqb plan --format may be specified only once");
             }
             if (index + 1 >= arguments.size()) {
-                return std::unexpected("mqb plan --format requires text or json");
+                return std::unexpected(
+                    "mqb plan --format requires text or json");
             }
             auto parsed = parse_format(arguments[++index]);
             if (!parsed) return std::unexpected(parsed.error());
@@ -130,7 +83,8 @@ parse_plan_arguments(const std::span<const std::string_view> arguments) {
         }
         if (!native_tail && argument.starts_with("--format=")) {
             if (format_seen) {
-                return std::unexpected("mqb plan --format may be specified only once");
+                return std::unexpected(
+                    "mqb plan --format may be specified only once");
             }
             auto parsed = parse_format(
                 argument.substr(std::string_view{"--format="}.size()));
@@ -169,7 +123,9 @@ validate_tool_capabilities(
             tool,
             argument,
             vc_tools_version);
-        if (capability.lifecycle == mqb::msvc::ParameterLifecycle::active) continue;
+        if (capability.lifecycle == mqb::msvc::ParameterLifecycle::active) {
+            continue;
+        }
 
         std::string message = "MSVC ";
         message += mqb::msvc::to_string(tool);
@@ -188,183 +144,6 @@ validate_tool_capabilities(
         return std::unexpected(std::move(message));
     }
     return {};
-}
-
-void append_step_outputs(
-    PlanStep& step,
-    const mqb::TranslationUnit& unit) {
-    step.outputs.reserve(unit.outputs.size());
-    for (const auto& output : unit.outputs) {
-        step.outputs.push_back(output.path);
-    }
-}
-
-[[nodiscard]] std::string display_path(
-    const fs::path& project_root,
-    const fs::path& path) {
-    const fs::path relative = path.lexically_relative(project_root);
-    if (!relative.empty() && !relative.is_absolute()) {
-        bool safe = true;
-        for (const auto& component : relative) {
-            if (component == "..") {
-                safe = false;
-                break;
-            }
-        }
-        if (safe) return path_to_utf8(relative);
-    }
-    return path_to_utf8(path);
-}
-
-[[nodiscard]] std::string render_text(
-    const BuildIntrospectionContext& context,
-    const std::vector<PlanStep>& steps) {
-    std::ostringstream output;
-    output << "MQB build plan\n"
-           << "project: " << path_to_utf8(context.project.project_root) << '\n'
-           << "target:  " << context.target_name << " ("
-           << mqb::to_string(context.options.build.target_kind) << ")\n"
-           << "output:  " << path_to_utf8(context.target_artifacts.executable) << '\n'
-           << "steps:\n";
-
-    std::size_t planned = 0;
-    for (const auto& step : steps) {
-        if (step.planned) ++planned;
-        output << "  [" << (step.planned ? "plan" : "up-to-date") << "] "
-               << step.kind << ' ' << step.label << '\n';
-        if (!step.reasons.empty()) {
-            output << "    reasons: ";
-            for (std::size_t index = 0; index < step.reasons.size(); ++index) {
-                if (index != 0) output << ", ";
-                output << mqb::to_string(step.reasons[index]);
-            }
-            output << '\n';
-        }
-        for (const auto& artifact : step.outputs) {
-            output << "    output: "
-                   << display_path(context.project.project_root, artifact) << '\n';
-        }
-        if (step.process) {
-            output << "    executable: " << path_to_utf8(step.process->executable) << '\n';
-            if (step.process->working_directory) {
-                output << "    directory:  "
-                       << path_to_utf8(*step.process->working_directory) << '\n';
-            }
-            output << "    argv:";
-            for (const auto& argument : step.process->arguments) {
-                output << "\n      " << argument;
-            }
-            output << '\n';
-        }
-    }
-    output << "summary: " << planned << " planned, "
-           << (steps.size() - planned) << " up-to-date\n";
-    return output.str();
-}
-
-void render_json_process(
-    std::ostringstream& output,
-    const mqb::process::ProcessSpec& process,
-    const std::string_view indent) {
-    output << indent << "\"process\": {\n"
-           << indent << "  \"executable\": \""
-           << json_escape(path_to_utf8(process.executable)) << "\",\n"
-           << indent << "  \"arguments\": [";
-    for (std::size_t index = 0; index < process.arguments.size(); ++index) {
-        if (index != 0) output << ", ";
-        output << "\"" << json_escape(process.arguments[index]) << "\"";
-    }
-    output << "],\n"
-           << indent << "  \"working_directory\": ";
-    if (process.working_directory) {
-        output << "\"" << json_escape(path_to_utf8(*process.working_directory)) << "\"";
-    } else {
-        output << "null";
-    }
-    output << ",\n"
-           << indent << "  \"inherit_environment\": "
-           << (process.inherit_environment ? "true" : "false") << ",\n"
-           << indent << "  \"environment\": [";
-    for (std::size_t index = 0; index < process.environment.size(); ++index) {
-        if (index != 0) output << ", ";
-        const auto& variable = process.environment[index];
-        output << "{\"name\":\"" << json_escape(variable.name)
-               << "\",\"value\":\"" << json_escape(variable.value)
-               << "\",\"remove\":" << (variable.remove ? "true" : "false") << '}';
-    }
-    output << "]\n" << indent << '}';
-}
-
-[[nodiscard]] std::string render_json(
-    const BuildIntrospectionContext& context,
-    const std::vector<PlanStep>& steps) {
-    std::size_t planned = 0;
-    for (const auto& step : steps) {
-        if (step.planned) ++planned;
-    }
-
-    std::ostringstream output;
-    output << "{\n"
-           << "  \"version\": 1,\n"
-           << "  \"project\": \""
-           << json_escape(path_to_utf8(context.project.project_root)) << "\",\n"
-           << "  \"target\": {\"name\": \"" << json_escape(context.target_name)
-           << "\", \"type\": \"" << json_escape(mqb::to_string(context.options.build.target_kind))
-           << "\", \"output\": \""
-           << json_escape(path_to_utf8(context.target_artifacts.executable)) << "\"},\n"
-           << "  \"toolchain\": {\"compiler\": \""
-           << json_escape(path_to_utf8(context.toolchain.identity.compiler))
-           << "\", \"linker\": \"" << json_escape(path_to_utf8(context.toolchain.linker))
-           << "\", \"librarian\": \"" << json_escape(path_to_utf8(context.toolchain.librarian))
-           << "\", \"version\": \"" << json_escape(context.toolchain.identity.version)
-           << "\"},\n"
-           << "  \"steps\": [\n";
-
-    for (std::size_t step_index = 0; step_index < steps.size(); ++step_index) {
-        const auto& step = steps[step_index];
-        output << "    {\n"
-               << "      \"kind\": \"" << json_escape(step.kind) << "\",\n"
-               << "      \"label\": \"" << json_escape(step.label) << "\",\n"
-               << "      \"status\": \"" << (step.planned ? "planned" : "up_to_date") << "\",\n"
-               << "      \"reasons\": [";
-        for (std::size_t index = 0; index < step.reasons.size(); ++index) {
-            if (index != 0) output << ", ";
-            output << "\"" << json_escape(mqb::to_string(step.reasons[index])) << "\"";
-        }
-        output << "],\n      \"outputs\": [";
-        for (std::size_t index = 0; index < step.outputs.size(); ++index) {
-            if (index != 0) output << ", ";
-            output << "\"" << json_escape(path_to_utf8(step.outputs[index])) << "\"";
-        }
-        output << ']';
-        if (step.process) {
-            output << ",\n";
-            render_json_process(output, *step.process, "      ");
-            output << '\n';
-        } else {
-            output << '\n';
-        }
-        output << "    }";
-        if (step_index + 1 != steps.size()) output << ',';
-        output << '\n';
-    }
-
-    output << "  ],\n"
-           << "  \"summary\": {\"planned\": " << planned
-           << ", \"up_to_date\": " << (steps.size() - planned) << "}\n"
-           << "}\n";
-    return output.str();
-}
-
-void render_plan(
-    const PlanFormat format,
-    const BuildIntrospectionContext& context,
-    const std::vector<PlanStep>& steps) {
-    if (format == PlanFormat::json) {
-        std::cout << render_json(context, steps);
-    } else {
-        std::cout << render_text(context, steps);
-    }
 }
 
 } // namespace
@@ -392,13 +171,8 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
 
     if (context->options.build.run_after_build
         || !context->options.build.run_arguments.empty()) {
-        diagnostics::print_error("mqb plan does not accept --run or program arguments");
-        return 2;
-    }
-    if (context->module_target) {
         diagnostics::print_error(
-            "mqb plan currently supports ordinary C/C++ targets only; "
-            "Modules/Header Units require graph-aware inspection and are intentionally fail-closed");
+            "mqb plan does not accept --run or program arguments");
         return 2;
     }
 
@@ -438,16 +212,25 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
         }
     }
 
-    mqb::msvc::MsvcCompileExecutor compile_executor{context->toolchain, runner};
+    if (context->module_target) {
+        return run_module_plan(parsed->format, *context, runner);
+    }
+
+    mqb::msvc::MsvcCompileExecutor compile_executor{
+        context->toolchain,
+        runner};
     mqb::orchestration::MsvcIncrementalCompileCoordinator compile_coordinator{
         context->toolchain,
         compile_executor};
 
-    std::vector<PlanStep> steps;
-    steps.reserve(context->target_sources.size() + (context->pch_artifacts ? 2u : 1u));
+    plan::Document document;
+    document.steps.reserve(
+        context->target_sources.size()
+        + (context->pch_artifacts ? 2u : 1u));
 
     bool pch_planned = false;
-    if (context->pch_artifacts && context->project.effective.precompiled_header) {
+    if (context->pch_artifacts
+        && context->project.effective.precompiled_header) {
         mqb::orchestration::MsvcIncrementalPchCoordinator pch_coordinator{
             compile_coordinator};
         auto inspected = pch_coordinator.inspect(
@@ -463,30 +246,36 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
         }
 
         pch_planned = !inspected->compile.plan.empty();
-        PlanStep step{
+        plan::Step step{
             .kind = "pch",
-            .label = display_path(
+            .label = plan::display_path(
                 context->project.project_root,
                 *context->project.effective.precompiled_header),
             .planned = pch_planned,
-            .reasons = inspected->compile.validation.reasons,
+            .reasons = plan::reason_texts(
+                inspected->compile.validation.reasons),
         };
-        append_step_outputs(step, inspected->compile_request.unit);
+        plan::append_outputs(step, inspected->compile_request.unit);
         if (pch_planned) {
-            auto recipe = compile_executor.build_recipe(inspected->compile_request);
+            auto recipe = compile_executor.build_recipe(
+                inspected->compile_request);
             if (!recipe) {
                 diagnostics::print_error(
-                    "failed to model PCH creator recipe: " + recipe.error().message);
+                    "failed to model PCH creator recipe: "
+                    + recipe.error().message);
                 return 4;
             }
             step.process = std::move(recipe->process);
         }
-        steps.push_back(std::move(step));
+        document.steps.push_back(std::move(step));
     }
 
-    const mqb::CompilerOptions consumer_options = context->consumer_compiler_options();
+    const mqb::CompilerOptions consumer_options =
+        context->consumer_compiler_options();
     std::vector<fs::path> objects;
-    objects.reserve(context->target_sources.size() + (context->pch_artifacts ? 1u : 0u));
+    objects.reserve(
+        context->target_sources.size()
+        + (context->pch_artifacts ? 1u : 0u));
     if (context->pch_artifacts) {
         objects.push_back(context->pch_artifacts->object);
     }
@@ -496,7 +285,8 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
         const auto kind = mqb::classify_translation_unit_path(source.source);
         if (!kind || *kind != mqb::TranslationUnitKind::source) {
             diagnostics::print_error(
-                "mqb plan encountered a non-ordinary translation unit after ordinary-target validation");
+                "mqb plan encountered a non-ordinary translation unit "
+                "after ordinary-target validation");
             return 2;
         }
 
@@ -504,7 +294,9 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
         unit.source = source.source;
         unit.kind = *kind;
         unit.outputs = {
-            mqb::Artifact{source.artifacts.object, mqb::ArtifactKind::object},
+            mqb::Artifact{
+                source.artifacts.object,
+                mqb::ArtifactKind::object},
         };
         const mqb::orchestration::IncrementalCompileRequest compile_request{
             .unit = unit,
@@ -522,29 +314,27 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
 
         const bool planned = !inspected->plan.empty();
         any_compile_planned = any_compile_planned || planned;
-        PlanStep step{
+        plan::Step step{
             .kind = "compile",
-            .label = display_path(context->project.project_root, source.source),
+            .label = plan::display_path(
+                context->project.project_root,
+                source.source),
             .planned = planned,
-            .reasons = inspected->validation.reasons,
+            .reasons = plan::reason_texts(inspected->validation.reasons),
         };
-        append_step_outputs(step, unit);
+        plan::append_outputs(step, unit);
         if (planned) {
             auto recipe = compile_executor.build_recipe(
-                mqb::msvc::CompileExecutionRequest{
-                    .unit = unit,
-                    .options = consumer_options,
-                    .source_dependencies_file = source.artifacts.dependencies,
-                    .working_directory = source.source.parent_path(),
-                });
+                plan::execution_request_for(compile_request));
             if (!recipe) {
                 diagnostics::print_error(
-                    "failed to model compile recipe: " + recipe.error().message);
+                    "failed to model compile recipe: "
+                    + recipe.error().message);
                 return 4;
             }
             step.process = std::move(recipe->process);
         }
-        steps.push_back(std::move(step));
+        document.steps.push_back(std::move(step));
         objects.push_back(source.artifacts.object);
     }
 
@@ -559,44 +349,47 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
             .cache_file = context->target_artifacts.link_cache,
             .working_directory = context->project.project_root,
             .architecture = context->options.build.architecture,
-            .link_time_code_generation = context->project.effective.link_time_code_generation,
+            .link_time_code_generation =
+                context->project.effective.link_time_code_generation,
             .additional_arguments = context->options.librarian_arguments,
             .force_archive = pch_planned || any_compile_planned,
         };
-        auto archive_inspection = archive_coordinator.inspect(archive_request);
-        if (!archive_inspection) {
-            diagnostics::print_error(archive_inspection.error().message);
+        auto inspected = archive_coordinator.inspect(archive_request);
+        if (!inspected) {
+            diagnostics::print_error(inspected.error().message);
             return 5;
         }
 
-        const bool archive_planned = !archive_inspection->plan.empty();
-        PlanStep archive_step{
+        const bool planned = !inspected->plan.empty();
+        plan::Step step{
             .kind = "archive",
-            .label = display_path(
+            .label = plan::display_path(
                 context->project.project_root,
                 context->target_artifacts.executable),
-            .planned = archive_planned,
-            .reasons = archive_inspection->validation.reasons,
+            .planned = planned,
+            .reasons = plan::reason_texts(inspected->validation.reasons),
             .outputs = {context->target_artifacts.executable},
         };
-        if (archive_planned) {
-            if (!archive_inspection->invocation) {
+        if (planned) {
+            if (!inspected->invocation) {
                 diagnostics::print_error(
-                    "mqb plan received an archive action without its typed librarian invocation");
+                    "mqb plan received an archive action without its typed "
+                    "librarian invocation");
                 return 5;
             }
             auto recipe = mqb::msvc::MsvcLibrarian::build_recipe(
                 context->toolchain,
-                *archive_inspection->invocation);
+                *inspected->invocation);
             if (!recipe) {
                 diagnostics::print_error(
-                    "failed to model archive recipe: " + recipe.error().message);
+                    "failed to model archive recipe: "
+                    + recipe.error().message);
                 return 5;
             }
-            archive_step.process = std::move(recipe->process);
+            step.process = std::move(recipe->process);
         }
-        steps.push_back(std::move(archive_step));
-        render_plan(parsed->format, *context, steps);
+        document.steps.push_back(std::move(step));
+        plan::render(parsed->format, *context, document);
         return 0;
     }
 
@@ -606,7 +399,8 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
     link_options.target_kind = context->options.build.target_kind;
     link_options.subsystem = context->options.subsystem_override.value_or(
         mqb::LinkSubsystem::console);
-    link_options.link_time_code_generation = context->project.effective.link_time_code_generation;
+    link_options.link_time_code_generation =
+        context->project.effective.link_time_code_generation;
     link_options.library_directories = context->options.library_directories;
     link_options.libraries = context->options.libraries;
     link_options.additional_arguments = context->options.linker_arguments;
@@ -632,65 +426,36 @@ int run_plan_command(const std::span<const std::string_view> arguments) {
         .working_directory = context->project.project_root,
         .force_relink = pch_planned || any_compile_planned,
     };
-    auto link_inspection = link_coordinator.inspect(link_request);
-    if (!link_inspection) {
-        diagnostics::print_error(link_inspection.error().message);
+    auto inspected = link_coordinator.inspect(link_request);
+    if (!inspected) {
+        diagnostics::print_error(inspected.error().message);
         return 5;
     }
 
-    const bool link_planned = !link_inspection->plan.empty();
-    PlanStep link_step{
+    const bool planned = !inspected->plan.empty();
+    plan::Step step{
         .kind = "link",
-        .label = display_path(
+        .label = plan::display_path(
             context->project.project_root,
             context->target_artifacts.executable),
-        .planned = link_planned,
-        .reasons = link_inspection->validation.reasons,
+        .planned = planned,
+        .reasons = plan::reason_texts(inspected->validation.reasons),
         .outputs = {context->target_artifacts.executable},
     };
-    if (link_planned) {
-        if (link_inspection->plan.actions.size() != 1) {
-            diagnostics::print_error("mqb plan expected exactly one link action");
-            return 5;
-        }
-        const auto* action = std::get_if<mqb::LinkAction>(
-            &link_inspection->plan.actions.front());
-        if (action == nullptr) {
-            diagnostics::print_error("mqb plan received a non-link action from link inspection");
-            return 5;
-        }
-        auto linker_file_routing = mqb::msvc::MsvcParameterEngine::linker_file_inputs(
-            link_options.additional_arguments,
-            context->project.project_root);
-        if (!linker_file_routing) {
-            diagnostics::print_error(linker_file_routing.error().message);
-            return 5;
-        }
-        const mqb::msvc::LinkInvocation invocation{
-            .objects = action->objects,
-            .output = action->output,
-            .libraries = action->libraries,
-            .options = link_options,
-            .working_directory = context->project.project_root,
-            .force_full_link = link_inspection->validation.library_inputs_changed
-                || link_inspection->validation.file_inputs_changed
-                || linker_file_routing->requires_full_link
-                || link_options.address_sanitizer_runtime_library.has_value(),
-            .observe_library_search = true,
-        };
-        auto recipe = mqb::msvc::MsvcLinker::build_recipe(
+    if (planned) {
+        auto process = plan::model_link_process(
             context->toolchain,
-            invocation);
-        if (!recipe) {
-            diagnostics::print_error(
-                "failed to model link recipe: " + recipe.error().message);
+            link_request,
+            *inspected);
+        if (!process) {
+            diagnostics::print_error(process.error());
             return 5;
         }
-        link_step.process = std::move(recipe->process);
+        step.process = std::move(*process);
     }
-    steps.push_back(std::move(link_step));
+    document.steps.push_back(std::move(step));
 
-    render_plan(parsed->format, *context, steps);
+    plan::render(parsed->format, *context, document);
     return 0;
 }
 
@@ -699,16 +464,20 @@ std::string_view plan_usage() noexcept {
   mqb plan [entry.cpp] [options] [MSVC-compiler-options] [/link linker-options...]
   mqb plan [source...] [options] [MSVC-compiler-options] [/lib librarian-options...]
 
-Inspect the exact MQB incremental decision without compiling, linking, archiving,
-or mutating project .mqb state. The command reports cache hit/miss decisions,
-rebuild reasons, planned artifacts, and exact cl.exe/link.exe/lib.exe process recipes.
+Inspect the exact MQB incremental decision without compiling, scanning, linking,
+archiving, or mutating project .mqb state. The command reports cache decisions,
+rebuild reasons, planned artifacts, and exact MSVC process recipes.
 
 Plan-only options:
   --format <text|json>     Output format (default: text)
 
-Other options follow `mqb build`. Ordinary executable, DLL, and static-library
-C/C++ targets are supported, including first-class PCH creators/consumers.
-Modules/Header Units remain fail-closed until graph-aware inspection is available.
+Other options follow `mqb build`. Executable and DLL Modules/Header Units targets
+are graph-aware: cold or stale P1689 evidence reports exact scan steps with a
+pending graph, while trustworthy warm evidence continues through provider graph,
+compile levels, exact /reference or /headerUnit recipes, and final link planning.
+Ordinary C/C++, first-class PCH, and static-library targets remain supported.
+Static-library targets that require the Modules/Header Units pipeline still fail
+closed because that product combination is not yet implemented.
 )";
 }
 

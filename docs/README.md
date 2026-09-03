@@ -13,6 +13,7 @@ This is the authoritative index for MQB's maintained documentation.
 | Project overview / quick start | [`../README.md`](../README.md) | [`../README_ZH.md`](../README_ZH.md) |
 | Installation | [`INSTALLATION_EN.md`](INSTALLATION_EN.md) | [`INSTALLATION.md`](INSTALLATION.md) |
 | `mqb.json`, profiles, precedence | [`MQB_CONFIG_EN.md`](MQB_CONFIG_EN.md) | [`MQB_CONFIG.md`](MQB_CONFIG.md) |
+| Build-plan inspection | [`BUILD_PLAN_EN.md`](BUILD_PLAN_EN.md) | [`BUILD_PLAN.md`](BUILD_PLAN.md) |
 | First-class PCH | [`PRECOMPILED_HEADERS_EN.md`](PRECOMPILED_HEADERS_EN.md) | [`PRECOMPILED_HEADERS.md`](PRECOMPILED_HEADERS.md) |
 | Parallelism and P1689 warm scan reuse | [`PARALLELISM_EN.md`](PARALLELISM_EN.md) | [`PARALLELISM.md`](PARALLELISM.md) |
 
