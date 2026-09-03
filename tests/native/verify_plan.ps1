@@ -65,13 +65,19 @@ $root = Join-Path $RepoRoot 'native-out/plan-evidence'
 if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 New-Item -ItemType Directory -Path $root -Force | Out-Null
 
-# Ordinary executable: cold planning is read-only, exact recipes use source
-# directories, repeated JSON is deterministic, and a real build seals warm state.
+# Ordinary executable: exact recipes use source-parent working directories and
+# cold planning remains fully read-only.
 $ordinary = Join-Path $root 'ordinary'
 New-Item -ItemType Directory -Path (Join-Path $ordinary 'src') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $ordinary 'include') -Force | Out-Null
-Set-Content -LiteralPath (Join-Path $ordinary 'include/value.hpp') -Encoding utf8 -Value '#pragma once`nint helper();'
-Set-Content -LiteralPath (Join-Path $ordinary 'src/main.cpp') -Encoding utf8 -Value '#include "value.hpp"`nint main() { return helper() == 7 ? 0 : 1; }'
+Set-Content -LiteralPath (Join-Path $ordinary 'include/value.hpp') -Encoding utf8 -Value @(
+    '#pragma once',
+    'int helper();'
+)
+Set-Content -LiteralPath (Join-Path $ordinary 'src/main.cpp') -Encoding utf8 -Value @(
+    '#include "value.hpp"',
+    'int main() { return helper() == 7 ? 0 : 1; }'
+)
 Set-Content -LiteralPath (Join-Path $ordinary 'src/helper.cpp') -Encoding utf8 -Value 'int helper() { return VALUE; }'
 
 $planArgs = @(
@@ -154,7 +160,10 @@ foreach ($entry in $database) {
 $pch = Join-Path $root 'pch'
 New-Item -ItemType Directory -Path (Join-Path $pch 'include') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $pch 'src') -Force | Out-Null
-Set-Content -LiteralPath (Join-Path $pch 'include/pch.hpp') -Encoding utf8 -Value '#pragma once`ninline constexpr int PCH_VALUE = 1;'
+Set-Content -LiteralPath (Join-Path $pch 'include/pch.hpp') -Encoding utf8 -Value @(
+    '#pragma once',
+    'inline constexpr int PCH_VALUE = 1;'
+)
 Set-Content -LiteralPath (Join-Path $pch 'src/main.cpp') -Encoding utf8 -Value 'int main() { return PCH_VALUE == 1 ? 0 : 1; }'
 Set-Content -LiteralPath (Join-Path $pch 'mqb.json') -Encoding utf8 -Value @'
 {
@@ -179,7 +188,10 @@ Assert-True ((@($pchStep[0].process.arguments) -join "`n") -match '/Fp') 'PCH pl
 $pchBuild = Invoke-MqbCaptured -WorkingDirectory $pch -Arguments @('build', '--no-discover', '--debug')
 Assert-True ($pchBuild.ExitCode -eq 0) "PCH build failed:`n$($pchBuild.Text)"
 Start-Sleep -Milliseconds 50
-Set-Content -LiteralPath (Join-Path $pch 'include/pch.hpp') -Encoding utf8 -Value '#pragma once`ninline constexpr int PCH_VALUE = 2;'
+Set-Content -LiteralPath (Join-Path $pch 'include/pch.hpp') -Encoding utf8 -Value @(
+    '#pragma once',
+    'inline constexpr int PCH_VALUE = 2;'
+)
 $beforePchPlan = Get-StateFingerprint -ProjectRoot $pch
 $pchChangedRun = Invoke-MqbCaptured -WorkingDirectory $pch -Arguments $pchPlanArgs
 $pchChanged = Read-PlanJson -Run $pchChangedRun -Context 'header-changed PCH plan'
@@ -189,7 +201,6 @@ Assert-True ([int]$pchChanged.summary.planned -eq 3) 'PCH header change should p
 Assert-True ((@($pchChanged.steps | Where-Object { $_.kind -eq 'pch' }).reasons -join "`n") -match 'dependency') `
     'PCH header change should expose dependency freshness reason'
 
-# Text output stays human-readable.
 $textRun = Invoke-MqbCaptured -WorkingDirectory $ordinary -Arguments @(
     'plan', 'src/main.cpp', 'src/helper.cpp', '--no-discover', '--debug',
     '-I', 'include', '-D', 'VALUE=7', '-o', 'plan_app', '--format', 'text'
