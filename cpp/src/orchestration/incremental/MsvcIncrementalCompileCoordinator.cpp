@@ -158,14 +158,14 @@ void seal_module_scan_evidence(
 
 } // namespace
 
-std::expected<IncrementalCompileResult, IncrementalCompileError>
-MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request) const {
-    IncrementalCompileResult result;
+std::expected<IncrementalCompileInspection, IncrementalCompileError>
+MsvcIncrementalCompileCoordinator::inspect(const IncrementalCompileRequest& request) const {
+    IncrementalCompileInspection result;
 
     // An upstream coordinator may already own the invalidation decision (for
     // example, a successfully rebuilt MQB-owned PCH). In that case old cache
-    // state cannot make this unit reusable, so avoid probing it and reseal the
-    // normal compile cache from the compiler result below.
+    // state cannot make this unit reusable, so avoid probing it. The execution
+    // path will reseal normal compile cache state only after a successful compile.
     if (request.force_rebuild) {
         result.validation.reasons.push_back(BuildReason::explicit_rebuild);
     } else {
@@ -241,10 +241,8 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
             add_reason_once(result.validation.reasons, BuildReason::dependency_changed);
         }
 
-        // The validator is authoritative for incremental freshness. Once it says
-        // this compile is reusable there is no action for the generic planner to
-        // derive, so return directly on the hot no-op path. Cold/miss paths still
-        // flow through BuildPlanner and retain all existing structural validation.
+        // A reusable validation is already the final no-op decision. Keep the
+        // generic planner off the warm path exactly as normal execution does.
         if (result.validation.reusable()) {
             return result;
         }
@@ -265,6 +263,20 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         });
     }
     result.plan = std::move(*planned);
+    return result;
+}
+
+std::expected<IncrementalCompileResult, IncrementalCompileError>
+MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request) const {
+    auto inspected = inspect(request);
+    if (!inspected) {
+        return std::unexpected(inspected.error());
+    }
+
+    IncrementalCompileResult result;
+    result.validation = std::move(inspected->validation);
+    result.plan = std::move(inspected->plan);
+    result.warnings = std::move(inspected->warnings);
 
     if (result.plan.actions.empty()) {
         return result;
