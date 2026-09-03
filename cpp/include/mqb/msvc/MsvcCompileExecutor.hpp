@@ -22,14 +22,6 @@ struct CompileExecutionRequest {
     std::optional<std::filesystem::path> working_directory;
 };
 
-// First-class execution recipe produced before cache-hit/miss execution choice.
-// The request preserves MQB's typed compile identity while compiler holds the
-// exact selected-toolchain ProcessSpec that execution and introspection share.
-struct CompileExecutionRecipe {
-    CompileExecutionRequest request;
-    MsvcCompileRecipe compiler;
-};
-
 struct CompileExecutionResult {
     process::ProcessResult process;
     CompileCacheEntry cache_entry;
@@ -54,11 +46,11 @@ public:
     MsvcCompileExecutor(const MsvcToolchain& toolchain, process::ProcessRunner& runner)
         : toolchain_(toolchain), runner_(runner) {}
 
-    [[nodiscard]] std::expected<CompileExecutionRecipe, CompileExecutorError>
+    // Pure modeling entry point for future compdb/plan consumers. It performs
+    // typed request validation and returns the same MsvcCompileRecipe used by
+    // real execution, but does not touch outputs, cache state, or cl.exe.
+    [[nodiscard]] std::expected<MsvcCompileRecipe, CompileExecutorError>
     build_recipe(const CompileExecutionRequest& request) const;
-
-    [[nodiscard]] std::expected<CompileExecutionResult, CompileExecutorError>
-    execute(const CompileExecutionRecipe& recipe) const;
 
     [[nodiscard]] std::expected<CompileExecutionResult, CompileExecutorError>
     execute(const CompileExecutionRequest& request) const;

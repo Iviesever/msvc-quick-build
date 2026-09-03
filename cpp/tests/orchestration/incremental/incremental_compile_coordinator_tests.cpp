@@ -234,10 +234,10 @@ int main() {
     mqb::process::ProcessSpec modeled_process;
     bool captured_modeled_process = false;
     if (modeled_before_cold) {
-        modeled_process = modeled_before_cold->compiler.process;
+        modeled_process = modeled_before_cold->process;
         captured_modeled_process = true;
-        expect(modeled_before_cold->compiler.toolchain.version == toolchain.identity.version
-                   && modeled_before_cold->compiler.toolchain.binary_stamp == toolchain.identity.binary_stamp,
+        expect(modeled_before_cold->toolchain.version == toolchain.identity.version
+                   && modeled_before_cold->toolchain.binary_stamp == toolchain.identity.binary_stamp,
                "compile recipe should retain the selected toolchain identity");
     }
 
@@ -278,7 +278,7 @@ int main() {
     expect(modeled_on_warm_state.has_value(),
            "the same compile recipe must remain constructible when cache state is warm");
     if (captured_modeled_process && modeled_on_warm_state) {
-        expect(same_process_spec(modeled_on_warm_state->compiler.process, modeled_process),
+        expect(same_process_spec(modeled_on_warm_state->process, modeled_process),
                "cold-state and warm-state recipe construction must be identical");
     }
     expect(runner.calls == 1,
@@ -362,7 +362,7 @@ int main() {
     expect(modeled_release.has_value(),
            "release policy should also produce an inspectable compile recipe");
     if (captured_modeled_process && modeled_release) {
-        expect(!same_process_spec(modeled_release->compiler.process, modeled_process),
+        expect(!same_process_spec(modeled_release->process, modeled_process),
                "a real compiler policy change should produce a different recipe");
     }
     expect(runner.calls == 4,

@@ -90,7 +90,7 @@ void add_interface_dependency(
 
 } // namespace
 
-std::expected<CompileExecutionRecipe, CompileExecutorError>
+std::expected<MsvcCompileRecipe, CompileExecutorError>
 MsvcCompileExecutor::build_recipe(const CompileExecutionRequest& request) const {
     if (request.unit.source.empty()) {
         return std::unexpected(invalid_request("translation unit source path is empty"));
@@ -228,15 +228,14 @@ MsvcCompileExecutor::build_recipe(const CompileExecutionRequest& request) const 
         });
     }
 
-    return CompileExecutionRecipe{
-        .request = request,
-        .compiler = std::move(*compiler_recipe),
-    };
+    return std::move(*compiler_recipe);
 }
 
 std::expected<CompileExecutionResult, CompileExecutorError>
-MsvcCompileExecutor::execute(const CompileExecutionRecipe& recipe) const {
-    const auto& request = recipe.request;
+MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
+    auto recipe = build_recipe(request);
+    if (!recipe) return std::unexpected(recipe.error());
+
     const bool pch_consumer = request.options.precompiled_header
         && request.options.precompiled_header->role == PrecompiledHeaderRole::use;
     if (pch_consumer && !regular_file(request.options.precompiled_header->artifact)) {
@@ -245,7 +244,7 @@ MsvcCompileExecutor::execute(const CompileExecutionRecipe& recipe) const {
     }
 
     MsvcCompiler compiler{toolchain_, runner_};
-    auto compiled = compiler.execute_recipe(recipe.compiler);
+    auto compiled = compiler.execute_recipe(*recipe);
     if (!compiled) {
         return std::unexpected(CompileExecutorError{
             .code = CompileExecutorErrorCode::compiler_failed,
@@ -321,13 +320,6 @@ MsvcCompileExecutor::execute(const CompileExecutionRecipe& recipe) const {
         .process = std::move(*compiled),
         .cache_entry = std::move(cache_entry),
     };
-}
-
-std::expected<CompileExecutionResult, CompileExecutorError>
-MsvcCompileExecutor::execute(const CompileExecutionRequest& request) const {
-    auto recipe = build_recipe(request);
-    if (!recipe) return std::unexpected(recipe.error());
-    return execute(*recipe);
 }
 
 } // namespace mqb::msvc
