@@ -10,6 +10,7 @@ on:
       - 'cpp/include/mqb/msvc/MsvcCompileExecutor.hpp'
       - 'cpp/include/mqb/msvc/MsvcCompiler.hpp'
       - 'cpp/src/msvc/compiler/**'
+      - 'tests/native/assert_cpp_layout.ps1'
       - 'tests/native/verify_compdb.ps1'
       - '.github/workflows/compdb-evidence.yml'
   workflow_dispatch:
