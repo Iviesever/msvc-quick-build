@@ -7,6 +7,7 @@
 
 #include "Application.hpp"
 #include "CompdbCommand.hpp"
+#include "PlanCommand.hpp"
 #include "mqb/platform/windows/CommandLine.hpp"
 
 int wmain(const int argc, wchar_t* argv[]) {
@@ -34,6 +35,10 @@ int wmain(const int argc, wchar_t* argv[]) {
 
     if (!arguments.empty() && arguments.front() == "compdb") {
         return mqb::app::run_compdb_command(
+            std::span<const std::string_view>{arguments}.subspan(1));
+    }
+    if (!arguments.empty() && arguments.front() == "plan") {
+        return mqb::app::run_plan_command(
             std::span<const std::string_view>{arguments}.subspan(1));
     }
 
