@@ -442,7 +442,7 @@ int run_compdb_command(const std::span<const std::string_view> arguments) {
     }
 
     const std::string target_name = options.build.output_name.value_or(
-        requested_sources.front().stem().string());
+        diagnostics::path_text(requested_sources.front().stem()));
     if (effective.precompiled_header) {
         const auto c_source = std::find_if(
             target_sources.begin(),

@@ -303,7 +303,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
     }
 
     const std::string target_name = options.build.output_name.value_or(
-        requested_sources.front().stem().string());
+        diagnostics::path_text(requested_sources.front().stem()));
     auto target_artifacts = layout->for_target(target_name, options.build.target_kind);
     if (!target_artifacts) {
         diagnostics::print_error(target_artifacts.error().message);
