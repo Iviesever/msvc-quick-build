@@ -47,8 +47,8 @@ struct LinkerError {
 };
 
 // Pure representation of the exact link.exe process contract. Construction has
-// no filesystem/process side effects; real execution and `mqb plan` consume the
-// same recipe so argv, working directory and environment isolation cannot drift.
+// no filesystem/process side effects; real execution parity is locked by native
+// integration coverage so `mqb plan` cannot silently drift from MsvcLinker::link().
 struct MsvcLinkRecipe {
     LinkInvocation invocation;
     process::ProcessSpec process;
@@ -118,9 +118,6 @@ public:
     build_recipe(
         const MsvcToolchain& toolchain,
         const LinkInvocation& invocation);
-
-    [[nodiscard]] std::expected<process::ProcessResult, LinkerError>
-    execute_recipe(const MsvcLinkRecipe& recipe) const;
 
     [[nodiscard]] std::expected<process::ProcessResult, LinkerError>
     link(const LinkInvocation& invocation) const;
