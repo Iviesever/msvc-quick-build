@@ -35,11 +35,4 @@ MsvcLinker::build_recipe(
     };
 }
 
-std::expected<process::ProcessResult, LinkerError>
-MsvcLinker::execute_recipe(const MsvcLinkRecipe& recipe) const {
-    // Keep output preparation and process launch execution-only. Recipe
-    // construction itself remains pure and can therefore be used by `mqb plan`.
-    return link(recipe.invocation);
-}
-
 } // namespace mqb::msvc
