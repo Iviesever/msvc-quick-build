@@ -124,7 +124,11 @@ $appLeafFiles = [ordered]@{
     'cli' = @('Cli.cpp', 'Cli.hpp', 'Invocation.cpp', 'Invocation.hpp')
     'diagnostics' = @('Diagnostics.cpp', 'Diagnostics.hpp', 'PerformanceTimings.cpp', 'PerformanceTimings.hpp')
     'project' = @('ProjectSetup.cpp', 'ProjectSetup.hpp')
-    'targets' = @('ModuleCliTarget.cpp', 'ModuleCliTarget.hpp', 'StaticCliTarget.cpp', 'StaticCliTarget.hpp')
+    'targets' = @(
+        'CompdbCommand.cpp', 'CompdbCommand.hpp',
+        'ModuleCliTarget.cpp', 'ModuleCliTarget.hpp',
+        'StaticCliTarget.cpp', 'StaticCliTarget.hpp'
+    )
 }
 foreach ($leaf in $appLeafFiles.Keys) {
     $leafRoot = Join-Path $appRoot $leaf
