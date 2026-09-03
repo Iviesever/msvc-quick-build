@@ -20,6 +20,8 @@ struct ArchiveInvocation {
     Architecture architecture{Architecture::x64};
     bool link_time_code_generation{false};
     std::vector<std::string> additional_arguments;
+
+    [[nodiscard]] bool operator==(const ArchiveInvocation&) const = default;
 };
 
 enum class LibrarianErrorCode {
