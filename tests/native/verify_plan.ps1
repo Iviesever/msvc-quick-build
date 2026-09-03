@@ -65,8 +65,6 @@ $root = Join-Path $RepoRoot 'native-out/plan-evidence'
 if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 New-Item -ItemType Directory -Path $root -Force | Out-Null
 
-# Ordinary executable: exact recipes use source-parent working directories and
-# cold planning remains fully read-only.
 $ordinary = Join-Path $root 'ordinary'
 New-Item -ItemType Directory -Path (Join-Path $ordinary 'src') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $ordinary 'include') -Force | Out-Null
@@ -109,11 +107,11 @@ $expectedProject = [System.IO.Path]::GetFullPath($ordinary).TrimEnd('\')
 $linkWorking = ([System.IO.Path]::GetFullPath([string]$linkSteps[0].process.working_directory)).TrimEnd('\')
 Assert-True ($linkWorking.Equals($expectedProject, [System.StringComparison]::OrdinalIgnoreCase)) `
     'link plan working directory must be project root'
-Assert-True ((@($linkSteps[0].process.environment | Where-Object { $_.name -eq 'LINK' -and $_.remove }).Count -eq 1) `
+Assert-True ((@($linkSteps[0].process.environment | Where-Object { $_.name -eq 'LINK' -and $_.remove }).Count -eq 1)) `
     'link recipe must suppress ambient LINK'
-Assert-True ((@($linkSteps[0].process.environment | Where-Object { $_.name -eq '_LINK_' -and $_.remove }).Count -eq 1) `
+Assert-True ((@($linkSteps[0].process.environment | Where-Object { $_.name -eq '_LINK_' -and $_.remove }).Count -eq 1)) `
     'link recipe must suppress ambient _LINK_'
-Assert-True ((@($linkSteps[0].process.environment | Where-Object { $_.name -eq 'LINK_REPRO' -and $_.remove }).Count -eq 1) `
+Assert-True ((@($linkSteps[0].process.environment | Where-Object { $_.name -eq 'LINK_REPRO' -and $_.remove }).Count -eq 1)) `
     'link recipe must suppress ambient LINK_REPRO'
 
 $coldRun2 = Invoke-MqbCaptured -WorkingDirectory $ordinary -Arguments $planArgs
@@ -139,8 +137,6 @@ foreach ($step in @($warm.steps)) {
     Assert-True ($null -eq $step.process) 'up-to-date step should not claim an execution recipe'
 }
 
-# Compdb regression discovered while building plan: nested translation units must
-# use the same source-parent working directory as real target compilation.
 $compdb = Invoke-MqbCaptured -WorkingDirectory $ordinary -Arguments @(
     'compdb', 'src/main.cpp', 'src/helper.cpp', '--no-discover', '--debug',
     '-I', 'include', '-D', 'VALUE=7', '--output', 'compile_commands.json'
@@ -154,9 +150,6 @@ foreach ($entry in $database) {
         "compdb directory must match real source-parent compile working directory: $directory"
 }
 
-# PCH: cold planning models creator -> forced consumers -> link without writing
-# state; after a real build, a PCH-header change plans the entire downstream chain
-# but still leaves the sealed .mqb tree untouched.
 $pch = Join-Path $root 'pch'
 New-Item -ItemType Directory -Path (Join-Path $pch 'include') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $pch 'src') -Force | Out-Null
@@ -209,7 +202,6 @@ Assert-True ($textRun.ExitCode -eq 0) "text plan failed:`n$($textRun.Text)"
 Assert-True ($textRun.Text -match 'MQB build plan') 'text plan missing heading'
 Assert-True ($textRun.Text -match 'summary:') 'text plan missing summary'
 
-# Unsupported graphs fail closed and remain state-free.
 $module = Join-Path $root 'module'
 New-Item -ItemType Directory -Path $module -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $module 'hello.ixx') -Encoding utf8 -Value 'export module hello; export int value() { return 1; }'
