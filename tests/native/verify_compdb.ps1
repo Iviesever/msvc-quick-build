@@ -24,8 +24,13 @@ function Invoke-MqbCaptured {
     Push-Location $WorkingDirectory
     try {
         $text = (& $MqbPath @Arguments 2>&1 | Out-String)
+        $exitCode = $LASTEXITCODE
+        # Some evidence cases intentionally exercise a non-zero MQB exit code.
+        # Preserve it in the returned record, but do not leak native-process
+        # status into the verifier's own final exit status.
+        $global:LASTEXITCODE = 0
         return [PSCustomObject]@{
-            ExitCode = $LASTEXITCODE
+            ExitCode = $exitCode
             Text = $text
         }
     }
