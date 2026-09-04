@@ -84,19 +84,22 @@ This milestone does not persist MSVC environment/toolchain discovery and does no
 
 ## Invocation-scoped target filesystem evidence
 
-Ordinary executable/DLL targets and static-library targets share filesystem snapshots across their translation-unit compile inspections for the duration of one MQB invocation. The table is neither persisted nor reused by another target or process.
+Ordinary executable/DLL targets and static-library targets share compile-cache **dependency** snapshots across their translation-unit inspections for the duration of one MQB invocation. The table is neither persisted nor reused by another target or process.
 
-The key is the Windows path identity plus the required observation mode (`regular file` versus `file or directory`). Concurrent requests use a single-flight entry: one worker performs the metadata query and other workers receive the exact existence/timestamp result while retaining their own requested path spelling for validation and diagnostics.
+The key is the Windows path identity under the existing file-or-directory dependency semantics. Concurrent requests use a single-flight entry: one worker performs the metadata query and other workers receive the exact existence/timestamp result while retaining their own requested path spelling for validation and diagnostics.
 
-This changes warm-path scaling from dependency occurrences toward unique paths without changing cache records, build signatures, compiler recipes, or freshness comparisons. Cache loading and compile validation remain per translation unit.
+Source and object/output snapshots deliberately stay on the historical direct path. Target validation already guarantees those regular-file artifacts are unique, so routing them through a synchronized table cannot produce reuse and would penalize projects with no shared dependencies.
 
-Every path whose first snapshot was reused is probed once more after the compile scheduler has joined all workers. If existence, timestamp, or reliable metadata status changed across that window—or the barrier itself cannot be completed—MQB rejects every result that could depend on the shared observation and conservatively rebuilds the complete target without evidence reuse. A failed optimization therefore becomes extra work, never stale success.
+The dependency table changes warm-path scaling from dependency occurrences toward unique dependency paths without changing cache records, build signatures, compiler recipes, or freshness comparisons. Cache loading and compile validation remain per translation unit.
+
+Every dependency whose first snapshot was reused is probed once more after the compile scheduler has joined all workers. If existence, timestamp, or reliable metadata status changed across that window—or the barrier itself cannot be completed—MQB rejects every result that could depend on the shared observation and conservatively rebuilds the complete target without evidence reuse. A failed optimization therefore becomes extra work, never stale success.
 
 The current boundary is deliberate:
 
-- ordinary and static target compile inspection participate;
+- ordinary and static target compile-cache dependency inspection participates;
+- unique source and object/output probes remain direct;
 - PCH and Modules/Header Units retain their existing dependency-ordered paths;
 - link/archive object snapshot handoff is a separate future optimization;
 - the table is invocation-local and does not introduce a daemon, watcher, USN journal, content hash, cache pack, or persistent lock.
 
-`incremental_target_coordinator_tests.cpp` locks the single-flight counter behavior and the mutation-revalidation rejection. `verify_performance_instrumentation.ps1` proves that a 129-TU common-header no-op keeps exact cache/process behavior while each unique compile path performs at most its initial probe plus one shared-evidence revalidation.
+`incremental_target_coordinator_tests.cpp` locks the single-flight counter behavior and the mutation-revalidation rejection. `verify_performance_instrumentation.ps1` proves that a 129-TU common-header no-op keeps exact cache/process behavior while each shared dependency performs at most its initial probe plus one revalidation.
