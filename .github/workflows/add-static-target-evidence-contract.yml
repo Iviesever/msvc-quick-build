@@ -1,0 +1,101 @@
+name: Add static target evidence contract
+
+on:
+  push:
+    branches:
+      - perf/target-wide-filesystem-evidence
+    paths:
+      - .github/workflows/add-static-target-evidence-contract.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Add static target symmetry contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/native/verify_performance_instrumentation.ps1')
+          text = path.read_text(encoding='utf-8')
+          anchor = "    Write-Host 'Performance instrumentation and target-wide evidence contract passed.'\n"
+          if text.count(anchor) != 1:
+              raise SystemExit('performance contract anchor drifted')
+
+          block = r'''    # Static-library targets use the same target-scoped dependency table.
+              # Lock that path independently so ordinary-target coverage cannot mask a
+              # future divergence in archive coordination.
+              Set-Content -LiteralPath (Join-Path $root 'static_a.cpp') -Encoding utf8 -Value @'
+          #include "common.hpp"
+          int static_a() { return shared_contract_value(); }
+          '@
+              Set-Content -LiteralPath (Join-Path $root 'static_b.cpp') -Encoding utf8 -Value @'
+          #include "common.hpp"
+          int static_b() { return shared_contract_value() + 1; }
+          '@
+              Set-Content -LiteralPath (Join-Path $root 'static_c.cpp') -Encoding utf8 -Value @'
+          #include "common.hpp"
+          int static_c() { return shared_contract_value() + 2; }
+          '@
+              $staticArguments = @(
+                  'static_a.cpp',
+                  'static_b.cpp',
+                  'static_c.cpp',
+                  '--no-discover',
+                  '--type',
+                  'static',
+                  '--output',
+                  'performance_contract_static',
+                  '-j',
+                  '3'
+              )
+              $null = Invoke-MqbCapture `
+                  -WorkingDirectory $root `
+                  -Arguments $staticArguments
+              $staticWarm = Invoke-MqbCapture `
+                  -WorkingDirectory $root `
+                  -Arguments ($staticArguments + @('--timings=json')) `
+                  -ExpectTimings
+              if ([int]$staticWarm.timing.cache.compile.hits -ne 3 `
+                  -or [int]$staticWarm.timing.cache.compile.misses -ne 0 `
+                  -or [int]$staticWarm.timing.cache.archive.hits -ne 1 `
+                  -or [int]$staticWarm.timing.cache.archive.misses -ne 0) {
+                  throw 'Static target evidence contract did not retain exact warm cache behavior'
+              }
+              if ([int64]$staticWarm.timing.counters.cl_processes_launched -ne 0 `
+                  -or [int64]$staticWarm.timing.counters.lib_processes_launched -ne 0) {
+                  throw 'Warm static target launched cl.exe or lib.exe'
+              }
+              if ([int64]$staticWarm.timing.counters.snapshot_evidence_reuses -lt 2) {
+                  throw "Static target did not reuse its common-header evidence across three TUs: $($staticWarm.timing.counters.snapshot_evidence_reuses) reuse(s)"
+              }
+              if ([int64]$staticWarm.timing.counter_breakdown.filesystem.compile.snapshot_evidence_reuses -lt 2) {
+                  throw 'Static target common-header reuse was not attributed to the compile filesystem domain'
+              }
+
+          '''
+          path.write_text(text.replace(anchor, block + anchor, 1), encoding='utf-8')
+          Path('.github/workflows/add-static-target-evidence-contract.yml').unlink()
+          PY
+
+      - name: Validate and commit contract
+        shell: bash
+        run: |
+          git diff --check
+          test "$(tr -d '\r\n' < VERSION)" = "5.4.0"
+          test ! -e .github/workflows/add-static-target-evidence-contract.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && { echo 'No static contract produced'; exit 1; }
+          git commit -m "test: cover static target filesystem evidence reuse"
+          git push origin HEAD:perf/target-wide-filesystem-evidence
