@@ -28,12 +28,16 @@ jobs:
           parts = sorted(Path('.github/scripts').glob('complete_v55_evidence.part*'))
           if len(parts) != 9:
               raise SystemExit(f'expected 9 transport fragments, found {len(parts)}')
-          payload = ''.join(
+          chunks = [
               part.read_text(encoding='utf-8').rstrip('\r\n')
               for part in parts
-          )
+          ]
+          premature = "'), \"complete_v55_evidence.py\", \"exec\"))"
+          if not chunks[0].endswith(premature):
+              raise SystemExit('first fragment does not contain the expected premature closure')
+          chunks[0] = chunks[0][:-len(premature)]
           Path('.github/scripts/complete_v55_evidence.py').write_text(
-              payload,
+              ''.join(chunks),
               encoding='utf-8',
           )
           PY
