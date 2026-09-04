@@ -23,7 +23,20 @@ jobs:
       - name: Reassemble deterministic patch
         shell: bash
         run: |
-          cat .github/scripts/complete_v55_evidence.part* > .github/scripts/complete_v55_evidence.py
+          python - <<'PY'
+          from pathlib import Path
+          parts = sorted(Path('.github/scripts').glob('complete_v55_evidence.part*'))
+          if len(parts) != 9:
+              raise SystemExit(f'expected 9 transport fragments, found {len(parts)}')
+          payload = ''.join(
+              part.read_text(encoding='utf-8').rstrip('\r\n')
+              for part in parts
+          )
+          Path('.github/scripts/complete_v55_evidence.py').write_text(
+              payload,
+              encoding='utf-8',
+          )
+          PY
           python -m py_compile .github/scripts/complete_v55_evidence.py
 
       - name: Apply deterministic evidence closure patch
