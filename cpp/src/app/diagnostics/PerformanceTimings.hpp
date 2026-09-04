@@ -2,11 +2,17 @@
 
 #include <chrono>
 #include <cstddef>
+#include <memory>
 #include <string>
 
+#include "mqb/diagnostics/PerformanceEvidence.hpp"
 #include "mqb/orchestration/TargetTimings.hpp"
 
 namespace mqb::app::performance {
+
+namespace detail {
+class OutputObserver;
+}
 
 enum class Format {
     disabled,
@@ -31,6 +37,7 @@ struct Snapshot {
     std::chrono::nanoseconds run_startup{};
     std::chrono::nanoseconds total{};
     CacheCounters cache;
+    mqb::diagnostics::PerformanceEvidenceSnapshot evidence;
 };
 
 [[nodiscard]] std::string render(const Snapshot& snapshot, Format format);
@@ -39,8 +46,7 @@ class Session {
 public:
     explicit Session(
         Format format,
-        Clock::time_point application_started = Clock::now()) noexcept
-        : format_(format), application_started_(application_started) {}
+        Clock::time_point application_started = Clock::now()) noexcept;
 
     ~Session() noexcept;
 
@@ -61,6 +67,8 @@ private:
     Format format_{Format::disabled};
     Clock::time_point application_started_{};
     Snapshot accumulated_;
+    std::unique_ptr<mqb::diagnostics::PerformanceEvidenceSession> evidence_session_;
+    std::unique_ptr<detail::OutputObserver> output_observer_;
 };
 
 } // namespace mqb::app::performance
