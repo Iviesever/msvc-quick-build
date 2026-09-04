@@ -95,6 +95,18 @@ schedule_compile_wave(
             compile_one);
     }
 
+    // A fixed single-worker policy executes the complete wave on the
+    // caller thread. Activate evidence once around that loop instead of
+    // writing/restoring the same thread-local pointer for every TU.
+    if (request.max_parallel_compiles == 1) {
+        detail::ScopedFilesystemEvidenceActivation evidence_activation{
+            evidence_table};
+        return BoundedWorkScheduler::run(
+            request.sources.size(),
+            request.max_parallel_compiles,
+            compile_one);
+    }
+
     return BoundedWorkScheduler::run(
         request.sources.size(),
         request.max_parallel_compiles,
