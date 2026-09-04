@@ -90,6 +90,8 @@ The key is the Windows path identity under the existing file-or-directory depend
 
 Source and object/output snapshots deliberately stay on the historical direct path. Target validation already guarantees those regular-file artifacts are unique, so routing them through a synchronized table cannot produce reuse and would penalize projects with no shared dependencies.
 
+The table is activated only when a target has at least three translation units. Because every reused dependency must be revalidated once, a path observed by exactly two translation units still costs two physical probes (`1` initial + `1` barrier), equal to the historical direct path. Disabling the table for one- and two-TU targets therefore removes synchronization overhead without giving up any possible metadata-I/O reduction.
+
 The dependency table changes warm-path scaling from dependency occurrences toward unique dependency paths without changing cache records, build signatures, compiler recipes, or freshness comparisons. Cache loading and compile validation remain per translation unit.
 
 Every dependency whose first snapshot was reused is probed once more after the compile scheduler has joined all workers. If existence, timestamp, or reliable metadata status changed across that window—or the barrier itself cannot be completed—MQB rejects every result that could depend on the shared observation and conservatively rebuilds the complete target without evidence reuse. A failed optimization therefore becomes extra work, never stale success.

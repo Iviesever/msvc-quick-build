@@ -90,6 +90,8 @@ Key 使用 Windows path identity，并保留现有 file-or-directory dependency 
 
 Source 与 object/output snapshot 有意继续走原始直连路径。Target validation 已经保证这些 regular-file artifact 在目标内唯一，因此将它们送入同步共享表不可能产生复用，只会让没有公共依赖的项目承担额外开销。
 
+共享表只在 target 至少包含 3 个 translation unit 时启用。由于每个被复用的 dependency 都必须在 barrier 再验证一次，一个只被 2 个 TU 观察的 path 仍需要 2 次物理 probe（`1` 次初查 + `1` 次复验），与原始直连路径完全相同。因此对 1～2 TU target 关闭共享表，只会消除同步开销，不会放弃任何可能的 metadata-I/O 减少。
+
 Dependency table 会把 warm path 从按 dependency occurrence 增长推进到更接近按 unique dependency path 增长，但不会修改 cache record、build signature、compiler recipe 或 freshness comparison。Cache load 与 compile validation 仍然属于每个 translation unit。
 
 凡首次 snapshot 曾被其他 inspection 复用的 dependency，都会在 compile scheduler join 所有 worker 后再探测一次。如果 existence、timestamp 或可靠 metadata 状态在该窗口内发生变化，或者 barrier 本身无法完成，MQB 会拒绝所有可能依赖共享 observation 的结果，并在不使用 evidence reuse 的情况下保守重编整个 target。因此优化失败只会增加工作量，绝不会产生 stale success。

@@ -215,6 +215,33 @@ int performance_contract_${index}() { return shared_contract_value() + $index; }
         throw 'Timing-disabled contract unexpectedly returned timing data'
     }
 
+    # The mandatory shared-evidence revalidation makes two TU observations
+    # the physical-probe break-even point: one initial probe plus one barrier
+    # probe equals the two historical direct probes. The table must remain off.
+    $twoSourceArguments = @(
+        'main.cpp',
+        'unit_000.cpp',
+        '--output',
+        'performance_contract_two',
+        '-j',
+        '2'
+    )
+    $null = Invoke-MqbCapture `
+        -WorkingDirectory $root `
+        -Arguments $twoSourceArguments
+    $twoSource = Invoke-MqbCapture `
+        -WorkingDirectory $root `
+        -Arguments ($twoSourceArguments + @('--timings=json')) `
+        -ExpectTimings
+    if ([int]$twoSource.timing.cache.compile.hits -ne 2 `
+        -or [int]$twoSource.timing.cache.compile.misses -ne 0 `
+        -or [int]$twoSource.timing.cache.link.hits -ne 1) {
+        throw 'Two-TU threshold contract did not retain exact warm cache behavior'
+    }
+    if ([int64]$twoSource.timing.counters.snapshot_evidence_reuses -ne 0) {
+        throw "Two-TU target activated evidence sharing despite zero possible physical-probe saving: $($twoSource.timing.counters.snapshot_evidence_reuses) reuse(s)"
+    }
+
     Write-Host 'Performance instrumentation and target-wide evidence contract passed.'
 }
 finally {

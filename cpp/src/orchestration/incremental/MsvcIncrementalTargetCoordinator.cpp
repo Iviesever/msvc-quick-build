@@ -189,8 +189,12 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
     // callback thread. Only physical filesystem observations are shared; each
     // compile keeps its own cache load, validation, warnings, and result.
     detail::FilesystemEvidenceTable filesystem_evidence;
+    // The race-safety barrier revalidates every reused dependency once.
+    // With only two translation units, one initial observation plus one
+    // revalidation is the same two physical probes as the uncached path,
+    // so enabling the synchronized table cannot reduce metadata I/O.
     detail::FilesystemEvidenceTable* shared_evidence =
-        request.sources.size() > 1 && !request.force_downstream_rebuild
+        request.sources.size() > 2 && !request.force_downstream_rebuild
         ? &filesystem_evidence
         : nullptr;
 
