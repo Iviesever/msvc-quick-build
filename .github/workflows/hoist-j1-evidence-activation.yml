@@ -1,0 +1,82 @@
+name: Hoist fixed-j1 evidence activation
+
+on:
+  push:
+    branches:
+      - perf/target-wide-filesystem-evidence
+    paths:
+      - .github/workflows/hoist-j1-evidence-activation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Hoist activation over caller-only scheduling
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          old = '''    if (evidence_table == nullptr) {
+                  return BoundedWorkScheduler::run(
+                      request.sources.size(),
+                      request.max_parallel_compiles,
+                      compile_one);
+              }
+
+              return BoundedWorkScheduler::run(
+          '''
+          new = '''    if (evidence_table == nullptr) {
+                  return BoundedWorkScheduler::run(
+                      request.sources.size(),
+                      request.max_parallel_compiles,
+                      compile_one);
+              }
+
+              // A fixed single-worker policy executes the complete wave on the
+              // caller thread. Activate evidence once around that loop instead of
+              // writing/restoring the same thread-local pointer for every TU.
+              if (request.max_parallel_compiles == 1) {
+                  detail::ScopedFilesystemEvidenceActivation evidence_activation{
+                      evidence_table};
+                  return BoundedWorkScheduler::run(
+                      request.sources.size(),
+                      request.max_parallel_compiles,
+                      compile_one);
+              }
+
+              return BoundedWorkScheduler::run(
+          '''
+          for name in (
+              'cpp/src/orchestration/incremental/MsvcIncrementalTargetCoordinator.cpp',
+              'cpp/src/orchestration/incremental/MsvcIncrementalStaticTargetCoordinator.cpp',
+          ):
+              path = Path(name)
+              text = path.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{name}: direct-path branch drifted')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          Path('.github/workflows/hoist-j1-evidence-activation.yml').unlink()
+          PY
+
+      - name: Validate and commit fixed-j1 fast path
+        shell: bash
+        run: |
+          git diff --check
+          test "$(tr -d '\r\n' < VERSION)" = "5.4.0"
+          test ! -e .github/workflows/hoist-j1-evidence-activation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && { echo 'No fixed-j1 refinement produced'; exit 1; }
+          git commit -m "perf: hoist filesystem evidence activation for j1"
+          git push origin HEAD:perf/target-wide-filesystem-evidence
