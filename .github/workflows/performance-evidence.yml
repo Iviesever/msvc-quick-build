@@ -111,12 +111,23 @@ jobs:
           $lines.Add('')
           $lines.Add('Negative deltas mean the candidate is faster. These values are review evidence, not correctness thresholds.')
           $lines.Add('')
+          $lines.Add('### Wall-clock and discovery phases')
+          $lines.Add('')
           $lines.Add('| Scenario | Base total ms | Candidate total ms | Total Δ% | Base discovery ms | Candidate discovery ms | Discovery Δ% |')
           $lines.Add('|---|---:|---:|---:|---:|---:|---:|')
           foreach ($row in @($report.comparison)) {
             $totalDelta = if ($null -eq $row.total_delta_pct) { 'n/a' } else { [string]$row.total_delta_pct }
             $discoveryDelta = if ($null -eq $row.discovery_delta_pct) { 'n/a' } else { [string]$row.discovery_delta_pct }
             $lines.Add("| $($row.scenario) | $($row.baseline_total_ms) | $($row.candidate_total_ms) | $totalDelta | $($row.baseline_discovery_ms) | $($row.candidate_discovery_ms) | $discoveryDelta |")
+          }
+          $lines.Add('')
+          $lines.Add('### Compile queue phase')
+          $lines.Add('')
+          $lines.Add('| Scenario | Base queue ms | Candidate queue ms | Queue Δ% |')
+          $lines.Add('|---|---:|---:|---:|')
+          foreach ($row in @($report.comparison)) {
+            $queueDelta = if ($null -eq $row.compile_queue_delta_pct) { 'n/a' } else { [string]$row.compile_queue_delta_pct }
+            $lines.Add("| $($row.scenario) | $($row.baseline_compile_queue_ms) | $($row.candidate_compile_queue_ms) | $queueDelta |")
           }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 

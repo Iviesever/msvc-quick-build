@@ -16,6 +16,9 @@ $RequiredScenarios = @(
     'public-header',
     'build-run',
     'link-only',
+    'target-scale-cold',
+    'target-scale-no-op',
+    'target-scale-single-tu',
     'discovery-cold',
     'discovery-no-op',
     'discovery-header',
@@ -74,14 +77,23 @@ function Assert-BenchmarkContract {
             throw "$Label benchmark is missing required scenario '$scenario'"
         }
 
-        $summarySamples = [int]$summaryByScenario[$scenario].samples
+        $summaryRow = $summaryByScenario[$scenario]
+        $summarySamples = [int]$summaryRow.samples
         if ($summarySamples -ne $ExpectedIterations) {
             throw "$Label benchmark scenario '$scenario' summary has $summarySamples samples; expected $ExpectedIterations"
+        }
+        if ($null -eq $summaryRow.PSObject.Properties['median_compile_queue_ms']) {
+            throw "$Label benchmark scenario '$scenario' summary is missing median_compile_queue_ms"
         }
 
         $rawSamples = @($sampleRows | Where-Object { [string]$_.scenario -eq $scenario })
         if ($rawSamples.Count -ne $ExpectedIterations) {
             throw "$Label benchmark scenario '$scenario' has $($rawSamples.Count) raw samples; expected $ExpectedIterations"
+        }
+        foreach ($sample in $rawSamples) {
+            if ($null -eq $sample.PSObject.Properties['compile_queue_ms']) {
+                throw "$Label benchmark scenario '$scenario' contains a raw sample without compile_queue_ms"
+            }
         }
 
         $iterationsSeen = @($rawSamples | ForEach-Object { [int]$_.iteration } | Sort-Object -Unique)
@@ -152,8 +164,11 @@ try {
             $candidateTotal = [double]$candidateRow.median_total_ms
             $baselineDiscovery = [double]$baselineRow.median_discovery_ms
             $candidateDiscovery = [double]$candidateRow.median_discovery_ms
+            $baselineCompileQueue = [double]$baselineRow.median_compile_queue_ms
+            $candidateCompileQueue = [double]$candidateRow.median_compile_queue_ms
             $totalDeltaPct = Get-DeltaPercent -Baseline $baselineTotal -Candidate $candidateTotal
             $discoveryDeltaPct = Get-DeltaPercent -Baseline $baselineDiscovery -Candidate $candidateDiscovery
+            $compileQueueDeltaPct = Get-DeltaPercent -Baseline $baselineCompileQueue -Candidate $candidateCompileQueue
 
             [PSCustomObject]@{
                 scenario = $scenario
@@ -165,6 +180,10 @@ try {
                 candidate_discovery_ms = [Math]::Round($candidateDiscovery, 3)
                 discovery_delta_ms = [Math]::Round(($candidateDiscovery - $baselineDiscovery), 3)
                 discovery_delta_pct = if ($null -eq $discoveryDeltaPct) { $null } else { [Math]::Round($discoveryDeltaPct, 2) }
+                baseline_compile_queue_ms = [Math]::Round($baselineCompileQueue, 3)
+                candidate_compile_queue_ms = [Math]::Round($candidateCompileQueue, 3)
+                compile_queue_delta_ms = [Math]::Round(($candidateCompileQueue - $baselineCompileQueue), 3)
+                compile_queue_delta_pct = if ($null -eq $compileQueueDeltaPct) { $null } else { [Math]::Round($compileQueueDeltaPct, 2) }
             }
         }
     )
