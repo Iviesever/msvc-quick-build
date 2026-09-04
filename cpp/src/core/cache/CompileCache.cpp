@@ -13,6 +13,13 @@ namespace {
 [[nodiscard]] bool same_path(
     const std::filesystem::path& left,
     const std::filesystem::path& right) {
+    // Cache files are written from the same normalized in-memory paths that are
+    // normally reconstructed on the next invocation. Avoid rebuilding two
+    // normalized UTF-8 identity strings for that overwhelmingly common exact
+    // match, while retaining Windows case/alias identity as the fallback.
+    if (left == right) {
+        return true;
+    }
     return platform::windows::path_identity_key(left)
         == platform::windows::path_identity_key(right);
 }
