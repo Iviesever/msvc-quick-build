@@ -79,8 +79,9 @@ function Assert-CompileCacheCounts {
         [Parameter(Mandatory = $true)][int]$ExpectedMisses
     )
 
-    if ([int]$Sample.compile_hits -ne $ExpectedHits
-        -or [int]$Sample.compile_misses -ne $ExpectedMisses) {
+    $hitsMatch = [int]$Sample.compile_hits -eq $ExpectedHits
+    $missesMatch = [int]$Sample.compile_misses -eq $ExpectedMisses
+    if (-not ($hitsMatch -and $missesMatch)) {
         throw "Benchmark scenario '$($Sample.scenario)' produced compile cache $($Sample.compile_hits) hit(s) / $($Sample.compile_misses) miss(es); expected $ExpectedHits / $ExpectedMisses"
     }
 }
