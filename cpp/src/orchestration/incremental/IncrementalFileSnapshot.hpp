@@ -141,15 +141,15 @@ snapshot_file_or_directory_uncached(const fs::path& path) {
     };
 }
 
-enum class FilesystemEvidenceMode {
-    regular_file,
-    file_or_directory,
-};
-
 class FilesystemEvidenceTable;
 
 inline thread_local FilesystemEvidenceTable* active_filesystem_evidence_table = nullptr;
 
+// This table deliberately owns only compile-cache dependency evidence. Target
+// validation already guarantees that source and object/output paths are unique,
+// so routing those regular-file probes through a synchronized map can add cost
+// without any possible reuse. Link/archive object handoff remains a separate
+// later optimization with its own identity and ordering contract.
 class FilesystemEvidenceTable {
 public:
     FilesystemEvidenceTable() = default;
@@ -157,20 +157,79 @@ public:
     FilesystemEvidenceTable(const FilesystemEvidenceTable&) = delete;
     FilesystemEvidenceTable& operator=(const FilesystemEvidenceTable&) = delete;
 
-    [[nodiscard]] IncrementalFileSnapshotResult observe_regular_file(
+    [[nodiscard]] IncrementalFileSnapshotResult observe_dependency(
         const fs::path& path) {
-        return observe(path, FilesystemEvidenceMode::regular_file);
+        if (path.empty()) {
+            return missing_file_snapshot(path);
+        }
+
+        std::shared_ptr<Entry> entry;
+        bool owns_probe = false;
+        try {
+            const std::string key =
+                mqb::platform::windows::path_identity_key(path);
+            {
+                std::scoped_lock lock{entries_mutex_};
+                const auto existing = entries_.find(key);
+                if (existing == entries_.end()) {
+                    entry = std::make_shared<Entry>(path);
+                    entries_.emplace(key, entry);
+                    owns_probe = true;
+                } else {
+                    entry = existing->second;
+                    ++entry->observation_count;
+                }
+            }
+        } catch (...) {
+            // Allocation/path-key failure must not create a new build failure
+            // surface. Fall back to the exact historical uncached observation.
+            return snapshot_file_or_directory_uncached(path);
+        }
+
+        if (owns_probe) {
+            try {
+                auto result = snapshot_file_or_directory_uncached(path);
+                {
+                    std::scoped_lock lock{entry->state_mutex};
+                    entry->result = result;
+                    entry->state = EntryState::ready;
+                }
+                entry->state_changed.notify_all();
+                return result;
+            } catch (...) {
+                {
+                    std::scoped_lock lock{entry->state_mutex};
+                    entry->state = EntryState::abandoned;
+                }
+                entry->state_changed.notify_all();
+                throw;
+            }
+        }
+
+        std::unique_lock lock{entry->state_mutex};
+        entry->state_changed.wait(lock, [&entry] {
+            return entry->state != EntryState::probing;
+        });
+        if (entry->state == EntryState::abandoned) {
+            lock.unlock();
+            return snapshot_file_or_directory_uncached(path);
+        }
+
+        auto result = entry->result;
+        lock.unlock();
+
+        // Preserve each request's spelling for warnings and validator alignment,
+        // while sharing only the existence/timestamp evidence.
+        result.snapshot.path = path;
+        mqb::performance::record_snapshot_evidence_reuse(
+            mqb::performance::active_filesystem_kind);
+        return result;
     }
 
-    [[nodiscard]] IncrementalFileSnapshotResult observe_file_or_directory(
-        const fs::path& path) {
-        return observe(path, FilesystemEvidenceMode::file_or_directory);
-    }
-
-    // Re-read every path whose first snapshot was reused by another compile
-    // inspection. A mismatch means the shared observation window crossed a
-    // filesystem mutation; callers must conservatively reject the target-wide
-    // all-hit decision. Unique paths retain the pre-existing per-TU race model.
+    // Re-read every dependency whose first snapshot was reused by another
+    // compile inspection. A mismatch means the shared observation window
+    // crossed a filesystem mutation; callers must conservatively reject every
+    // target result that could depend on that window.
     [[nodiscard]] bool revalidate_shared() noexcept {
         try {
             std::vector<std::shared_ptr<Entry>> shared_entries;
@@ -198,7 +257,8 @@ public:
                     baseline = entry->result;
                 }
 
-                const auto current = snapshot_uncached(entry->path, entry->mode);
+                const auto current =
+                    snapshot_file_or_directory_uncached(entry->path);
                 if (!same_evidence(baseline, current)) {
                     return false;
                 }
@@ -220,11 +280,10 @@ private:
     };
 
     struct Entry {
-        Entry(fs::path observed_path, const FilesystemEvidenceMode observed_mode)
-            : path(std::move(observed_path)), mode(observed_mode) {}
+        explicit Entry(fs::path observed_path)
+            : path(std::move(observed_path)) {}
 
         fs::path path;
-        FilesystemEvidenceMode mode{FilesystemEvidenceMode::regular_file};
         std::mutex state_mutex;
         std::condition_variable state_changed;
         EntryState state{EntryState::probing};
@@ -233,14 +292,6 @@ private:
         // the scheduler has joined every inspection worker.
         std::size_t observation_count{1};
     };
-
-    [[nodiscard]] static IncrementalFileSnapshotResult snapshot_uncached(
-        const fs::path& path,
-        const FilesystemEvidenceMode mode) {
-        return mode == FilesystemEvidenceMode::regular_file
-            ? snapshot_regular_file_uncached(path)
-            : snapshot_file_or_directory_uncached(path);
-    }
 
     [[nodiscard]] static bool same_evidence(
         const IncrementalFileSnapshotResult& left,
@@ -257,87 +308,6 @@ private:
             || left.snapshot.modified == right.snapshot.modified;
     }
 
-    [[nodiscard]] static std::string evidence_key(
-        const fs::path& path,
-        const FilesystemEvidenceMode mode) {
-        std::string key;
-        const std::string identity =
-            mqb::platform::windows::path_identity_key(path);
-        key.reserve(identity.size() + 1);
-        key.push_back(mode == FilesystemEvidenceMode::regular_file ? 'R' : 'A');
-        key.append(identity);
-        return key;
-    }
-
-    [[nodiscard]] IncrementalFileSnapshotResult observe(
-        const fs::path& path,
-        const FilesystemEvidenceMode mode) {
-        if (path.empty()) {
-            return missing_file_snapshot(path);
-        }
-
-        std::shared_ptr<Entry> entry;
-        bool owns_probe = false;
-        try {
-            const std::string key = evidence_key(path, mode);
-            {
-                std::scoped_lock lock{entries_mutex_};
-                const auto existing = entries_.find(key);
-                if (existing == entries_.end()) {
-                    entry = std::make_shared<Entry>(path, mode);
-                    entries_.emplace(key, entry);
-                    owns_probe = true;
-                } else {
-                    entry = existing->second;
-                    ++entry->observation_count;
-                }
-            }
-        } catch (...) {
-            // Allocation/path-key failure must not create a new build failure
-            // surface. Fall back to the exact historical uncached observation.
-            return snapshot_uncached(path, mode);
-        }
-
-        if (owns_probe) {
-            try {
-                auto result = snapshot_uncached(path, mode);
-                {
-                    std::scoped_lock lock{entry->state_mutex};
-                    entry->result = result;
-                    entry->state = EntryState::ready;
-                }
-                entry->state_changed.notify_all();
-                return result;
-            } catch (...) {
-                {
-                    std::scoped_lock lock{entry->state_mutex};
-                    entry->state = EntryState::abandoned;
-                }
-                entry->state_changed.notify_all();
-                throw;
-            }
-        }
-
-        std::unique_lock lock{entry->state_mutex};
-        entry->state_changed.wait(lock, [&entry] {
-            return entry->state != EntryState::probing;
-        });
-        if (entry->state == EntryState::abandoned) {
-            lock.unlock();
-            return snapshot_uncached(path, mode);
-        }
-
-        auto result = entry->result;
-        lock.unlock();
-
-        // Preserve each request's spelling for warnings and validator alignment,
-        // while sharing only the existence/timestamp evidence.
-        result.snapshot.path = path;
-        mqb::performance::record_snapshot_evidence_reuse(
-            mqb::performance::active_filesystem_kind);
-        return result;
-    }
-
     std::mutex entries_mutex_;
     std::unordered_map<std::string, std::shared_ptr<Entry>> entries_;
 };
@@ -346,11 +316,10 @@ class ScopedFilesystemEvidenceActivation {
 public:
     explicit ScopedFilesystemEvidenceActivation(
         FilesystemEvidenceTable* table) noexcept
-        : previous_(active_filesystem_evidence_table),
-          active_(table != nullptr) {
-        if (active_) {
-            active_filesystem_evidence_table = table;
-        }
+        : previous_(active_filesystem_evidence_table) {
+        // Passing nullptr is an intentional suspension. This guarantees that a
+        // conservative retry cannot accidentally inherit an outer table.
+        active_filesystem_evidence_table = table;
     }
 
     explicit ScopedFilesystemEvidenceActivation(
@@ -358,9 +327,7 @@ public:
         : ScopedFilesystemEvidenceActivation(&table) {}
 
     ~ScopedFilesystemEvidenceActivation() noexcept {
-        if (active_) {
-            active_filesystem_evidence_table = previous_;
-        }
+        active_filesystem_evidence_table = previous_;
     }
 
     ScopedFilesystemEvidenceActivation(
@@ -370,21 +337,20 @@ public:
 
 private:
     FilesystemEvidenceTable* previous_{};
-    bool active_{false};
 };
 
 [[nodiscard]] inline IncrementalFileSnapshotResult snapshot_regular_file(
     const fs::path& path) {
-    if (active_filesystem_evidence_table != nullptr) {
-        return active_filesystem_evidence_table->observe_regular_file(path);
-    }
+    // Source and object/output paths are unique inside an ordinary/static target.
+    // Keep their exact historical direct path and avoid synchronized-map cost on
+    // workloads with no shareable dependencies.
     return snapshot_regular_file_uncached(path);
 }
 
 [[nodiscard]] inline IncrementalFileSnapshotResult snapshot_file_or_directory(
     const fs::path& path) {
     if (active_filesystem_evidence_table != nullptr) {
-        return active_filesystem_evidence_table->observe_file_or_directory(path);
+        return active_filesystem_evidence_table->observe_dependency(path);
     }
     return snapshot_file_or_directory_uncached(path);
 }
