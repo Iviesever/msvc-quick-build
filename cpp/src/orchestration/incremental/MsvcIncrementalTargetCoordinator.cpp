@@ -18,12 +18,16 @@
 #include "mqb/orchestration/BoundedWorkScheduler.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 
+#include "IncrementalFileSnapshot.hpp"
+
 namespace mqb::orchestration {
 namespace {
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 using PathIdentitySet = std::unordered_set<std::string>;
+using CompileAttempt =
+    std::expected<IncrementalCompileResult, IncrementalCompileError>;
 
 [[nodiscard]] IncrementalTargetError failure(
     const IncrementalTargetErrorCode code,
@@ -63,6 +67,49 @@ using PathIdentitySet = std::unordered_set<std::string>;
         .working_directory = source.source.parent_path(),
         .force_rebuild = force_rebuild,
     };
+}
+
+[[nodiscard]] std::expected<BoundedWorkSummary, BoundedWorkError>
+schedule_compile_wave(
+    const IncrementalTargetRequest& request,
+    MsvcIncrementalCompileCoordinator& compile_coordinator,
+    const bool force_rebuild,
+    detail::FilesystemEvidenceTable* evidence_table,
+    std::vector<std::optional<CompileAttempt>>& attempts) {
+    attempts.clear();
+    attempts.resize(request.sources.size());
+
+    return BoundedWorkScheduler::run(
+        request.sources.size(),
+        request.max_parallel_compiles,
+        [&](const std::size_t index) {
+            detail::ScopedFilesystemEvidenceActivation evidence_activation{
+                evidence_table};
+            auto compile_request = compile_request_for(
+                request.sources[index],
+                request.compiler_options,
+                force_rebuild);
+            attempts[index].emplace(compile_coordinator.run(compile_request));
+            return attempts[index]->has_value();
+        });
+}
+
+[[nodiscard]] std::optional<IncrementalTargetError> first_compile_error(
+    const IncrementalTargetRequest& request,
+    const std::vector<std::optional<CompileAttempt>>& attempts) {
+    for (std::size_t index = 0; index < attempts.size(); ++index) {
+        if (!attempts[index] || attempts[index]->has_value()) {
+            continue;
+        }
+
+        IncrementalTargetError error = failure(
+            IncrementalTargetErrorCode::compile_failed,
+            "translation unit compilation failed",
+            request.sources[index].source);
+        error.compile_error = attempts[index]->error();
+        return error;
+    }
+    return std::nullopt;
 }
 
 } // namespace
@@ -131,52 +178,70 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
         }
     }
 
-    using CompileAttempt = std::expected<IncrementalCompileResult, IncrementalCompileError>;
     std::vector<std::optional<CompileAttempt>> attempts(request.sources.size());
     timings.compile_queue = std::chrono::duration_cast<std::chrono::nanoseconds>(
         Clock::now() - queue_started);
     validation_evidence.finish();
 
     const auto compile_started = Clock::now();
-    const auto scheduled = BoundedWorkScheduler::run(
-        request.sources.size(),
-        request.max_parallel_compiles,
-        [&](const std::size_t index) {
-            const auto& source = request.sources[index];
-            auto compile_request = compile_request_for(
-                source,
-                request.compiler_options,
-                request.force_downstream_rebuild);
-            attempts[index].emplace(compile_coordinator_.run(compile_request));
-            return attempts[index]->has_value();
-        });
-    timings.compile = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        Clock::now() - compile_started);
+
+    // A target-scoped table is activated independently on every scheduler
+    // callback thread. Only physical filesystem observations are shared; each
+    // compile keeps its own cache load, validation, warnings, and result.
+    detail::FilesystemEvidenceTable filesystem_evidence;
+    detail::FilesystemEvidenceTable* shared_evidence =
+        request.sources.size() > 1 && !request.force_downstream_rebuild
+        ? &filesystem_evidence
+        : nullptr;
+
+    auto scheduled = schedule_compile_wave(
+        request,
+        compile_coordinator_,
+        request.force_downstream_rebuild,
+        shared_evidence,
+        attempts);
     if (!scheduled) {
         return std::unexpected(failure(
             IncrementalTargetErrorCode::scheduling_failed,
             "target compile scheduler failed: " + scheduled.error().message));
     }
+    if (auto error = first_compile_error(request, attempts)) {
+        return std::unexpected(std::move(*error));
+    }
 
-    for (std::size_t index = 0; index < attempts.size(); ++index) {
-        if (!attempts[index]) {
-            continue;
+    if (shared_evidence != nullptr
+        && !shared_evidence->revalidate_shared()) {
+        // A shared path changed (or could not be revalidated) across the
+        // inspection window. Do not trust any hit derived from the old
+        // observation: rebuild the complete target without evidence reuse.
+        scheduled = schedule_compile_wave(
+            request,
+            compile_coordinator_,
+            true,
+            nullptr,
+            attempts);
+        if (!scheduled) {
+            return std::unexpected(failure(
+                IncrementalTargetErrorCode::scheduling_failed,
+                "target conservative rebuild scheduler failed: "
+                    + scheduled.error().message));
         }
-        if (!attempts[index]->has_value()) {
-            IncrementalTargetError error = failure(
-                IncrementalTargetErrorCode::compile_failed,
-                "translation unit compilation failed",
-                request.sources[index].source);
-            error.compile_error = attempts[index]->error();
-            return std::unexpected(std::move(error));
+        if (auto error = first_compile_error(request, attempts)) {
+            return std::unexpected(std::move(*error));
         }
     }
+
+    timings.compile = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - compile_started);
 
     IncrementalTargetResult result;
     result.compiles.reserve(request.sources.size());
     std::vector<fs::path> objects;
     objects.reserve(request.sources.size() + request.additional_objects.size());
-    objects.insert(objects.end(), request.additional_objects.begin(), request.additional_objects.end());
+    objects.insert(
+        objects.end(),
+        request.additional_objects.begin(),
+        request.additional_objects.end());
 
     for (std::size_t index = 0; index < request.sources.size(); ++index) {
         if (!attempts[index]) {
