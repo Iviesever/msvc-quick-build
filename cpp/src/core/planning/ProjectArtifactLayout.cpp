@@ -109,13 +109,19 @@ namespace fs = std::filesystem;
     const fs::path& source) {
     const fs::path normalized_source = normalize_existing_identity(source);
 
-    if (auto relative = physical_relative(project_root, normalized_source)) {
-        return *relative;
-    }
-
-    fs::path relative = normalized_source.lexically_relative(project_root);
+    // Existing project roots and sources have already passed through
+    // weakly_canonical(), so the overwhelmingly common in-project case has a
+    // direct lexical relationship. Resolve it without repeating exists() and
+    // equivalent() probes for every translation unit. Keep the physical walk as
+    // a correctness fallback for an alias the platform canonicalizer did not
+    // collapse to the project-root spelling.
+    const fs::path relative = normalized_source.lexically_relative(project_root);
     if (safe_relative(relative)) {
         return identity_path(relative);
+    }
+
+    if (auto physical = physical_relative(project_root, normalized_source)) {
+        return *physical;
     }
 
     const fs::path identity = identity_path(normalized_source);
