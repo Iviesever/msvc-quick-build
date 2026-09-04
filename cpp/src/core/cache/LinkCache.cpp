@@ -12,6 +12,12 @@ namespace {
 [[nodiscard]] bool same_path(
     const std::filesystem::path& left,
     const std::filesystem::path& right) {
+    // Cache entries and current link inputs normally carry the exact same path
+    // spelling. Preserve Windows alias identity as the fallback, but avoid two
+    // normalized UTF-8 identity allocations for the aligned warm-cache case.
+    if (left == right) {
+        return true;
+    }
     return platform::windows::path_identity_key(left)
         == platform::windows::path_identity_key(right);
 }
