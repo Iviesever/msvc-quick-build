@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
-$TargetScaleSourceCount = 256
+$TargetScaleSourceCount = 128
 
 function Get-FullPath {
     param([Parameter(Mandatory = $true)][string]$Path)
