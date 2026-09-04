@@ -155,8 +155,30 @@ int performance_contract_${index}() { return shared_contract_value() + $index; }
     }
     if ([int64]$timing.counters.unique_filesystem_paths_probed `
         -ge [int64]$timing.counters.filesystem_snapshot_requests) {
-        throw 'Common-header fixture did not expose repeated filesystem evidence'
+        throw 'Target-wide fixture did not retain independently auditable physical-probe evidence'
     }
+    if ([int64]$timing.counters.snapshot_evidence_reuses -lt 128) {
+        throw "Expected at least 128 common-header evidence reuses; got $($timing.counters.snapshot_evidence_reuses)"
+    }
+
+    $compileFilesystem = $timing.counter_breakdown.filesystem.compile
+    foreach ($name in @(
+        'snapshot_requests',
+        'unique_paths_probed',
+        'snapshot_evidence_reuses')) {
+        Assert-Property `
+            -Object $compileFilesystem `
+            -Name $name `
+            -Context 'compile filesystem breakdown'
+    }
+    if ([int64]$compileFilesystem.snapshot_evidence_reuses -lt 128) {
+        throw "Compile domain did not reuse the common-header snapshot across all TUs; got $($compileFilesystem.snapshot_evidence_reuses)"
+    }
+    if ([int64]$compileFilesystem.snapshot_requests `
+        -gt 2 * [int64]$compileFilesystem.unique_paths_probed) {
+        throw "Compile filesystem evidence exceeded the one initial probe plus one shared-path revalidation bound: requests=$($compileFilesystem.snapshot_requests), unique=$($compileFilesystem.unique_paths_probed)"
+    }
+
     if ([double]$timing.attribution.work.compile_inspection -le 0.0 `
         -or [double]$timing.attribution.work.compile_cache_read -le 0.0 `
         -or [double]$timing.attribution.work.link_inspection -le 0.0) {
@@ -184,13 +206,16 @@ int performance_contract_${index}() { return shared_contract_value() + $index; }
         -or [int]$serial.timing.cache.link.hits -ne 1) {
         throw 'Changing execution policy from -j 4 to -j 1 polluted cache identity'
     }
+    if ([int64]$serial.timing.counters.snapshot_evidence_reuses -lt 128) {
+        throw 'Target-wide evidence reuse must remain active under fixed -j 1'
+    }
 
     $disabled = Invoke-MqbCapture -WorkingDirectory $root -Arguments ($baseArguments + @('-j', '1'))
     if ($null -ne $disabled.timing) {
         throw 'Timing-disabled contract unexpectedly returned timing data'
     }
 
-    Write-Host 'Performance instrumentation contract passed.'
+    Write-Host 'Performance instrumentation and target-wide evidence contract passed.'
 }
 finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
