@@ -242,6 +242,57 @@ int performance_contract_${index}() { return shared_contract_value() + $index; }
         throw "Two-TU target activated evidence sharing despite zero possible physical-probe saving: $($twoSource.timing.counters.snapshot_evidence_reuses) reuse(s)"
     }
 
+    # Static-library targets use the same target-scoped dependency table.
+    # Lock that path independently so ordinary-target coverage cannot mask a
+    # future divergence in archive coordination.
+    Set-Content -LiteralPath (Join-Path $root 'static_a.cpp') -Encoding utf8 -Value @'
+#include "common.hpp"
+int static_a() { return shared_contract_value(); }
+'@
+    Set-Content -LiteralPath (Join-Path $root 'static_b.cpp') -Encoding utf8 -Value @'
+#include "common.hpp"
+int static_b() { return shared_contract_value() + 1; }
+'@
+    Set-Content -LiteralPath (Join-Path $root 'static_c.cpp') -Encoding utf8 -Value @'
+#include "common.hpp"
+int static_c() { return shared_contract_value() + 2; }
+'@
+    $staticArguments = @(
+        'static_a.cpp',
+        'static_b.cpp',
+        'static_c.cpp',
+        '--no-discover',
+        '--type',
+        'static',
+        '--output',
+        'performance_contract_static',
+        '-j',
+        '3'
+    )
+    $null = Invoke-MqbCapture `
+        -WorkingDirectory $root `
+        -Arguments $staticArguments
+    $staticWarm = Invoke-MqbCapture `
+        -WorkingDirectory $root `
+        -Arguments ($staticArguments + @('--timings=json')) `
+        -ExpectTimings
+    if ([int]$staticWarm.timing.cache.compile.hits -ne 3 `
+        -or [int]$staticWarm.timing.cache.compile.misses -ne 0 `
+        -or [int]$staticWarm.timing.cache.archive.hits -ne 1 `
+        -or [int]$staticWarm.timing.cache.archive.misses -ne 0) {
+        throw 'Static target evidence contract did not retain exact warm cache behavior'
+    }
+    if ([int64]$staticWarm.timing.counters.cl_processes_launched -ne 0 `
+        -or [int64]$staticWarm.timing.counters.lib_processes_launched -ne 0) {
+        throw 'Warm static target launched cl.exe or lib.exe'
+    }
+    if ([int64]$staticWarm.timing.counters.snapshot_evidence_reuses -lt 2) {
+        throw "Static target did not reuse its common-header evidence across three TUs: $($staticWarm.timing.counters.snapshot_evidence_reuses) reuse(s)"
+    }
+    if ([int64]$staticWarm.timing.counter_breakdown.filesystem.compile.snapshot_evidence_reuses -lt 2) {
+        throw 'Static target common-header reuse was not attributed to the compile filesystem domain'
+    }
+
     Write-Host 'Performance instrumentation and target-wide evidence contract passed.'
 }
 finally {
