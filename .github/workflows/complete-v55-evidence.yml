@@ -1,0 +1,53 @@
+name: Complete v5.5 evidence patch
+
+on:
+  push:
+    branches:
+      - perf/v5.5.0-attributed-performance-evidence
+    paths:
+      - .github/scripts/complete_v55_evidence.part*
+      - .github/workflows/complete-v55-evidence.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Reassemble deterministic patch
+        shell: bash
+        run: |
+          cat .github/scripts/complete_v55_evidence.part* > .github/scripts/complete_v55_evidence.py
+          python -m py_compile .github/scripts/complete_v55_evidence.py
+
+      - name: Apply deterministic evidence closure patch
+        run: python .github/scripts/complete_v55_evidence.py
+
+      - name: Remove transport fragments
+        shell: bash
+        run: rm -f .github/scripts/complete_v55_evidence.part*
+
+      - name: Validate patch text and closure
+        shell: bash
+        run: |
+          git diff --check
+          test "$(tr -d '\r\n' < VERSION)" = "5.4.0"
+          test ! -e .github/scripts/complete_v55_evidence.py
+          test ! -e .github/scripts/complete_v55_evidence.part01
+          test ! -e .github/workflows/complete-v55-evidence.yml
+
+      - name: Commit completed evidence implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && { echo "No patch changes produced"; exit 1; }
+          git commit -m "perf: complete attributable warm-path evidence"
+          git push origin HEAD:perf/v5.5.0-attributed-performance-evidence
