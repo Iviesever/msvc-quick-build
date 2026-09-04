@@ -37,12 +37,13 @@ namespace fs = std::filesystem;
 [[nodiscard]] fs::path normalize_existing_identity(const fs::path& path) {
     fs::path normalized = path.lexically_normal();
     std::error_code error_code;
-    if (!fs::exists(normalized, error_code) || error_code) {
-        return normalized;
-    }
 
-    error_code.clear();
-    fs::path canonical = fs::weakly_canonical(normalized, error_code);
+    // For a fully existing path, weakly_canonical() is equivalent to
+    // canonical(). Calling canonical() directly avoids the separate exists()
+    // probe that every project root and translation unit previously paid. A
+    // missing, inaccessible, or otherwise unresolvable path still fails closed
+    // to the exact normalized spelling used by the previous implementation.
+    fs::path canonical = fs::canonical(normalized, error_code);
     if (error_code || canonical.empty()) {
         return normalized;
     }
@@ -110,7 +111,7 @@ namespace fs = std::filesystem;
     const fs::path normalized_source = normalize_existing_identity(source);
 
     // Existing project roots and sources have already passed through
-    // weakly_canonical(), so the overwhelmingly common in-project case has a
+    // canonicalization, so the overwhelmingly common in-project case has a
     // direct lexical relationship. Resolve it without repeating exists() and
     // equivalent() probes for every translation unit. Keep the physical walk as
     // a correctness fallback for an alias the platform canonicalizer did not
