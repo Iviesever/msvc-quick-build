@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-#include "mqb/diagnostics/PerformanceEvidence.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/orchestration/TargetTimings.hpp"
 
 namespace mqb::app::performance {
