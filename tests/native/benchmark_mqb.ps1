@@ -7,6 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
+$TargetScaleSourceCount = 256
 
 function Get-FullPath {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -71,6 +72,19 @@ function Invoke-TimedMqb {
     }
 }
 
+function Assert-CompileCacheCounts {
+    param(
+        [Parameter(Mandatory = $true)]$Sample,
+        [Parameter(Mandatory = $true)][int]$ExpectedHits,
+        [Parameter(Mandatory = $true)][int]$ExpectedMisses
+    )
+
+    if ([int]$Sample.compile_hits -ne $ExpectedHits
+        -or [int]$Sample.compile_misses -ne $ExpectedMisses) {
+        throw "Benchmark scenario '$($Sample.scenario)' produced compile cache $($Sample.compile_hits) hit(s) / $($Sample.compile_misses) miss(es); expected $ExpectedHits / $ExpectedMisses"
+    }
+}
+
 function Get-Median {
     param([Parameter(Mandatory = $true)][double[]]$Values)
 
@@ -117,6 +131,40 @@ int main() { return helper_value() == shared_value() + 2 ? 0 : 1; }
 
         $results.Add((Invoke-TimedMqb -Scenario 'build-run' -Iteration $iteration -WorkingDirectory $ordinaryRoot -Arguments ($ordinaryArgs + @('--run'))))
         $results.Add((Invoke-TimedMqb -Scenario 'link-only' -Iteration $iteration -WorkingDirectory $ordinaryRoot -Arguments ($ordinaryArgs + @('--linker-arg', '/MAP'))))
+
+        # Scale fixture for target setup/validation. All source and artifact
+        # identities are unique, so the compile_queue phase exposes how target
+        # registration grows without mixing in duplicate-error handling.
+        $targetScaleRoot = Join-Path $benchmarkRoot "target-scale-$iteration"
+        New-Item -ItemType Directory -Path $targetScaleRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $targetScaleRoot 'main.cpp') -Encoding utf8 -Value @'
+int main() { return 0; }
+'@
+        $targetScaleArgs = [System.Collections.Generic.List[string]]::new()
+        $targetScaleArgs.Add('main.cpp')
+        for ($sourceIndex = 0; $sourceIndex -lt $TargetScaleSourceCount; ++$sourceIndex) {
+            $sourceName = 'unit_{0:D3}.cpp' -f $sourceIndex
+            Set-Content -LiteralPath (Join-Path $targetScaleRoot $sourceName) -Encoding utf8 -Value "int target_scale_${sourceIndex}() { return $sourceIndex; }"
+            $targetScaleArgs.Add($sourceName)
+        }
+        $targetScaleArgs.Add('--output')
+        $targetScaleArgs.Add('target_scale_bench')
+        $targetScaleArguments = $targetScaleArgs.ToArray()
+        $targetScaleUnitCount = $TargetScaleSourceCount + 1
+
+        $targetScaleCold = Invoke-TimedMqb -Scenario 'target-scale-cold' -Iteration $iteration -WorkingDirectory $targetScaleRoot -Arguments $targetScaleArguments
+        Assert-CompileCacheCounts -Sample $targetScaleCold -ExpectedHits 0 -ExpectedMisses $targetScaleUnitCount
+        $results.Add($targetScaleCold)
+
+        $targetScaleNoOp = Invoke-TimedMqb -Scenario 'target-scale-no-op' -Iteration $iteration -WorkingDirectory $targetScaleRoot -Arguments $targetScaleArguments
+        Assert-CompileCacheCounts -Sample $targetScaleNoOp -ExpectedHits $targetScaleUnitCount -ExpectedMisses 0
+        $results.Add($targetScaleNoOp)
+
+        $lastScaleSource = 'unit_{0:D3}.cpp' -f ($TargetScaleSourceCount - 1)
+        Add-Content -LiteralPath (Join-Path $targetScaleRoot $lastScaleSource) -Encoding utf8 -Value "// target-scale mutation $iteration"
+        $targetScaleSingle = Invoke-TimedMqb -Scenario 'target-scale-single-tu' -Iteration $iteration -WorkingDirectory $targetScaleRoot -Arguments $targetScaleArguments
+        Assert-CompileCacheCounts -Sample $targetScaleSingle -ExpectedHits ($targetScaleUnitCount - 1) -ExpectedMisses 1
+        $results.Add($targetScaleSingle)
 
         # Dedicated smart-discovery fixture. Only the entry TU is passed to MQB;
         # helper.cpp must be found through the shared local header graph. The
@@ -172,11 +220,13 @@ $summary = @(
             $group = @($_.Group)
             $medianTotal = Get-Median -Values @($group.total_ms)
             $medianDiscovery = Get-Median -Values @($group.discovery_ms)
+            $medianCompileQueue = Get-Median -Values @($group.compile_queue_ms)
             [PSCustomObject]@{
                 scenario = $_.Name
                 samples = $group.Count
                 median_total_ms = [Math]::Round($medianTotal, 3)
                 median_discovery_ms = [Math]::Round($medianDiscovery, 3)
+                median_compile_queue_ms = [Math]::Round($medianCompileQueue, 3)
                 min_total_ms = [Math]::Round((($group.total_ms | Measure-Object -Minimum).Minimum), 3)
                 max_total_ms = [Math]::Round((($group.total_ms | Measure-Object -Maximum).Maximum), 3)
             }
@@ -197,6 +247,7 @@ if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         generated_utc = [DateTime]::UtcNow.ToString('o')
         mqb = $MqbPath
         iterations = $Iterations
+        target_scale_source_count = $TargetScaleSourceCount
         samples = $ordered
         summary = $summary
     } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $OutputPath -Encoding utf8
