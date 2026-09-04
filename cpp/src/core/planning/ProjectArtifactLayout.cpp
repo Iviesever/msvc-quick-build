@@ -8,6 +8,7 @@
 #include <string_view>
 #include <utility>
 
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb {
@@ -178,6 +179,8 @@ namespace fs = std::filesystem;
 
 std::expected<ProjectArtifactLayout, ArtifactLayoutError>
 ProjectArtifactLayout::create(fs::path project_root) {
+    mqb::performance::ScopedWall evidence{
+        mqb::performance::WallKind::artifact_layout};
     if (project_root.empty()) {
         return std::unexpected(failure(
             ArtifactLayoutErrorCode::empty_project_root,
@@ -193,6 +196,8 @@ ProjectArtifactLayout::create(fs::path project_root) {
 
 std::expected<SourceArtifacts, ArtifactLayoutError>
 ProjectArtifactLayout::for_source(const fs::path& source) const {
+    mqb::performance::ScopedWall evidence{
+        mqb::performance::WallKind::artifact_layout};
     if (source.empty()) {
         return std::unexpected(failure(
             ArtifactLayoutErrorCode::empty_source,
@@ -223,6 +228,8 @@ ProjectArtifactLayout::for_precompiled_header(
     const std::string_view target_name,
     const BuildConfiguration configuration,
     const Architecture architecture) const {
+    mqb::performance::ScopedWall evidence{
+        mqb::performance::WallKind::artifact_layout};
     const fs::path target_path = path_from_utf8(target_name);
     if (!valid_target_name(target_name)) {
         return std::unexpected(failure(
@@ -248,6 +255,8 @@ std::expected<TargetArtifacts, ArtifactLayoutError>
 ProjectArtifactLayout::for_target(
     const std::string_view target_name,
     const TargetKind target_kind) const {
+    mqb::performance::ScopedWall evidence{
+        mqb::performance::WallKind::artifact_layout};
     const fs::path target_path = path_from_utf8(target_name);
     if (!valid_target_name(target_name)) {
         return std::unexpected(failure(

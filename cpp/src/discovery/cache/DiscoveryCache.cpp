@@ -17,6 +17,8 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/PerformanceEvidence.hpp"
+
 namespace mqb::discovery::detail {
 namespace {
 
@@ -313,6 +315,9 @@ private:
 [[nodiscard]] bool snapshot_matches(
     const FileSnapshot& snapshot,
     const bool directory) noexcept {
+    mqb::performance::ScopedFilesystemProbe evidence{
+        snapshot.path,
+        mqb::performance::FilesystemKind::discovery};
     std::error_code error_code;
     const auto status = fs::status(snapshot.path, error_code);
     if (error_code) return false;
@@ -341,6 +346,8 @@ private:
 }
 
 [[nodiscard]] std::optional<DiscoveryCacheRecord> load_record(const fs::path& file) {
+    mqb::performance::ScopedCacheRead evidence{
+        mqb::performance::CacheKind::discovery};
     std::error_code error_code;
     if (!fs::is_regular_file(file, error_code) || error_code) return std::nullopt;
     const auto size = fs::file_size(file, error_code);
@@ -348,6 +355,7 @@ private:
 
     std::ifstream stream{file, std::ios::binary};
     if (!stream) return std::nullopt;
+    evidence.opened(static_cast<std::uint64_t>(size));
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
     if (!bytes.empty()) {
         stream.read(
@@ -379,6 +387,8 @@ std::optional<Result> try_reuse_discovery_cache(
 void save_discovery_cache_best_effort(
     const fs::path& cache_file,
     const DiscoveryCacheRecord& record) noexcept {
+    mqb::performance::ScopedCacheWrite evidence{
+        mqb::performance::CacheKind::discovery};
     try {
         auto bytes = serialize(record);
         if (!bytes) return;
@@ -393,6 +403,7 @@ void save_discovery_cache_best_effort(
         {
             std::ofstream stream{temporary, std::ios::binary | std::ios::trunc};
             if (!stream) return;
+            evidence.opened(static_cast<std::uint64_t>(bytes->size()));
             if (!bytes->empty()) {
                 stream.write(
                     reinterpret_cast<const char*>(bytes->data()),

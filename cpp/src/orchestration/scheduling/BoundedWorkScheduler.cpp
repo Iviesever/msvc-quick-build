@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/PerformanceEvidence.hpp"
+
 namespace mqb::orchestration {
 namespace {
 
@@ -109,6 +111,7 @@ BoundedWorkScheduler::run(
     background_workers.reserve(worker_count - 1);
     for (std::size_t worker_index = 1; worker_index < worker_count; ++worker_index) {
         background_workers.emplace_back(worker_loop);
+        mqb::performance::record_background_threads(1);
     }
 
     worker_loop();

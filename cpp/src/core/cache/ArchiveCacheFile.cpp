@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/PerformanceEvidence.hpp"
+
 namespace mqb {
 namespace {
 
@@ -53,6 +55,8 @@ constexpr std::size_t max_objects = 100000u;
 
 std::expected<std::optional<ArchiveCacheEntry>, ArchiveCacheFileError>
 ArchiveCacheFile::load(const fs::path& file) {
+    mqb::performance::ScopedCacheRead evidence{
+        mqb::performance::CacheKind::archive};
     std::error_code ec;
     if (!fs::exists(file, ec)) {
         if (ec) return std::unexpected(error(
@@ -60,9 +64,18 @@ ArchiveCacheFile::load(const fs::path& file) {
         return std::optional<ArchiveCacheEntry>{};
     }
 
-    std::ifstream stream{file, std::ios::binary};
+    std::ifstream stream{file, std::ios::binary | std::ios::ate};
     if (!stream) return std::unexpected(error(
         ArchiveCacheFileErrorCode::file_open_failed, file, "failed to open archive cache file"));
+    const std::streampos end = stream.tellg();
+    const std::uint64_t size = end == std::streampos{-1}
+        ? 0u
+        : static_cast<std::uint64_t>(static_cast<std::streamoff>(end));
+    stream.clear();
+    stream.seekg(0, std::ios::beg);
+    if (!stream) return std::unexpected(error(
+        ArchiveCacheFileErrorCode::file_open_failed, file, "failed to seek archive cache file"));
+    evidence.opened(size);
 
     std::string loaded_magic;
     unsigned int version = 0;
@@ -131,6 +144,8 @@ ArchiveCacheFile::load(const fs::path& file) {
 
 std::expected<void, ArchiveCacheFileError>
 ArchiveCacheFile::save(const fs::path& file, const ArchiveCacheEntry& entry) {
+    mqb::performance::ScopedCacheWrite evidence{
+        mqb::performance::CacheKind::archive};
     if (entry.objects.size() > max_objects) {
         return std::unexpected(error(
             ArchiveCacheFileErrorCode::file_write_failed, file, "archive cache object count exceeds safety limit"));
@@ -148,6 +163,7 @@ ArchiveCacheFile::save(const fs::path& file, const ArchiveCacheEntry& entry) {
         std::ofstream stream{temporary, std::ios::binary | std::ios::trunc};
         if (!stream) return std::unexpected(error(
             ArchiveCacheFileErrorCode::file_open_failed, temporary, "failed to open temporary archive cache"));
+        evidence.opened(0);
         stream << magic << ' ' << format_version << '\n'
                << std::quoted(path_to_utf8(entry.librarian.librarian)) << '\n'
                << std::quoted(entry.librarian.version) << '\n'

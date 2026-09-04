@@ -17,6 +17,7 @@
 
 #include "mqb/core/BuildSignature.hpp"
 #include "mqb/core/LinkerIdentity.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 
 namespace mqb {
 namespace {
@@ -367,6 +368,8 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
 
 std::expected<std::optional<LinkCacheEntry>, LinkCacheFileError>
 LinkCacheFile::load(const fs::path& file) {
+    mqb::performance::ScopedCacheRead evidence{
+        mqb::performance::CacheKind::link};
     std::error_code error_code;
     const bool exists = fs::exists(file, error_code);
     if (error_code) {
@@ -392,6 +395,7 @@ LinkCacheFile::load(const fs::path& file) {
         return std::unexpected(make_error(
             LinkCacheFileErrorCode::file_open_failed, file, 0, "failed to open link cache file"));
     }
+    evidence.opened(static_cast<std::uint64_t>(size));
 
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
     if (!bytes.empty()) {
@@ -412,6 +416,8 @@ LinkCacheFile::load(const fs::path& file) {
 
 std::expected<void, LinkCacheFileError>
 LinkCacheFile::save(const fs::path& file, const LinkCacheEntry& entry) {
+    mqb::performance::ScopedCacheWrite evidence{
+        mqb::performance::CacheKind::link};
     auto bytes = serialize(file, entry);
     if (!bytes) return std::unexpected(bytes.error());
 
@@ -434,6 +440,7 @@ LinkCacheFile::save(const fs::path& file, const LinkCacheEntry& entry) {
                 0,
                 "failed to open temporary link cache file"));
         }
+        evidence.opened(static_cast<std::uint64_t>(bytes->size()));
         if (!bytes->empty()) {
             stream.write(
                 reinterpret_cast<const char*>(bytes->data()),

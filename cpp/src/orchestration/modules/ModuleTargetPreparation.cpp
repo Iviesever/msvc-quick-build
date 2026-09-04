@@ -11,6 +11,7 @@
 #include "ModuleTargetArtifactRegistry.hpp"
 #include "ModuleTargetScanner.hpp"
 #include "StandardLibraryModuleProvider.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/modules/ModuleDependencyGraph.hpp"
 
 namespace mqb::orchestration::detail {
@@ -45,6 +46,8 @@ using Clock = std::chrono::steady_clock;
 
 [[nodiscard]] std::expected<void, IncrementalModuleTargetError>
 validate_request(const IncrementalModuleTargetRequest& request) {
+    mqb::performance::ScopedWall evidence{
+        mqb::performance::WallKind::target_validation};
     if (request.sources.empty()) {
         return std::unexpected(failure(
             IncrementalModuleTargetErrorCode::no_sources,
@@ -60,6 +63,8 @@ validate_request(const IncrementalModuleTargetRequest& request) {
 
 [[nodiscard]] std::expected<ModuleTargetArtifactRegistry, IncrementalModuleTargetError>
 register_requested_artifacts(const IncrementalModuleTargetRequest& request) {
+    mqb::performance::ScopedWall evidence{
+        mqb::performance::WallKind::target_validation};
     ModuleTargetArtifactRegistry artifacts{request.sources.size()};
     for (const auto& source : request.sources) {
         if (auto registered = artifacts.add_requested_source(source); !registered) {
@@ -78,6 +83,8 @@ finish_preparation(
     ModuleTargetArtifactRegistry& artifacts,
     std::vector<modules::ScannedModuleUnit> scanned_units,
     std::vector<ModuleCompileSourceRequest> compile_sources) {
+    mqb::performance::ScopedWall evidence{
+        mqb::performance::WallKind::target_validation};
     auto plan = modules::ModuleDependencyGraphBuilder::build(
         scanned_units,
         request.compiler_options.external_module_providers);

@@ -15,6 +15,7 @@
 #include "mqb/core/CompileCache.hpp"
 #include "mqb/core/CompileCacheFile.hpp"
 #include "mqb/core/FileSnapshot.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 
@@ -67,6 +68,9 @@ void add_reason(
 [[nodiscard]] std::optional<FileSnapshot> snapshot_regular_file(
     const fs::path& path) {
     if (path.empty()) return std::nullopt;
+    mqb::performance::ScopedFilesystemProbe evidence{
+        path,
+        mqb::performance::FilesystemKind::module_scan};
     std::error_code error_code;
     const auto status = fs::status(path, error_code);
     if (error_code || !fs::is_regular_file(status)) return std::nullopt;
@@ -82,6 +86,9 @@ void add_reason(
 [[nodiscard]] std::optional<FileSnapshot> snapshot_file_or_directory(
     const fs::path& path) {
     if (path.empty()) return std::nullopt;
+    mqb::performance::ScopedFilesystemProbe evidence{
+        path,
+        mqb::performance::FilesystemKind::module_scan};
     std::error_code error_code;
     const auto modified = fs::last_write_time(path, error_code);
     if (error_code) return std::nullopt;

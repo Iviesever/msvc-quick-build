@@ -15,6 +15,7 @@
 #include "mqb/core/FileSnapshot.hpp"
 #include "mqb/core/LinkCache.hpp"
 #include "mqb/core/LinkCacheFile.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcBaseAddressPolicy.hpp"
 #include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
@@ -174,6 +175,10 @@ void collect_existing_side_output(
 inspect_link(
     const IncrementalLinkRequest& request,
     const msvc::MsvcToolchain& toolchain) {
+    mqb::performance::ScopedWork evidence{
+        mqb::performance::WorkKind::link_inspection};
+    mqb::performance::ScopedFilesystemDomain filesystem_domain{
+        mqb::performance::FilesystemKind::link};
     LinkInspectionState state;
 
     auto linker_identity = msvc::MsvcLinker::identity(toolchain);

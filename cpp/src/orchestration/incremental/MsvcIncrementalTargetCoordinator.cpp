@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "mqb/core/Artifact.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcFuzzerPolicy.hpp"
@@ -68,6 +69,8 @@ using PathIdentitySet = std::unordered_set<std::string>;
 
 std::expected<IncrementalTargetResult, IncrementalTargetError>
 MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) const {
+    mqb::performance::ScopedWall validation_evidence{
+        mqb::performance::WallKind::target_validation};
     if (request.sources.empty()) {
         return std::unexpected(failure(
             IncrementalTargetErrorCode::no_sources,
@@ -132,6 +135,7 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
     std::vector<std::optional<CompileAttempt>> attempts(request.sources.size());
     timings.compile_queue = std::chrono::duration_cast<std::chrono::nanoseconds>(
         Clock::now() - queue_started);
+    validation_evidence.finish();
 
     const auto compile_started = Clock::now();
     const auto scheduled = BoundedWorkScheduler::run(
