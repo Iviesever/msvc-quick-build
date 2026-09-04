@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
 #include "mqb/msvc/MsvcParameterEngine.hpp"
 
@@ -207,6 +208,8 @@ std::expected<ProjectSetup, ProjectSetupError>
 prepare_project(
     mqb::cli::Options& options,
     const std::filesystem::path& invocation_directory) {
+    mqb::performance::ScopedWall evidence{
+        mqb::performance::WallKind::project_setup};
     std::optional<mqb::config::ProjectConfig> project_config;
     auto located_config = mqb::config::ProjectConfigLoader::find_upwards(invocation_directory);
     if (!located_config) {

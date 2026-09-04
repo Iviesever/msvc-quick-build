@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::msvc {
@@ -182,6 +183,9 @@ void add_search_directory(
     }
 
     std::error_code error_code;
+    mqb::performance::ScopedFilesystemProbe seal_evidence{
+        observation_seal_file,
+        mqb::performance::FilesystemKind::link};
     const auto sealed = fs::last_write_time(observation_seal_file, error_code);
     if (error_code) {
         return true;
@@ -189,6 +193,9 @@ void add_search_directory(
 
     for (const auto& directory : search_directories) {
         error_code.clear();
+        mqb::performance::ScopedFilesystemProbe directory_evidence{
+            directory,
+            mqb::performance::FilesystemKind::link};
         const auto modified = fs::last_write_time(directory, error_code);
         // Missing/inaccessible search roots need the conservative path. A root
         // can become available later and introduce a higher-priority library.
@@ -200,6 +207,9 @@ void add_search_directory(
 }
 
 [[nodiscard]] bool regular_file(const fs::path& path) {
+    mqb::performance::ScopedFilesystemProbe evidence{
+        path,
+        mqb::performance::FilesystemKind::link};
     std::error_code error_code;
     return fs::is_regular_file(path, error_code) && !error_code;
 }
@@ -290,6 +300,8 @@ MsvcLibraryResolver::resolve(
     const MsvcToolchain& toolchain,
     const LinkOptions& options,
     const fs::path& requested_working_directory) {
+    mqb::performance::ScopedWork evidence{
+        mqb::performance::WorkKind::link_resolution};
     return resolve_requests(
         toolchain,
         options.libraries,
@@ -304,6 +316,8 @@ MsvcLibraryResolver::resolve_available(
     const std::span<const std::string> libraries,
     const std::span<const fs::path> library_directories,
     const fs::path& requested_working_directory) {
+    mqb::performance::ScopedWork evidence{
+        mqb::performance::WorkKind::link_resolution};
     return resolve_requests(
         toolchain,
         libraries,
@@ -319,6 +333,8 @@ MsvcLibraryResolver::refresh_observed(
     const std::span<const fs::path> library_directories,
     const fs::path& requested_working_directory,
     const fs::path& observation_seal_file) {
+    mqb::performance::ScopedWork evidence{
+        mqb::performance::WorkKind::link_resolution};
     auto working_directory = resolve_working_directory(requested_working_directory);
     if (!working_directory) {
         return std::unexpected(working_directory.error());

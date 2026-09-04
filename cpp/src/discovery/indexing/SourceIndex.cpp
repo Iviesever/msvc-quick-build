@@ -7,6 +7,7 @@
 #include <system_error>
 #include <utility>
 
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
 #include "DiscoveryPath.hpp"
 
@@ -44,6 +45,9 @@ read_text(const fs::path& path) {
 [[nodiscard]] std::optional<FileSnapshot> snapshot_path(
     const fs::path& path,
     const bool directory) {
+    mqb::performance::ScopedFilesystemProbe evidence{
+        path,
+        mqb::performance::FilesystemKind::discovery};
     std::error_code error_code;
     const auto status = fs::status(path, error_code);
     if (error_code) return std::nullopt;

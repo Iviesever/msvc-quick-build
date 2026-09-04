@@ -73,3 +73,14 @@ Structural performance test 仍然有价值，例如它们可以证明“warm mo
 ## Benchmark 演进
 
 当新优化针对标准 harness 尚未覆盖的场景时，应向 `benchmark_mqb.ps1` 增加 deterministic fixture/scenario，并让 comparator 自动消费它。额外 scenario 可以扩展 evidence set，但标准 scenario 是 append-only compatibility floor：不能仅仅因为一个新优化没有改善某个旧核心场景，就把该场景从标准集合中删除。
+
+## 可归因 timing schema v2 与配对执行
+
+`--timings=json` schema v2 完整保留 schema v1 的 `phases` 与 `cache` 对象，并增量增加两类不可混淆的归因数据：
+
+- `attribution.wall` 是 project setup、artifact layout、toolchain discovery、target validation、CLI reporting 等墙钟区间；
+- `attribution.work` 是可在多个 TU 间并行重叠的累计工作量，包括 inspection、execution、cache I/O、link resolution 与 filesystem snapshot。不得把这些字段相加成总和为 100% 的墙钟占比。
+
+记录同时增加确定性总计数器和按域 breakdown：cache 打开次数/读取字节、filesystem snapshot 请求/唯一路径/证据复用、后台线程创建、MSVC 进程启动及输出行数/字节数。最终 timing 记录会在输出 observer 脱离后再写出，因此不会把自身计入 reporting 和 output counters。
+
+性能比较改为交替配对执行（`baseline -> candidate`、`candidate -> baseline`，循环重复），报告 paired delta 中位数、paired MAD 和 nearest-rank paired P95。标准场景保持 append-only，并新增 129-TU 公共头 warm build、automatic 与 `-j 1`、timings enabled/disabled no-op 场景。

@@ -16,6 +16,7 @@
 
 #include "ToolchainDiscoveryPrimitives.hpp"
 #include "VisualStudioToolchainDiscovery.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 
@@ -316,6 +317,8 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
 [[nodiscard]] std::optional<MsvcToolchain> try_reuse_visual_studio_cache(
     const fs::path& cache_file,
     const DiscoveryOptions& options) {
+    mqb::performance::ScopedCacheRead evidence{
+        mqb::performance::CacheKind::toolchain};
     try {
         std::error_code error_code;
         if (!fs::is_regular_file(cache_file, error_code) || error_code) return std::nullopt;
@@ -327,6 +330,7 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
         if (modified > now || now - modified > max_cache_age) return std::nullopt;
         std::ifstream stream{cache_file, std::ios::binary};
         if (!stream) return std::nullopt;
+        evidence.opened(static_cast<std::uint64_t>(size));
         auto record = read_record(stream);
         if (!record || !cache_key_matches(*record, options) || record->binary_stamp.empty()) return std::nullopt;
 
@@ -378,6 +382,8 @@ void save_visual_studio_cache_best_effort(
     const fs::path& cache_file,
     const DiscoveryOptions& options,
     const MsvcToolchain& toolchain) noexcept {
+    mqb::performance::ScopedCacheWrite evidence{
+        mqb::performance::CacheKind::toolchain};
     try {
         if (toolchain.source != ToolchainSource::visual_studio || toolchain.reused) return;
         const fs::path root = stable_path(toolchain.vc_tools_root);
@@ -411,7 +417,11 @@ void save_visual_studio_cache_best_effort(
         temporary += ".tmp." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         {
             std::ofstream stream{temporary, std::ios::binary | std::ios::trunc};
-            if (!stream || !write_record(stream, record)) {
+            if (!stream) {
+                return;
+            }
+            evidence.opened(0);
+            if (!write_record(stream, record)) {
                 stream.close();
                 fs::remove(temporary, error_code);
                 return;

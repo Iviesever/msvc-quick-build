@@ -52,6 +52,9 @@ function Invoke-TimedMqb {
     }
 
     $timing = $timingLine | ConvertFrom-Json
+    $attribution = if ($null -ne $timing.PSObject.Properties['attribution']) { $timing.attribution } else { $null }
+    $counters = if ($null -ne $timing.PSObject.Properties['counters']) { $timing.counters } else { $null }
+    $counterBreakdown = if ($null -ne $timing.PSObject.Properties['counter_breakdown']) { $timing.counter_breakdown } else { $null }
     return [PSCustomObject]@{
         iteration = $Iteration
         scenario = $Scenario
@@ -69,6 +72,63 @@ function Invoke-TimedMqb {
         link_misses = [int]$timing.cache.link.misses
         archive_hits = [int]$timing.cache.archive.hits
         archive_misses = [int]$timing.cache.archive.misses
+        measurement_source = 'mqb.timings'
+        timing_schema_version = [int]$timing.schema_version
+        attribution = $attribution
+        counters = $counters
+        counter_breakdown = $counterBreakdown
+    }
+}
+
+function Invoke-UntimedMqb {
+    param(
+        [Parameter(Mandatory = $true)][string]$Scenario,
+        [Parameter(Mandatory = $true)][int]$Iteration,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    Push-Location $WorkingDirectory
+    try {
+        $output = @(& $MqbPath @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+        $stopwatch.Stop()
+    }
+    if ($exitCode -ne 0) {
+        foreach ($line in $output) { Write-Host $line }
+        throw "Benchmark scenario '$Scenario' failed with exit code $exitCode"
+    }
+    $timingLine = @($output | ForEach-Object { [string]$_ } |
+        Where-Object { $_ -like '{"type":"mqb.timings"*' })
+    if ($timingLine.Count -ne 0) {
+        throw "Benchmark scenario '$Scenario' unexpectedly emitted timing JSON"
+    }
+    return [PSCustomObject]@{
+        iteration = $Iteration
+        scenario = $Scenario
+        total_ms = [double]$stopwatch.Elapsed.TotalMilliseconds
+        discovery_ms = 0.0
+        dependency_scan_ms = 0.0
+        compile_queue_ms = 0.0
+        compile_ms = 0.0
+        link_ms = 0.0
+        archive_ms = 0.0
+        run_startup_ms = 0.0
+        compile_hits = -1
+        compile_misses = -1
+        link_hits = -1
+        link_misses = -1
+        archive_hits = -1
+        archive_misses = -1
+        measurement_source = 'external_stopwatch'
+        timing_schema_version = 0
+        attribution = $null
+        counters = $null
+        counter_breakdown = $null
     }
 }
 
@@ -133,9 +193,10 @@ int main() { return helper_value() == shared_value() + 2 ? 0 : 1; }
         $results.Add((Invoke-TimedMqb -Scenario 'build-run' -Iteration $iteration -WorkingDirectory $ordinaryRoot -Arguments ($ordinaryArgs + @('--run'))))
         $results.Add((Invoke-TimedMqb -Scenario 'link-only' -Iteration $iteration -WorkingDirectory $ordinaryRoot -Arguments ($ordinaryArgs + @('--linker-arg', '/MAP'))))
 
-        # Scale fixture for target setup/validation. All source and artifact
-        # identities are unique, so the compile_queue phase exposes how target
-        # registration grows without mixing in duplicate-error handling.
+        # Preserve the historical scale fixture: unique source/artifact identities
+        # and no shared header dependency. This keeps target-scale-* comparable
+        # with earlier performance evidence while the dedicated fixture below
+        # measures dependency-occurrence amplification.
         $targetScaleRoot = Join-Path $benchmarkRoot "target-scale-$iteration"
         New-Item -ItemType Directory -Path $targetScaleRoot | Out-Null
         Set-Content -LiteralPath (Join-Path $targetScaleRoot 'main.cpp') -Encoding utf8 -Value @'
@@ -161,11 +222,47 @@ int main() { return 0; }
         Assert-CompileCacheCounts -Sample $targetScaleNoOp -ExpectedHits $targetScaleUnitCount -ExpectedMisses 0
         $results.Add($targetScaleNoOp)
 
+        $targetScaleAuto = Invoke-TimedMqb -Scenario 'target-scale-no-op-auto' -Iteration $iteration -WorkingDirectory $targetScaleRoot -Arguments ($targetScaleArguments + @('-j', 'auto'))
+        Assert-CompileCacheCounts -Sample $targetScaleAuto -ExpectedHits $targetScaleUnitCount -ExpectedMisses 0
+        $results.Add($targetScaleAuto)
+
+        $targetScaleJ1 = Invoke-TimedMqb -Scenario 'target-scale-no-op-j1' -Iteration $iteration -WorkingDirectory $targetScaleRoot -Arguments ($targetScaleArguments + @('-j', '1'))
+        Assert-CompileCacheCounts -Sample $targetScaleJ1 -ExpectedHits $targetScaleUnitCount -ExpectedMisses 0
+        $results.Add($targetScaleJ1)
+
         $lastScaleSource = 'unit_{0:D3}.cpp' -f ($TargetScaleSourceCount - 1)
         Add-Content -LiteralPath (Join-Path $targetScaleRoot $lastScaleSource) -Encoding utf8 -Value "// target-scale mutation $iteration"
         $targetScaleSingle = Invoke-TimedMqb -Scenario 'target-scale-single-tu' -Iteration $iteration -WorkingDirectory $targetScaleRoot -Arguments $targetScaleArguments
         Assert-CompileCacheCounts -Sample $targetScaleSingle -ExpectedHits ($targetScaleUnitCount - 1) -ExpectedMisses 1
         $results.Add($targetScaleSingle)
+
+        # Dedicated 129-TU common-header fixture. It retains the same target size
+        # while making repeated dependency evidence visible independently of the
+        # historical unique-source scale scenarios above.
+        $commonHeaderRoot = Join-Path $benchmarkRoot "target-scale-common-header-$iteration"
+        New-Item -ItemType Directory -Path $commonHeaderRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $commonHeaderRoot 'common.hpp') -Encoding utf8 -Value @'
+#pragma once
+inline int target_scale_common() { return 1; }
+'@
+        Set-Content -LiteralPath (Join-Path $commonHeaderRoot 'main.cpp') -Encoding utf8 -Value @'
+#include "common.hpp"
+int main() { return target_scale_common() == 1 ? 0 : 1; }
+'@
+        $commonHeaderArgs = [System.Collections.Generic.List[string]]::new()
+        $commonHeaderArgs.Add('main.cpp')
+        for ($sourceIndex = 0; $sourceIndex -lt $TargetScaleSourceCount; ++$sourceIndex) {
+            $sourceName = 'unit_{0:D3}.cpp' -f $sourceIndex
+            Set-Content -LiteralPath (Join-Path $commonHeaderRoot $sourceName) -Encoding utf8 -Value "#include `"common.hpp`"`nint target_scale_common_${sourceIndex}() { return target_scale_common() + $sourceIndex; }"
+            $commonHeaderArgs.Add($sourceName)
+        }
+        $commonHeaderArgs.Add('--output')
+        $commonHeaderArgs.Add('target_scale_common_header_bench')
+        $commonHeaderArguments = $commonHeaderArgs.ToArray()
+        $null = Invoke-UntimedMqb -Scenario 'target-scale-common-header-prime' -Iteration $iteration -WorkingDirectory $commonHeaderRoot -Arguments ($commonHeaderArguments + @('-j', 'auto'))
+        $targetScaleCommonHeader = Invoke-TimedMqb -Scenario 'target-scale-common-header-no-op' -Iteration $iteration -WorkingDirectory $commonHeaderRoot -Arguments ($commonHeaderArguments + @('-j', 'auto'))
+        Assert-CompileCacheCounts -Sample $targetScaleCommonHeader -ExpectedHits $targetScaleUnitCount -ExpectedMisses 0
+        $results.Add($targetScaleCommonHeader)
 
         # Dedicated smart-discovery fixture. Only the entry TU is passed to MQB;
         # helper.cpp must be found through the shared local header graph. The
@@ -191,6 +288,15 @@ int main() { return helper_value() == 42 ? 0 : 1; }
 
         Add-Content -LiteralPath (Join-Path $discoveryRoot 'src/common.hpp') -Encoding utf8 -Value "// discovery invalidation $iteration"
         $results.Add((Invoke-TimedMqb -Scenario 'discovery-header' -Iteration $iteration -WorkingDirectory $discoveryRoot -Arguments $discoveryArgs))
+
+        $timingRoot = Join-Path $benchmarkRoot "timings-$iteration"
+        New-Item -ItemType Directory -Path $timingRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $timingRoot 'helper.cpp') -Encoding utf8 -Value 'int timing_helper() { return 42; }'
+        Set-Content -LiteralPath (Join-Path $timingRoot 'main.cpp') -Encoding utf8 -Value 'int timing_helper(); int main() { return timing_helper() == 42 ? 0 : 1; }'
+        $timingArgs = @('main.cpp', 'helper.cpp', '--output', 'timing_bench', '-j', '1')
+        $null = Invoke-UntimedMqb -Scenario 'timings-prime' -Iteration $iteration -WorkingDirectory $timingRoot -Arguments $timingArgs
+        $results.Add((Invoke-TimedMqb -Scenario 'timings-enabled-no-op' -Iteration $iteration -WorkingDirectory $timingRoot -Arguments $timingArgs))
+        $results.Add((Invoke-UntimedMqb -Scenario 'timings-disabled-no-op' -Iteration $iteration -WorkingDirectory $timingRoot -Arguments $timingArgs))
 
         $moduleRoot = Join-Path $benchmarkRoot "modules-$iteration"
         New-Item -ItemType Directory -Path $moduleRoot | Out-Null
@@ -244,7 +350,7 @@ if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
     [PSCustomObject]@{
-        schema_version = 2
+        schema_version = 3
         generated_utc = [DateTime]::UtcNow.ToString('o')
         mqb = $MqbPath
         iterations = $Iterations

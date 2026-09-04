@@ -19,6 +19,7 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/platform/windows/CommandLine.hpp"
 
 namespace mqb::platform::windows {
@@ -478,6 +479,58 @@ void read_pipe(HANDLE handle, std::string& output, std::optional<DWORD>& read_er
     }
 }
 
+[[nodiscard]] bool ascii_starts_with_ignore_case(
+    const std::string_view value,
+    const std::string_view prefix) noexcept {
+    if (value.size() < prefix.size()) return false;
+    for (std::size_t index = 0; index < prefix.size(); ++index) {
+        unsigned char left = static_cast<unsigned char>(value[index]);
+        unsigned char right = static_cast<unsigned char>(prefix[index]);
+        if (left >= 'A' && left <= 'Z') left = static_cast<unsigned char>(left + ('a' - 'A'));
+        if (right >= 'A' && right <= 'Z') right = static_cast<unsigned char>(right + ('a' - 'A'));
+        if (left != right) return false;
+    }
+    return true;
+}
+
+struct InstrumentedProcess {
+    mqb::performance::ProcessKind process_kind;
+    mqb::performance::WorkKind work_kind;
+};
+
+[[nodiscard]] std::optional<InstrumentedProcess> classify_instrumented_process(
+    const process::ProcessSpec& spec) {
+    const std::string executable =
+        mqb::platform::windows::path_identity_key(spec.executable.filename());
+    if (executable == "link.exe") {
+        return InstrumentedProcess{
+            .process_kind = mqb::performance::ProcessKind::linker,
+            .work_kind = mqb::performance::WorkKind::link_execution,
+        };
+    }
+    if (executable == "lib.exe") {
+        return InstrumentedProcess{
+            .process_kind = mqb::performance::ProcessKind::librarian,
+            .work_kind = mqb::performance::WorkKind::archive_execution,
+        };
+    }
+    if (executable != "cl.exe") return std::nullopt;
+
+    const bool dependency_scan = std::any_of(
+        spec.arguments.begin(),
+        spec.arguments.end(),
+        [](const std::string& argument) {
+            return ascii_starts_with_ignore_case(argument, "/scanDependencies")
+                || ascii_starts_with_ignore_case(argument, "-scanDependencies");
+        });
+    return InstrumentedProcess{
+        .process_kind = mqb::performance::ProcessKind::compiler,
+        .work_kind = dependency_scan
+            ? mqb::performance::WorkKind::module_scan_execution
+            : mqb::performance::WorkKind::compile_execution,
+    };
+}
+
 } // namespace
 
 std::expected<process::ProcessResult, process::ProcessError>
@@ -605,6 +658,12 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
         startup = &extended_startup.StartupInfo;
     }
 
+    const auto instrumented_process = classify_instrumented_process(spec);
+    std::optional<mqb::performance::ScopedWork> execution_evidence;
+    if (mqb::performance::current_collector() != nullptr && instrumented_process) {
+        execution_evidence.emplace(instrumented_process->work_kind);
+    }
+
     PROCESS_INFORMATION process_info{};
     const auto launch_started = std::chrono::steady_clock::now();
     const BOOL created = ::CreateProcessW(
@@ -625,6 +684,10 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
             ProcessErrorCode::launch_failed,
             ::GetLastError(),
             "CreateProcessW failed"));
+    }
+    if (instrumented_process) {
+        mqb::performance::record_process_launch(
+            instrumented_process->process_kind);
     }
 
     UniqueHandle process_handle{process_info.hProcess};

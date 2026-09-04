@@ -5,6 +5,7 @@
 #include <system_error>
 
 #include "mqb/core/FileSnapshot.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 
 namespace mqb::orchestration::detail {
 
@@ -40,6 +41,7 @@ struct IncrementalFileSnapshotResult {
         return missing_file_snapshot(path);
     }
 
+    mqb::performance::ScopedFilesystemProbe evidence{path};
     std::error_code error_code;
     const fs::file_status status = fs::status(path, error_code);
     if (error_code) {
@@ -93,6 +95,8 @@ struct IncrementalFileSnapshotResult {
     if (path.empty()) {
         return missing_file_snapshot(path);
     }
+
+    mqb::performance::ScopedFilesystemProbe evidence{path};
 
     // Compile-cache dependencies intentionally admit both regular files and
     // directories, and FileSnapshot identity is existence + last-write time.

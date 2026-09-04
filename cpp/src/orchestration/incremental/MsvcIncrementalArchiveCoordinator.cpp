@@ -13,6 +13,7 @@
 #include "mqb/core/BuildPlanner.hpp"
 #include "mqb/core/BuildSignature.hpp"
 #include "mqb/core/FileSnapshot.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 
 #include "IncrementalFileSnapshot.hpp"
 
@@ -62,6 +63,10 @@ void snapshot_inputs(
 inspect_archive(
     const IncrementalArchiveRequest& request,
     const msvc::MsvcToolchain& toolchain) {
+    mqb::performance::ScopedWork evidence{
+        mqb::performance::WorkKind::archive_inspection};
+    mqb::performance::ScopedFilesystemDomain filesystem_domain{
+        mqb::performance::FilesystemKind::archive};
     ArchiveInspectionState state;
 
     auto librarian_identity = msvc::MsvcLibrarian::identity(toolchain);

@@ -73,3 +73,14 @@ Structural performance tests remain useful when they prove deterministic propert
 ## Benchmark evolution
 
 When a new optimization targets a scenario not represented by the standard harness, add a deterministic fixture/scenario to `benchmark_mqb.ps1` and make the comparator consume it automatically. Additional scenarios may extend the evidence set, but the standard scenarios are an append-only compatibility floor: do not remove an existing core scenario merely because a new optimization does not improve it.
+
+## Attributable timing schema v2 and paired execution
+
+`--timings=json` schema version 2 preserves the complete schema-v1 `phases` and `cache` objects and appends two different attribution classes:
+
+- `attribution.wall` contains wall-clock intervals such as project setup, artifact layout, toolchain discovery, target validation, and CLI reporting;
+- `attribution.work` contains cumulative work that may overlap across parallel translation units, including inspection, execution, cache I/O, link resolution, and filesystem snapshots. These values must not be summed into a 100% wall-clock breakdown.
+
+The record also appends deterministic counters and per-domain breakdowns for cache opens/bytes, filesystem snapshot requests/unique paths/reuses, background-thread creation, MSVC process launches, and emitted output. The final timing record is emitted only after the output observer is detached, so it does not count itself as reporting output.
+
+Performance comparison now uses alternating paired execution (`baseline -> candidate`, then `candidate -> baseline`, repeated) and reports the median paired delta, paired MAD, and nearest-rank paired P95. Standard scenarios remain append-only; the contract additionally includes 129-TU common-header warm builds, automatic versus `-j 1`, and timings-enabled versus timings-disabled no-op builds.

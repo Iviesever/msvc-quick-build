@@ -14,16 +14,17 @@ jobs:
     name: Compare base and candidate
     if: github.event_name == 'workflow_dispatch' || (startsWith(github.event.pull_request.title, 'perf:') && (github.event.action != 'edited' || github.event.changes.title.from != null))
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      - name: Checkout candidate
+      - name: Checkout exact candidate head
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: candidate
 
       - name: Checkout exact PR base
@@ -87,7 +88,16 @@ jobs:
             throw "Candidate Release MQB missing: $mqb"
           }
 
-      - name: Compare benchmark medians on the same runner
+      - name: Verify candidate performance instrumentation contract
+        shell: pwsh
+        run: |
+          $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+          $candidateMqb = Join-Path $env:GITHUB_WORKSPACE 'performance-out/candidate/mqb.exe'
+          & (Join-Path $candidateRoot 'tests/native/verify_performance_instrumentation.ps1') `
+            -MqbPath $candidateMqb
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compare paired ABBA samples on the same runner
         shell: pwsh
         run: |
           $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'
@@ -97,37 +107,41 @@ jobs:
           & (Join-Path $candidateRoot 'tests/native/compare_mqb_benchmarks.ps1') `
             -BaselineMqbPath $baselineMqb `
             -CandidateMqbPath $candidateMqb `
-            -Iterations 5 `
+            -Iterations 4 `
             -OutputPath $comparison
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Publish comparison summary
+      - name: Publish paired comparison summary
         shell: pwsh
         run: |
           $comparisonPath = Join-Path $env:GITHUB_WORKSPACE 'performance-out/benchmark-comparison.json'
           $report = Get-Content -LiteralPath $comparisonPath -Raw | ConvertFrom-Json
           $lines = [System.Collections.Generic.List[string]]::new()
-          $lines.Add('## MQB performance evidence')
+          $lines.Add('## MQB paired ABBA performance evidence')
           $lines.Add('')
-          $lines.Add('Negative deltas mean the candidate is faster. These values are review evidence, not correctness thresholds.')
+          $lines.Add("Execution order: $(@($report.execution_order) -join ' → ')")
+          $lines.Add('Negative deltas mean the candidate is faster. MAD and P95 are calculated from paired candidate-minus-baseline deltas; P95 uses nearest-rank.')
           $lines.Add('')
-          $lines.Add('### Wall-clock and discovery phases')
-          $lines.Add('')
-          $lines.Add('| Scenario | Base total ms | Candidate total ms | Total Δ% | Base discovery ms | Candidate discovery ms | Discovery Δ% |')
+          $lines.Add('| Scenario | Base median ms | Candidate median ms | Paired median Δms | Paired median Δ% | MAD Δms | P95 Δms |')
           $lines.Add('|---|---:|---:|---:|---:|---:|---:|')
           foreach ($row in @($report.comparison)) {
-            $totalDelta = if ($null -eq $row.total_delta_pct) { 'n/a' } else { [string]$row.total_delta_pct }
-            $discoveryDelta = if ($null -eq $row.discovery_delta_pct) { 'n/a' } else { [string]$row.discovery_delta_pct }
-            $lines.Add("| $($row.scenario) | $($row.baseline_total_ms) | $($row.candidate_total_ms) | $totalDelta | $($row.baseline_discovery_ms) | $($row.candidate_discovery_ms) | $discoveryDelta |")
+            $deltaPct = if ($null -eq $row.paired_median_total_delta_pct) { 'n/a' } else { [string]$row.paired_median_total_delta_pct }
+            $lines.Add("| $($row.scenario) | $($row.baseline_median_total_ms) | $($row.candidate_median_total_ms) | $($row.paired_median_total_delta_ms) | $deltaPct | $($row.paired_mad_total_delta_ms) | $($row.paired_p95_total_delta_ms) |")
           }
+
           $lines.Add('')
-          $lines.Add('### Compile queue phase')
+          $lines.Add('### Candidate warm-path attribution: 129-TU common-header no-op')
           $lines.Add('')
-          $lines.Add('| Scenario | Base queue ms | Candidate queue ms | Queue Δ% |')
-          $lines.Add('|---|---:|---:|---:|')
-          foreach ($row in @($report.comparison)) {
-            $queueDelta = if ($null -eq $row.compile_queue_delta_pct) { 'n/a' } else { [string]$row.compile_queue_delta_pct }
-            $lines.Add("| $($row.scenario) | $($row.baseline_compile_queue_ms) | $($row.candidate_compile_queue_ms) | $queueDelta |")
+          $lines.Add('| Pair | Orientation | Total ms | Compile inspect ms | Cache read ms | FS snapshot ms | Cache opens | Cache bytes | FS requests | Unique paths | Threads | cl/link/lib | Output lines/bytes |')
+          $lines.Add('|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|')
+          $evidenceRows = @($report.paired_samples | Where-Object { $_.scenario -eq 'target-scale-common-header-no-op' } | Sort-Object pair)
+          foreach ($pair in $evidenceRows) {
+            $candidate = $pair.candidate
+            $work = $candidate.attribution.work
+            $counters = $candidate.counters
+            $processes = "$($counters.cl_processes_launched)/$($counters.link_processes_launched)/$($counters.lib_processes_launched)"
+            $output = "$($counters.output_lines_emitted)/$($counters.output_bytes_emitted)"
+            $lines.Add("| $($pair.pair) | $($pair.orientation) | $($candidate.total_ms) | $($work.compile_inspection) | $($work.compile_cache_read) | $($work.filesystem_snapshot) | $($counters.cache_files_opened) | $($counters.cache_bytes_read) | $($counters.filesystem_snapshot_requests) | $($counters.unique_filesystem_paths_probed) | $($counters.background_threads_created) | $processes | $output |")
           }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 

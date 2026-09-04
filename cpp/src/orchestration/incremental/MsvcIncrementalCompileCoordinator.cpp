@@ -13,6 +13,7 @@
 #include "mqb/core/BuildPlanner.hpp"
 #include "mqb/core/CompileCache.hpp"
 #include "mqb/core/CompileCacheFile.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/msvc/MsvcSourceDependenciesReader.hpp"
@@ -88,6 +89,8 @@ void seal_module_scan_evidence(
     const IncrementalCompileRequest& request,
     const msvc::MsvcToolchain& toolchain,
     std::vector<IncrementalCompileWarning>& warnings) {
+    mqb::performance::ScopedFilesystemDomain filesystem_domain{
+        mqb::performance::FilesystemKind::module_scan};
     if (!request.module_scan_output) {
         return;
     }
@@ -160,6 +163,10 @@ void seal_module_scan_evidence(
 
 std::expected<IncrementalCompileInspection, IncrementalCompileError>
 MsvcIncrementalCompileCoordinator::inspect(const IncrementalCompileRequest& request) const {
+    mqb::performance::ScopedWork evidence{
+        mqb::performance::WorkKind::compile_inspection};
+    mqb::performance::ScopedFilesystemDomain filesystem_domain{
+        mqb::performance::FilesystemKind::compile};
     IncrementalCompileInspection result;
 
     // An upstream coordinator may already own the invalidation decision (for

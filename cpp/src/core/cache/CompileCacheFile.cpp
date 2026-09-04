@@ -21,6 +21,7 @@
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildSignature.hpp"
 #include "mqb/core/FileSnapshot.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/core/ToolchainIdentity.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 
@@ -521,6 +522,8 @@ deserialize(const fs::path& file, const std::span<const std::uint8_t> bytes) {
 
 std::expected<std::optional<CompileCacheEntry>, CompileCacheFileError>
 CompileCacheFile::load(const fs::path& file) {
+    mqb::performance::ScopedCacheRead evidence{
+        mqb::performance::CacheKind::compile};
     std::error_code error_code;
     const bool exists = fs::exists(file, error_code);
     if (error_code) {
@@ -556,6 +559,7 @@ CompileCacheFile::load(const fs::path& file) {
             0,
             "failed to open cache file"));
     }
+    evidence.opened(static_cast<std::uint64_t>(size));
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
     if (!bytes.empty()) {
         stream.read(
@@ -577,6 +581,8 @@ CompileCacheFile::load(const fs::path& file) {
 
 std::expected<void, CompileCacheFileError>
 CompileCacheFile::save(const fs::path& file, const CompileCacheEntry& entry) {
+    mqb::performance::ScopedCacheWrite evidence{
+        mqb::performance::CacheKind::compile};
     auto bytes = serialize(file, entry);
     if (!bytes) return std::unexpected(bytes.error());
 
@@ -602,6 +608,7 @@ CompileCacheFile::save(const fs::path& file, const CompileCacheEntry& entry) {
                 0,
                 "failed to open temporary cache file for writing"));
         }
+        evidence.opened(static_cast<std::uint64_t>(bytes->size()));
         if (!bytes->empty()) {
             stream.write(
                 reinterpret_cast<const char*>(bytes->data()),
