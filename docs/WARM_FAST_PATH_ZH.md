@@ -84,19 +84,22 @@ Native benchmark harness 包括：
 
 ## Invocation-scoped target filesystem evidence
 
-普通 executable/DLL target 与 static-library target 会在一次 MQB invocation 内，让各 translation-unit compile inspection 共享 filesystem snapshot。该表不会持久化，也不会被另一个 target 或进程复用。
+普通 executable/DLL target 与 static-library target 会在一次 MQB invocation 内，让各 translation-unit inspection 共享 compile-cache **dependency** snapshot。该表不会持久化，也不会被另一个 target 或进程复用。
 
-Key 由 Windows path identity 与所需 observation mode（`regular file` 或 `file or directory`）组成。并发请求使用 single-flight entry：一个 worker 执行 metadata query，其余 worker 复用完全相同的 existence/timestamp 结果，同时保留各自请求的 path spelling，用于 validation 与 diagnostics。
+Key 使用 Windows path identity，并保留现有 file-or-directory dependency 语义。并发请求采用 single-flight entry：一个 worker 执行 metadata query，其余 worker 复用完全相同的 existence/timestamp 结果，同时保留各自请求的 path spelling，用于 validation 与 diagnostics。
 
-这会把 warm path 从按 dependency occurrence 增长推进到更接近按 unique path 增长，但不会修改 cache record、build signature、compiler recipe 或 freshness comparison。Cache load 与 compile validation 仍然属于每个 translation unit。
+Source 与 object/output snapshot 有意继续走原始直连路径。Target validation 已经保证这些 regular-file artifact 在目标内唯一，因此将它们送入同步共享表不可能产生复用，只会让没有公共依赖的项目承担额外开销。
 
-凡首次 snapshot 曾被其他 inspection 复用的 path，都会在 compile scheduler join 所有 worker 后再探测一次。如果 existence、timestamp 或可靠 metadata 状态在该窗口内发生变化，或者 barrier 本身无法完成，MQB 会拒绝所有可能依赖共享 observation 的结果，并在不使用 evidence reuse 的情况下保守重编整个 target。因此优化失败只会增加工作量，绝不会产生 stale success。
+Dependency table 会把 warm path 从按 dependency occurrence 增长推进到更接近按 unique dependency path 增长，但不会修改 cache record、build signature、compiler recipe 或 freshness comparison。Cache load 与 compile validation 仍然属于每个 translation unit。
+
+凡首次 snapshot 曾被其他 inspection 复用的 dependency，都会在 compile scheduler join 所有 worker 后再探测一次。如果 existence、timestamp 或可靠 metadata 状态在该窗口内发生变化，或者 barrier 本身无法完成，MQB 会拒绝所有可能依赖共享 observation 的结果，并在不使用 evidence reuse 的情况下保守重编整个 target。因此优化失败只会增加工作量，绝不会产生 stale success。
 
 当前边界是有意限定的：
 
-- ordinary 与 static target 的 compile inspection 参与；
+- ordinary 与 static target 的 compile-cache dependency inspection 参与；
+- 唯一的 source 与 object/output probe 保持直连；
 - PCH 与 Modules/Header Units 保持现有 dependency-ordered path；
 - link/archive object snapshot handoff 是独立的后续优化；
 - 该表仅在 invocation 内存在，不引入 daemon、watcher、USN journal、content hash、cache pack 或 persistent lock。
 
-`incremental_target_coordinator_tests.cpp` 锁定 single-flight counter 行为与 mutation revalidation rejection。`verify_performance_instrumentation.ps1` 证明 129-TU common-header no-op 保持精确 cache/process 行为，同时每个 unique compile path 最多执行一次初始 probe 与一次 shared-evidence revalidation。
+`incremental_target_coordinator_tests.cpp` 锁定 single-flight counter 行为与 mutation revalidation rejection。`verify_performance_instrumentation.ps1` 证明 129-TU common-header no-op 保持精确 cache/process 行为，同时每个共享 dependency 最多执行一次初始 probe 与一次 revalidation。
