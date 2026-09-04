@@ -79,18 +79,33 @@ schedule_compile_wave(
     attempts.clear();
     attempts.resize(request.sources.size());
 
+    const auto compile_one = [&](const std::size_t index) {
+        auto compile_request = compile_request_for(
+            request.sources[index],
+            request.compiler_options,
+            force_rebuild);
+        attempts[index].emplace(compile_coordinator.run(compile_request));
+        return attempts[index]->has_value();
+    };
+
+    // Preserve the exact historical callback path when evidence sharing is
+    // disabled. In particular, one- and two-TU targets should not pay even
+    // a thread-local activation/deactivation for a table that cannot reduce
+    // physical metadata queries after mandatory revalidation.
+    if (evidence_table == nullptr) {
+        return BoundedWorkScheduler::run(
+            request.sources.size(),
+            request.max_parallel_compiles,
+            compile_one);
+    }
+
     return BoundedWorkScheduler::run(
         request.sources.size(),
         request.max_parallel_compiles,
         [&](const std::size_t index) {
             detail::ScopedFilesystemEvidenceActivation evidence_activation{
                 evidence_table};
-            auto compile_request = compile_request_for(
-                request.sources[index],
-                request.compiler_options,
-                force_rebuild);
-            attempts[index].emplace(compile_coordinator.run(compile_request));
-            return attempts[index]->has_value();
+            return compile_one(index);
         });
 }
 
@@ -188,15 +203,17 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
     // A target-scoped table is activated independently on every scheduler
     // callback thread. Only physical filesystem observations are shared; each
     // compile keeps its own cache load, validation, warnings, and result.
-    detail::FilesystemEvidenceTable filesystem_evidence;
+    std::optional<detail::FilesystemEvidenceTable> filesystem_evidence;
     // The race-safety barrier revalidates every reused dependency once.
     // With only two translation units, one initial observation plus one
-    // revalidation is the same two physical probes as the uncached path,
-    // so enabling the synchronized table cannot reduce metadata I/O.
+    // revalidation is the same two physical probes as the uncached path.
+    // Do not even construct the synchronized table on that break-even path.
+    if (request.sources.size() > 2
+        && !request.force_downstream_rebuild) {
+        filesystem_evidence.emplace();
+    }
     detail::FilesystemEvidenceTable* shared_evidence =
-        request.sources.size() > 2 && !request.force_downstream_rebuild
-        ? &filesystem_evidence
-        : nullptr;
+        filesystem_evidence ? &*filesystem_evidence : nullptr;
 
     auto scheduled = schedule_compile_wave(
         request,
