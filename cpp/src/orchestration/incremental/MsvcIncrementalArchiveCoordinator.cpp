@@ -13,6 +13,7 @@
 #include "mqb/core/BuildPlanner.hpp"
 #include "mqb/core/BuildSignature.hpp"
 #include "mqb/core/FileSnapshot.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 
 #include "IncrementalFileSnapshot.hpp"
 
@@ -62,6 +63,8 @@ void snapshot_inputs(
 inspect_archive(
     const IncrementalArchiveRequest& request,
     const msvc::MsvcToolchain& toolchain) {
+    diagnostics::ScopedPerformancePhase inspection_phase{
+        diagnostics::PerformancePhase::archive_inspection};
     ArchiveInspectionState state;
 
     auto librarian_identity = msvc::MsvcLibrarian::identity(toolchain);
@@ -201,7 +204,10 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
     }
 
     const msvc::ArchiveInvocation invocation = *inspected->inspection.invocation;
+    diagnostics::ScopedPerformancePhase execution_phase{
+        diagnostics::PerformancePhase::archive_execution};
     auto archived = librarian_.archive(invocation);
+    execution_phase.finish();
     if (!archived) {
         return std::unexpected(IncrementalArchiveError{
             .code = IncrementalArchiveErrorCode::archive_failed,

@@ -15,6 +15,7 @@
 #include "mqb/core/FileSnapshot.hpp"
 #include "mqb/core/LinkCache.hpp"
 #include "mqb/core/LinkCacheFile.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcBaseAddressPolicy.hpp"
 #include "mqb/msvc/MsvcDefaultLibraryPolicy.hpp"
@@ -174,6 +175,8 @@ void collect_existing_side_output(
 inspect_link(
     const IncrementalLinkRequest& request,
     const msvc::MsvcToolchain& toolchain) {
+    diagnostics::ScopedPerformancePhase inspection_phase{
+        diagnostics::PerformancePhase::link_inspection};
     LinkInspectionState state;
 
     auto linker_identity = msvc::MsvcLinker::identity(toolchain);
@@ -614,7 +617,10 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     }
 
     const auto& invocation = *inspected->invocation;
+    diagnostics::ScopedPerformancePhase execution_phase{
+        diagnostics::PerformancePhase::link_execution};
     auto linked = linker_.link(invocation);
+    execution_phase.finish();
     if (!linked) {
         return std::unexpected(link_failure(
             IncrementalLinkErrorCode::link_failed,

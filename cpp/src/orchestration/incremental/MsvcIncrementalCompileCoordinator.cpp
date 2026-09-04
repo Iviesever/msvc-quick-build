@@ -13,6 +13,7 @@
 #include "mqb/core/BuildPlanner.hpp"
 #include "mqb/core/CompileCache.hpp"
 #include "mqb/core/CompileCacheFile.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/msvc/MsvcSourceDependenciesReader.hpp"
@@ -160,6 +161,8 @@ void seal_module_scan_evidence(
 
 std::expected<IncrementalCompileInspection, IncrementalCompileError>
 MsvcIncrementalCompileCoordinator::inspect(const IncrementalCompileRequest& request) const {
+    diagnostics::ScopedPerformancePhase inspection_phase{
+        diagnostics::PerformancePhase::compile_inspection};
     IncrementalCompileInspection result;
 
     // An upstream coordinator may already own the invalidation decision (for
@@ -170,7 +173,10 @@ MsvcIncrementalCompileCoordinator::inspect(const IncrementalCompileRequest& requ
         result.validation.reasons.push_back(BuildReason::explicit_rebuild);
     } else {
         std::optional<CompileCacheEntry> cached_entry;
+        diagnostics::ScopedPerformancePhase cache_read_phase{
+            diagnostics::PerformancePhase::compile_cache_read};
         auto loaded_cache = CompileCacheFile::load(request.cache_file);
+        cache_read_phase.finish();
         if (!loaded_cache) {
             result.warnings.push_back(IncrementalCompileWarning{
                 .code = IncrementalCompileWarningCode::cache_load_failed,
@@ -288,7 +294,10 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         .source_dependencies_file = request.source_dependencies_file,
         .working_directory = request.working_directory,
     };
+    diagnostics::ScopedPerformancePhase execution_phase{
+        diagnostics::PerformancePhase::compile_execution};
     auto executed = executor_.execute(execution_request);
+    execution_phase.finish();
     if (!executed) {
         return std::unexpected(IncrementalCompileError{
             .code = IncrementalCompileErrorCode::compile_failed,
@@ -306,9 +315,12 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
         toolchain_,
         result.warnings);
 
+    diagnostics::ScopedPerformancePhase cache_write_phase{
+        diagnostics::PerformancePhase::compile_cache_write};
     auto saved_cache = CompileCacheFile::save(
         request.cache_file,
         executed->cache_entry);
+    cache_write_phase.finish();
     if (!saved_cache) {
         result.warnings.push_back(IncrementalCompileWarning{
             .code = IncrementalCompileWarningCode::cache_save_failed,

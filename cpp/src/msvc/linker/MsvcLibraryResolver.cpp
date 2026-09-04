@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::msvc {
@@ -290,6 +291,8 @@ MsvcLibraryResolver::resolve(
     const MsvcToolchain& toolchain,
     const LinkOptions& options,
     const fs::path& requested_working_directory) {
+    diagnostics::ScopedPerformancePhase phase{
+        diagnostics::PerformancePhase::link_resolution};
     return resolve_requests(
         toolchain,
         options.libraries,
@@ -304,6 +307,8 @@ MsvcLibraryResolver::resolve_available(
     const std::span<const std::string> libraries,
     const std::span<const fs::path> library_directories,
     const fs::path& requested_working_directory) {
+    diagnostics::ScopedPerformancePhase phase{
+        diagnostics::PerformancePhase::link_resolution};
     return resolve_requests(
         toolchain,
         libraries,
@@ -319,6 +324,8 @@ MsvcLibraryResolver::refresh_observed(
     const std::span<const fs::path> library_directories,
     const fs::path& requested_working_directory,
     const fs::path& observation_seal_file) {
+    diagnostics::ScopedPerformancePhase phase{
+        diagnostics::PerformancePhase::link_resolution};
     auto working_directory = resolve_working_directory(requested_working_directory);
     if (!working_directory) {
         return std::unexpected(working_directory.error());
