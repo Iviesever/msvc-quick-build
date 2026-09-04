@@ -1,31 +1,25 @@
 #include "mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <expected>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/orchestration/BoundedWorkScheduler.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 
 namespace mqb::orchestration {
 namespace {
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
-
-[[nodiscard]] std::string windows_path_key(const fs::path& path) {
-    std::string value = path.lexically_normal().generic_string();
-    std::transform(value.begin(), value.end(), value.begin(),
-        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return value;
-}
+using PathIdentitySet = std::unordered_set<std::string>;
 
 [[nodiscard]] IncrementalStaticTargetError failure(
     const IncrementalStaticTargetErrorCode code,
@@ -38,11 +32,11 @@ using Clock = std::chrono::steady_clock;
     };
 }
 
-[[nodiscard]] bool insert_unique(std::vector<std::string>& seen, const fs::path& path) {
-    const std::string key = windows_path_key(path);
-    if (std::find(seen.begin(), seen.end(), key) != seen.end()) return false;
-    seen.push_back(key);
-    return true;
+[[nodiscard]] bool insert_unique(
+    PathIdentitySet& seen,
+    const fs::path& path) {
+    return seen.emplace(
+        mqb::platform::windows::path_identity_key(path)).second;
 }
 
 [[nodiscard]] IncrementalCompileRequest compile_request_for(
@@ -81,11 +75,15 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
     TargetTimings timings;
     const auto queue_started = Clock::now();
 
-    std::vector<std::string> seen_sources;
-    std::vector<std::string> seen_objects;
-    std::vector<std::string> seen_dependencies;
-    std::vector<std::string> seen_caches;
+    PathIdentitySet seen_sources;
+    PathIdentitySet seen_objects;
+    PathIdentitySet seen_dependencies;
+    PathIdentitySet seen_caches;
+    seen_sources.reserve(request.sources.size());
     seen_objects.reserve(request.sources.size() + request.additional_objects.size());
+    seen_dependencies.reserve(request.sources.size());
+    seen_caches.reserve(request.sources.size());
+
     for (const auto& source : request.sources) {
         if (!insert_unique(seen_sources, source.source)) {
             return std::unexpected(failure(
