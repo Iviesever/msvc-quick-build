@@ -1,0 +1,135 @@
+name: Refine target evidence threshold
+
+on:
+  push:
+    branches:
+      - perf/target-wide-filesystem-evidence
+    paths:
+      - .github/workflows/refine-target-evidence-threshold.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Apply mathematically lossless activation threshold
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one replacement, found {count}')
+              file.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          old_threshold = '''    detail::FilesystemEvidenceTable filesystem_evidence;
+              detail::FilesystemEvidenceTable* shared_evidence =
+                  request.sources.size() > 1 && !request.force_downstream_rebuild
+                  ? &filesystem_evidence
+                  : nullptr;
+          '''
+          new_threshold = '''    detail::FilesystemEvidenceTable filesystem_evidence;
+              // The race-safety barrier revalidates every reused dependency once.
+              // With only two translation units, one initial observation plus one
+              // revalidation is the same two physical probes as the uncached path,
+              // so enabling the synchronized table cannot reduce metadata I/O.
+              detail::FilesystemEvidenceTable* shared_evidence =
+                  request.sources.size() > 2 && !request.force_downstream_rebuild
+                  ? &filesystem_evidence
+                  : nullptr;
+          '''
+          for path in (
+              'cpp/src/orchestration/incremental/MsvcIncrementalTargetCoordinator.cpp',
+              'cpp/src/orchestration/incremental/MsvcIncrementalStaticTargetCoordinator.cpp',
+          ):
+              replace_once(path, old_threshold, new_threshold)
+
+          test_anchor = "    Write-Host 'Performance instrumentation and target-wide evidence contract passed.'\n"
+          test_block = '''    # The mandatory shared-evidence revalidation makes two TU observations
+              # the physical-probe break-even point: one initial probe plus one barrier
+              # probe equals the two historical direct probes. The table must remain off.
+              $twoSourceArguments = @(
+                  'main.cpp',
+                  'unit_000.cpp',
+                  '--output',
+                  'performance_contract_two',
+                  '-j',
+                  '2'
+              )
+              $null = Invoke-MqbCapture `
+                  -WorkingDirectory $root `
+                  -Arguments $twoSourceArguments
+              $twoSource = Invoke-MqbCapture `
+                  -WorkingDirectory $root `
+                  -Arguments ($twoSourceArguments + @('--timings=json')) `
+                  -ExpectTimings
+              if ([int]$twoSource.timing.cache.compile.hits -ne 2 `
+                  -or [int]$twoSource.timing.cache.compile.misses -ne 0 `
+                  -or [int]$twoSource.timing.cache.link.hits -ne 1) {
+                  throw 'Two-TU threshold contract did not retain exact warm cache behavior'
+              }
+              if ([int64]$twoSource.timing.counters.snapshot_evidence_reuses -ne 0) {
+                  throw "Two-TU target activated evidence sharing despite zero possible physical-probe saving: $($twoSource.timing.counters.snapshot_evidence_reuses) reuse(s)"
+              }
+
+          '''
+          replace_once(
+              'tests/native/verify_performance_instrumentation.ps1',
+              test_anchor,
+              test_block + test_anchor,
+          )
+
+          replace_once(
+              'docs/WARM_FAST_PATH.md',
+              '''Source and object/output snapshots deliberately stay on the historical direct path. Target validation already guarantees those regular-file artifacts are unique, so routing them through a synchronized table cannot produce reuse and would penalize projects with no shared dependencies.
+
+          The dependency table changes warm-path scaling from dependency occurrences toward unique dependency paths without changing cache records, build signatures, compiler recipes, or freshness comparisons. Cache loading and compile validation remain per translation unit.
+          ''',
+              '''Source and object/output snapshots deliberately stay on the historical direct path. Target validation already guarantees those regular-file artifacts are unique, so routing them through a synchronized table cannot produce reuse and would penalize projects with no shared dependencies.
+
+          The table is activated only when a target has at least three translation units. Because every reused dependency must be revalidated once, a path observed by exactly two translation units still costs two physical probes (`1` initial + `1` barrier), equal to the historical direct path. Disabling the table for one- and two-TU targets therefore removes synchronization overhead without giving up any possible metadata-I/O reduction.
+
+          The dependency table changes warm-path scaling from dependency occurrences toward unique dependency paths without changing cache records, build signatures, compiler recipes, or freshness comparisons. Cache loading and compile validation remain per translation unit.
+          ''',
+          )
+
+          replace_once(
+              'docs/WARM_FAST_PATH_ZH.md',
+              '''Source 与 object/output snapshot 有意继续走原始直连路径。Target validation 已经保证这些 regular-file artifact 在目标内唯一，因此将它们送入同步共享表不可能产生复用，只会让没有公共依赖的项目承担额外开销。
+
+          Dependency table 会把 warm path 从按 dependency occurrence 增长推进到更接近按 unique dependency path 增长，但不会修改 cache record、build signature、compiler recipe 或 freshness comparison。Cache load 与 compile validation 仍然属于每个 translation unit。
+          ''',
+              '''Source 与 object/output snapshot 有意继续走原始直连路径。Target validation 已经保证这些 regular-file artifact 在目标内唯一，因此将它们送入同步共享表不可能产生复用，只会让没有公共依赖的项目承担额外开销。
+
+          共享表只在 target 至少包含 3 个 translation unit 时启用。由于每个被复用的 dependency 都必须在 barrier 再验证一次，一个只被 2 个 TU 观察的 path 仍需要 2 次物理 probe（`1` 次初查 + `1` 次复验），与原始直连路径完全相同。因此对 1～2 TU target 关闭共享表，只会消除同步开销，不会放弃任何可能的 metadata-I/O 减少。
+
+          Dependency table 会把 warm path 从按 dependency occurrence 增长推进到更接近按 unique dependency path 增长，但不会修改 cache record、build signature、compiler recipe 或 freshness comparison。Cache load 与 compile validation 仍然属于每个 translation unit。
+          ''',
+          )
+
+          Path('.github/workflows/refine-target-evidence-threshold.yml').unlink()
+          PY
+
+      - name: Validate and commit refinement
+        shell: bash
+        run: |
+          git diff --check
+          test "$(tr -d '\r\n' < VERSION)" = "5.4.0"
+          test ! -e .github/workflows/refine-target-evidence-threshold.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && { echo 'No refinement produced'; exit 1; }
+          git commit -m "perf: skip target evidence table at two-TU break-even"
+          git push origin HEAD:perf/target-wide-filesystem-evidence
