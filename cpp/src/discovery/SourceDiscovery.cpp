@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
 #include "cache/DiscoveryCache.hpp"
 #include "indexing/DiscoveryPath.hpp"
@@ -118,6 +119,8 @@ void stabilize_cache_parent_best_effort(const fs::path& cache_file) noexcept {
 
 std::expected<Result, Error>
 SourceDiscovery::discover(const Request& request) {
+    mqb::diagnostics::finish_project_setup();
+
     std::error_code error_code;
     fs::path root = fs::absolute(request.project_root, error_code).lexically_normal();
     if (error_code || !fs::is_directory(root, error_code) || error_code) {

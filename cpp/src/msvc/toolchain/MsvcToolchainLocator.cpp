@@ -8,6 +8,7 @@
 #include "ToolchainDiscoveryPrimitives.hpp"
 #include "VisualStudioToolchainCache.hpp"
 #include "VisualStudioToolchainDiscovery.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 
 namespace mqb::msvc {
@@ -16,6 +17,9 @@ namespace fs = std::filesystem;
 
 std::expected<MsvcToolchain, ToolchainError>
 MsvcToolchainLocator::discover(const DiscoveryOptions& options) const {
+    diagnostics::ScopedPerformancePhase phase{
+        diagnostics::PerformancePhase::toolchain_discovery};
+
     if (options.preference != ToolchainPreference::visual_studio) {
         for (const auto& portable_root : options.portable_roots) {
             std::error_code error_code;

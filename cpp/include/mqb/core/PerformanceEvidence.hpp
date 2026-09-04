@@ -88,12 +88,17 @@ public:
             this,
             std::memory_order_acq_rel,
             std::memory_order_acquire);
+        if (registered_) {
+            project_setup_open_.store(true, std::memory_order_relaxed);
+            begin_phase(PerformancePhase::project_setup);
+        }
     }
 
     ~PerformanceEvidenceSession() noexcept {
         if (!registered_) {
             return;
         }
+        finish_project_setup();
         PerformanceEvidenceSession* expected = this;
         (void)active_session_.compare_exchange_strong(
             expected,
@@ -109,6 +114,12 @@ public:
 
     [[nodiscard]] static PerformanceEvidenceSession* active() noexcept {
         return active_session_.load(std::memory_order_acquire);
+    }
+
+    void finish_project_setup() noexcept {
+        if (project_setup_open_.exchange(false, std::memory_order_acq_rel)) {
+            end_phase(PerformancePhase::project_setup);
+        }
     }
 
     void begin_phase(const PerformancePhase phase) noexcept {
@@ -293,6 +304,7 @@ private:
     inline static std::atomic<PerformanceEvidenceSession*> active_session_{nullptr};
 
     bool registered_{false};
+    std::atomic<bool> project_setup_open_{};
     mutable std::array<
         PhaseState,
         static_cast<std::size_t>(PerformancePhase::count)> phases_{};
@@ -339,6 +351,12 @@ private:
 
 [[nodiscard]] inline bool performance_evidence_active() noexcept {
     return PerformanceEvidenceSession::active() != nullptr;
+}
+
+inline void finish_project_setup() noexcept {
+    if (auto* session = PerformanceEvidenceSession::active()) {
+        session->finish_project_setup();
+    }
 }
 
 inline void record_cache_file_opened() noexcept {

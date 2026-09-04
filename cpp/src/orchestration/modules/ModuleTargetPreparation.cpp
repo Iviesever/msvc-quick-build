@@ -11,6 +11,7 @@
 #include "ModuleTargetArtifactRegistry.hpp"
 #include "ModuleTargetScanner.hpp"
 #include "StandardLibraryModuleProvider.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/modules/ModuleDependencyGraph.hpp"
 
 namespace mqb::orchestration::detail {
@@ -151,12 +152,16 @@ std::expected<ModuleTargetPreparationInspection, IncrementalModuleTargetError>
 inspect_module_target_preparation(
     const IncrementalModuleTargetRequest& request,
     msvc::MsvcModuleDependencyScanner& scanner) {
+    diagnostics::ScopedPerformancePhase validation_phase{
+        diagnostics::PerformancePhase::target_validation};
+
     if (auto validated = validate_request(request); !validated) {
         return std::unexpected(std::move(validated.error()));
     }
 
     auto artifacts = register_requested_artifacts(request);
     if (!artifacts) return std::unexpected(std::move(artifacts.error()));
+    validation_phase.finish();
 
     auto inspected = inspect_requested_module_sources(request, scanner);
     if (!inspected) return std::unexpected(std::move(inspected.error()));
@@ -200,6 +205,9 @@ std::expected<ModuleTargetPreparation, IncrementalModuleTargetError>
 prepare_module_target(
     const IncrementalModuleTargetRequest& request,
     msvc::MsvcModuleDependencyScanner& scanner) {
+    diagnostics::ScopedPerformancePhase validation_phase{
+        diagnostics::PerformancePhase::target_validation};
+
     if (auto validated = validate_request(request); !validated) {
         return std::unexpected(std::move(validated.error()));
     }
@@ -208,6 +216,7 @@ prepare_module_target(
 
     auto artifacts = register_requested_artifacts(request);
     if (!artifacts) return std::unexpected(std::move(artifacts.error()));
+    validation_phase.finish();
 
     const auto scan_started = Clock::now();
     auto scanned = scan_requested_module_sources(request, scanner);

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "mqb/core/Artifact.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/orchestration/BoundedWorkScheduler.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
@@ -61,6 +62,9 @@ using PathIdentitySet = std::unordered_set<std::string>;
 
 std::expected<IncrementalStaticTargetResult, IncrementalStaticTargetError>
 MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest& request) const {
+    diagnostics::ScopedPerformancePhase validation_phase{
+        diagnostics::PerformancePhase::target_validation};
+
     if (request.sources.empty()) {
         return std::unexpected(failure(
             IncrementalStaticTargetErrorCode::no_sources,
@@ -120,6 +124,7 @@ MsvcIncrementalStaticTargetCoordinator::run(const IncrementalStaticTargetRequest
                 object));
         }
     }
+    validation_phase.finish();
 
     using CompileAttempt = std::expected<IncrementalCompileResult, IncrementalCompileError>;
     std::vector<std::optional<CompileAttempt>> attempts(request.sources.size());
