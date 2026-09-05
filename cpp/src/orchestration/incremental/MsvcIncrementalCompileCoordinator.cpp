@@ -279,11 +279,15 @@ MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request)
     if (!inspected) {
         return std::unexpected(inspected.error());
     }
+    return execute_inspected(request, std::move(*inspected));
+}
 
+std::expected<IncrementalCompileResult, IncrementalCompileError>
+MsvcIncrementalCompileCoordinator::execute_inspected(
+    const IncrementalCompileRequest& request,
+    IncrementalCompileInspection inspection) const {
     IncrementalCompileResult result;
-    result.validation = std::move(inspected->validation);
-    result.plan = std::move(inspected->plan);
-    result.warnings = std::move(inspected->warnings);
+    static_cast<IncrementalCompileInspection&>(result) = std::move(inspection);
 
     if (result.plan.actions.empty()) {
         return result;
