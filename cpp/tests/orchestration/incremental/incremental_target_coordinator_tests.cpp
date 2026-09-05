@@ -614,7 +614,9 @@ int main() {
         // An earlier planned miss must not execute when later inspection fails.
         expect(fs::remove(sources[0].artifacts.object), "prepare miss before inspection error");
         auto invalid_inspection = serial;
-        invalid_inspection.sources[3].source.clear();
+        // Empty source paths are rejected later by the compile executor. An
+        // empty object output is a genuine BuildPlanner inspection failure.
+        invalid_inspection.sources[3].artifacts.object.clear();
         const int before_error = runner.compile_calls();
         const auto rejected_wave = run_wave(invalid_inspection);
         expect(rejected_wave && rejected_wave->inspection
@@ -625,6 +627,13 @@ int main() {
                "no compiler may launch after target inspection failed");
         expect(attempts[3] && !attempts[3]->has_value(),
                "inspection failure must retain its original source-index error");
+        if (attempts[3] && !attempts[3]->has_value()) {
+            const auto& error = attempts[3]->error();
+            expect(error.code == mqb::orchestration::IncrementalCompileErrorCode::planning_failed
+                       && error.planner_error
+                       && error.planner_error->code == mqb::BuildPlannerErrorCode::missing_object_output,
+                   "fixture must fail in inspection planning, not in tool execution");
+        }
         const auto repaired = target_coordinator.run(request);
         expect(repaired.has_value(), "normal request must recover after a rejected inspection");
     }
