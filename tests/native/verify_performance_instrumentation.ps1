@@ -155,8 +155,30 @@ int performance_contract_${index}() { return shared_contract_value() + $index; }
     }
     if ([int64]$timing.counters.unique_filesystem_paths_probed `
         -ge [int64]$timing.counters.filesystem_snapshot_requests) {
-        throw 'Common-header fixture did not expose repeated filesystem evidence'
+        throw 'Target-wide fixture did not retain independently auditable physical-probe evidence'
     }
+    if ([int64]$timing.counters.snapshot_evidence_reuses -lt 128) {
+        throw "Expected at least 128 common-header evidence reuses; got $($timing.counters.snapshot_evidence_reuses)"
+    }
+
+    $compileFilesystem = $timing.counter_breakdown.filesystem.compile
+    foreach ($name in @(
+        'snapshot_requests',
+        'unique_paths_probed',
+        'snapshot_evidence_reuses')) {
+        Assert-Property `
+            -Object $compileFilesystem `
+            -Name $name `
+            -Context 'compile filesystem breakdown'
+    }
+    if ([int64]$compileFilesystem.snapshot_evidence_reuses -lt 128) {
+        throw "Compile domain did not reuse the common-header snapshot across all TUs; got $($compileFilesystem.snapshot_evidence_reuses)"
+    }
+    if ([int64]$compileFilesystem.snapshot_requests `
+        -gt 2 * [int64]$compileFilesystem.unique_paths_probed) {
+        throw "Compile filesystem evidence exceeded the one initial probe plus one shared-path revalidation bound: requests=$($compileFilesystem.snapshot_requests), unique=$($compileFilesystem.unique_paths_probed)"
+    }
+
     if ([double]$timing.attribution.work.compile_inspection -le 0.0 `
         -or [double]$timing.attribution.work.compile_cache_read -le 0.0 `
         -or [double]$timing.attribution.work.link_inspection -le 0.0) {
@@ -184,13 +206,94 @@ int performance_contract_${index}() { return shared_contract_value() + $index; }
         -or [int]$serial.timing.cache.link.hits -ne 1) {
         throw 'Changing execution policy from -j 4 to -j 1 polluted cache identity'
     }
+    if ([int64]$serial.timing.counters.snapshot_evidence_reuses -lt 128) {
+        throw 'Target-wide evidence reuse must remain active under fixed -j 1'
+    }
 
     $disabled = Invoke-MqbCapture -WorkingDirectory $root -Arguments ($baseArguments + @('-j', '1'))
     if ($null -ne $disabled.timing) {
         throw 'Timing-disabled contract unexpectedly returned timing data'
     }
 
-    Write-Host 'Performance instrumentation contract passed.'
+    # The mandatory shared-evidence revalidation makes two TU observations
+    # the physical-probe break-even point: one initial probe plus one barrier
+    # probe equals the two historical direct probes. The table must remain off.
+    $twoSourceArguments = @(
+        'main.cpp',
+        'unit_000.cpp',
+        '--output',
+        'performance_contract_two',
+        '-j',
+        '2'
+    )
+    $null = Invoke-MqbCapture `
+        -WorkingDirectory $root `
+        -Arguments $twoSourceArguments
+    $twoSource = Invoke-MqbCapture `
+        -WorkingDirectory $root `
+        -Arguments ($twoSourceArguments + @('--timings=json')) `
+        -ExpectTimings
+    if ([int]$twoSource.timing.cache.compile.hits -ne 2 `
+        -or [int]$twoSource.timing.cache.compile.misses -ne 0 `
+        -or [int]$twoSource.timing.cache.link.hits -ne 1) {
+        throw 'Two-TU threshold contract did not retain exact warm cache behavior'
+    }
+    if ([int64]$twoSource.timing.counters.snapshot_evidence_reuses -ne 0) {
+        throw "Two-TU target activated evidence sharing despite zero possible physical-probe saving: $($twoSource.timing.counters.snapshot_evidence_reuses) reuse(s)"
+    }
+
+    # Static-library targets use the same target-scoped dependency table.
+    # Lock that path independently so ordinary-target coverage cannot mask a
+    # future divergence in archive coordination.
+    Set-Content -LiteralPath (Join-Path $root 'static_a.cpp') -Encoding utf8 -Value @'
+#include "common.hpp"
+int static_a() { return shared_contract_value(); }
+'@
+    Set-Content -LiteralPath (Join-Path $root 'static_b.cpp') -Encoding utf8 -Value @'
+#include "common.hpp"
+int static_b() { return shared_contract_value() + 1; }
+'@
+    Set-Content -LiteralPath (Join-Path $root 'static_c.cpp') -Encoding utf8 -Value @'
+#include "common.hpp"
+int static_c() { return shared_contract_value() + 2; }
+'@
+    $staticArguments = @(
+        'static_a.cpp',
+        'static_b.cpp',
+        'static_c.cpp',
+        '--no-discover',
+        '--type',
+        'static',
+        '--output',
+        'performance_contract_static',
+        '-j',
+        '3'
+    )
+    $null = Invoke-MqbCapture `
+        -WorkingDirectory $root `
+        -Arguments $staticArguments
+    $staticWarm = Invoke-MqbCapture `
+        -WorkingDirectory $root `
+        -Arguments ($staticArguments + @('--timings=json')) `
+        -ExpectTimings
+    if ([int]$staticWarm.timing.cache.compile.hits -ne 3 `
+        -or [int]$staticWarm.timing.cache.compile.misses -ne 0 `
+        -or [int]$staticWarm.timing.cache.archive.hits -ne 1 `
+        -or [int]$staticWarm.timing.cache.archive.misses -ne 0) {
+        throw 'Static target evidence contract did not retain exact warm cache behavior'
+    }
+    if ([int64]$staticWarm.timing.counters.cl_processes_launched -ne 0 `
+        -or [int64]$staticWarm.timing.counters.lib_processes_launched -ne 0) {
+        throw 'Warm static target launched cl.exe or lib.exe'
+    }
+    if ([int64]$staticWarm.timing.counters.snapshot_evidence_reuses -lt 2) {
+        throw "Static target did not reuse its common-header evidence across three TUs: $($staticWarm.timing.counters.snapshot_evidence_reuses) reuse(s)"
+    }
+    if ([int64]$staticWarm.timing.counter_breakdown.filesystem.compile.snapshot_evidence_reuses -lt 2) {
+        throw 'Static target common-header reuse was not attributed to the compile filesystem domain'
+    }
+
+    Write-Host 'Performance instrumentation and target-wide evidence contract passed.'
 }
 finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
