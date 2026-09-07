@@ -20,6 +20,7 @@
 
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildSignature.hpp"
+#include "mqb/core/BoundedCacheReader.hpp"
 #include "mqb/core/FileSnapshot.hpp"
 #include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/core/ToolchainIdentity.hpp"
@@ -524,57 +525,66 @@ std::expected<std::optional<CompileCacheEntry>, CompileCacheFileError>
 CompileCacheFile::load(const fs::path& file) {
     mqb::performance::ScopedCacheRead evidence{
         mqb::performance::CacheKind::compile};
-    std::error_code error_code;
-    const bool exists = fs::exists(file, error_code);
-    if (error_code) {
-        return std::unexpected(make_error(
-            CompileCacheFileErrorCode::file_open_failed,
-            file,
-            0,
-            "failed to query cache file"));
-    }
-    if (!exists) return std::optional<CompileCacheEntry>{};
-
-    const auto size = fs::file_size(file, error_code);
-    if (error_code) {
-        return std::unexpected(make_error(
-            CompileCacheFileErrorCode::file_read_failed,
-            file,
-            0,
-            "failed to query cache file size"));
-    }
-    if (size > max_cache_file_size) {
-        return std::unexpected(make_error(
-            CompileCacheFileErrorCode::corrupt_data,
-            file,
-            0,
-            "cache file exceeds safety size limit"));
-    }
-
+    // Existing files take one payload open, with length and bytes obtained from
+    // that same stream. Path queries are only a failed-open diagnostic fallback.
     std::ifstream stream{file, std::ios::binary};
     if (!stream) {
+        std::error_code error_code;
+        const bool exists = fs::exists(file, error_code);
+        if (error_code) {
+            return std::unexpected(make_error(
+                CompileCacheFileErrorCode::file_open_failed, file, 0,
+                "failed to query cache file"));
+        }
+        if (!exists) return std::optional<CompileCacheEntry>{};
+
+        // Preserve the previous size-query/oversize error categories for an
+        // existing but unopenable path (including a directory). Never reopen.
+        const auto size = fs::file_size(file, error_code);
+        if (error_code) {
+            return std::unexpected(make_error(
+                CompileCacheFileErrorCode::file_read_failed, file, 0,
+                "failed to query cache file size"));
+        }
+        if (size > max_cache_file_size) {
+            return std::unexpected(make_error(
+                CompileCacheFileErrorCode::corrupt_data, file, 0,
+                "cache file exceeds safety size limit"));
+        }
         return std::unexpected(make_error(
-            CompileCacheFileErrorCode::file_open_failed,
-            file,
-            0,
+            CompileCacheFileErrorCode::file_open_failed, file, 0,
             "failed to open cache file"));
     }
-    evidence.opened(static_cast<std::uint64_t>(size));
-    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
-    if (!bytes.empty()) {
-        stream.read(
-            reinterpret_cast<char*>(bytes.data()),
-            static_cast<std::streamsize>(bytes.size()));
-    }
-    if (!stream && !bytes.empty()) {
+
+    auto bytes = read_bounded_cache_stream(
+        stream, max_cache_file_size,
+        [&](const std::uint64_t size) { evidence.opened(size); });
+    if (!bytes) {
+        const auto& failure = bytes.error();
+        switch (failure.code) {
+        case BoundedCacheReadErrorCode::size_query_failed:
+            return std::unexpected(make_error(
+                CompileCacheFileErrorCode::file_read_failed, file, failure.offset,
+                "failed to query cache file size"));
+        case BoundedCacheReadErrorCode::size_limit_exceeded:
+            return std::unexpected(make_error(
+                CompileCacheFileErrorCode::corrupt_data, file, failure.offset,
+                "cache file exceeds safety size limit"));
+        case BoundedCacheReadErrorCode::read_failed:
+            return std::unexpected(make_error(
+                CompileCacheFileErrorCode::file_read_failed, file, failure.offset,
+                "failed to read complete cache file"));
+        case BoundedCacheReadErrorCode::trailing_data:
+            return std::unexpected(make_error(
+                CompileCacheFileErrorCode::corrupt_data, file, failure.offset,
+                "cache file grew while being read"));
+        }
         return std::unexpected(make_error(
-            CompileCacheFileErrorCode::file_read_failed,
-            file,
-            static_cast<std::size_t>(stream.gcount()),
-            "failed to read complete cache file"));
+            CompileCacheFileErrorCode::file_read_failed, file, failure.offset,
+            "unrecognized bounded cache read failure"));
     }
 
-    auto entry = deserialize(file, bytes);
+    auto entry = deserialize(file, *bytes);
     if (!entry) return std::unexpected(entry.error());
     return std::optional<CompileCacheEntry>{std::move(*entry)};
 }

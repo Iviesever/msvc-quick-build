@@ -4,11 +4,15 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
+#include <sstream>
+#include <string>
 #include <string_view>
 #include <vector>
 
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildSignature.hpp"
+#include "mqb/core/BoundedCacheReader.hpp"
 #include "mqb/core/CompileCache.hpp"
 #include "mqb/core/CompileCacheFile.hpp"
 #include "mqb/core/CompilerOptions.hpp"
@@ -287,9 +291,110 @@ void expect_round_trip(
     }
 }
 
+// Override only the size observation; the readable bytes are independent.
+// This models truncation/growth after sizing without sleeps or a racing writer.
+class SizedCacheBuffer : public std::stringbuf {
+public:
+    SizedCacheBuffer(const std::string& bytes, const std::streamoff reported)
+        : std::stringbuf(bytes, std::ios::in), reported_(reported) {}
+
+    bool fail_end{};
+    bool fail_rewind{};
+    bool fail_eof{};
+
+protected:
+    pos_type seekoff(
+        const off_type offset,
+        const std::ios::seekdir direction,
+        const std::ios::openmode mode) override {
+        if ((direction == std::ios::end && fail_end)
+            || (direction == std::ios::beg && fail_rewind)) return pos_type{-1};
+        if (direction == std::ios::cur && offset == 0) return pos_type{reported_};
+        return std::stringbuf::seekoff(offset, direction, mode);
+    }
+
+    int_type underflow() override {
+        if (fail_eof && gptr() == egptr()) {
+            throw std::ios_base::failure{"injected EOF read failure"};
+        }
+        return std::stringbuf::underflow();
+    }
+
+private:
+    std::streamoff reported_;
+};
+
+void test_bounded_cache_reader() {
+    using Code = mqb::BoundedCacheReadErrorCode;
+    const auto check = [](
+        SizedCacheBuffer& buffer,
+        const std::size_t limit,
+        const std::optional<Code> expected_error,
+        const std::size_t expected_offset,
+        const unsigned expected_observations,
+        const std::uint64_t expected_size) {
+        std::istream stream{&buffer};
+        unsigned observations = 0;
+        std::uint64_t observed_size = 0;
+        const auto bytes = mqb::read_bounded_cache_stream(
+            stream, limit, [&](const std::uint64_t size) {
+                ++observations;
+                observed_size = size;
+            });
+        expect(observations == expected_observations,
+               "bounded read should observe its accepted size exactly once");
+        expect(observed_size == expected_size,
+               "bounded read should retain the sized-read byte observation");
+        if (expected_error) {
+            expect(!bytes, "invalid bounded stream should be rejected");
+            if (!bytes) {
+                expect(bytes.error().code == *expected_error,
+                       "bounded stream should retain the precise failure category");
+                expect(bytes.error().offset == expected_offset,
+                       "bounded stream should report its read offset");
+            }
+        } else {
+            expect(bytes.has_value(), "complete bounded stream should load");
+            if (bytes) expect(bytes->size() == expected_size,
+                              "complete payload should have its measured size");
+        }
+    };
+
+    SizedCacheBuffer exact{"abc", 3};
+    check(exact, 3, std::nullopt, 0, 1, 3);
+    SizedCacheBuffer empty{"", 0};
+    check(empty, 0, std::nullopt, 0, 1, 0);
+    SizedCacheBuffer oversized{"abc", 4};
+    check(oversized, 3, Code::size_limit_exceeded, 0, 0, 0);
+    SizedCacheBuffer negative{"abc", -1};
+    check(negative, 3, Code::size_query_failed, 0, 0, 0);
+    SizedCacheBuffer unseekable{"abc", 3};
+    unseekable.fail_end = true;
+    check(unseekable, 3, Code::size_query_failed, 0, 0, 0);
+    SizedCacheBuffer rewind_failed{"abc", 3};
+    rewind_failed.fail_rewind = true;
+    check(rewind_failed, 3, Code::read_failed, 0, 1, 3);
+    SizedCacheBuffer shrunk{"ab", 3};
+    check(shrunk, 3, Code::read_failed, 2, 1, 3);
+    SizedCacheBuffer grown{"abcd", 3};
+    check(grown, 3, Code::trailing_data, 3, 1, 3);
+    SizedCacheBuffer grew_from_empty{"x", 0};
+    check(grew_from_empty, 0, Code::trailing_data, 0, 1, 0);
+    SizedCacheBuffer eof_failed{"abc", 3};
+    eof_failed.fail_eof = true;
+    check(eof_failed, 3, Code::read_failed, 3, 1, 3);
+
+    std::istringstream binary{std::string{"a\0b", 3}, std::ios::in | std::ios::binary};
+    const auto payload = mqb::read_bounded_cache_stream(
+        binary, 3, [](const std::uint64_t) {});
+    expect(payload && *payload == std::vector<std::uint8_t>{'a', 0, 'b'},
+           "bounded read must preserve embedded NUL bytes");
+}
+
 } // namespace
 
 int main() {
+    test_bounded_cache_reader();
     TemporaryDirectory fixture;
     const fs::path file = fixture.path() / "nested/main.mqbcache";
 
@@ -297,6 +402,36 @@ int main() {
     expect(
         missing && !missing->has_value(),
         "missing cache file should be a normal cache miss");
+
+    const fs::path empty_file = fixture.path() / "zero-bytes.mqbcache";
+    write_bytes(empty_file, {});
+    const auto empty_result = mqb::CompileCacheFile::load(empty_file);
+    expect(!empty_result
+               && empty_result.error().code == mqb::CompileCacheFileErrorCode::invalid_magic,
+           "empty existing cache must not become a missing-cache result");
+
+    // Mirror the historical pathname-size preflight for this non-file case.
+    // MSVC can obtain a directory size, then reject it when opening the stream;
+    // other libraries reject the size query itself. Neither is a cache miss.
+    std::error_code directory_size_error;
+    const auto directory_size = fs::file_size(fixture.path(), directory_size_error);
+    const auto directory_error_code = directory_size_error
+        ? mqb::CompileCacheFileErrorCode::file_read_failed
+        : directory_size > 64u * 1024u * 1024u
+            ? mqb::CompileCacheFileErrorCode::corrupt_data
+            : mqb::CompileCacheFileErrorCode::file_open_failed;
+    const auto directory_result = mqb::CompileCacheFile::load(fixture.path());
+    expect(!directory_result
+               && directory_result.error().code == directory_error_code,
+           "directory cache path must retain its platform's historical failure category");
+
+    const fs::path oversized_file = fixture.path() / "oversized.mqbcache";
+    write_bytes(oversized_file, {});
+    fs::resize_file(oversized_file, 64u * 1024u * 1024u + 1u);
+    const auto oversized_result = mqb::CompileCacheFile::load(oversized_file);
+    expect(!oversized_result
+               && oversized_result.error().code == mqb::CompileCacheFileErrorCode::corrupt_data,
+           "oversized cache must be rejected before allocating its payload");
 
     const auto original = make_entry();
     expect_round_trip(file, original, "ordinary object-only cache entry");
