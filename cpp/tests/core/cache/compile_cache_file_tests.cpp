@@ -410,10 +410,20 @@ int main() {
                && empty_result.error().code == mqb::CompileCacheFileErrorCode::invalid_magic,
            "empty existing cache must not become a missing-cache result");
 
+    // Mirror the historical pathname-size preflight for this non-file case.
+    // MSVC can obtain a directory size, then reject it when opening the stream;
+    // other libraries reject the size query itself. Neither is a cache miss.
+    std::error_code directory_size_error;
+    const auto directory_size = fs::file_size(fixture.path(), directory_size_error);
+    const auto directory_error_code = directory_size_error
+        ? mqb::CompileCacheFileErrorCode::file_read_failed
+        : directory_size > 64u * 1024u * 1024u
+            ? mqb::CompileCacheFileErrorCode::corrupt_data
+            : mqb::CompileCacheFileErrorCode::file_open_failed;
     const auto directory_result = mqb::CompileCacheFile::load(fixture.path());
     expect(!directory_result
-               && directory_result.error().code == mqb::CompileCacheFileErrorCode::file_read_failed,
-           "directory cache path must retain its size-query failure category");
+               && directory_result.error().code == directory_error_code,
+           "directory cache path must retain its platform's historical failure category");
 
     const fs::path oversized_file = fixture.path() / "oversized.mqbcache";
     write_bytes(oversized_file, {});
