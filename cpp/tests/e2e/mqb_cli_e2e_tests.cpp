@@ -82,7 +82,8 @@ run_mqb(
     const fs::path& working_directory,
     const std::vector<fs::path>& sources,
     const fs::path& include_directory,
-    const std::vector<std::string>& extra_arguments = {}) {
+    const std::vector<std::string>& extra_arguments = {},
+    const bool detailed = true) {
     mqb::process::ProcessSpec spec;
     spec.executable = executable;
     for (const auto& source : sources) {
@@ -92,10 +93,13 @@ run_mqb(
         spec.arguments.end(),
         {"--env", "vs", "-DMQB_CLI_TEST=1", "-I", path_text(include_directory)});
     spec.arguments.insert(spec.arguments.end(), extra_arguments.begin(), extra_arguments.end());
-    // Per-source freshness assertions require the detailed reporting mode.
-    const bool explicit_command = !spec.arguments.empty()
-        && (spec.arguments.front() == "build" || spec.arguments.front() == "run");
-    spec.arguments.insert(spec.arguments.begin() + (explicit_command ? 1 : 0), "--verbose");
+    // Warm per-source assertions use verbose; the cold discovery contract
+    // deliberately retains default output instead of relaxing its exact line.
+    if (detailed) {
+        const bool explicit_command = !spec.arguments.empty()
+            && (spec.arguments.front() == "build" || spec.arguments.front() == "run");
+        spec.arguments.insert(spec.arguments.begin() + (explicit_command ? 1 : 0), "--verbose");
+    }
     spec.working_directory = working_directory;
     spec.capture_stdout = true;
     spec.capture_stderr = true;
@@ -297,7 +301,7 @@ int main(const int argc, char* argv[]) {
     const std::vector<std::string> target_arguments{
         "-o", "product", "-L", path_text(library_dir), "-l", "math"};
 
-    auto cold = run_mqb(runner, mqb_executable, tree.root, entry_only, include_dir, target_arguments);
+    auto cold = run_mqb(runner, mqb_executable, tree.root, entry_only, include_dir, target_arguments, false);
     expect(cold.has_value(), "cold smart-discovery invocation should launch");
     if (cold) {
         if (cold->exit_code != 0) dump_failure(*cold);
