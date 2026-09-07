@@ -1,0 +1,118 @@
+name: Apply verified reporting iteration
+
+on:
+  push:
+    branches: [perf/reporting-noop-summary]
+    paths: ['.github/workflows/apply-reporting-iteration.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.repository == 'Iviesever/msvc-quick-build' && github.ref == 'refs/heads/perf/reporting-noop-summary'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - name: Apply immutable verified edits, never main or workflow payloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          import base64, hashlib, json, pathlib, subprocess, tempfile
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          def blob_hash(data):
+              return hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+          def fetch(sha):
+              raw = subprocess.check_output(['gh', 'api', 'repos/Iviesever/msvc-quick-build/git/blobs/' + sha])
+              result = json.loads(raw)
+              assert result['encoding'] == 'base64'
+              data = base64.b64decode(result['content'])
+              assert blob_hash(data) == sha, 'downloaded blob identity mismatch'
+              return data
+          assert git('rev-parse', 'HEAD^') == 'd52e55496e20154ca4a8344442465a54f4c389aa', 'unexpected feature baseline'
+          assert not git('status', '--porcelain'), 'working tree not clean'
+          assert pathlib.Path('VERSION').read_text().strip() == '5.4.0'
+          expected = {
+            'README.md': '50f260641ca8544849fbb943d40033781d0fbbf2',
+            'README_EN.md': '50f260641ca8544849fbb943d40033781d0fbbf2',
+            'README_ZH.md': 'c2b3de2c1106a92890aef80d0426f416b339ea99',
+            'cpp/include/mqb/core/PerformanceEvidence.hpp': '68e3bd635472dd4cd923ffefcaf6759b6afb75f6',
+            'cpp/src/app/Application.cpp': '1775cd874e71dce3ad1fbeccca919d9dae04a3d6',
+            'cpp/src/app/cli/Cli.cpp': '69f51bda5ba7e322d76ff39770e5fad3f4511ae3',
+            'cpp/src/app/diagnostics/Diagnostics.cpp': '1b87782412f7047b6792c4e4ed01dba19a2dbec2',
+            'cpp/src/app/diagnostics/Diagnostics.hpp': '6a2e3ddfbbbd9366936e9374367428c40272d108',
+            'cpp/src/app/diagnostics/PerformanceTimings.cpp': 'c8953dde2d3e5107afd1d5bae29c24d774453394',
+            'cpp/src/app/diagnostics/ReportBuffer.hpp': 'cc6029fc170b481bd0b2cb198f343ab31feecb08',
+            'cpp/src/app/targets/ModuleCliTarget.cpp': '393e9121b4998c1f8109cf0cfc9c1d58c2a5c092',
+            'cpp/src/app/targets/StaticCliTarget.cpp': 'd9f3b8b45b878968bacbb94b1d41df4593f4ba0f',
+            'cpp/tests/app/diagnostics/reporting_tests.cpp': '25bc2462d719628cb62f5f840a379db5048bf13c',
+            'cpp/tests/e2e/mqb_build_policy_e2e_tests.cpp': '0a9d405d72048fb5ab8e8f27cbcedb6c1fd3bc8d',
+            'cpp/tests/e2e/mqb_c_source_e2e_tests.cpp': '8592f4b7faa181121882603deadd1f7d3a2b8934',
+            'cpp/tests/e2e/mqb_cli_e2e_tests.cpp': '054360b4cae17d9a93df310ea8e7ceffc1facb8a',
+            'cpp/tests/e2e/mqb_default_library_e2e_tests.cpp': '89e78dcea25d1acd637527a8c11d00e30129f658',
+            'cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp': '53112634474371641d85e712603e35f132f4631b',
+            'cpp/tests/e2e/mqb_manifest_input_e2e_tests.cpp': '97e0472322f9f01747f9d1d88ddd2542194b8399',
+            'cpp/tests/e2e/mqb_pch_e2e_tests.cpp': '8cd87b6b6e97879e9c4a3fd459514c2587008d13',
+            'cpp/tests/e2e/mqb_project_config_e2e_tests.cpp': '177991756b2a815becb16d522c43d8134a9cf1d7',
+            'cpp/tests/e2e/mqb_runtime_subsystem_config_e2e_tests.cpp': 'c21e3f4fbfeded61b8b1d552720fa8d4e99c3cc2',
+            'cpp/tests/e2e/mqb_static_library_e2e_tests.cpp': 'ed58b7f4b56c5a70e9e0685e9e0aa9e02c1d5849',
+            'cpp/tests/e2e/mqb_stub_linker_e2e_tests.cpp': 'd70dded8e079134ea0f4e3090363ccb33f7057bf',
+            'docs/REPORTING.md': 'b399c03947114b727d4cc65f8324e54211b19dce',
+            'tests/native/assert_cpp_layout.ps1': '17cd5046f5db7a5319baa4c953a8a1673b06576c',
+            'tests/native/compare_reporting.py': '960084bdfecbe3aee312af228402120dcd800af7',
+            'tests/native/run_native_tests.ps1': 'b9bd3a5af0c8d3f2687cdfb6ef73bc4b9bd316b7',
+            'tests/native/verify_has_include_freshness.ps1': '9e5bb4fa8b1b20704e30f11886f2e023407d4c71',
+            'tests/native/verify_include_search_freshness.ps1': '1f79e67f874befbe3d8ab8ddb4ea5b5da08b0930',
+            'tests/native/verify_link_side_output_repair.ps1': 'c103763c243575bf37b26b855212ea3aaa43338f',
+            'tests/native/verify_openmp_runtime_policy.ps1': '9ba9ade0870f0a6494408b2877f4fa8cb87f3499',
+            'tests/native/verify_performance_instrumentation.ps1': '13f8862ddab8c171c1cac1b2b02c547209e80e36',
+            'tests/native/verify_transitive_default_library_freshness.ps1': '3d1ea86334b652abfed18eb20a6f1edbfbd60e4a'
+          }
+          patches = [
+            ('a5fb7f97bb1481c59ebd5e8e094f96aa0b20c127', '595dbd99c684cb103ef5fc015bf46f23fca5f786'),
+            ('81b15c157ce7f451322b69a48407f6197c83eef2', '81b15c157ce7f451322b69a48407f6197c83eef2'),
+            ('490a780fce58b7ea78c5717ede1ea09339499fb8', '490a780fce58b7ea78c5717ede1ea09339499fb8'),
+            ('1b395e5479033c7cdf62348d3d1859224d3e22e6', '1b395e5479033c7cdf62348d3d1859224d3e22e6'),
+            ('ee4db7a1f622d78af26d629a31b8c41548940176', 'ee4db7a1f622d78af26d629a31b8c41548940176')
+          ]
+          with tempfile.TemporaryDirectory() as temporary:
+              for index, (uploaded, canonical) in enumerate(patches):
+                  data = fetch(uploaded)
+                  if index == 0:
+                      data = data.replace(b'\n diff --git', b'\ndiff --git')
+                  assert blob_hash(data) == canonical, 'canonical patch mismatch'
+                  path = pathlib.Path(temporary) / f'{index}.patch'
+                  path.write_bytes(data)
+                  subprocess.run(['git', 'apply', '--unidiff-zero', '--whitespace=error', '--check', str(path)], check=True)
+                  subprocess.run(['git', 'apply', '--unidiff-zero', '--whitespace=error', str(path)], check=True)
+          full_files = [
+            'cpp/src/app/diagnostics/Diagnostics.cpp',
+            'cpp/src/app/diagnostics/Diagnostics.hpp',
+            'cpp/src/app/diagnostics/ReportBuffer.hpp',
+            'cpp/tests/app/diagnostics/reporting_tests.cpp',
+            'tests/native/compare_reporting.py',
+            'docs/REPORTING.md'
+          ]
+          for name in full_files:
+              path = pathlib.Path(name)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(fetch(expected[name]))
+          for name, sha in expected.items():
+              assert blob_hash(pathlib.Path(name).read_bytes()) == sha, 'final file mismatch: ' + name
+          subprocess.run(['git', 'diff', '--check'], check=True)
+          subprocess.run(['python', 'tests/native/compare_reporting.py', '--self-test'], check=True)
+          subprocess.run(['git', 'add', '--', *expected], check=True)
+          assert set(git('diff', '--cached', '--name-only').splitlines()) == set(expected), 'staged scope differs'
+          assert not git('diff', '--name-only'), 'unstaged modifications'
+          assert pathlib.Path('VERSION').read_text().strip() == '5.4.0'
+          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+          subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'perf: summarize cached translation units and batch target diagnostics'], check=True)
+          subprocess.run(['git', 'push', 'origin', 'HEAD:refs/heads/perf/reporting-noop-summary'], check=True)
+          print('Verified reporting product commit:', git('rev-parse', 'HEAD'))
