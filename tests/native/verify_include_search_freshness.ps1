@@ -83,7 +83,7 @@ function Require-UpToDate {
 
 function Program-Path {
     param([string]$Fixture, [string]$OutputName)
-    return Join-Path $Fixture ('.mqb/bin/{0}.exe' -f $Fixture)
+    return Join-Path $Fixture ('.mqb/bin/{0}.exe' -f $OutputName)
 }
 
 function Require-ProgramExit {
