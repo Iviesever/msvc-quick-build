@@ -226,9 +226,10 @@ def mutation_contract(recorder: Recorder, candidate: Path, case: Fixture) -> Non
     # Test default mode itself, not merely verbose compatibility. Preserve an
     # actual source-timestamp mutation; do not disable freshness for this test.
     unit = case.root / "unit_000.cpp"
+    previous_stamp = unit.stat().st_mtime_ns
     unit.write_text(unit.read_text(encoding="utf-8") + "\n// changed\n", encoding="utf-8")
-    info = unit.stat()
-    os.utime(unit, ns=(info.st_atime_ns, info.st_mtime_ns + 2_000_000_000))
+    require(unit.stat().st_mtime_ns > previous_stamp,
+            "fixture mutation must advance the real timestamp, not manufacture a future input")
     row = recorder.run(candidate, case, "contract-single-tu-mutation", timings=True)
     require(row["timing"]["cache"]["compile"] == {"hits": 1, "misses": 1}, "default mutation lost freshness")
     human = recorder.human(row, "stdout")
