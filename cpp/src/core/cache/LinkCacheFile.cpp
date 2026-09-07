@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/BoundedCacheReader.hpp"
 #include "mqb/core/BuildSignature.hpp"
 #include "mqb/core/LinkerIdentity.hpp"
 #include "mqb/core/PerformanceEvidence.hpp"
@@ -370,46 +371,59 @@ std::expected<std::optional<LinkCacheEntry>, LinkCacheFileError>
 LinkCacheFile::load(const fs::path& file) {
     mqb::performance::ScopedCacheRead evidence{
         mqb::performance::CacheKind::link};
-    std::error_code error_code;
-    const bool exists = fs::exists(file, error_code);
-    if (error_code) {
-        return std::unexpected(make_error(
-            LinkCacheFileErrorCode::file_open_failed, file, 0, "failed to query link cache file"));
-    }
-    if (!exists) {
-        return std::optional<LinkCacheEntry>{};
-    }
-
-    const auto size = fs::file_size(file, error_code);
-    if (error_code) {
-        return std::unexpected(make_error(
-            LinkCacheFileErrorCode::file_read_failed, file, 0, "failed to query link cache file size"));
-    }
-    if (size > max_cache_file_size) {
-        return std::unexpected(make_error(
-            LinkCacheFileErrorCode::corrupt_data, file, 0, "link cache file exceeds safety size limit"));
-    }
-
+    // Size and payload belong to the same opened stream. Pathname queries
+    // remain diagnostic-only after a failed open, preserving miss/error policy.
     std::ifstream stream{file, std::ios::binary};
     if (!stream) {
+        std::error_code error_code;
+        const bool exists = fs::exists(file, error_code);
+        if (error_code) {
+            return std::unexpected(make_error(
+                LinkCacheFileErrorCode::file_open_failed, file, 0, "failed to query link cache file"));
+        }
+        if (!exists) return std::optional<LinkCacheEntry>{};
+        const auto size = fs::file_size(file, error_code);
+        if (error_code) {
+            return std::unexpected(make_error(
+                LinkCacheFileErrorCode::file_read_failed, file, 0, "failed to query link cache file size"));
+        }
+        if (size > max_cache_file_size) {
+            return std::unexpected(make_error(
+                LinkCacheFileErrorCode::corrupt_data, file, 0, "link cache file exceeds safety size limit"));
+        }
         return std::unexpected(make_error(
             LinkCacheFileErrorCode::file_open_failed, file, 0, "failed to open link cache file"));
     }
-    evidence.opened(static_cast<std::uint64_t>(size));
 
-    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
-    if (!bytes.empty()) {
-        stream.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    }
-    if (!stream && !bytes.empty()) {
+    auto bytes = read_bounded_cache_stream(
+        stream, max_cache_file_size,
+        [&evidence](const std::uint64_t size) { evidence.opened(size); });
+    if (!bytes) {
+        const auto failure = bytes.error();
+        switch (failure.code) {
+        case BoundedCacheReadErrorCode::size_query_failed:
+            return std::unexpected(make_error(
+                LinkCacheFileErrorCode::file_read_failed, file, failure.offset,
+                "failed to query link cache stream size"));
+        case BoundedCacheReadErrorCode::size_limit_exceeded:
+            return std::unexpected(make_error(
+                LinkCacheFileErrorCode::corrupt_data, file, failure.offset,
+                "link cache file exceeds safety size limit"));
+        case BoundedCacheReadErrorCode::trailing_data:
+            return std::unexpected(make_error(
+                LinkCacheFileErrorCode::corrupt_data, file, failure.offset,
+                "link cache file grew while reading"));
+        case BoundedCacheReadErrorCode::read_failed:
+            return std::unexpected(make_error(
+                LinkCacheFileErrorCode::file_read_failed, file, failure.offset,
+                "failed to read complete link cache file"));
+        }
         return std::unexpected(make_error(
-            LinkCacheFileErrorCode::file_read_failed,
-            file,
-            static_cast<std::size_t>(stream.gcount()),
-            "failed to read complete link cache file"));
+            LinkCacheFileErrorCode::file_read_failed, file, failure.offset,
+            "failed to read link cache file"));
     }
 
-    auto entry = deserialize(file, bytes);
+    auto entry = deserialize(file, *bytes);
     if (!entry) return std::unexpected(entry.error());
     return std::optional<LinkCacheEntry>{std::move(*entry)};
 }

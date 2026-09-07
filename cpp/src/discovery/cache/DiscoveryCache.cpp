@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/BoundedCacheReader.hpp"
 #include "mqb/core/PerformanceEvidence.hpp"
 
 namespace mqb::discovery::detail {
@@ -348,22 +349,18 @@ private:
 [[nodiscard]] std::optional<DiscoveryCacheRecord> load_record(const fs::path& file) {
     mqb::performance::ScopedCacheRead evidence{
         mqb::performance::CacheKind::discovery};
+    // Keep discovery's ordinary-file policy; only the redundant pathname
+    // size query is removed. Identity and filesystem freshness stay below.
     std::error_code error_code;
     if (!fs::is_regular_file(file, error_code) || error_code) return std::nullopt;
-    const auto size = fs::file_size(file, error_code);
-    if (error_code || size > max_cache_file_size) return std::nullopt;
 
     std::ifstream stream{file, std::ios::binary};
     if (!stream) return std::nullopt;
-    evidence.opened(static_cast<std::uint64_t>(size));
-    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
-    if (!bytes.empty()) {
-        stream.read(
-            reinterpret_cast<char*>(bytes.data()),
-            static_cast<std::streamsize>(bytes.size()));
-    }
-    if (!stream && !bytes.empty()) return std::nullopt;
-    return deserialize(bytes);
+    auto bytes = read_bounded_cache_stream(
+        stream, max_cache_file_size,
+        [&evidence](const std::uint64_t size) { evidence.opened(size); });
+    if (!bytes) return std::nullopt;
+    return deserialize(*bytes);
 }
 
 } // namespace

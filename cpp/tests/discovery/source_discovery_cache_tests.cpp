@@ -238,6 +238,67 @@ int main() {
     expect(repaired_cache.has_value() && repaired_cache->reused,
            "full fallback after corrupt cache should repair evidence for the next invocation");
 
+    const auto expect_reader_fallback = [&] {
+        const auto fallback = mqb::discovery::SourceDiscovery::discover(request);
+        expect(fallback.has_value() && !fallback->reused,
+               "invalid discovery transport must trigger fresh discovery, never a hit");
+        if (fallback && repaired_cache) {
+            expect(fallback->sources == repaired_cache->sources
+                       && fallback->indexed_files == repaired_cache->indexed_files,
+                   "reader fallback must preserve source ordering and index accounting");
+        }
+        const auto resealed = mqb::discovery::SourceDiscovery::discover(request);
+        expect(resealed.has_value() && resealed->reused,
+               "reader fallback should repair the cache for the next invocation");
+    };
+
+    write_text(default_cache, "");
+    expect_reader_fallback();
+
+    const auto cache_size = fs::file_size(default_cache, error_code);
+    expect(!error_code && cache_size > 12u, "valid discovery cache should be sizeable");
+    if (!error_code && cache_size > 12u) {
+        fs::resize_file(default_cache, cache_size - 1u, error_code);
+        expect(!error_code, "discovery cache should be truncatable");
+        if (!error_code) expect_reader_fallback();
+    }
+
+    {
+        std::ofstream stream{default_cache, std::ios::binary | std::ios::app};
+        stream.put('\0');
+        expect(stream.good(), "discovery trailing-byte fixture should append");
+    }
+    expect_reader_fallback();
+
+    fs::resize_file(default_cache, 64u * 1024u * 1024u + 1u, error_code);
+    expect(!error_code, "oversized discovery-cache fixture should resize");
+    if (!error_code) expect_reader_fallback();
+
+    fs::remove(default_cache, error_code);
+    expect(!error_code, "discovery cache should be removable");
+    if (!error_code) expect_reader_fallback();
+
+    fs::remove(default_cache, error_code);
+    expect(!error_code, "directory-policy fixture should remove only the cache file");
+    if (!error_code) {
+        // A nonempty directory cannot be replaced by best-effort cache repair.
+        // It must not become a cache hit or make fresh discovery fail.
+        const fs::path sentinel = default_cache / "keep.txt";
+        write_text(sentinel, "preserve this directory");
+        const auto directory_cache = mqb::discovery::SourceDiscovery::discover(request);
+        expect(directory_cache.has_value() && !directory_cache->reused,
+               "a directory cache path must retain ordinary-file rejection");
+        if (directory_cache && repaired_cache) {
+            expect(directory_cache->sources == repaired_cache->sources,
+                   "an unusable cache directory must not change source selection");
+        }
+        expect(fs::is_regular_file(sentinel),
+               "best-effort cache repair must preserve a nonempty directory");
+        fs::remove_all(default_cache, error_code);
+        expect(!error_code, "directory-policy fixture should be removable");
+        if (!error_code) expect_reader_fallback();
+    }
+
     mqb::discovery::Request uncached = request;
     uncached.persistent_cache = false;
     const auto disabled_first = mqb::discovery::SourceDiscovery::discover(uncached);
