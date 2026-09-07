@@ -1,0 +1,45 @@
+name: Reporting Evidence
+
+on:
+  push:
+    branches: [perf/reporting-noop-summary]
+    paths: ['.github/workflows/reporting-evidence.yml']
+  pull_request:
+    paths:
+      - 'cpp/src/app/**'
+      - 'cpp/tests/app/**'
+      - 'tests/native/*reporting*'
+      - '.github/workflows/reporting-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reporting-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-provenance:
+    name: Retain exact source provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Archive exact candidate source and identity
+        shell: bash
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/candidate-sha.txt
+          git rev-parse HEAD^{tree} > evidence/candidate-tree.txt
+          git archive --format=zip --output=evidence/candidate-source.zip HEAD
+          sha256sum evidence/candidate-source.zip > evidence/SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mqb-reporting-source
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: error
