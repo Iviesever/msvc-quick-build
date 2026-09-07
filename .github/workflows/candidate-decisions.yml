@@ -1,0 +1,77 @@
+name: Candidate Merge Decisions
+on:
+  push:
+    branches: [perf/candidate-decisions]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: main
+            sha: 8d9008a6031755feccf15d72a52c9fad137b4ad9
+          - name: pr157
+            sha: 2c87b47d9fe4945a75077a8ded0bdfed5ca425ab
+          - name: pr158
+            sha: c23ea11010c24410cab46ad2d6d17c13a92d42e7
+          - name: pr159
+            sha: 501255bfe1ddb429ba4703f93c1e08dcfeb40ebc
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
+      - name: Build exact Release tree
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ matrix.sha }}
+        run: |
+          $sha = git rev-parse HEAD
+          if ($sha -ne $env:EXPECTED_SHA) { throw 'Wrong source identity' }
+          $seed = & ./tests/native/acquire_seed.ps1 -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $mqb = & ./tests/native/build_mqb.ps1 -BuilderMqbPath $seed -RepoRoot $PWD -Version '5.4.0' -Configuration Release -Clean -OutputPath (Join-Path $PWD 'binary/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @{ sha=$sha; tree=(git rev-parse 'HEAD^{tree}'); binary_sha256=(Get-FileHash $mqb -Algorithm SHA256).Hash; image=$env:ImageOS; image_version=$env:ImageVersion } | ConvertTo-Json | Set-Content binary/identity.json -Encoding utf8
+      - uses: actions/upload-artifact@v7
+        with:
+          name: decision-${{ matrix.name }}
+          path: binary/
+          retention-days: 30
+          if-no-files-found: error
+  compare:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: 501255bfe1ddb429ba4703f93c1e08dcfeb40ebc
+          path: harness
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: decision-*
+          path: binaries
+      - name: Fixed external comparisons
+        shell: pwsh
+        run: |
+          foreach ($name in @('main','pr157','pr158','pr159')) { Move-Item "binaries/decision-$name" "binaries/$name" }
+          python tests/native/review_candidates.py --harness harness/tests/native/compare_reporting.py --binaries binaries --output decision-evidence
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: candidate-decisions
+          path: decision-evidence/
+          retention-days: 30
+          if-no-files-found: warn
