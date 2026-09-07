@@ -429,19 +429,22 @@ int Application::run(const std::span<const std::string_view> arguments) {
 
         pch_compiled = pch->compile.compiled;
         timing_session.record_compile(pch_compiled);
-        diagnostics::print_compile_warnings(pch->compile);
-        if (pch_compiled) {
-            std::cout << "[pch] "
-                      << diagnostics::path_text(display_source(project_root, *effective.precompiled_header));
-            diagnostics::print_reasons(pch->compile.validation.reasons);
-            std::cout << '\n';
-            if (pch->compile.process) {
-                diagnostics::print_process_output(*pch->compile.process);
+        {
+            mqb::performance::ScopedWork report_time{mqb::performance::WorkKind::target_reporting};
+            diagnostics::print_compile_warnings(pch->compile);
+            if (pch_compiled) {
+                std::cout << "[pch] "
+                          << diagnostics::path_text(display_source(project_root, *effective.precompiled_header));
+                diagnostics::print_reasons(pch->compile.validation.reasons);
+                std::cout << '\n';
+                if (pch->compile.process) {
+                    diagnostics::print_process_output(*pch->compile.process);
+                }
+            } else {
+                std::cout << "[up-to-date] pch "
+                          << diagnostics::path_text(display_source(project_root, *effective.precompiled_header))
+                          << '\n';
             }
-        } else {
-            std::cout << "[up-to-date] pch "
-                      << diagnostics::path_text(display_source(project_root, *effective.precompiled_header))
-                      << '\n';
         }
 
         compiler_options.precompiled_header = mqb::PrecompiledHeaderBinding{
@@ -527,6 +530,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
     }
 
     if (options.verbose) {
+        mqb::performance::ScopedWork report_time{mqb::performance::WorkKind::target_reporting};
         std::cout << "[target] " << target_name << "\n"
                   << "  project: " << diagnostics::path_text(project_root) << '\n';
         if (project_config) {
@@ -596,34 +600,8 @@ int Application::run(const std::span<const std::string_view> arguments) {
     }
     timing_session.record_link(result->link.linked);
 
-    for (const auto& compile : result->compiles) {
-        diagnostics::print_compile_warnings(compile.result);
-        const fs::path label = display_source(project_root, compile.source);
-        if (compile.result.compiled) {
-            std::cout << "[compile] " << diagnostics::path_text(label);
-            diagnostics::print_reasons(compile.result.validation.reasons);
-            std::cout << '\n';
-            if (compile.result.process) {
-                diagnostics::print_process_output(*compile.result.process);
-            }
-        } else {
-            std::cout << "[up-to-date] " << diagnostics::path_text(label) << '\n';
-        }
-    }
-
-    diagnostics::print_link_warnings(result->link);
-    if (result->link.linked) {
-        std::cout << "[link] " << diagnostics::path_text(request.target.executable.filename());
-        diagnostics::print_reasons(result->link.validation.reasons);
-        std::cout << '\n';
-        if (result->link.process) {
-            diagnostics::print_process_output(*result->link.process);
-        }
-    } else {
-        std::cout << "[up-to-date] " << diagnostics::path_text(request.target.executable.filename()) << '\n';
-    }
-
-    std::cout << "output: " << diagnostics::path_text(request.target.executable) << '\n';
+    diagnostics::print_target_report(
+        result->compiles, result->link, request.target.executable, project_root, options.verbose);
 
     if (!options.build.run_after_build) {
         return 0;

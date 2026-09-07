@@ -119,7 +119,7 @@ Assert-DirectDirectories -Root $appRoot -Allowed @('cli', 'diagnostics', 'projec
 Assert-ExactFiles -Root $appRoot -Expected @('Application.cpp', 'Application.hpp', 'main.cpp')
 $appLeafFiles = [ordered]@{
     'cli' = @('Cli.cpp', 'Cli.hpp', 'Invocation.cpp', 'Invocation.hpp')
-    'diagnostics' = @('Diagnostics.cpp', 'Diagnostics.hpp', 'PerformanceTimings.cpp', 'PerformanceTimings.hpp')
+    'diagnostics' = @('Diagnostics.cpp', 'Diagnostics.hpp', 'PerformanceTimings.cpp', 'PerformanceTimings.hpp', 'ReportBuffer.hpp')
     'project' = @('ProjectSetup.cpp', 'ProjectSetup.hpp')
     'targets' = @(
         'BuildIntrospectionSetup.cpp', 'BuildIntrospectionSetup.hpp',
@@ -140,6 +140,7 @@ foreach ($leaf in $appLeafFiles.Keys) {
 }
 Assert-LeafLayout -Root (Join-Path $testsRoot 'app') -LeafFiles ([ordered]@{
     'cli' = @('build_policy_cli_tests.cpp', 'cli_argument_tests.cpp', 'mqb_native_msvc_cli_e2e_tests.cpp')
+    'diagnostics' = @('reporting_tests.cpp')
 })
 
 Assert-LeafLayout -Root (Join-Path $srcRoot 'config') -LeafFiles ([ordered]@{

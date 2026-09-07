@@ -2,18 +2,82 @@
 
 #include <iostream>
 
+#include "ReportBuffer.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
+
 namespace mqb::app::diagnostics {
 namespace {
 
 void write_forwarded_text(std::ostream& stream, const std::string_view text) {
-    for (std::size_t index = 0; index < text.size(); ++index) {
-        const char ch = text[index];
-        if (ch == '\r' && index + 1 < text.size() && text[index + 1] == '\n') {
-            stream.put('\n');
-            ++index;
+    detail::ReportBuffer output{stream};
+    std::size_t start = 0;
+    for (;;) {
+        const std::size_t crlf = text.find("\r\n", start);
+        if (crlf == std::string_view::npos) break;
+        output.append(text.substr(start, crlf - start));
+        output.append("\n");
+        start = crlf + 2;
+    }
+    output.append(text.substr(start));
+    output.flush();
+}
+
+void append_reasons(
+    detail::ReportBuffer& output,
+    const std::vector<mqb::BuildReason>& reasons) {
+    if (reasons.empty()) return;
+    output.append(" [");
+    for (std::size_t index = 0; index < reasons.size(); ++index) {
+        if (index != 0) output.append(", ");
+        output.append(mqb::to_string(reasons[index]));
+    }
+    output.append("]");
+}
+
+[[nodiscard]] std::filesystem::path source_label(
+    const std::filesystem::path& root,
+    const std::filesystem::path& source,
+    const bool filename_only) {
+    if (filename_only) return source.filename();
+    const auto relative = source.lexically_relative(root);
+    if (relative.empty() || relative.is_absolute() || relative == ".") return source;
+    for (const auto& component : relative) {
+        if (component == "..") return source;
+    }
+    return relative;
+}
+
+void append_compile_report(
+    detail::ReportBuffer& output,
+    const std::span<const mqb::orchestration::TargetCompileResult> compiles,
+    const std::filesystem::path& project_root,
+    const bool verbose,
+    const bool filename_only) {
+    std::size_t reused = 0;
+    for (const auto& compile : compiles) {
+        // Warnings are never hidden with the reused-TU progress lines. Flush
+        // preceding stdout before crossing streams to retain diagnostic order.
+        if (!compile.result.warnings.empty()) {
+            output.flush();
+            print_compile_warnings(compile.result);
+        }
+        if (!compile.result.compiled && !verbose) {
+            ++reused;
             continue;
         }
-        stream.put(ch);
+        output.append(compile.result.compiled ? "[compile] " : "[up-to-date] ");
+        output.append(path_text(source_label(project_root, compile.source, filename_only)));
+        if (compile.result.compiled) append_reasons(output, compile.result.validation.reasons);
+        output.append("\n");
+        if (compile.result.compiled && compile.result.process) {
+            output.flush();
+            print_process_output(*compile.result.process);
+        }
+    }
+    if (reused != 0) {
+        output.append("[up-to-date] ");
+        output.append(std::to_string(reused));
+        output.append(reused == 1 ? " translation unit\n" : " translation units\n");
     }
 }
 
@@ -108,6 +172,60 @@ void print_reasons(const std::vector<mqb::BuildReason>& reasons) {
     std::cout << ']';
 }
 
+void print_target_report(
+    const std::span<const mqb::orchestration::TargetCompileResult> compiles,
+    const mqb::orchestration::IncrementalLinkResult& link,
+    const std::filesystem::path& executable,
+    const std::filesystem::path& project_root,
+    const bool verbose) {
+    mqb::performance::ScopedWork report_time{mqb::performance::WorkKind::target_reporting};
+    detail::ReportBuffer output{std::cout};
+    append_compile_report(output, compiles, project_root, verbose, false);
+    if (!link.warnings.empty()) {
+        output.flush();
+        print_link_warnings(link);
+    }
+    output.append(link.linked ? "[link] " : "[up-to-date] ");
+    output.append(path_text(executable.filename()));
+    if (link.linked) append_reasons(output, link.validation.reasons);
+    output.append("\n");
+    if (link.linked && link.process) {
+        output.flush();
+        print_process_output(*link.process);
+    }
+    output.append("output: ");
+    output.append(path_text(executable));
+    output.append("\n");
+    output.flush();
+}
+
+void print_static_target_report(
+    const std::span<const mqb::orchestration::TargetCompileResult> compiles,
+    const mqb::orchestration::IncrementalArchiveResult& archive,
+    const std::filesystem::path& library,
+    const bool verbose) {
+    mqb::performance::ScopedWork report_time{mqb::performance::WorkKind::target_reporting};
+    detail::ReportBuffer output{std::cout};
+    // Preserve the existing static target's basename labels in verbose mode.
+    append_compile_report(output, compiles, {}, verbose, true);
+    if (!archive.warnings.empty()) {
+        output.flush();
+        print_archive_warnings(archive);
+    }
+    output.append(archive.archived ? "[archive] " : "[up-to-date] ");
+    output.append(path_text(library.filename()));
+    if (archive.archived) append_reasons(output, archive.validation.reasons);
+    output.append("\n");
+    if (archive.archived && archive.process) {
+        output.flush();
+        print_process_output(*archive.process);
+    }
+    output.append("output: ");
+    output.append(path_text(library));
+    output.append("\n");
+    output.flush();
+}
+
 void print_config_error(const mqb::config::Error& error) {
     std::cerr << "error: project config: " << error.message;
     if (!error.path.empty()) {
@@ -177,7 +295,7 @@ void print_static_target_failure(
     }
     std::cerr << '\n';
     if (error.compile_error) {
-        std::cerr << "  " << error.compile_error->message << '\n';
+        print_compile_failure(*error.compile_error);
     }
     if (error.archive_error) {
         std::cerr << "  " << error.archive_error->message << '\n';

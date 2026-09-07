@@ -395,9 +395,14 @@ mqb <source...> [options]
 | `--linker-arg <arg>` | raw linker argv element |
 | `--env <auto|vs|portable>` | toolchain selection |
 | `--run` | source-first 兼容形式：构建后运行 executable |
-| `-v, --verbose` | 详细输出 |
+| `-v, --verbose` | 逐 TU 进度，以及配置、发现、工具链和产物详情 |
 | `-h, --help` | 完整 CLI 帮助 |
 | `--` | `mqb run` / `--run` 后续参数传给目标程序 |
+
+默认将缓存命中的翻译单元汇总为 `[up-to-date] N translation units`，仍显示实际重编译的源文件、
+重建原因、编译器/链接器/归档器诊断以及最终产物和输出路径。`--verbose` 保留每个命中源文件的
+进度行；依赖逐 TU 日志判断的脚本应显式使用该选项。PCH 进度单独显示，普通目标、模块目标和
+静态库目标采用相同的汇总规则。
 
 完整 CLI reference 以当前 binary 的 `mqb --help` 为准。
 

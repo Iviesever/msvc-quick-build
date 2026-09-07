@@ -61,6 +61,20 @@ run_process(
     return std::move(*result);
 }
 
+// These freshness tests inspect individual TU lines. The reporting contract
+// separately tests the default summary; produced executables keep their argv.
+[[nodiscard]] std::expected<mqb::process::ProcessResult, std::string> run_detailed_mqb(
+    mqb::platform::windows::WindowsProcessRunner& runner,
+    const fs::path& executable,
+    const fs::path& root,
+    std::vector<std::string> arguments = {}) {
+    const bool explicit_command = !arguments.empty()
+        && (arguments.front() == "build" || arguments.front() == "run");
+    arguments.insert(arguments.begin() + (explicit_command ? 1 : 0), "--verbose");
+    return run_process(runner, executable, root, std::move(arguments));
+}
+
+
 [[nodiscard]] bool contains(const mqb::process::ProcessResult& result, const std::string_view text) {
     return result.stdout_text.find(text) != std::string::npos
         || result.stderr_text.find(text) != std::string::npos;
@@ -127,7 +141,7 @@ int main(const int argc, char* argv[]) {
 
     mqb::platform::windows::WindowsProcessRunner runner;
 
-    auto cold = run_process(runner, mqb_executable, tree.root, build_args());
+    auto cold = run_detailed_mqb(runner, mqb_executable, tree.root, build_args());
     expect(cold.has_value(), "cold PCH build should launch");
     if (cold) {
         if (cold->exit_code != 0) dump_failure(*cold);
@@ -152,7 +166,7 @@ int main(const int argc, char* argv[]) {
                "forced PCH include should provide declarations to ordinary sources");
     }
 
-    auto warm = run_process(runner, mqb_executable, tree.root, build_args());
+    auto warm = run_detailed_mqb(runner, mqb_executable, tree.root, build_args());
     expect(warm.has_value(), "warm PCH build should launch");
     if (warm) {
         if (warm->exit_code != 0) dump_failure(*warm);
@@ -168,7 +182,7 @@ int main(const int argc, char* argv[]) {
         "#include <cstdio>\n"
         "int worker_value();\n"
         "int main() { const int value = worker_value(); std::printf(\"pch=%d\\n\", value); return value == 42 ? 0 : 1; }\n");
-    auto source_changed = run_process(runner, mqb_executable, tree.root, build_args());
+    auto source_changed = run_detailed_mqb(runner, mqb_executable, tree.root, build_args());
     expect(source_changed.has_value(), "source-only PCH build should launch");
     if (source_changed) {
         if (source_changed->exit_code != 0) dump_failure(*source_changed);
@@ -184,7 +198,7 @@ int main(const int argc, char* argv[]) {
         "#pragma once\n"
         "struct PchValue { int value; };\n"
         "inline constexpr int pch_bias = 11;\n");
-    auto header_changed = run_process(runner, mqb_executable, tree.root, build_args());
+    auto header_changed = run_detailed_mqb(runner, mqb_executable, tree.root, build_args());
     expect(header_changed.has_value(), "header-changed PCH build should launch");
     if (header_changed) {
         if (header_changed->exit_code != 0) dump_failure(*header_changed);
@@ -208,7 +222,7 @@ int main(const int argc, char* argv[]) {
                "PCH header change should link exactly once");
     }
 
-    auto post_header_warm = run_process(runner, mqb_executable, tree.root, build_args());
+    auto post_header_warm = run_detailed_mqb(runner, mqb_executable, tree.root, build_args());
     expect(post_header_warm.has_value(), "post-header warm PCH build should launch");
     if (post_header_warm) {
         if (post_header_warm->exit_code != 0) dump_failure(*post_header_warm);
@@ -223,7 +237,7 @@ int main(const int argc, char* argv[]) {
     std::error_code remove_error;
     fs::remove(pch_file, remove_error);
     expect(!remove_error, "test should be able to remove the PCH artifact");
-    auto repaired = run_process(runner, mqb_executable, tree.root, build_args());
+    auto repaired = run_detailed_mqb(runner, mqb_executable, tree.root, build_args());
     expect(repaired.has_value(), "missing-PCH repair build should launch");
     if (repaired) {
         if (repaired->exit_code != 0) dump_failure(*repaired);
@@ -265,7 +279,7 @@ int main(const int argc, char* argv[]) {
             discovery_tree.root / "main.cpp",
             "int main() { return widget_value() + deep_value() == 42 ? 0 : 1; }\n");
 
-        auto pch_only_reachable = run_process(
+        auto pch_only_reachable = run_detailed_mqb(
             runner,
             mqb_executable,
             discovery_tree.root,
@@ -316,7 +330,7 @@ int main(const int argc, char* argv[]) {
   }
 })json");
 
-        auto base_discovery = run_process(
+        auto base_discovery = run_detailed_mqb(
             runner,
             mqb_executable,
             discovery_tree.root,
@@ -335,7 +349,7 @@ int main(const int argc, char* argv[]) {
         rewrite_after_tick(
             discovery_tree.root / "base_pch.hpp",
             "#pragma once\n#include \"beta.hpp\"\n");
-        auto changed_pch_discovery = run_process(
+        auto changed_pch_discovery = run_detailed_mqb(
             runner,
             mqb_executable,
             discovery_tree.root,
@@ -354,7 +368,7 @@ int main(const int argc, char* argv[]) {
         rewrite_after_tick(
             discovery_tree.root / "base_pch.hpp",
             "#pragma once\n#include \"alpha.hpp\"\n");
-        auto resealed_base_discovery = run_process(
+        auto resealed_base_discovery = run_detailed_mqb(
             runner,
             mqb_executable,
             discovery_tree.root,
@@ -369,7 +383,7 @@ int main(const int argc, char* argv[]) {
                    "base PCH closure should be resealed before path-identity regression check");
         }
 
-        auto profile_discovery = run_process(
+        auto profile_discovery = run_detailed_mqb(
             runner,
             mqb_executable,
             discovery_tree.root,
@@ -384,7 +398,7 @@ int main(const int argc, char* argv[]) {
                    "profile PCH overlay must change discovery and invalidate base-PCH cache identity");
         }
 
-        auto no_pch_discovery = run_process(
+        auto no_pch_discovery = run_detailed_mqb(
             runner,
             mqb_executable,
             discovery_tree.root,
@@ -401,7 +415,7 @@ int main(const int argc, char* argv[]) {
                    "CLI --no-pch must remove the inherited/profile forced discovery root");
         }
 
-        auto raw_and_pch_discovery = run_process(
+        auto raw_and_pch_discovery = run_detailed_mqb(
             runner,
             mqb_executable,
             discovery_tree.root,
@@ -433,7 +447,7 @@ int main(const int argc, char* argv[]) {
         write_text(ordinary_tree.root / "ordinary.cpp", "int ordinary_value() { return 7; }\n");
         write_text(ordinary_tree.root / "unrelated.cpp", "int unrelated_value() { return 0; }\n");
 
-        auto ordinary_discovery = run_process(
+        auto ordinary_discovery = run_detailed_mqb(
             runner,
             mqb_executable,
             ordinary_tree.root,
@@ -483,7 +497,7 @@ int main(const int argc, char* argv[]) {
     const fs::path nested = tree.root / "nested/work";
     fs::create_directories(nested);
 
-    auto config_base = run_process(
+    auto config_base = run_detailed_mqb(
         runner,
         mqb_executable,
         nested,
@@ -497,7 +511,7 @@ int main(const int argc, char* argv[]) {
                "base build.pch should resolve relative to mqb.json and create that PCH");
     }
 
-    auto profile_override = run_process(
+    auto profile_override = run_detailed_mqb(
         runner,
         mqb_executable,
         nested,
@@ -511,7 +525,7 @@ int main(const int argc, char* argv[]) {
                "selected profile PCH should override base PCH using config-relative path semantics");
     }
 
-    auto profile_disable = run_process(
+    auto profile_disable = run_detailed_mqb(
         runner,
         mqb_executable,
         nested,
@@ -525,7 +539,7 @@ int main(const int argc, char* argv[]) {
                "profile pch:false should suppress PCH orchestration inherited from base config");
     }
 
-    auto cli_override = run_process(
+    auto cli_override = run_detailed_mqb(
         runner,
         mqb_executable,
         nested,
@@ -540,7 +554,7 @@ int main(const int argc, char* argv[]) {
                "CLI --pch should override selected profile and resolve relative to invocation directory");
     }
 
-    auto cli_disable = run_process(
+    auto cli_disable = run_detailed_mqb(
         runner,
         mqb_executable,
         nested,
@@ -555,7 +569,7 @@ int main(const int argc, char* argv[]) {
     }
 
     write_text(tree.root / "plain.c", "int main(void) { return 0; }\n");
-    auto c_rejected = run_process(
+    auto c_rejected = run_detailed_mqb(
         runner,
         mqb_executable,
         tree.root,
@@ -568,7 +582,7 @@ int main(const int argc, char* argv[]) {
     }
 
     write_text(tree.root / "math.ixx", "export module math; export int answer() { return 42; }\n");
-    auto module_rejected = run_process(
+    auto module_rejected = run_detailed_mqb(
         runner,
         mqb_executable,
         tree.root,
@@ -584,7 +598,7 @@ int main(const int argc, char* argv[]) {
     write_text(
         tree.root / "static_source.cpp",
         "int static_value() { PchValue v{1}; return v.value + pch_bias; }\n");
-    auto static_build = run_process(
+    auto static_build = run_detailed_mqb(
         runner,
         mqb_executable,
         tree.root,
@@ -603,7 +617,7 @@ int main(const int argc, char* argv[]) {
         "#pragma once\n"
         "struct PchValue { int value; };\n"
         "inline constexpr int pch_bias = 12;\n");
-    auto static_header_changed = run_process(
+    auto static_header_changed = run_detailed_mqb(
         runner,
         mqb_executable,
         tree.root,
@@ -628,7 +642,7 @@ int main(const int argc, char* argv[]) {
         "build", "pch_dll.cpp", "--env", "vs", "--no-discover", "--debug",
         "--type", "dll", "--pch", "include/pch.hpp", "-o", "pch_dll",
     };
-    auto dll_build = run_process(runner, mqb_executable, tree.root, dll_build_args);
+    auto dll_build = run_detailed_mqb(runner, mqb_executable, tree.root, dll_build_args);
     expect(dll_build.has_value(), "DLL PCH build should launch");
     if (dll_build) {
         if (dll_build->exit_code != 0) dump_failure(*dll_build);
@@ -642,7 +656,7 @@ int main(const int argc, char* argv[]) {
         "#pragma once\n"
         "struct PchValue { int value; };\n"
         "inline constexpr int pch_bias = 13;\n");
-    auto dll_header_changed = run_process(runner, mqb_executable, tree.root, dll_build_args);
+    auto dll_header_changed = run_detailed_mqb(runner, mqb_executable, tree.root, dll_build_args);
     expect(dll_header_changed.has_value(), "DLL PCH header rebuild should launch");
     if (dll_header_changed) {
         if (dll_header_changed->exit_code != 0) dump_failure(*dll_header_changed);
@@ -660,7 +674,7 @@ int main(const int argc, char* argv[]) {
                "DLL PCH header rebuild should link exactly once");
     }
 
-    auto dll_warm = run_process(runner, mqb_executable, tree.root, dll_build_args);
+    auto dll_warm = run_detailed_mqb(runner, mqb_executable, tree.root, dll_build_args);
     expect(dll_warm.has_value(), "post-header warm DLL PCH build should launch");
     if (dll_warm) {
         if (dll_warm->exit_code != 0) dump_failure(*dll_warm);

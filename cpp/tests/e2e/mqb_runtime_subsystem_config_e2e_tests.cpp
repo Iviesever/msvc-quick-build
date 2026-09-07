@@ -82,6 +82,10 @@ struct TempTree {
     mqb::process::ProcessSpec spec;
     spec.executable = mqb;
     spec.arguments = {"main.cpp", "--env", "vs", "--no-discover"};
+    // Per-source freshness assertions require the detailed reporting mode.
+    const bool explicit_command = !spec.arguments.empty()
+        && (spec.arguments.front() == "build" || spec.arguments.front() == "run");
+    spec.arguments.insert(spec.arguments.begin() + (explicit_command ? 1 : 0), "--verbose");
     spec.working_directory = root;
     spec.capture_stdout = true;
     spec.capture_stderr = true;

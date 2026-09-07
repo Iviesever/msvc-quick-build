@@ -51,6 +51,9 @@ enum class WorkKind : std::size_t {
     filesystem_snapshot_toolchain,
     filesystem_snapshot_module_scan,
     filesystem_snapshot_other,
+    // Inclusive target preamble/result reporting, including formatting and
+    // nested stream writes. Not additive with WallKind::reporting.
+    target_reporting,
     count,
 };
 

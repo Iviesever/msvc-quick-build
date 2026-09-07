@@ -73,6 +73,20 @@ struct TempTree {
     return std::move(*result);
 }
 
+// These freshness tests inspect individual TU lines. The reporting contract
+// separately tests the default summary; produced executables keep their argv.
+[[nodiscard]] std::expected<mqb::process::ProcessResult, std::string> run_detailed_mqb(
+    mqb::platform::windows::WindowsProcessRunner& runner,
+    const fs::path& executable,
+    const fs::path& root,
+    std::vector<std::string> arguments = {}) {
+    const bool explicit_command = !arguments.empty()
+        && (arguments.front() == "build" || arguments.front() == "run");
+    arguments.insert(arguments.begin() + (explicit_command ? 1 : 0), "--verbose");
+    return run_process(runner, executable, root, std::move(arguments));
+}
+
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -110,7 +124,7 @@ int main() {
     const fs::path consumer = tree.root / ".mqb" / "bin" / "consumer.exe";
     const fs::path obsolete_consumer = tree.root / ".mqb" / "bin" / "obsolete_consumer.exe";
 
-    auto cold = run_process(
+    auto cold = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"math.cpp", "obsolete.cpp", "--env", "vs", "--type", "static", "-o", "math"});
     expect(cold.has_value(), "cold static-library invocation should launch");
@@ -125,7 +139,7 @@ int main() {
     }
     expect(fs::is_regular_file(library), "static target should produce .mqb/bin/math.lib");
 
-    auto consumer_build = run_process(
+    auto consumer_build = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"consumer.cpp", "--no-discover", "--env", "vs", "-L", ".mqb/bin", "-l", "math", "-o", "consumer"});
     expect(consumer_build.has_value(), "consumer build should launch");
@@ -138,7 +152,7 @@ int main() {
     expect(consumer_run.has_value() && consumer_run->exit_code == 42,
            "consumer should execute symbol from generated static library");
 
-    auto obsolete_consumer_build = run_process(
+    auto obsolete_consumer_build = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"obsolete_consumer.cpp", "--no-discover", "--env", "vs", "-L", ".mqb/bin", "-l", "math", "-o", "obsolete_consumer"});
     expect(obsolete_consumer_build.has_value(), "obsolete-symbol consumer build should launch");
@@ -151,7 +165,7 @@ int main() {
     expect(obsolete_consumer_run.has_value() && obsolete_consumer_run->exit_code == 7,
            "initial archive should execute symbol from its second object member");
 
-    auto warm = run_process(
+    auto warm = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"math.cpp", "obsolete.cpp", "--env", "vs", "--type", "static", "-o", "math"});
     expect(warm.has_value(), "warm static-library invocation should launch");
@@ -168,7 +182,7 @@ int main() {
     std::error_code ec;
     fs::remove(library, ec);
     expect(!ec && !fs::exists(library), "test should remove static archive");
-    auto repair = run_process(
+    auto repair = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"math.cpp", "obsolete.cpp", "--env", "vs", "--type=static", "-o", "math"});
     expect(repair.has_value(), "missing-archive repair invocation should launch");
@@ -188,7 +202,7 @@ int main() {
     return 43;
 }
 )cpp");
-    auto mutated = run_process(
+    auto mutated = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"math.cpp", "obsolete.cpp", "--env", "vs", "--type", "static", "-o", "math"});
     expect(mutated.has_value(), "mutated static-library invocation should launch");
@@ -201,7 +215,7 @@ int main() {
                "fresh object should rearchive static target");
     }
 
-    auto consumer_relink = run_process(
+    auto consumer_relink = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"consumer.cpp", "--no-discover", "--env", "vs", "-L", ".mqb/bin", "-l", "math", "-o", "consumer"});
     expect(consumer_relink.has_value(), "consumer relink should launch");
@@ -217,7 +231,7 @@ int main() {
     expect(consumer_run_after_mutation.has_value() && consumer_run_after_mutation->exit_code == 43,
            "consumer should observe mutated static-library behavior");
 
-    auto shrunk = run_process(
+    auto shrunk = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"math.cpp", "--no-discover", "--env", "vs", "--type", "static", "-o", "math"});
     expect(shrunk.has_value(), "source-set shrink invocation should launch");
@@ -235,7 +249,7 @@ int main() {
     fs::remove(obsolete_consumer, ec);
     expect(!ec && !fs::exists(obsolete_consumer),
            "test should remove old obsolete-symbol consumer output");
-    auto stale_member_probe = run_process(
+    auto stale_member_probe = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"obsolete_consumer.cpp", "--no-discover", "--env", "vs", "-L", ".mqb/bin", "-l", "math", "-o", "obsolete_consumer"});
     expect(stale_member_probe.has_value(), "stale-member probe should launch");
@@ -245,7 +259,7 @@ int main() {
         if (stale_member_probe->exit_code == 0) dump_failure(*stale_member_probe);
     }
 
-    auto ltcg_static = run_process(
+    auto ltcg_static = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"math.cpp", "--no-discover", "--env", "vs", "--type", "static", "--ltcg", "-o", "math"});
     expect(ltcg_static.has_value(), "typed-LTCG static invocation should launch");
@@ -259,7 +273,7 @@ int main() {
                "typed LTCG should rebuild the archive through lib.exe /LTCG");
     }
 
-    auto ltcg_static_warm = run_process(
+    auto ltcg_static_warm = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"math.cpp", "--no-discover", "--env", "vs", "--type", "static", "--ltcg", "-o", "math"});
     expect(ltcg_static_warm.has_value(), "warm typed-LTCG static invocation should launch");
@@ -273,7 +287,7 @@ int main() {
     }
 
     const fs::path ltcg_consumer = tree.root / ".mqb" / "bin" / "ltcg_consumer.exe";
-    auto ltcg_consumer_build = run_process(
+    auto ltcg_consumer_build = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"consumer.cpp", "--no-discover", "--env", "vs", "--ltcg",
          "-L", ".mqb/bin", "-l", "math", "-o", "ltcg_consumer"});
@@ -298,7 +312,7 @@ int main() {
     "enabled": false
   }
 })json");
-    auto config_static = run_process(
+    auto config_static = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"math.cpp", "--no-discover", "--env", "vs"});
     expect(config_static.has_value(), "config-only static target invocation should launch");
@@ -312,7 +326,7 @@ int main() {
     expect(fs::is_regular_file(tree.root / ".mqb" / "bin" / "config_math.lib"),
            "config-only static target should produce the configured .lib output");
 
-    auto cli_type_override = run_process(
+    auto cli_type_override = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"consumer.cpp", "--no-discover", "--env", "vs", "--type", "exe",
          "-L", ".mqb/bin", "-l", "math", "-o", "config_override"});
@@ -331,7 +345,7 @@ int main() {
     expect(override_run.has_value() && override_run->exit_code == 43,
            "CLI-overridden LTCG executable should consume the existing static library");
 
-    auto invalid_librarian_policy = run_process(
+    auto invalid_librarian_policy = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"consumer.cpp", "--no-discover", "--env", "vs", "--type", "exe",
          "-o", "invalid_librarian", "/lib", "/WX"});
@@ -346,7 +360,7 @@ int main() {
                "non-static librarian-policy failure should explain the static-only contract");
     }
 
-    auto invalid_policy = run_process(
+    auto invalid_policy = run_detailed_mqb(
         runner, mqb_executable, tree.root,
         {"math.cpp", "--type", "static", "--subsystem", "console"});
     expect(invalid_policy.has_value() && invalid_policy->exit_code == 2,

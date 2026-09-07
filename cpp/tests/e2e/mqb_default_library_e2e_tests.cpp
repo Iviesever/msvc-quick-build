@@ -74,13 +74,27 @@ struct TempTree {
     return std::move(*result);
 }
 
+// These freshness tests inspect individual TU lines. The reporting contract
+// separately tests the default summary; produced executables keep their argv.
+[[nodiscard]] std::expected<mqb::process::ProcessResult, std::string> run_detailed_mqb(
+    mqb::platform::windows::WindowsProcessRunner& runner,
+    const fs::path& executable,
+    const fs::path& root,
+    std::vector<std::string> arguments = {}) {
+    const bool explicit_command = !arguments.empty()
+        && (arguments.front() == "build" || arguments.front() == "run");
+    arguments.insert(arguments.begin() + (explicit_command ? 1 : 0), "--verbose");
+    return run_process(runner, executable, root, std::move(arguments));
+}
+
+
 [[nodiscard]] bool build_static_library(
     mqb::platform::windows::WindowsProcessRunner& runner,
     const fs::path& mqb,
     const fs::path& root,
     const std::string& source,
     const std::string& output) {
-    auto result = run_process(
+    auto result = run_detailed_mqb(
         runner,
         mqb,
         root,
@@ -143,7 +157,7 @@ int main() {
         "/DEFAULTLIB:defaultlib.lib",
     };
 
-    auto cold = run_process(runner, mqb_executable, tree.root, default_consumer_args);
+    auto cold = run_detailed_mqb(runner, mqb_executable, tree.root, default_consumer_args);
     expect(cold.has_value(), "DEFAULTLIB consumer build should launch");
     if (cold) {
         if (cold->exit_code != 0) dump_failure(*cold);
@@ -158,7 +172,7 @@ int main() {
     expect(cold_run.has_value() && cold_run->exit_code == 41,
            "consumer should execute the symbol provided only through /DEFAULTLIB");
 
-    auto warm = run_process(runner, mqb_executable, tree.root, default_consumer_args);
+    auto warm = run_detailed_mqb(runner, mqb_executable, tree.root, default_consumer_args);
     expect(warm.has_value(), "warm DEFAULTLIB consumer build should launch");
     if (warm) {
         if (warm->exit_code != 0) dump_failure(*warm);
@@ -190,7 +204,7 @@ int main() {
     }
     expect(!time_error, "DEFAULTLIB fixture should advance provider archive timestamp");
 
-    auto provider_changed = run_process(
+    auto provider_changed = run_detailed_mqb(
         runner, mqb_executable, tree.root, default_consumer_args);
     expect(provider_changed.has_value(), "DEFAULTLIB-only mutation consumer build should launch");
     if (provider_changed) {
@@ -206,7 +220,7 @@ int main() {
     expect(changed_run.has_value() && changed_run->exit_code == 42,
            "consumer should observe mutated DEFAULTLIB archive behavior");
 
-    auto suppressed = run_process(
+    auto suppressed = run_detailed_mqb(
         runner,
         mqb_executable,
         tree.root,
@@ -219,7 +233,7 @@ int main() {
                "NODEFAULTLIB:name should suppress the matching raw DEFAULTLIB and leave the symbol unresolved");
     }
 
-    auto explicit_priority = run_process(
+    auto explicit_priority = run_detailed_mqb(
         runner,
         mqb_executable,
         tree.root,
@@ -237,7 +251,7 @@ int main() {
     expect(explicit_run.has_value() && explicit_run->exit_code == 73,
            "explicit structured library must retain priority over a raw DEFAULTLIB declaration");
 
-    auto ignored_missing = run_process(
+    auto ignored_missing = run_detailed_mqb(
         runner,
         mqb_executable,
         tree.root,
@@ -266,7 +280,7 @@ int main() {
 })json");
     const fs::path nested = tree.root / "nested";
     fs::create_directories(nested);
-    auto config_relative = run_process(
+    auto config_relative = run_detailed_mqb(
         runner,
         mqb_executable,
         nested,
