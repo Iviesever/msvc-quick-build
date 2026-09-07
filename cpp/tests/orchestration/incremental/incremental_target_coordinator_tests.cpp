@@ -6,12 +6,14 @@
 #include <expected>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include "mqb/core/BuildTypes.hpp"
@@ -23,10 +25,12 @@
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
+#include "mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/process/Process.hpp"
 
 #include "../../../src/orchestration/incremental/IncrementalFileSnapshot.hpp"
+#include "../../../src/orchestration/incremental/TargetCompileWave.hpp"
 
 namespace {
 
@@ -128,6 +132,11 @@ public:
         fail_source_names_ = std::move(names);
     }
 
+    void mutate_on_next_compile(std::function<void()> mutation) {
+        std::scoped_lock lock{mutex_};
+        mutation_ = std::move(mutation);
+    }
+
     [[nodiscard]] int compile_calls() const noexcept {
         return compile_calls_.load(std::memory_order_relaxed);
     }
@@ -184,11 +193,14 @@ private:
         }
 
         bool should_fail = false;
+        std::function<void()> mutation;
         {
             std::scoped_lock lock{mutex_};
             should_fail =
                 fail_source_names_.contains(source.filename().string());
+            mutation = std::exchange(mutation_, {});
         }
+        if (mutation) mutation();
 
         if (!should_fail) {
             write_text(object, "parallel fake object");
@@ -250,6 +262,7 @@ private:
     std::atomic<int> maximum_active_{0};
     mutable std::mutex mutex_;
     std::set<std::string> fail_source_names_;
+    std::function<void()> mutation_;
 };
 
 [[nodiscard]] mqb::orchestration::TargetSourceRequest make_source(
@@ -267,6 +280,16 @@ private:
         },
     };
 }
+
+template <typename Coordinator>
+concept PublicInspectionExecution = requires(
+    Coordinator& coordinator,
+    const mqb::orchestration::IncrementalCompileRequest& request,
+    mqb::orchestration::IncrementalCompileInspection inspection) {
+    coordinator.execute_inspected(request, std::move(inspection));
+};
+static_assert(!PublicInspectionExecution<
+    mqb::orchestration::MsvcIncrementalCompileCoordinator>);
 
 } // namespace
 
@@ -480,6 +503,178 @@ int main() {
     expect(runner.link_calls() == 2,
            "post-force warm target should not launch another linker process");
 
+    // Observe the actual compact execution scheduler, not merely process counts.
+    // A broken inspect-then-run implementation also launches one compiler, but
+    // rereads caches and must fail the exact cache-open assertions below.
+    {
+        namespace detail = mqb::orchestration::detail;
+        std::vector<std::optional<detail::TargetCompileAttempt>> attempts;
+        mqb::performance::EvidenceSnapshot evidence;
+        const auto cache_index = static_cast<std::size_t>(mqb::performance::CacheKind::compile);
+        const auto run_wave = [&](const auto& wave_request) {
+            mqb::performance::Collector collector;
+            mqb::performance::Activation active{collector};
+            detail::FilesystemEvidenceTable table;
+            auto summary = detail::TargetCompileWave::run(
+                wave_request, compile_coordinator, false, &table, attempts);
+            expect(table.revalidate_shared(), "unmutated test wave must pass its final barrier");
+            evidence = collector.snapshot();
+            return summary;
+        };
+        const auto expect_compiled = [&](const std::set<std::size_t>& indices) {
+            expect(attempts.size() == sources.size(), "wave must retain source-index result slots");
+            for (std::size_t index = 0; index < attempts.size(); ++index) {
+                expect(attempts[index] && attempts[index]->has_value(),
+                       "successful wave must populate every source result");
+                if (attempts[index] && attempts[index]->has_value()) {
+                    expect(attempts[index]->value().compiled == indices.contains(index),
+                           "compact miss index must map back to the original source index");
+                }
+            }
+        };
+
+        const auto all_hit = run_wave(request);
+        expect(all_hit && all_hit->inspection
+                   && all_hit->inspection->started_count == 4
+                   && all_hit->inspection->worker_count == 3,
+               "all-hit target retains parallel inspection of every TU");
+        expect(all_hit && all_hit->execution.started_count == 0
+                   && all_hit->execution.worker_count == 0,
+               "all-hit target must not enter the execution scheduler");
+        expect(evidence.background_threads_created == 2,
+               "all-hit wave must create only its two inspection background threads");
+        expect(evidence.cache_files_opened[cache_index] == 4,
+               "all-hit target must read each compile cache exactly once");
+        expect_compiled({});
+
+        expect(fs::remove(sources[2].artifacts.object), "remove one object for a single miss");
+        const int before_one = runner.compile_calls();
+        const auto one_miss = run_wave(request);
+        expect(one_miss && one_miss->execution.started_count == 1
+                   && one_miss->execution.worker_count == 1,
+               "one miss must run once on the caller without execution background threads");
+        expect(runner.compile_calls() == before_one + 1,
+               "single-miss wave must invoke the compiler exactly once");
+        expect(evidence.cache_files_opened[cache_index] == 4,
+               "single-miss execution must consume its inspection without rereading cache");
+        expect(evidence.background_threads_created == 2,
+               "single-miss wave must create no additional execution background thread");
+        expect_compiled({2});
+
+        expect(fs::remove(sources[1].artifacts.object), "remove first noncontiguous miss");
+        expect(fs::remove(sources[3].artifacts.object), "remove second noncontiguous miss");
+        const auto two_misses = run_wave(request);
+        expect(two_misses && two_misses->execution.started_count == 2
+                   && two_misses->execution.worker_count == 2,
+               "two misses must resolve the execution ceiling from two items, not four TUs");
+        expect(evidence.background_threads_created == 3,
+               "two-miss wave adds exactly one execution thread to two inspection threads");
+        expect(evidence.cache_files_opened[cache_index] == 4,
+               "multiple misses must not repeat compile-cache reads");
+        expect_compiled({1, 3});
+
+        write_text(sources[2].artifacts.compile_cache, "corrupt cache fixture");
+        const auto corrupt = run_wave(request);
+        expect(corrupt && corrupt->execution.started_count == 1,
+               "one corrupt cache must remain a single recoverable compile miss");
+        expect_compiled({2});
+        if (attempts[2] && attempts[2]->has_value()) {
+            const auto& warnings = attempts[2]->value().warnings;
+            expect(std::any_of(warnings.begin(), warnings.end(), [](const auto& warning) {
+                return warning.code == mqb::orchestration::IncrementalCompileWarningCode::cache_load_failed;
+            }), "execution must retain the warning from its original inspection");
+        }
+        expect(evidence.cache_files_opened[cache_index] == 4,
+               "corrupt-cache repair must not silently repeat inspection");
+
+        mqb::orchestration::IncrementalStaticTargetRequest static_request;
+        static_request.sources = sources;
+        static_request.compiler_options = compiler_options;
+        static_request.max_parallel_compiles = 3;
+        const auto static_hit = run_wave(static_request);
+        expect(static_hit && static_hit->inspection
+                   && static_hit->execution.started_count == 0,
+               "static targets must use the same all-hit inspection/execute boundary");
+        expect_compiled({});
+        expect(fs::remove(sources[1].artifacts.object), "remove static-wave object");
+        const auto static_miss = run_wave(static_request);
+        expect(static_miss && static_miss->execution.started_count == 1
+                   && static_miss->execution.worker_count == 1,
+               "static targets must share the same compact one-miss scheduler");
+        expect_compiled({1});
+
+        auto serial = request;
+        serial.max_parallel_compiles = 1;
+        const auto serial_hit = run_wave(serial);
+        expect(serial_hit && serial_hit->execution.started_count == 0
+                   && evidence.background_threads_created == 0,
+               "fixed j1 all-hit target must remain entirely on the caller");
+        expect_compiled({});
+
+        // An earlier planned miss must not execute when later inspection fails.
+        expect(fs::remove(sources[0].artifacts.object), "prepare miss before inspection error");
+        auto invalid_inspection = serial;
+        // Empty source paths are rejected later by the compile executor. An
+        // empty object output is a genuine BuildPlanner inspection failure.
+        invalid_inspection.sources[3].artifacts.object.clear();
+        const int before_error = runner.compile_calls();
+        const auto rejected_wave = run_wave(invalid_inspection);
+        expect(rejected_wave && rejected_wave->inspection
+                   && rejected_wave->inspection->stop_requested
+                   && rejected_wave->execution.started_count == 0,
+               "inspection failure must prevent every planned execution");
+        expect(runner.compile_calls() == before_error,
+               "no compiler may launch after target inspection failed");
+        expect(attempts[3] && !attempts[3]->has_value(),
+               "inspection failure must retain its original source-index error");
+        if (attempts[3] && !attempts[3]->has_value()) {
+            const auto& error = attempts[3]->error();
+            expect(error.code == mqb::orchestration::IncrementalCompileErrorCode::planning_failed
+                       && error.planner_error
+                       && error.planner_error->code == mqb::BuildPlannerErrorCode::missing_object_output,
+                   "fixture must fail in inspection planning, not in tool execution");
+        }
+        const auto repaired = target_coordinator.run(request);
+        expect(repaired.has_value(), "normal request must recover after a rejected inspection");
+    }
+
+    // A mutation is injected INSIDE the sole missing compiler invocation. Moving
+    // the barrier before execution would incorrectly leave three stale hits.
+    {
+        expect(fs::remove(sources[0].artifacts.object), "prepare single miss for race fallback");
+        const auto original_time = fs::last_write_time(common_header);
+        runner.mutate_on_next_compile([&] {
+            fs::last_write_time(common_header, original_time + std::chrono::seconds{2});
+        });
+        auto serial = request;
+        serial.max_parallel_compiles = 1;
+        const int before_compiles = runner.compile_calls();
+        const int before_links = runner.link_calls();
+        const auto raced = target_coordinator.run(serial);
+        expect(raced.has_value(), "execution-time header mutation must recover conservatively");
+        expect(runner.compile_calls() == before_compiles + 5,
+               "race must execute the one miss, then force all four TUs without stale hits");
+        expect(runner.link_calls() == before_links + 1,
+               "race fallback must link only after the complete retry succeeds");
+        if (raced) {
+            for (const auto& compile : raced->compiles) {
+                expect(compile.result.compiled,
+                       "every earlier hit must be discarded after execution-time mutation");
+                expect(std::find(compile.result.validation.reasons.begin(),
+                                 compile.result.validation.reasons.end(),
+                                 mqb::BuildReason::explicit_rebuild)
+                           != compile.result.validation.reasons.end(),
+                       "race fallback must preserve explicit rebuild provenance");
+            }
+        }
+        fs::last_write_time(common_header, original_time);
+        const auto settled = target_coordinator.run(request);
+        expect(settled && !settled->any_compiled && !settled->link.linked,
+               "conservative retry must leave reusable state after the fixture settles");
+        expect(mqb::orchestration::detail::active_filesystem_evidence_table == nullptr,
+               "inspection and execution activations must restore the caller TLS state");
+    }
+
     {
         auto invalid = request;
         invalid.max_parallel_compiles = 0;
@@ -516,7 +711,7 @@ int main() {
                    && rejected.error().code
                        == mqb::orchestration::IncrementalTargetErrorCode::
                            duplicate_compile_cache,
-               "duplicate compile cache output should be rejected before workers start");
+               "duplicate compile cache should be rejected before workers start");
         expect(runner.compile_calls() == calls_before,
                "duplicate compile cache should not launch any compiler work");
     }

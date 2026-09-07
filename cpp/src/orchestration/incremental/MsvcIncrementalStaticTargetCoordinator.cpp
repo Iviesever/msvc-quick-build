@@ -9,13 +9,10 @@
 #include <utility>
 #include <vector>
 
-#include "mqb/core/Artifact.hpp"
 #include "mqb/core/PerformanceEvidence.hpp"
-#include "mqb/core/TranslationUnit.hpp"
-#include "mqb/orchestration/BoundedWorkScheduler.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 
-#include "IncrementalFileSnapshot.hpp"
+#include "TargetCompileWave.hpp"
 
 namespace mqb::orchestration {
 namespace {
@@ -23,8 +20,7 @@ namespace {
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 using PathIdentitySet = std::unordered_set<std::string>;
-using CompileAttempt =
-    std::expected<IncrementalCompileResult, IncrementalCompileError>;
+using CompileAttempt = detail::TargetCompileAttempt;
 
 [[nodiscard]] IncrementalStaticTargetError failure(
     const IncrementalStaticTargetErrorCode code,
@@ -42,79 +38,6 @@ using CompileAttempt =
     const fs::path& path) {
     return seen.emplace(
         mqb::platform::windows::path_identity_key(path)).second;
-}
-
-[[nodiscard]] IncrementalCompileRequest compile_request_for(
-    const TargetSourceRequest& source,
-    const CompilerOptions& options,
-    const bool force_rebuild) {
-    TranslationUnit unit;
-    unit.source = source.source;
-    unit.kind = TranslationUnitKind::source;
-    unit.outputs.push_back(Artifact{
-        .path = source.artifacts.object,
-        .kind = ArtifactKind::object,
-    });
-    return IncrementalCompileRequest{
-        .unit = std::move(unit),
-        .options = options,
-        .cache_file = source.artifacts.compile_cache,
-        .source_dependencies_file = source.artifacts.dependencies,
-        .working_directory = source.source.parent_path(),
-        .force_rebuild = force_rebuild,
-    };
-}
-
-[[nodiscard]] std::expected<BoundedWorkSummary, BoundedWorkError>
-schedule_compile_wave(
-    const IncrementalStaticTargetRequest& request,
-    MsvcIncrementalCompileCoordinator& compile_coordinator,
-    const bool force_rebuild,
-    detail::FilesystemEvidenceTable* evidence_table,
-    std::vector<std::optional<CompileAttempt>>& attempts) {
-    attempts.clear();
-    attempts.resize(request.sources.size());
-
-    const auto compile_one = [&](const std::size_t index) {
-        auto compile_request = compile_request_for(
-            request.sources[index],
-            request.compiler_options,
-            force_rebuild);
-        attempts[index].emplace(compile_coordinator.run(compile_request));
-        return attempts[index]->has_value();
-    };
-
-    // Preserve the exact historical callback path when evidence sharing is
-    // disabled. In particular, one- and two-TU targets should not pay even
-    // a thread-local activation/deactivation for a table that cannot reduce
-    // physical metadata queries after mandatory revalidation.
-    if (evidence_table == nullptr) {
-        return BoundedWorkScheduler::run(
-            request.sources.size(),
-            request.max_parallel_compiles,
-            compile_one);
-    }
-
-    // A fixed single-worker policy executes the complete wave on the
-    // caller thread. Activate evidence once around that loop instead of
-    // writing/restoring the same thread-local pointer for every TU.
-    if (request.max_parallel_compiles == 1) {
-        detail::ScopedFilesystemEvidenceActivation evidence_activation{
-            evidence_table};
-        return BoundedWorkScheduler::run(
-            request.sources.size(),
-            request.max_parallel_compiles,
-            compile_one);
-    }
-
-    return BoundedWorkScheduler::run(
-        request.sources.size(),
-        request.max_parallel_compiles,
-        [&](const std::size_t index) {
-            detail::ScopedFilesystemEvidenceActivation evidence_activation{
-                evidence_table};
-            return compile_one(index);
-        });
 }
 
 [[nodiscard]] std::optional<IncrementalStaticTargetError> first_compile_error(
@@ -221,7 +144,7 @@ MsvcIncrementalStaticTargetCoordinator::run(
     detail::FilesystemEvidenceTable* shared_evidence =
         filesystem_evidence ? &*filesystem_evidence : nullptr;
 
-    auto scheduled = schedule_compile_wave(
+    auto scheduled = detail::TargetCompileWave::run(
         request,
         compile_coordinator_,
         request.force_downstream_rebuild,
@@ -237,9 +160,10 @@ MsvcIncrementalStaticTargetCoordinator::run(
         return std::unexpected(std::move(*error));
     }
 
+    // Keep the barrier after execution, exactly as for executable/DLL targets.
     if (shared_evidence != nullptr
         && !shared_evidence->revalidate_shared()) {
-        scheduled = schedule_compile_wave(
+        scheduled = detail::TargetCompileWave::run(
             request,
             compile_coordinator_,
             true,

@@ -253,6 +253,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'msvc') -LeafFiles ([ordered]@{
 $orchestrationLeafFiles = [ordered]@{
     'incremental' = @(
         'IncrementalFileSnapshot.hpp',
+        'TargetCompileWave.hpp',
         'MsvcIncrementalArchiveCoordinator.cpp',
         'MsvcIncrementalCompileCoordinator.cpp',
         'MsvcIncrementalLinkCoordinator.cpp',

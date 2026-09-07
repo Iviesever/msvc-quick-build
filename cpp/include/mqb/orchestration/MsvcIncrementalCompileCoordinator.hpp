@@ -18,6 +18,10 @@
 
 namespace mqb::orchestration {
 
+namespace detail {
+class TargetCompileWave;
+}
+
 struct IncrementalCompileRequest {
     TranslationUnit unit;
     CompilerOptions options;
@@ -82,6 +86,15 @@ public:
     run(const IncrementalCompileRequest& request) const;
 
 private:
+    friend class detail::TargetCompileWave;
+
+    // Only run() and the invocation-owned target wave may consume a decision.
+    // Public inspect() remains diagnostic data, not a reusable execution ticket.
+    [[nodiscard]] std::expected<IncrementalCompileResult, IncrementalCompileError>
+    execute_inspected(
+        const IncrementalCompileRequest& request,
+        IncrementalCompileInspection inspection) const;
+
     const msvc::MsvcToolchain& toolchain_;
     msvc::MsvcCompileExecutor& executor_;
 };
