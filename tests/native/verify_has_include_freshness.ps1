@@ -27,7 +27,7 @@ Set-Content -LiteralPath (Join-Path $fixture 'main.cpp') -Encoding utf8 -Value @
 function Invoke-Build {
     Push-Location $fixture
     try {
-        $output = @(& $MqbPath main.cpp --release --no-discover --env vs -I high -o has-include 2>&1)
+        $output = @(& $MqbPath --verbose main.cpp --release --no-discover --env vs -I high -o has-include 2>&1)
         $exitCode = $LASTEXITCODE
     }
     finally {

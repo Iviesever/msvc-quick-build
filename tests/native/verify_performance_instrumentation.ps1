@@ -117,7 +117,7 @@ int performance_contract_${index}() { return shared_contract_value() + $index; }
         'compile_inspection', 'compile_execution', 'compile_cache_read',
         'compile_cache_write', 'link_inspection', 'link_execution',
         'link_resolution', 'archive_inspection', 'archive_execution',
-        'filesystem_snapshot')) {
+        'filesystem_snapshot', 'target_reporting')) {
         Assert-Property -Object $timing.attribution.work -Name $name -Context 'work attribution'
     }
     foreach ($name in @(

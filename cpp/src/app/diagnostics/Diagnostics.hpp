@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,6 +24,20 @@ void print_error(std::string_view message);
 void print_warning(std::string_view message);
 void print_process_output(const mqb::process::ProcessResult& process);
 void print_reasons(const std::vector<mqb::BuildReason>& reasons);
+// Successful target reports share one output policy. Default mode summarizes
+// reused translation units before constructing labels; verbose retains details.
+void print_target_report(
+    std::span<const mqb::orchestration::TargetCompileResult> compiles,
+    const mqb::orchestration::IncrementalLinkResult& link,
+    const std::filesystem::path& output,
+    const std::filesystem::path& project_root,
+    bool verbose);
+void print_static_target_report(
+    std::span<const mqb::orchestration::TargetCompileResult> compiles,
+    const mqb::orchestration::IncrementalArchiveResult& archive,
+    const std::filesystem::path& output,
+    bool verbose);
+
 void print_config_error(const mqb::config::Error& error);
 void print_target_failure(const mqb::orchestration::IncrementalTargetError& error);
 void print_module_target_failure(const mqb::orchestration::IncrementalModuleTargetError& error);

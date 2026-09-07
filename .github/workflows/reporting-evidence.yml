@@ -1,0 +1,108 @@
+name: Reporting Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/src/app/**'
+      - 'cpp/include/mqb/core/PerformanceEvidence.hpp'
+      - 'cpp/tests/app/**'
+      - 'tests/native/compare_reporting.py'
+      - '.github/workflows/reporting-evidence.yml'
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Baseline ref (resolved and recorded before building)
+        default: main
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reporting-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-provenance:
+    name: Retain exact source provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Check evidence parser and paired statistics
+        run: python3 tests/native/compare_reporting.py --self-test
+      - name: Archive exact candidate source and identity
+        shell: bash
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/candidate-sha.txt
+          git rev-parse HEAD^{tree} > evidence/candidate-tree.txt
+          git archive --format=zip --output=evidence/candidate-source.zip HEAD
+          sha256sum evidence/candidate-source.zip > evidence/SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mqb-reporting-source
+          path: evidence/
+          retention-days: 30
+          if-no-files-found: error
+
+  compare:
+    name: Reporting contracts and external ABBA
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Checkout exact baseline
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || inputs.base_ref }}
+          path: baseline
+          persist-credentials: false
+      - name: Build both exact Release binaries with one pinned MQB seed
+        shell: pwsh
+        run: |
+          $candidate = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+          $seed = & (Join-Path $candidate 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $candidate -OutputRoot (Join-Path $env:GITHUB_WORKSPACE 'reporting-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($side in @('baseline', 'candidate')) {
+            $root = Join-Path $env:GITHUB_WORKSPACE $side
+            $version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
+            $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') `
+              -BuilderMqbPath $seed -RepoRoot $root -Version $version `
+              -Configuration Release -Clean `
+              -OutputPath (Join-Path $env:GITHUB_WORKSPACE "reporting-out/$side/mqb.exe")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) { throw "Missing $side MQB" }
+          }
+      - name: Default and verbose contracts plus external paired ABBA
+        shell: pwsh
+        run: |
+          $baseSha = git -C baseline rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $headSha = git -C candidate rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python candidate/tests/native/compare_reporting.py `
+            --baseline reporting-out/baseline/mqb.exe `
+            --candidate reporting-out/candidate/mqb.exe `
+            --base-sha $baseSha --head-sha $headSha `
+            --pairs 12 --output reporting-out/evidence
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain raw reports, adverse pairs and partial failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mqb-reporting-evidence
+          path: reporting-out/evidence/
+          retention-days: 30
+          if-no-files-found: warn

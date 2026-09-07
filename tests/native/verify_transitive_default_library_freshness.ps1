@@ -31,7 +31,7 @@ function Invoke-Mqb {
 
     Push-Location $WorkingDirectory
     try {
-        $output = @(& $MqbPath @Arguments 2>&1)
+        $output = @(& $MqbPath --verbose @Arguments 2>&1)
         $exitCode = $LASTEXITCODE
     }
     finally {

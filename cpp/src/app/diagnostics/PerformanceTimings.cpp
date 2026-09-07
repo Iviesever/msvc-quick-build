@@ -50,6 +50,7 @@ constexpr std::array<std::string_view, mqb::performance::work_kind_count> work_n
     "filesystem_snapshot_toolchain",
     "filesystem_snapshot_module_scan",
     "filesystem_snapshot_other",
+    "target_reporting",
 };
 
 constexpr std::array<std::string_view, mqb::performance::cache_kind_count> cache_names{

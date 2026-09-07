@@ -63,7 +63,7 @@ function Invoke-ProbeBuild {
     try {
         $output = @(
             Invoke-WithAmbientLinkRepro {
-                & $MqbPath build main.cpp --debug --no-discover -o link_side_output_probe `
+                & $MqbPath build --verbose main.cpp --debug --no-discover -o link_side_output_probe `
                     /link "/MAP:$map" 2>&1
             }
         )
@@ -142,7 +142,7 @@ Push-Location $fixture
 try {
     $staticOutput = @(
         Invoke-WithAmbientLinkRepro {
-            & $MqbPath build static.cpp --debug --no-discover --type static -o link_repro_static 2>&1
+            & $MqbPath build --verbose static.cpp --debug --no-discover --type static -o link_repro_static 2>&1
         }
     )
     $staticExit = $LASTEXITCODE
@@ -162,7 +162,7 @@ $explicitRepro = Join-Path $fixture 'explicit-link-repro'
 New-Item -ItemType Directory -Path $explicitRepro -Force | Out-Null
 Push-Location $fixture
 try {
-    $rejected = @(& $MqbPath build main.cpp --debug --no-discover -o rejected_repro /link "/LINKREPRO:$explicitRepro" 2>&1)
+    $rejected = @(& $MqbPath build --verbose main.cpp --debug --no-discover -o rejected_repro /link "/LINKREPRO:$explicitRepro" 2>&1)
     $rejectedExit = $LASTEXITCODE
 }
 finally {
@@ -194,7 +194,7 @@ Set-Content -LiteralPath $wholeMainSource -Encoding utf8 -Value @(
 function Invoke-WholeArchiveLibraryBuild {
     Push-Location $wholeArchiveRoot
     try {
-        $output = @(& $MqbPath build library.cpp --debug --no-discover --type static -o whole_input 2>&1)
+        $output = @(& $MqbPath build --verbose library.cpp --debug --no-discover --type static -o whole_input 2>&1)
         $exitCode = $LASTEXITCODE
     }
     finally {
@@ -207,7 +207,7 @@ function Invoke-WholeArchiveConsumerBuild {
     Push-Location $wholeArchiveRoot
     try {
         $output = @(
-            & $MqbPath build consumer.cpp --debug --no-discover -o whole_consumer `
+            & $MqbPath build --verbose consumer.cpp --debug --no-discover -o whole_consumer `
                 -L '.mqb/bin' /link '/WHOLEARCHIVE:whole_input.lib' 2>&1
         )
         $exitCode = $LASTEXITCODE

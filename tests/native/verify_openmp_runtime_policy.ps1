@@ -38,7 +38,7 @@ function Invoke-OpenMpBuild {
 
     Push-Location $fixture
     try {
-        $arguments = @('build', $Source, '--release', '--no-discover', '-o', $Target, '/openmp')
+        $arguments = @('build', '--verbose', $Source, '--release', '--no-discover', '-o', $Target, '/openmp')
         $arguments += $ExtraArguments
         $output = @(& $MqbPath @arguments 2>&1)
         $exitCode = $LASTEXITCODE
@@ -186,7 +186,7 @@ Set-Content -LiteralPath (Join-Path $fixture 'module_main.cpp') -Encoding utf8 -
 Push-Location $fixture
 try {
     $moduleOutput = @(
-        & $MqbPath build module_main.cpp math.ixx --release --no-discover `
+        & $MqbPath build --verbose module_main.cpp math.ixx --release --no-discover `
             -o openmp_module_probe /openmp 2>&1
     )
     $moduleExit = $LASTEXITCODE
@@ -206,7 +206,7 @@ if ((Get-LinkCacheText 'openmp_module_probe') -notmatch '(?i)vcomp\.lib') {
 Push-Location $fixture
 try {
     $llvmRejected = @(
-        & $MqbPath build plain.cpp --release --no-discover -o openmp_llvm_rejected `
+        & $MqbPath build --verbose plain.cpp --release --no-discover -o openmp_llvm_rejected `
             /openmp:llvm 2>&1
     )
     $llvmExit = $LASTEXITCODE

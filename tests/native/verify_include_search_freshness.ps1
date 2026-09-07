@@ -39,7 +39,13 @@ function Invoke-MqbCase {
     param([string]$WorkingDirectory, [string[]]$Arguments)
     Push-Location $WorkingDirectory
     try {
-        $output = @(& $MqbPath @Arguments 2>&1)
+        # Keep an explicit command first; otherwise MQB parses "build" as a source.
+        # Inserting before the native tail also leaves /link and program argv intact.
+        $detailedArguments = [System.Collections.Generic.List[string]]::new()
+        $detailedArguments.AddRange($Arguments)
+        $verboseIndex = if ($Arguments.Count -gt 0 -and $Arguments[0] -in @('build', 'run')) { 1 } else { 0 }
+        $detailedArguments.Insert($verboseIndex, '--verbose')
+        $output = @(& $MqbPath @detailedArguments 2>&1)
         $exitCode = $LASTEXITCODE
     }
     finally {

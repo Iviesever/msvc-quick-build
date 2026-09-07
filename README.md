@@ -395,9 +395,16 @@ mqb <source...> [options]
 | `--linker-arg <arg>` | Raw linker argv element |
 | `--env <auto|vs|portable>` | Toolchain selection |
 | `--run` | Source-first compatibility form: run executable after build |
-| `-v, --verbose` | Verbose output |
+| `-v, --verbose` | Per-TU progress and configuration, discovery, toolchain and artifact details |
 | `-h, --help` | Complete CLI help |
 | `--` | Pass remaining arguments to the target program under `mqb run` / `--run` |
+
+By default, cached translation units are summarized as `[up-to-date] N translation units`.
+Recompiled sources, rebuild reasons, compiler/linker/librarian diagnostics and the final
+artifact/output lines remain visible. Use `--verbose` for each cached source's progress
+line; scripts that inspect individual TU lines should select this mode explicitly.
+PCH progress remains separate. The same summary policy applies to ordinary, module
+and static-library targets.
 
 Use the current binary's `mqb --help` as the complete CLI reference.
 

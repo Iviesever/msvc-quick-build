@@ -33,6 +33,7 @@ int run_static_target(
     const msvc::MsvcToolchain& toolchain,
     process::ProcessRunner& runner) {
     if (request.verbose) {
+        mqb::performance::ScopedWork report_time{mqb::performance::WorkKind::target_reporting};
         std::cout << "[target] " << request.target_name << '\n'
                   << "  project: " << diagnostics::path_text(request.project_root) << '\n'
                   << "  type:    static\n";
@@ -79,33 +80,8 @@ int run_static_target(
         request.timings->record_archive(result->archive.archived);
     }
 
-    for (const auto& compile : result->compiles) {
-        if (compile.result.compiled) {
-            std::cout << "[compile] " << diagnostics::path_text(compile.source.filename());
-            diagnostics::print_reasons(compile.result.validation.reasons);
-            std::cout << '\n';
-            if (compile.result.process) {
-                diagnostics::print_process_output(*compile.result.process);
-            }
-        } else {
-            std::cout << "[up-to-date] " << diagnostics::path_text(compile.source.filename())
-                      << '\n';
-        }
-    }
-
-    diagnostics::print_archive_warnings(result->archive);
-    if (result->archive.archived) {
-        std::cout << "[archive] " << diagnostics::path_text(request.target.executable.filename());
-        diagnostics::print_reasons(result->archive.validation.reasons);
-        std::cout << '\n';
-        if (result->archive.process) {
-            diagnostics::print_process_output(*result->archive.process);
-        }
-    } else {
-        std::cout << "[up-to-date] " << diagnostics::path_text(request.target.executable.filename())
-                  << '\n';
-    }
-    std::cout << "output: " << diagnostics::path_text(request.target.executable) << '\n';
+    diagnostics::print_static_target_report(
+        result->compiles, result->archive, request.target.executable, request.verbose);
     return 0;
 }
 

@@ -80,6 +80,7 @@ int run_module_target(
     }
 
     if (request.verbose) {
+        mqb::performance::ScopedWork report_time{mqb::performance::WorkKind::target_reporting};
         std::cout << "[target] " << request.target_name << "\n"
                   << "  project: " << diagnostics::path_text(request.project_root) << '\n';
         if (request.config_file) {
@@ -175,34 +176,9 @@ int run_module_target(
         request.timings->record_link(result->link.linked);
     }
 
-    for (const auto& compile : result->compiles) {
-        diagnostics::print_compile_warnings(compile.result);
-        const fs::path label = display_source(request.project_root, compile.source);
-        if (compile.result.compiled) {
-            std::cout << "[compile] " << diagnostics::path_text(label);
-            diagnostics::print_reasons(compile.result.validation.reasons);
-            std::cout << '\n';
-            if (compile.result.process) {
-                diagnostics::print_process_output(*compile.result.process);
-            }
-        } else {
-            std::cout << "[up-to-date] " << diagnostics::path_text(label) << '\n';
-        }
-    }
-
-    diagnostics::print_link_warnings(result->link);
-    if (result->link.linked) {
-        std::cout << "[link] " << diagnostics::path_text(target_request.target.executable.filename());
-        diagnostics::print_reasons(result->link.validation.reasons);
-        std::cout << '\n';
-        if (result->link.process) {
-            diagnostics::print_process_output(*result->link.process);
-        }
-    } else {
-        std::cout << "[up-to-date] "
-                  << diagnostics::path_text(target_request.target.executable.filename()) << '\n';
-    }
-    std::cout << "output: " << diagnostics::path_text(target_request.target.executable) << '\n';
+    diagnostics::print_target_report(
+        result->compiles, result->link, target_request.target.executable,
+        request.project_root, request.verbose);
 
     if (!request.run_after_build) {
         return 0;

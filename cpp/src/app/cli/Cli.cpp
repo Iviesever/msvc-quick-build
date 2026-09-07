@@ -767,7 +767,7 @@ Options:
   --env <auto|vs|portable>
                            Toolchain selection
   --portable-root <dir>   Add a portable_msvc root candidate
-  -v, --verbose           Show config, discovery, toolchain, and artifact details
+  -v, --verbose           Show per-TU progress, config, discovery, toolchain, and artifact details
   -h, --help              Show this help and the embedded build version
   --                      Pass all remaining argv elements to an executable program
 
