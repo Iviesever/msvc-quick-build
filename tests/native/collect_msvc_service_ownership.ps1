@@ -11,6 +11,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Nonzero native exits remain data until their diagnostics and case result are
+# persisted. Every native invocation below still checks its actual exit code.
+$PSNativeCommandUseErrorActionPreference = $false
 Set-StrictMode -Version 2.0
 $prebuilt = -not [string]::IsNullOrWhiteSpace($PrebuiltProbePath)
 if ($BuildOnly -and ($prebuilt -or $EndpointMode -eq 'default')) { throw 'BuildOnly requires a private build-only invocation.' }
@@ -34,6 +37,121 @@ $OutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 # Never erase an earlier run, failure, or unfavorable observation.
 if (Test-Path -LiteralPath $OutputRoot) { throw "Evidence directory already exists: $OutputRoot" }
 New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+
+function Assert-OwnershipObservation {
+    param($Observation, [string]$EndpointMode, [string]$Profile, [string]$Origin, [string]$Ending)
+    if ($Observation -isnot [pscustomobject] -or
+        ($Observation.schema -isnot [int] -and $Observation.schema -isnot [long]) -or
+        $Observation.schema -ne 2) { throw 'Unexpected observation schema.' }
+    $identity = @{ endpoint_mode = $EndpointMode; profile = $Profile; origin = $Origin; ending = $Ending }
+    foreach ($field in $identity.Keys) {
+        if ($Observation.$field -isnot [string] -or $Observation.$field -cne $identity[$field]) {
+            throw "Unexpected observation identity: $field"
+        }
+    }
+    foreach ($field in @('A_exit', 'B0_exit', 'B1_exit', 'B_link_exit', 'B_run_exit', 'recovery_compile_exit')) {
+        if (($Observation.$field -isnot [int] -and $Observation.$field -isnot [long]) -or
+            $Observation.$field -lt [int]::MinValue -or $Observation.$field -gt [int]::MaxValue) {
+            throw "Missing or mistyped outcome: $field"
+        }
+    }
+    foreach ($field in @('safe_to_integrate_cancellation', 'safe_to_transfer_write_lease')) {
+        if ($Observation.$field -isnot [bool] -or $Observation.$field) { throw "Evidence must not authorize safety: $field" }
+    }
+    foreach ($field in @('lifecycle_ok', 'unmanaged_control_ok', 'drain_control_ok')) {
+        if ($Observation.$field -isnot [bool] -or -not $Observation.$field) { throw "Fixture control failed: $field" }
+    }
+    if ($Observation.server_survived_A -isnot [bool] -or $Observation.B_compiler_overlap_observed -isnot [bool]) {
+        throw 'Missing or mistyped liveness observation.'
+    }
+    if ($Ending -eq 'cancel') {
+        if ($Observation.A_exit -eq 0) { throw 'Cancelled A cannot report successful exit.' }
+    } elseif ($Observation.A_exit -ne 0) { throw 'Original A control failed.' }
+    if ($Observation.B0_exit -ne 0 -or $Observation.B1_exit -ne 0) {
+        if ($Observation.B_link_exit -ne -2 -or $Observation.B_run_exit -ne -2) { throw 'Unattempted link/run must remain unattempted.' }
+    } elseif ($Observation.B_link_exit -ne 0 -and $Observation.B_run_exit -ne -2) { throw 'Failed link cannot run an artifact.' }
+    if ($Ending -in @('unmanaged-normal', 'drain')) {
+        if (-not $Observation.server_survived_A -or $Observation.B0_exit -ne 0 -or $Observation.B1_exit -ne 0 -or
+            $Observation.B_link_exit -ne 0 -or $Observation.B_run_exit -ne 0) { throw 'Original B control failed.' }
+    }
+    if ($Ending -eq 'drain') {
+        foreach ($field in @('drain_requested', 'A_compiler_overlap_observed', 'B_compiler_overlap_observed', 'A_observed_compilers_signaled')) {
+            if ($Observation.$field -isnot [bool] -or -not $Observation.$field) { throw "Unproven drain boundary: $field" }
+        }
+        if ($Observation.A_pending_compile_dispatched -isnot [bool] -or $Observation.A_pending_compile_dispatched) {
+            throw 'Pending A work was not suppressed.'
+        }
+    }
+}
+
+function Test-OwnershipCleanupEnvelope {
+    param($Envelope)
+    try {
+        return $Envelope -is [pscustomobject] -and
+            $Envelope.cleanup_verified -is [bool] -and $Envelope.cleanup_verified -and
+            $Envelope.endpoint_override_absent -is [bool] -and $Envelope.endpoint_override_absent -and
+            $Envelope.outer_lifecycle_verified -is [bool] -and $Envelope.outer_lifecycle_verified -and
+            $Envelope.remaining_servers -is [array] -and $Envelope.remaining_servers.Count -eq 0
+    } catch { return $false }
+}
+
+function Get-OwnershipDiagnosticErrors {
+    param([string]$CaseRoot, [string]$Profile, [string]$Origin, [string]$Ending, $Observation)
+    # Check both expected and observed tools: a present-file inventory alone
+    # cannot detect an entirely missing invocation record.
+    $stems = @('A', 'A/warm', 'B/warm', 'B/work0', 'B/work1', 'B/recovery')
+    $prepared = @('A', 'B')
+    if ($Origin -eq 'preexisting') { $prepared += 'seed'; $stems += 'seed/warm' }
+    foreach ($directory in $prepared) {
+        if ($Profile.StartsWith('pch-')) { $stems += "$directory/prefix" }
+        if ($Profile.StartsWith('modules-')) { $stems += "$directory/provider" }
+    }
+    if ($Ending -eq 'drain') { $stems += 'A/work0' }
+    if ($null -ne $Observation -and $Observation.B0_exit -eq 0 -and $Observation.B1_exit -eq 0) {
+        $stems += 'B/link'
+        if ($Observation.B_link_exit -eq 0) { $stems += 'B/run' }
+    }
+    $stems += @(Get-ChildItem -LiteralPath $CaseRoot -Recurse -File |
+        Where-Object { $_.Name -match '\.(result\.json|argv\.txt)$' -and $_.Name -notin @('case.result.json', 'case.argv.txt') } |
+        ForEach-Object { [System.IO.Path]::GetRelativePath($CaseRoot, $_.FullName).Replace('\', '/') -replace '\.(result\.json|argv\.txt)$', '' })
+    foreach ($stem in @($stems | Sort-Object -Unique)) {
+        try {
+            $result = Get-Content -LiteralPath (Join-Path $CaseRoot "$stem.result.json") -Raw | ConvertFrom-Json
+            if ($result -isnot [pscustomobject] -or $null -ne $result.PSObject.Properties['infrastructure_error']) {
+                throw 'Process infrastructure error or invalid result schema.'
+            }
+            if (($result.exit_code -isnot [int] -and $result.exit_code -isnot [long]) -or
+                $result.cancelled -isnot [bool]) { throw 'Missing or mistyped tool outcome.' }
+            if ($result.cancelled -ne ($stem -eq 'A' -and $Ending -eq 'cancel')) { throw 'Unexpected cancellation outcome.' }
+            $outcomeFields = @{ A = 'A_exit'; 'B/work0' = 'B0_exit'; 'B/work1' = 'B1_exit';
+                'B/link' = 'B_link_exit'; 'B/run' = 'B_run_exit'; 'B/recovery' = 'recovery_compile_exit' }
+            if ($null -ne $Observation -and $outcomeFields.ContainsKey($stem)) {
+                $field = $outcomeFields[$stem]
+                if ($result.exit_code -ne $Observation.$field) { throw 'Original tool outcome disagrees with observation.' }
+            }
+            $suffixes = @('stdout.txt', 'stderr.txt')
+            if ($stem -ne 'A') { $suffixes += 'argv.txt' }
+            foreach ($suffix in $suffixes) {
+                if (-not (Test-Path -LiteralPath (Join-Path $CaseRoot "$stem.$suffix") -PathType Leaf)) {
+                    throw "Missing $suffix; original diagnostics are incomplete."
+                }
+            }
+            if ($stem -match '/(warm|prefix|provider)$' -and $result.exit_code -ne 0) { throw 'Preparation control failed.' }
+        } catch { "${stem}.result.json: $($_.Exception.Message)" }
+    }
+    if ($Ending -eq 'drain') {
+        try {
+            $drain = Get-Content -LiteralPath (Join-Path $CaseRoot 'A/drain.json') -Raw | ConvertFrom-Json
+            if ($drain.stop_observed -isnot [bool] -or -not $drain.stop_observed -or
+                $drain.safe_to_transfer_write_lease -isnot [bool] -or $drain.safe_to_transfer_write_lease) { throw 'Invalid drain flags.' }
+            foreach ($entry in @{ work_compiles_dispatched = 1; first_compile_exit = 0; pending_compile_exit = -2 }.GetEnumerator()) {
+                if (($drain.($entry.Key) -isnot [int] -and $drain.($entry.Key) -isnot [long]) -or
+                    $drain.($entry.Key) -ne $entry.Value) { throw 'Invalid original drain outcome.' }
+            }
+            if (Test-Path -LiteralPath (Join-Path $CaseRoot 'A/work1.argv.txt')) { throw 'Pending A work was dispatched.' }
+        } catch { "A/drain.json: $($_.Exception.Message)" }
+    }
+}
 
 Push-Location $RepoRoot
 try {
@@ -147,36 +265,29 @@ try {
                 $observation = $null
                 $parseError = $null
                 if (Test-Path -LiteralPath $observationPath -PathType Leaf) {
-                    try { $observation = Get-Content -LiteralPath $observationPath -Raw | ConvertFrom-Json }
-                    catch { $parseError = $_.Exception.Message }
+                    try {
+                        $observation = Get-Content -LiteralPath $observationPath -Raw | ConvertFrom-Json
+                        Assert-OwnershipObservation -Observation $observation -EndpointMode $EndpointMode `
+                            -Profile $profile -Origin $origin -Ending $ending
+                    } catch { $parseError = $_.Exception.Message }
                 }
                 # B failures are the result of the policy under test, not a reason
                 # to suppress their data. Missing evidence / failed unmanaged
                 # controls / process-infrastructure failures do fail collection.
-                $toolErrors = @(Get-ChildItem -LiteralPath $caseRoot -Recurse -File -Filter '*.result.json' |
-                    ForEach-Object {
-                        $result = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
-                        $property = $result.PSObject.Properties['infrastructure_error']
-                        if ($null -ne $property -and $property.Value -eq $true) {
-                            [System.IO.Path]::GetRelativePath($caseRoot, $_.FullName)
-                        }
-                    })
+                try {
+                    $toolErrors = @(Get-OwnershipDiagnosticErrors -CaseRoot $caseRoot -Profile $profile `
+                        -Origin $origin -Ending $ending -Observation $observation)
+                } catch { $toolErrors = @("Diagnostic inventory failed: $($_.Exception.Message)") }
                 $cleanupVerified = $null
                 $envelopeError = $null
                 if ($EndpointMode -eq 'default') {
                     try {
                         $envelope = Get-Content -LiteralPath (Join-Path $caseRoot 'default-envelope.json') -Raw | ConvertFrom-Json
-                        $cleanupVerified = $envelope.cleanup_verified -eq $true -and
-                            $envelope.endpoint_override_absent -eq $true -and
-                            $envelope.outer_lifecycle_verified -eq $true -and @($envelope.remaining_servers).Count -eq 0
+                        $cleanupVerified = Test-OwnershipCleanupEnvelope -Envelope $envelope
                     } catch { $envelopeError = $_.Exception.Message }
                 }
                 $collectionOk = $caseExit -eq 0 -and $null -ne $observation -and
                     $null -eq $parseError -and $toolErrors.Count -eq 0 -and ($EndpointMode -ne 'default' -or $cleanupVerified -eq $true)
-                if ($null -ne $observation -and ($observation.schema -ne 2 -or $observation.endpoint_mode -ne $EndpointMode)) {
-                    $collectionOk = $false
-                    $parseError = 'Unexpected observation schema or endpoint mode.'
-                }
                 if ($EndpointMode -eq 'default' -and $cleanupVerified -ne $true) { $aborted = $true }
                 if (-not $collectionOk) { $failed++ }
                 $row = [ordered]@{
@@ -198,6 +309,13 @@ try {
                 if ($aborted) { Write-Warning 'Default endpoint cleanup unproven; remaining cases not attempted.'; break caseMatrix }
             }
         }
+    }
+    if ($aborted) {
+        # Do not read/hash outputs possibly still being written after uncertain
+        # cleanup. Retain the captured prefix without inventing stable snapshots.
+        [ordered]@{ status = 'not_attempted'; reason = 'cleanup_unproven' } | ConvertTo-Json |
+            Set-Content -LiteralPath (Join-Path $OutputRoot 'binary-inventory-status.json') -Encoding utf8
+        exit 1
     }
     # Raw diagnostics/inputs are uploaded; large generated binaries are identified
     # by SHA-256 rather than being silently mistaken for retained artifact bytes.
