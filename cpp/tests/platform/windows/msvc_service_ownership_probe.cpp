@@ -440,6 +440,7 @@ int scheduler_drain(const MsvcToolchain& tc, const fs::path& dir,
     if (!scheduled) std::cerr << "SCHEDULER_ERROR " << scheduled.error().message << '\n';
     if (wait_error != ERROR_SUCCESS) std::cerr << "SCHEDULER_BRIDGE_ERROR native=" << wait_error << '\n';
     std::cerr.flush();
+    // Suppress ADL: a mutable std::string would prefer std::quoted over this JSON helper.
     const std::string summary = "{\"schema\":1,\"api\":\"BoundedWorkScheduler::run_with_admission_stop\""
         ",\"scheduler_succeeded\":" + std::string{scheduled ? "true" : "false"}
         + ",\"worker_count\":" + (scheduled ? std::to_string(scheduled->worker_count) : "null")
@@ -450,7 +451,7 @@ int scheduler_drain(const MsvcToolchain& tc, const fs::path& dir,
         + ",\"event_observed\":" + (event_observed ? "true" : "false")
         + ",\"forwarded_during_callback\":" + (forwarded_during_callback ? "true" : "false")
         + ",\"bridge_wait_error\":" + std::to_string(wait_error)
-        + ",\"callback_exception\":" + quoted(callback_exception)
+        + ",\"callback_exception\":" + (quoted)(callback_exception)
         + ",\"scheduler_error_code\":" + (scheduled ? "null" : std::to_string(static_cast<int>(scheduled.error().code)))
         + ",\"safe_to_transfer_write_lease\":false}\n";
     write(dir / "scheduler.json", summary);
