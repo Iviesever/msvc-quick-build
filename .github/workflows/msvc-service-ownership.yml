@@ -1,0 +1,72 @@
+name: MSVC Service Ownership Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/**'
+      - 'tests/native/collect_msvc_service_ownership.ps1'
+      - '.github/workflows/msvc-service-ownership.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: msvc-service-ownership-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  observe:
+    name: Real MSVC ownership matrix
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Acquire pinned historical MQB seed
+        id: seed
+        shell: pwsh
+        run: |
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "path=$seed" >> $env:GITHUB_OUTPUT
+
+      - name: Build exact candidate with MQB
+        shell: pwsh
+        run: |
+          $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath '${{ steps.seed.outputs.path }}' -RepoRoot $PWD `
+            -Version ((Get-Content -LiteralPath 'VERSION' -Raw).Trim()) `
+            -Configuration Release -Clean `
+            -OutputPath (Join-Path $PWD 'native-out/ownership/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) { throw 'Candidate MQB missing.' }
+
+      - name: Observe fixed real-tool ownership matrix
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'tests/native/collect_msvc_service_ownership.ps1') `
+            -MqbPath (Join-Path $PWD 'native-out/ownership/mqb.exe') -RepoRoot $PWD `
+            -OutputRoot (Join-Path $PWD '.mqb/msvc-ownership-evidence')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Retain diagnostics and unfavorable observations
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: msvc-service-ownership-evidence
+          path: |
+            .mqb/msvc-ownership-evidence/**
+            !.mqb/msvc-ownership-evidence/**/*.obj
+            !.mqb/msvc-ownership-evidence/**/*.pdb
+            !.mqb/msvc-ownership-evidence/**/*.pch
+            !.mqb/msvc-ownership-evidence/**/*.ifc
+            !.mqb/msvc-ownership-evidence/**/*.exe
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
