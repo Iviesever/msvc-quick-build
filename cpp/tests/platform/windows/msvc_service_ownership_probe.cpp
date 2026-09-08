@@ -134,6 +134,24 @@ std::vector<Process> census(const wchar_t* name, std::optional<DWORD> parent = {
     return result;
 }
 bool same(const Process& a, const Process& b) { return a.pid == b.pid && a.created == b.created; }
+std::string identities(const std::vector<Process>& processes) {
+    std::string result = "[";
+    for (const auto& p : processes) {
+        if (result.size() != 1) result += ',';
+        result += "{\"pid\":" + std::to_string(p.pid) + ",\"created\":" + std::to_string(p.created)
+            + ",\"image\":" + quoted(path_text(p.image)) + "}";
+    }
+    return result + ']';
+}
+void require_default_host() {
+    wchar_t value[2]{};
+    require(::GetEnvironmentVariableW(L"MQB_OWNERSHIP_DISPOSABLE_HOST", value, 2) == 1 && value[0] == L'1',
+            "default endpoint experiment requires an explicitly disposable host");
+    ::SetLastError(ERROR_SUCCESS);
+    const auto size = ::GetEnvironmentVariableW(L"_MSPDBSRV_ENDPOINT_", value, 2);
+    require(size == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND,
+            "default endpoint experiment rejects an ambient endpoint override");
+}
 std::vector<Process> new_servers(const std::vector<Process>& before, const fs::path& compiler) {
     auto now = census(L"mspdbsrv.exe");
     std::vector<Process> result;
@@ -227,8 +245,11 @@ std::string prefix(const std::string& profile) {
     return "";
 }
 RunResult compile(const MsvcToolchain& tc, const fs::path& dir, const std::string& profile,
-                  const std::string& stem) {
+                  const std::string& stem, bool large_object = false) {
     auto args = flags(dir, profile);
+    // The fixed 24k-function /ZI drain fixture exceeds ordinary COFF sections.
+    // Keep its input/debug/PDB behavior; widen only its object section indices.
+    if (large_object) args.push_back("/bigobj");
     if (pch(profile)) {
         args.push_back("/Yucommon.hpp"); args.push_back("/Fp" + path_text(dir / "common.pch"));
     }
@@ -260,11 +281,11 @@ void prepare(const MsvcToolchain& tc, const fs::path& dir, const std::string& pr
     success(compile(tc, dir, profile, "warm"), "warm compiler control");
     require(fs::exists(dir / "compiler.pdb"), "control must create real compiler PDB");
 }
-void workload(const fs::path& dir, const std::string& profile) {
+void workload(const fs::path& dir, const std::string& profile, unsigned functions = 6000) {
     // Fixed input, not repeatedly enlarged until overlap or a favorable result.
     for (unsigned worker = 0; worker != 2; ++worker) {
         std::string source = prefix(profile);
-        for (unsigned i = 0; i != 6000; ++i) {
+        for (unsigned i = 0; i != functions; ++i) {
             auto id = std::to_string(worker) + "_" + std::to_string(i);
             source += "struct T" + id + " { int a; int b; };\n__declspec(noinline) int f" + id
                 + "(int x) { T" + id + " t{x, x+1}; return t.a+t.b; }\n";
@@ -275,32 +296,53 @@ void workload(const fs::path& dir, const std::string& profile) {
     }
 }
 
-int root(int argc, wchar_t** argv) {
-    require(argc == 7, "root arguments");
+int root(int argc, wchar_t** argv, bool drain) {
+    require(argc == (drain ? 8 : 7), "root arguments");
     MsvcToolchain tc;
     tc.identity.compiler = argv[2]; // Environment already supplied by the measured parent.
     const fs::path dir{argv[3]};
+    const auto profile = utf8(argv[4]);
     Handle ready{::OpenEventW(EVENT_MODIFY_STATE, FALSE, argv[5])};
     Handle release{::OpenEventW(SYNCHRONIZE, FALSE, argv[6])};
-    require(bool(ready) && bool(release), "root event open failed");
-    prepare(tc, dir, utf8(argv[4]));
+    Handle cancel{drain ? ::OpenEventW(SYNCHRONIZE, FALSE, argv[7]) : nullptr};
+    require(bool(ready) && bool(release) && (!drain || bool(cancel)), "root event open failed");
+    prepare(tc, dir, profile);
+    // The drain fixture has one active and one pending TU. Fixed input, never
+    // enlarged/retried to obtain overlap. Neither compiler receives a kill token.
+    if (drain) workload(dir, profile, 24000);
     write(dir / "root.pid", std::to_string(::GetCurrentProcessId()));
     require(::SetEvent(ready.value) != FALSE, "root ready failed");
     // Fixture watchdog only; not a product cancellation deadline.
     require(::WaitForSingleObject(release.value, 120000) == WAIT_OBJECT_0, "root fixture watchdog");
-    return 0;
+    if (!drain) return 0;
+    const auto first = compile(tc, dir, profile, "work0", true);
+    const auto status = ::WaitForSingleObject(cancel.value, 0);
+    require(status == WAIT_TIMEOUT || status == WAIT_OBJECT_0, "admission cancellation wait failed");
+    const bool stopped = status == WAIT_OBJECT_0;
+    int pending_exit = -2;
+    if (!stopped) pending_exit = exit_code(compile(tc, dir, profile, "work1", true));
+    write(dir / "drain.json", "{\"stop_observed\":" + std::string{stopped ? "true" : "false"}
+          + ",\"work_compiles_dispatched\":" + (stopped ? "1" : "2")
+          + ",\"first_compile_exit\":" + std::to_string(exit_code(first))
+          + ",\"pending_compile_exit\":" + std::to_string(pending_exit)
+          + ",\"safe_to_transfer_write_lease\":false}\n");
+    // Missing the active boundary is a failed fixture, not evidence of safe cancellation.
+    return stopped && exit_code(first) == 0 ? 0 : 1;
 }
 
-int measure(int argc, wchar_t** argv) {
+int measure(int argc, wchar_t** argv, bool default_endpoint) {
     require(argc == 7, "measure arguments");
+    if (default_endpoint) require_default_host();
     const fs::path dir = fs::absolute(argv[2]);
     const std::string profile = utf8(argv[3]), origin = utf8(argv[4]), ending = utf8(argv[5]);
-    const std::wstring endpoint = argv[6];
+    const std::wstring fixture_id = argv[6];
+    const bool drain = ending == "drain";
     require(profile == "zi-debug" || profile == "ZI-debug" || profile == "zi-release"
             || profile == "pch-debug" || profile == "pch-release"
             || profile == "modules-debug" || profile == "modules-release", "unknown profile");
     require(origin == "preexisting" || origin == "A-started", "unknown origin");
-    require(ending == "cancel" || ending == "normal" || ending == "unmanaged-normal", "unknown ending");
+    require(ending == "cancel" || ending == "normal" || ending == "unmanaged-normal"
+            || (default_endpoint && drain), "unknown ending");
     fs::create_directories(dir);
     WindowsProcessRunner runner;
     mqb::msvc::DiscoveryOptions options;
@@ -312,37 +354,48 @@ int measure(int argc, wchar_t** argv) {
         throw std::runtime_error("MSVC discovery failed; see discovery.error.txt");
     }
     auto tc = std::move(*discovered);
-    // Test isolation only, not a supported product-service ownership policy.
+    // Private endpoints are still fixture isolation only. The default mode
+    // removes the override; fixture_id then names events, never the PDB endpoint.
     for (const char* name : {"_MSPDBSRV_ENDPOINT_", "CL", "_CL_", "LINK", "_LINK_"}) {
         std::erase_if(tc.environment, [&](const auto& e) { return _stricmp(e.name.c_str(), name) == 0; });
-        tc.environment.push_back({name, name == std::string{"_MSPDBSRV_ENDPOINT_"} ? utf8(endpoint) : "",
-                                  name != std::string{"_MSPDBSRV_ENDPOINT_"}});
+        const bool private_endpoint = !default_endpoint && name == std::string{"_MSPDBSRV_ENDPOINT_"};
+        tc.environment.push_back({name, private_endpoint ? utf8(fixture_id) : "", !private_endpoint});
     }
     write(dir / "toolchain.txt", path_text(tc.identity.compiler) + '\n' + tc.identity.version + '\n'
-          + tc.identity.binary_stamp + "\nendpoint=" + utf8(endpoint) + '\n');
+          + tc.identity.binary_stamp + "\nendpoint=" + (default_endpoint ? "<unset/default>" : utf8(fixture_id)) + '\n');
     auto before = census(L"mspdbsrv.exe");
+    write(dir / "baseline-servers.json", identities(before) + '\n');
+    require(!default_endpoint || before.empty(), "default endpoint is not pristine after discovery");
     if (origin == "preexisting") prepare(tc, dir / "seed", profile);
-    const auto ready_name = L"Local\\MQB-ownership-ready-" + endpoint;
-    const auto release_name = L"Local\\MQB-ownership-release-" + endpoint;
+    const auto ready_name = L"Local\\MQB-ownership-ready-" + fixture_id;
+    const auto release_name = L"Local\\MQB-ownership-release-" + fixture_id;
+    const auto cancel_name = L"Local\\MQB-ownership-cancel-" + fixture_id;
     Handle ready{::CreateEventW(nullptr, TRUE, FALSE, ready_name.c_str())};
     Handle release{::CreateEventW(nullptr, TRUE, FALSE, release_name.c_str())};
-    require(bool(ready) && bool(release), "fixture events failed");
+    Handle admission_cancel{drain ? ::CreateEventW(nullptr, TRUE, FALSE, cancel_name.c_str()) : nullptr};
+    require(bool(ready) && bool(release) && (!drain || bool(admission_cancel)), "fixture events failed");
     std::stop_source stop;
     ProcessSpec a;
     a.executable = self();
-    a.arguments = {"--root", path_text(tc.identity.compiler), path_text(dir / "A"), profile,
+    a.arguments = {drain ? "--drain-root" : "--root", path_text(tc.identity.compiler), path_text(dir / "A"), profile,
                    utf8(ready_name), utf8(release_name)};
+    if (drain) a.arguments.push_back(utf8(cancel_name));
     a.environment = tc.environment;
-    if (ending != "unmanaged-normal") a.cancellation = stop.get_token();
+    if (ending == "normal" || ending == "cancel") a.cancellation = stop.get_token();
     auto a_future = std::async(std::launch::async, [&] {
         auto result = runner.run(a);
         save_result(dir, "A", result); // Also preserve early-root failures before readiness.
         return result;
     });
     struct Release {
-        Handle& event; std::stop_source& stop; std::future<RunResult>& future;
-        ~Release() { stop.request_stop(); ::SetEvent(event.value); if (future.valid()) future.wait(); }
-    } release_on_error{release, stop, a_future};
+        Handle& event; Handle& cancel; std::stop_source& stop; std::future<RunResult>& future;
+        ~Release() {
+            stop.request_stop();
+            if (cancel) ::SetEvent(cancel.value);
+            ::SetEvent(event.value);
+            if (future.valid()) future.wait();
+        }
+    } release_on_error{release, admission_cancel, stop, a_future};
     bool is_ready = false;
     for (unsigned attempt = 0; attempt != 600; ++attempt) {
         const auto status = ::WaitForSingleObject(ready.value, 100);
@@ -359,6 +412,22 @@ int measure(int argc, wchar_t** argv) {
     require(after_b.size() == 1 && same(server, after_b[0]), "B did not retain the same observed endpoint service");
     auto warm_owners = pdb_owners(dir / "B/compiler.pdb", server);
     workload(dir / "B", profile);
+    std::vector<Process> active_a;
+    if (drain) {
+        DWORD root_pid{};
+        std::ifstream pid_file(dir / "A/root.pid");
+        require(bool(pid_file >> root_pid) && root_pid != 0, "A root identity unavailable");
+        require(::SetEvent(release.value) != FALSE, "start A drain workload failed");
+        const auto deadline = std::chrono::steady_clock::now() + 15s;
+        do {
+            // PID only filters observations; it never authorizes termination.
+            active_a = census(L"cl.exe", root_pid);
+            if (!active_a.empty() || a_future.wait_for(0ms) == std::future_status::ready) break;
+            std::this_thread::sleep_for(10ms);
+        } while (std::chrono::steady_clock::now() < deadline);
+        for (const auto& p : active_a)
+            require(_wcsicmp(p.image.c_str(), tc.identity.compiler.c_str()) == 0, "A compiler image mismatch");
+    }
     auto b0 = std::async(std::launch::async, [&] { return compile(tc, dir / "B", profile, "work0"); });
     auto b1 = std::async(std::launch::async, [&] { return compile(tc, dir / "B", profile, "work1"); });
     std::vector<Process> active;
@@ -369,23 +438,25 @@ int measure(int argc, wchar_t** argv) {
         if (b0.wait_for(0ms) == std::future_status::ready && b1.wait_for(0ms) == std::future_status::ready) break;
         std::this_thread::sleep_for(10ms);
     } while (std::chrono::steady_clock::now() < deadline);
-    std::string observed_compilers = "[";
-    for (const auto& process : active) {
-        require(_wcsicmp(process.image.c_str(), tc.identity.compiler.c_str()) == 0,
-                "observed child compiler image differs from selected toolchain");
-        if (observed_compilers.size() != 1) observed_compilers += ',';
-        observed_compilers += "{\"pid\":" + std::to_string(process.pid)
-            + ",\"created\":" + std::to_string(process.created)
-            + ",\"image\":" + quoted(path_text(process.image)) + "}";
-    }
-    observed_compilers += ']';
+    for (const auto& p : active)
+        require(_wcsicmp(p.image.c_str(), tc.identity.compiler.c_str()) == 0, "B compiler image mismatch");
     const auto active_owners = pdb_owners(dir / "B/compiler.pdb", server);
-    bool overlap = std::any_of(active.begin(), active.end(), [](const auto& p) { return alive(p.handle.value); });
-    // No claim that a live cl.exe proves an RPC is in flight at this instant.
+    const auto a_owners_at_request = drain ? pdb_owners(dir / "A/compiler.pdb", server) : Owners{};
+    const bool a_overlap = std::any_of(active_a.begin(), active_a.end(), [](const auto& p) { return alive(p.handle.value); });
+    const bool overlap = std::any_of(active.begin(), active.end(), [](const auto& p) { return alive(p.handle.value); });
+    // These are retained-handle observations, not proof of an in-flight PDB RPC.
+    const auto requested = std::chrono::steady_clock::now();
     if (ending == "cancel") stop.request_stop();
+    else if (drain) require(::SetEvent(admission_cancel.value) != FALSE, "stop A admission failed");
     else require(::SetEvent(release.value) != FALSE, "release A failed");
     auto a_result = a_future.get();
-    const bool service_survived = alive(server.handle.value); // Immediate retained-handle observation.
+    const auto settled = std::chrono::steady_clock::now();
+    const bool service_survived = alive(server.handle.value);
+    // The surviving service can still own PDB resources after the A client exits.
+    // An empty snapshot is not a durable no-writer certificate either.
+    const auto a_owners_after = default_endpoint ? pdb_owners(dir / "A/compiler.pdb", server) : Owners{};
+    const bool a_handles_signaled = std::all_of(active_a.begin(), active_a.end(), [](const auto& p) { return !alive(p.handle.value); });
+    const bool pending_dispatched = fs::exists(dir / "A/work1.argv.txt");
     auto b0_result = b0.get(), b1_result = b1.get();
     int linked = -2, executed = -2;
     if (exit_code(b0_result) == 0 && exit_code(b1_result) == 0) {
@@ -405,14 +476,29 @@ int measure(int argc, wchar_t** argv) {
         ? a_result->termination == mqb::process::ProcessTermination::cancelled && a_result->exit_code != 0
         : a_result->termination == mqb::process::ProcessTermination::exited && a_result->exit_code == 0);
     const bool b_ok = exit_code(b0_result) == 0 && exit_code(b1_result) == 0 && linked == 0 && executed == 0;
+    const bool drain_ok = !drain || (service_survived && b_ok && a_overlap && overlap
+        && a_handles_signaled && !pending_dispatched && fs::exists(dir / "A/work0.obj"));
     const bool control_ok = ending != "unmanaged-normal" || (service_survived && b_ok);
-    std::string report = "{\n\"schema\":1,\"profile\":" + quoted(profile) + ",\"origin\":" + quoted(origin)
+    std::string report = "{\n\"schema\":2,\"profile\":" + quoted(profile) + ",\"origin\":" + quoted(origin)
         + ",\"ending\":" + quoted(ending) + ",\"server_pid\":" + std::to_string(server.pid)
         + ",\"server_created\":" + std::to_string(server.created)
         + ",\"server_image\":" + quoted(path_text(server.image))
         + ",\"server_survived_A\":" + (service_survived ? "true" : "false")
         + ",\"B_compiler_overlap_observed\":" + (overlap ? "true" : "false")
-        + ",\"B_observed_compilers\":" + observed_compilers
+        + ",\"B_observed_compilers\":" + identities(active)
+        + ",\"endpoint_mode\":" + quoted(default_endpoint ? "default" : "private")
+        + ",\"request_to_A_result_ms\":" + std::to_string(std::chrono::duration<double, std::milli>(settled - requested).count())
+        + ",\"drain_requested\":" + (drain ? "true" : "false")
+        + ",\"A_observed_compilers\":" + identities(active_a)
+        + ",\"A_compiler_overlap_observed\":" + (a_overlap ? "true" : "false")
+        + ",\"A_observed_compilers_signaled\":" + (drain ? (a_handles_signaled ? "true" : "false") : "null")
+        + ",\"A_pending_compile_dispatched\":" + (drain ? (pending_dispatched ? "true" : "false") : "null")
+        + ",\"A_pdb_owner_at_request_error\":" + (drain ? std::to_string(a_owners_at_request.error) : "null")
+        + ",\"A_pdb_owners_at_request\":" + a_owners_at_request.identities
+        + ",\"A_pdb_owner_after_A_error\":" + (default_endpoint ? std::to_string(a_owners_after.error) : "null")
+        + ",\"A_pdb_owners_after_A\":" + a_owners_after.identities
+        + ",\"A_pdb_service_owner_after_A\":" + (default_endpoint ? (a_owners_after.includes_server ? "true" : "false") : "null")
+        + ",\"drain_control_ok\":" + (drain_ok ? "true" : "false")
         + ",\"warm_pdb_owner_error\":" + std::to_string(warm_owners.error)
         + ",\"warm_pdb_owners\":" + warm_owners.identities
         + ",\"active_pdb_owner_error\":" + std::to_string(active_owners.error)
@@ -427,28 +513,51 @@ int measure(int argc, wchar_t** argv) {
         + ",\"safe_to_integrate_cancellation\":false,\"safe_to_transfer_write_lease\":false\n}\n";
     write(dir / "observation.json", report);
     std::cout << report;
-    return lifecycle_ok && control_ok ? 0 : 1;
+    return lifecycle_ok && control_ok && drain_ok ? 0 : 1;
 }
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
     try {
-        require(argc >= 2, "use --case/--measure/--root");
+        require(argc >= 2, "use --case/--default-case/--measure/--root");
         const std::wstring mode = argv[1];
-        if (mode == L"--root") return root(argc, argv);
-        if (mode == L"--measure") return measure(argc, argv);
-        require(mode == L"--case" && argc == 7, "case arguments");
-        // A fixture-wide outer Job bounds *both* projects and their dedicated
-        // endpoint. The inner A Job is the policy under test. No global service
-        // termination, PID-authorized kill, or product environment changes.
+        if (mode == L"--root" || mode == L"--drain-root") return root(argc, argv, mode == L"--drain-root");
+        if (mode == L"--measure" || mode == L"--measure-default") return measure(argc, argv, mode == L"--measure-default");
+        const bool default_endpoint = mode == L"--default-case";
+        require((mode == L"--case" || default_endpoint) && argc == 7, "case arguments");
+        const fs::path dir = fs::absolute(argv[2]);
+        fs::create_directories(dir);
+        if (default_endpoint) {
+            require_default_host();
+            const auto before = census(L"mspdbsrv.exe");
+            write(dir / "default-preflight.json", identities(before) + '\n');
+            // Never terminate a pre-existing host service to manufacture a clean test.
+            require(before.empty(), "default endpoint host is not clean; experiment refused");
+        }
+        // A fixture-wide outer Job bounds BOTH projects. For default endpoints
+        // it is authorized only on a disposable clean host, never a developer PC.
+        // No global service termination, PID-authorized kill, or product changes.
         ProcessSpec spec;
         spec.executable = self();
-        spec.arguments = {"--measure"};
+        spec.arguments = {default_endpoint ? "--measure-default" : "--measure"};
         for (int i = 2; i < argc; ++i) spec.arguments.push_back(utf8(argv[i]));
         std::stop_source lifetime;
         spec.cancellation = lifetime.get_token();
         WindowsProcessRunner runner;
         auto result = runner.run(spec);
+        if (default_endpoint) {
+            const auto remaining = census(L"mspdbsrv.exe");
+            const bool clean = result.has_value() && remaining.empty();
+            write(dir / "default-envelope.json", "{\"endpoint_override_absent\":true,\"remaining_servers\":"
+                  + identities(remaining) + ",\"outer_lifecycle_verified\":" + (result ? "true" : "false")
+                  + ",\"cleanup_verified\":" + (clean ? "true" : "false") + "}\n");
+            if (!clean) {
+                if (result) { std::cout << result->stdout_text; std::cerr << result->stderr_text; }
+                else std::cerr << result.error().message << '\n';
+                std::cerr << "DEFAULT_ENDPOINT_CLEANUP_UNPROVEN: do not run another case\n";
+                return 1;
+            }
+        }
         if (!result) { std::cerr << "OUTER_CLEANUP_ERROR " << result.error().message << '\n'; return 1; }
         std::cout << result->stdout_text;
         std::cerr << result->stderr_text;

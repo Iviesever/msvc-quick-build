@@ -1,0 +1,128 @@
+name: MSVC Default Endpoint Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/**'
+      - 'tests/native/collect_msvc_service_ownership.ps1'
+      - '.github/workflows/msvc-default-endpoint.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: msvc-default-endpoint-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build exact ownership probe
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build candidate and probe with MQB, without measuring ownership
+        shell: pwsh
+        run: |
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath $seed -RepoRoot $PWD `
+            -Version ((Get-Content -LiteralPath 'VERSION' -Raw).Trim()) `
+            -Configuration Release -Clean -OutputPath (Join-Path $PWD 'native-out/endpoint/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & (Join-Path $PWD 'tests/native/collect_msvc_service_ownership.ps1') `
+            -MqbPath $mqb -RepoRoot $PWD -BuildOnly `
+            -OutputRoot (Join-Path $PWD '.mqb/default-endpoint-build')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path 'native-out/endpoint-input' -Force | Out-Null
+          Copy-Item -LiteralPath $mqb -Destination 'native-out/endpoint-input/mqb.exe'
+          Copy-Item -LiteralPath '.mqb/bin/msvc_service_ownership_probe.exe' -Destination 'native-out/endpoint-input/'
+          Copy-Item -LiteralPath '.mqb/default-endpoint-build/probe.identity.json' -Destination 'native-out/endpoint-input/'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: exact-default-endpoint-input
+          path: native-out/endpoint-input/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain probe build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: default-endpoint-build-evidence
+          path: .mqb/default-endpoint-build/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  observe:
+    name: Default endpoint ownership and natural drain
+    needs: build
+    # A DIFFERENT disposable VM: no seed/candidate/probe compilation on this host.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: exact-default-endpoint-input
+          path: native-input
+      - name: Verify default-endpoint refusal guards
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probe = Join-Path $PWD 'native-input/msvc_service_ownership_probe.exe'
+          $root = Join-Path $PWD '.mqb/default-endpoint-guards'
+          New-Item -ItemType Directory -Path $root | Out-Null
+          Remove-Item Env:MQB_OWNERSHIP_DISPOSABLE_HOST -ErrorAction SilentlyContinue
+          $output = @(& $probe --default-case (Join-Path $root 'no-authorization') zi-debug A-started cancel guard 2>&1)
+          $code = $LASTEXITCODE
+          $output | Set-Content -LiteralPath (Join-Path $root 'no-authorization.txt') -Encoding utf8
+          if ($code -eq 0 -or "$output" -notmatch 'explicitly disposable host') { throw 'Missing-host-authorization guard failed.' }
+          $env:MQB_OWNERSHIP_DISPOSABLE_HOST = '1'
+          $env:_MSPDBSRV_ENDPOINT_ = 'must-not-be-used'
+          $output = @(& $probe --default-case (Join-Path $root 'override') zi-debug A-started cancel guard 2>&1)
+          $code = $LASTEXITCODE
+          $output | Set-Content -LiteralPath (Join-Path $root 'override.txt') -Encoding utf8
+          if ($code -eq 0 -or "$output" -notmatch 'ambient endpoint override') { throw 'Ambient endpoint refusal guard failed.' }
+          Remove-Item Env:_MSPDBSRV_ENDPOINT_
+          if (@(Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'toolchain.txt').Count -ne 0) { throw 'Refused case performed discovery.' }
+          @{ missing_authorization_rejected = $true; endpoint_override_rejected = $true } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'guards.json') -Encoding utf8
+          # Both native failures above are expected and independently asserted.
+          exit 0
+      - name: Observe fixed 56-case default endpoint matrix
+        shell: pwsh
+        env:
+          MQB_OWNERSHIP_DISPOSABLE_HOST: '1'
+        run: |
+          & (Join-Path $PWD 'tests/native/collect_msvc_service_ownership.ps1') `
+            -MqbPath (Join-Path $PWD 'native-input/mqb.exe') -RepoRoot $PWD `
+            -PrebuiltProbePath (Join-Path $PWD 'native-input/msvc_service_ownership_probe.exe') `
+            -ProbeIdentityPath (Join-Path $PWD 'native-input/probe.identity.json') `
+            -EndpointMode default -OutputRoot (Join-Path $PWD '.mqb/msvc-default-endpoint-evidence')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain all default endpoint observations and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: msvc-default-endpoint-evidence
+          path: |
+            .mqb/default-endpoint-guards/**
+            .mqb/msvc-default-endpoint-evidence/**
+            !.mqb/msvc-default-endpoint-evidence/**/*.obj
+            !.mqb/msvc-default-endpoint-evidence/**/*.pdb
+            !.mqb/msvc-default-endpoint-evidence/**/*.pch
+            !.mqb/msvc-default-endpoint-evidence/**/*.ifc
+            !.mqb/msvc-default-endpoint-evidence/**/*.exe
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
