@@ -97,6 +97,8 @@ jobs:
           if (@(Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'toolchain.txt').Count -ne 0) { throw 'Refused case performed discovery.' }
           @{ missing_authorization_rejected = $true; endpoint_override_rejected = $true } |
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'guards.json') -Encoding utf8
+          # Both native failures above are expected and independently asserted.
+          exit 0
       - name: Observe fixed 56-case default endpoint matrix
         shell: pwsh
         env:
