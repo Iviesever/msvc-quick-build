@@ -5,6 +5,7 @@ on:
     paths:
       - 'cpp/**'
       - 'tests/native/collect_msvc_service_ownership.ps1'
+      - 'tests/native/verify_ownership_evidence_contract.ps1'
       - '.github/workflows/msvc-default-endpoint.yml'
   workflow_dispatch:
 
@@ -16,6 +17,29 @@ permissions:
   contents: read
 
 jobs:
+  contract:
+    name: Ownership evidence contract fault injection
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Parse and execute actual collector validation helpers
+        shell: pwsh
+        run: |
+          & ./tests/native/verify_ownership_evidence_contract.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain synthetic contract evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ownership-collector-contract-evidence
+          path: .mqb/ownership-contract-tests/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
   build:
     name: Build exact ownership probe
     runs-on: windows-latest
@@ -79,9 +103,16 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
           $probe = Join-Path $PWD 'native-input/msvc_service_ownership_probe.exe'
           $root = Join-Path $PWD '.mqb/default-endpoint-guards'
           New-Item -ItemType Directory -Path $root | Out-Null
+          $output = @(& $probe --evidence-contract-self-test 2>&1)
+          $code = $LASTEXITCODE
+          $output | Set-Content -LiteralPath (Join-Path $root 'evidence-contract.txt') -Encoding utf8
+          if ($code -ne 0 -or "$output" -notmatch 'EVIDENCE_CONTRACT_SELF_TEST 7 checks passed') {
+              throw 'Synthetic environment/diagnostic contract tests failed.'
+          }
           Remove-Item Env:MQB_OWNERSHIP_DISPOSABLE_HOST -ErrorAction SilentlyContinue
           $output = @(& $probe --default-case (Join-Path $root 'no-authorization') zi-debug A-started cancel guard 2>&1)
           $code = $LASTEXITCODE
