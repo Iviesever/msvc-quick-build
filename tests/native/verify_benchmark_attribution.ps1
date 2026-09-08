@@ -97,7 +97,16 @@ $malformed = Get-Content -LiteralPath (Join-Path $InvocationEvidenceDirectory '1
 Check 'malformed-timing-retained-before-parse-failure' ($rejected -and $malformed.exit_code -eq 0 -and $malformed.output_lines.Count -eq 1)
 $MqbPath = Join-Path $PSHOME 'pwsh.exe'
 $InvocationEvidenceDirectory = ''
-$legacy = Invoke-UntimedMqb 'legacy' 1 $working @('-NoProfile', '-NonInteractive', '-Command', 'exit 0')
+# Legacy Push-Location uses wildcard Path; do not silently change its historical
+# semantics to make the new literal-path test pass. Preserve that limitation as
+# an expected rejection, then test inactive-observer compatibility on plain cwd.
+$rejected = $false
+try { Invoke-UntimedMqb 'legacy-literal-path' 1 $working @('-NoProfile', '-NonInteractive', '-Command', 'exit 0') | Out-Null }
+catch { $rejected = $true }
+Check 'legacy-wildcard-cwd-limitation-retained' ($rejected -and (Get-Location).Path -ceq $before)
+$legacyWorking = Join-Path $OutputRoot 'legacy directory with spaces'
+New-Item -ItemType Directory -Path $legacyWorking | Out-Null
+$legacy = Invoke-UntimedMqb 'legacy' 1 $legacyWorking @('-NoProfile', '-NonInteractive', '-Command', 'exit 0')
 Check 'inactive-observer-retains-legacy-clock-and-unavailable-counters' ($legacy.measurement_source -ceq 'external_stopwatch' -and $legacy.compile_hits -eq -1 -and $null -eq $legacy.counters)
 $semantic = [pscustomobject]@{ scenario = 'no-op'; measurement_source = 'mqb.timings'
     counters = [pscustomobject]@{ cl_processes_launched = 0 }; counter_breakdown = [pscustomobject]@{ cache = 1 }
