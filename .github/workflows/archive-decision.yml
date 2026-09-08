@@ -35,7 +35,8 @@ jobs:
             $root = Join-Path $PWD $side
             $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') -BuilderMqbPath $seed -RepoRoot $root -Version 5.4.0 -Configuration Release -Clean -OutputPath (Join-Path $PWD "out/$side/mqb.exe")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & $seed build harness/archive_save_probe.cpp "$side/cpp/src/core/cache/ArchiveCacheFile.cpp" --no-discover --env vs --release --std latest -I "$side/cpp/include" -o "probe-$side"
+            # The historical seed uses implicit build syntax, not the modern subcommand.
+            & $seed harness/archive_save_probe.cpp "$side/cpp/src/core/cache/ArchiveCacheFile.cpp" --no-discover --env vs --release --std latest -I "$side/cpp/include" -o "probe-$side"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Copy-Item ".mqb/bin/probe-$side.exe" "out/$side/probe.exe"
             git -C $side rev-parse HEAD
