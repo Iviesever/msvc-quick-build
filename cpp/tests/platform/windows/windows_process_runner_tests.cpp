@@ -301,7 +301,10 @@ void test_lifetime(WindowsProcessRunner& runner, const fs::path& ordinary_helper
             (void)collect(running, fixture);
         }
     }
-    {
+    // Repeat the normal-root-exit boundary: an accounting-zero observation
+    // alone raced descendant process-object signaling in the initial Release run.
+    // Keep the zero-time handle assertions; do not turn them into delayed waits.
+    for (int iteration = 0; iteration < 16; ++iteration) {
         Fixture fixture;
         std::stop_source stop;
         const auto request = fixture.spec(stop.get_token());
@@ -380,7 +383,7 @@ void test_lifetime(WindowsProcessRunner& runner, const fs::path& ordinary_helper
         expect(::GetProcessHandleCount(::GetCurrentProcess(), &after) != FALSE, "final handle count must be queryable");
         expect(after <= before + 2, "repeated managed requests must not leak Job/event/process/pipe handles");
     }
-    std::cout << "request-owned process lifetime checks passed\n";
+    if (failures == 0) std::cout << "request-owned process lifetime checks passed\n";
 }
 
 } // namespace lifetime_tests

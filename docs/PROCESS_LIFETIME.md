@@ -43,10 +43,19 @@ This opt-in backend requires Windows 10 / Server 2016 or newer.
 
 The callback lifetime ends before its event is closed. Each invocation owns its
 handles and callback, including concurrent calls to the same runner instance.
-On cancellation or normal root completion, terminate the Job and query active
-process accounting until zero before joining pipe readers and returning. Waiting
-only for the root or waiting for the Job handle to become signaled would not
-establish this boundary. The cleanup-only 1 ms query wait is not a resident idle
+On cancellation or normal root completion, first retain the Job's current member
+process handles (with Job-membership verification), then terminate the Job and
+wait for those handles to signal. Also require zero active processes and an
+unchanged total-assignment count across the census and cleanup. The first native
+Release test exposed that accounting zero alone can precede descendant-handle
+signaling; the native assertion remains a zero-time check after return. A PID
+that has disappeared or been reused cannot authorize terminating another process.
+If assignments change during cleanup, identity cannot be checked, or the bounded
+65,536-member census is exceeded, return an infrastructure error, not successful
+cancellation. Job close remains best-effort cleanup on an error; callers must not
+interpret that error as a safe write-lease handoff. No completion-port message or
+empty queue is used as sole proof. Waiting only for the root or for the Job handle
+to become signaled would not establish this boundary. The cleanup-only 1 ms query wait is not a resident idle
 poller. Kernel termination has no guaranteed wall-clock bound.
 
 Owner death closes the private Job handle and requests kernel termination of the
@@ -63,7 +72,8 @@ there is no new production translation unit or native test executable. It retain
 all original argv/environment/output/concurrency tests and adds normal managed
 exit, pre-cancellation/no-launch, live launch failure, captured and uncaptured
 cancellation, 128 KiB on each captured stream, descendant-held pipes, normal root
-exit with a surviving descendant, concurrent cancellation isolation, owner death,
+exit with a surviving descendant (sixteen repetitions without relaxing immediate
+handle assertions), concurrent cancellation isolation, owner death,
 and repeated-handle accounting. Ready/release events synchronize tests; retained
 process handles, not recycled PIDs, prove root and descendant termination.
 
