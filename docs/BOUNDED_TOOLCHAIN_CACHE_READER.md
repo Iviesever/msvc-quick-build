@@ -73,8 +73,12 @@ transcripts must match. Full before/after artifact/cache metadata inventories
 are retained and must be equal. Missing instrumentation is unavailable, not zero.
 
 Five additional real-build cases damage only the toolchain payload and require
-successful ordinary rediscovery/resealing without TU recompilation or relinking,
-then a true warm hit. These are correctness contracts, not a discovery-miss speed
+successful ordinary rediscovery/resealing with the same compile/link decisions,
+non-output counters and diagnostics as the exact baseline, then a true warm hit.
+Each side starts with a verified full hit on identical fixture paths. Source hashes
+are checked for equality; post-repair inventories are retained. Rediscovery may
+invalidate filesystem evidence; this test must not demand suppressed recompilation when the baseline
+correctly rebuilds. These are correctness contracts, not a discovery-miss speed
 claim. The native test separately proves that a hit does not invoke discovery.
 
 All raw stdout/stderr, Git and binary identities, adverse observations and paired

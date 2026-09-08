@@ -90,21 +90,41 @@ def main() -> None:
         files = list((case.root / '.mqb/cache/toolchain').glob('*.cache'))
         h.require(len(files) == 1, 'Expected exactly one toolchain cache fixture')
         cache = files[0]
+        report['fallback_contracts'] = []
         for damage in ('empty', 'truncated', 'trailing', 'oversized', 'missing'):
-            if damage == 'empty': cache.write_bytes(b'')
-            elif damage == 'truncated': cache.write_bytes(cache.read_bytes()[:20])
-            elif damage == 'trailing':
-                with cache.open('ab') as stream: stream.write(b'\0')
-            elif damage == 'oversized':
-                with cache.open('r+b') as stream: stream.truncate(1024 * 1024 + 1)
-            else: cache.unlink()
-            row = recorder.run(candidate, case, 'repair-' + damage, timings=True)
-            h.require(row['timing']['cache']['compile'] == {'hits': case.units, 'misses': 0}
-                      and row['timing']['cache']['link'] == {'hits': 1, 'misses': 0},
-                      'Toolchain rediscovery changed build identity or skipped required checks')
-            h.require(row['timing']['counter_breakdown']['cache']['toolchain']['files_written'] == 1,
-                      'Unusable toolchain cache was not resealed by discovery')
-            warm(recorder.run(candidate, case, 'repaired-hit-' + damage, timings=True), case)
+            pair = {'damage': damage}
+            source_hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                             for path in case.root.glob('*.cpp')}
+            # Compare the actual baseline behavior, rather than assuming a
+            # rediscovery cannot invalidate compiler filesystem evidence.
+            # Each side starts with a verified full hit on the same fixture.
+            for side, binary in [('baseline', base), ('candidate', candidate)]:
+                warm(recorder.run(binary, case, f'pre-repair-{damage}-{side}', timings=True), case)
+                if damage == 'empty': cache.write_bytes(b'')
+                elif damage == 'truncated': cache.write_bytes(cache.read_bytes()[:20])
+                elif damage == 'trailing':
+                    with cache.open('ab') as stream: stream.write(b'\0')
+                elif damage == 'oversized':
+                    with cache.open('r+b') as stream: stream.truncate(1024 * 1024 + 1)
+                else: cache.unlink()
+                row = recorder.run(binary, case, f'repair-{damage}-{side}', timings=True)
+                h.require(row['timing']['counter_breakdown']['cache']['toolchain']['files_written'] == 1,
+                          'Unusable toolchain cache was not resealed by discovery')
+                pair[side] = row
+                warm(recorder.run(binary, case, f'repaired-hit-{damage}-{side}', timings=True), case)
+                state_after = h.state(case)
+                (output / f'repair-{damage}-{side}-state.json').write_text(
+                    json.dumps(state_after, indent=2), encoding='utf-8')
+                h.require(source_hashes == {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                                          for path in case.root.glob('*.cpp')},
+                          'Fallback contract altered source contents')
+            h.require(h.semantic_counters(pair['baseline']) == h.semantic_counters(pair['candidate']),
+                      'Rediscovery changed baseline build decisions or non-output counters')
+            for channel in ('stdout', 'stderr'):
+                h.require(pair['baseline'][f'human_{channel}_sha256'] == pair['candidate'][f'human_{channel}_sha256'],
+                          'Rediscovery changed baseline diagnostics or rebuild reasons')
+            report['fallback_contracts'].append(pair)
+            save()
     (output / 'passed.txt').write_text('All 96 pairs and real toolchain fallback contracts completed.\n', encoding='utf-8')
     print(json.dumps([{key: value for key, value in row.items() if key != 'pairs'}
                       for row in report['scenarios']], indent=2))
