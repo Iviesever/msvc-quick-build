@@ -64,17 +64,19 @@ function Assert-OwnershipObservation {
     if ($Observation.server_survived_A -isnot [bool] -or $Observation.B_compiler_overlap_observed -isnot [bool]) {
         throw 'Missing or mistyped liveness observation.'
     }
+    if ($Observation.scheduler_api_used -isnot [bool] -or
+        $Observation.scheduler_api_used -ne ($Ending -eq 'scheduler-drain')) { throw 'Wrong scheduler API identity.' }
     if ($Ending -eq 'cancel') {
         if ($Observation.A_exit -eq 0) { throw 'Cancelled A cannot report successful exit.' }
     } elseif ($Observation.A_exit -ne 0) { throw 'Original A control failed.' }
     if ($Observation.B0_exit -ne 0 -or $Observation.B1_exit -ne 0) {
         if ($Observation.B_link_exit -ne -2 -or $Observation.B_run_exit -ne -2) { throw 'Unattempted link/run must remain unattempted.' }
     } elseif ($Observation.B_link_exit -ne 0 -and $Observation.B_run_exit -ne -2) { throw 'Failed link cannot run an artifact.' }
-    if ($Ending -in @('unmanaged-normal', 'drain')) {
+    if ($Ending -in @('unmanaged-normal', 'drain', 'scheduler-drain')) {
         if (-not $Observation.server_survived_A -or $Observation.B0_exit -ne 0 -or $Observation.B1_exit -ne 0 -or
             $Observation.B_link_exit -ne 0 -or $Observation.B_run_exit -ne 0) { throw 'Original B control failed.' }
     }
-    if ($Ending -eq 'drain') {
+    if ($Ending -in @('drain', 'scheduler-drain')) {
         foreach ($field in @('drain_requested', 'A_compiler_overlap_observed', 'B_compiler_overlap_observed', 'A_observed_compilers_signaled')) {
             if ($Observation.$field -isnot [bool] -or -not $Observation.$field) { throw "Unproven drain boundary: $field" }
         }
@@ -106,7 +108,7 @@ function Get-OwnershipDiagnosticErrors {
         if ($Profile.StartsWith('pch-')) { $stems += "$directory/prefix" }
         if ($Profile.StartsWith('modules-')) { $stems += "$directory/provider" }
     }
-    if ($Ending -eq 'drain') { $stems += 'A/work0' }
+    if ($Ending -in @('drain', 'scheduler-drain')) { $stems += 'A/work0' }
     if ($null -ne $Observation -and $Observation.B0_exit -eq 0 -and $Observation.B1_exit -eq 0) {
         $stems += 'B/link'
         if ($Observation.B_link_exit -eq 0) { $stems += 'B/run' }
@@ -139,7 +141,7 @@ function Get-OwnershipDiagnosticErrors {
             if ($stem -match '/(warm|prefix|provider)$' -and $result.exit_code -ne 0) { throw 'Preparation control failed.' }
         } catch { "${stem}.result.json: $($_.Exception.Message)" }
     }
-    if ($Ending -eq 'drain') {
+    if ($Ending -in @('drain', 'scheduler-drain')) {
         try {
             $drain = Get-Content -LiteralPath (Join-Path $CaseRoot 'A/drain.json') -Raw | ConvertFrom-Json
             if ($drain.stop_observed -isnot [bool] -or -not $drain.stop_observed -or
@@ -148,8 +150,29 @@ function Get-OwnershipDiagnosticErrors {
                 if (($drain.($entry.Key) -isnot [int] -and $drain.($entry.Key) -isnot [long]) -or
                     $drain.($entry.Key) -ne $entry.Value) { throw 'Invalid original drain outcome.' }
             }
+            $first = Get-Content -LiteralPath (Join-Path $CaseRoot 'A/work0.result.json') -Raw | ConvertFrom-Json
+            if ($first.exit_code -ne $drain.first_compile_exit) { throw 'Original A compile disagrees with drain outcome.' }
             if (Test-Path -LiteralPath (Join-Path $CaseRoot 'A/work1.argv.txt')) { throw 'Pending A work was dispatched.' }
         } catch { "A/drain.json: $($_.Exception.Message)" }
+    }
+    if ($Ending -eq 'scheduler-drain') {
+        try {
+            $scheduler = Get-Content -LiteralPath (Join-Path $CaseRoot 'A/scheduler.json') -Raw | ConvertFrom-Json
+            if ($scheduler -isnot [pscustomobject] -or $scheduler.api -isnot [string] -or $scheduler.api -cne 'BoundedWorkScheduler::run_with_admission_stop') {
+                throw 'Wrong scheduler API record.'
+            }
+            foreach ($entry in @{ schema = 1; worker_count = 1; started_count = 1; bridge_wait_error = 0 }.GetEnumerator()) {
+                if (($scheduler.($entry.Key) -isnot [int] -and $scheduler.($entry.Key) -isnot [long]) -or
+                    $scheduler.($entry.Key) -ne $entry.Value) { throw 'Invalid scheduler or bridge outcome.' }
+            }
+            foreach ($field in @('scheduler_succeeded', 'stop_requested', 'admission_stop_observed',
+                'stopped_before_all_items', 'event_observed', 'forwarded_during_callback')) {
+                if ($scheduler.$field -isnot [bool] -or -not $scheduler.$field) { throw "Unproven scheduler boundary: $field" }
+            }
+            if ($scheduler.callback_exception -isnot [string] -or $scheduler.callback_exception.Length -ne 0 -or
+                $null -ne $scheduler.scheduler_error_code -or $scheduler.safe_to_transfer_write_lease -isnot [bool] -or
+                $scheduler.safe_to_transfer_write_lease) { throw 'Scheduler failure or invalid safety authorization.' }
+        } catch { "A/scheduler.json: $($_.Exception.Message)" }
     }
 }
 
@@ -236,7 +259,7 @@ try {
     $profiles = @('zi-debug', 'ZI-debug', 'zi-release', 'pch-debug', 'pch-release', 'modules-debug', 'modules-release')
     $origins = @('preexisting', 'A-started')
     $endings = @('unmanaged-normal', 'normal', 'cancel')
-    if ($EndpointMode -eq 'default') { $endings += 'drain' }
+    if ($EndpointMode -eq 'default') { $endings += @('drain', 'scheduler-drain') }
     $expectedCases = $profiles.Count * $origins.Count * $endings.Count
     $aborted = $false
     $rows = [System.Collections.Generic.List[object]]::new()
