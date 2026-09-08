@@ -82,7 +82,10 @@ try {
     foreach ($profile in $profiles) {
         foreach ($origin in $origins) {
             foreach ($ending in $endings) {
-                $name = "$profile-$origin-$ending"
+                # /Zi and /ZI are different compiler modes, but their short
+                # names alone collide on a case-insensitive output filesystem.
+                $directoryProfile = if ($profile -ceq 'ZI-debug') { 'zi-edit-and-continue-debug' } else { $profile }
+                $name = "$directoryProfile-$origin-$ending"
                 $caseRoot = Join-Path $OutputRoot $name
                 New-Item -ItemType Directory -Path $caseRoot | Out-Null
                 $endpoint = 'mqb-' + [guid]::NewGuid().ToString('N')
@@ -105,9 +108,20 @@ try {
                 # B failures are the result of the policy under test, not a reason
                 # to suppress their data. Missing evidence / failed unmanaged
                 # controls / process-infrastructure failures do fail collection.
-                if ($caseExit -ne 0 -or $null -eq $observation -or $null -ne $parseError) { $failed++ }
+                $toolErrors = @(Get-ChildItem -LiteralPath $caseRoot -Recurse -File -Filter '*.result.json' |
+                    ForEach-Object {
+                        $result = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+                        $property = $result.PSObject.Properties['infrastructure_error']
+                        if ($null -ne $property -and $property.Value -eq $true) {
+                            [System.IO.Path]::GetRelativePath($caseRoot, $_.FullName)
+                        }
+                    })
+                $collectionOk = $caseExit -eq 0 -and $null -ne $observation -and
+                    $null -eq $parseError -and $toolErrors.Count -eq 0
+                if (-not $collectionOk) { $failed++ }
                 $row = [ordered]@{
                     case = $name; exit_code = $caseExit; elapsed_ms = $timer.Elapsed.TotalMilliseconds
+                    collection_ok = $collectionOk; tool_infrastructure_errors = $toolErrors
                     observation = $observation; parse_error = $parseError
                 }
                 $rows.Add($row)
