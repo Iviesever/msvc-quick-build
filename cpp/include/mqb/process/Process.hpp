@@ -5,6 +5,7 @@
 #include <expected>
 #include <filesystem>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,15 @@ struct ProcessSpec {
     bool inherit_environment{true};
     bool capture_stdout{true};
     bool capture_stderr{true};
+    // Opt-in request-owned process tree. A stoppable token also bounds the
+    // descendants to this run: they are terminated when the root exits.
+    // The default token preserves the legacy, root-only lifetime policy.
+    std::stop_token cancellation;
+};
+
+enum class ProcessTermination {
+    exited,
+    cancelled,
 };
 
 struct ProcessResult {
@@ -33,6 +43,9 @@ struct ProcessResult {
     std::string stdout_text;
     std::string stderr_text;
     std::chrono::nanoseconds launch_duration{};
+    // Cancellation is an outcome, not a launch error. Preserve captured output;
+    // exit_code is nonzero for cancellation (ERROR_CANCELLED on Windows).
+    ProcessTermination termination{ProcessTermination::exited};
 };
 
 enum class ProcessErrorCode {

@@ -42,7 +42,8 @@ $pairs = @(
     @{ English = 'docs/PERFORMANCE_GOVERNANCE.md'; Chinese = 'docs/PERFORMANCE_GOVERNANCE_ZH.md' },
     @{ English = 'docs/WARM_FAST_PATH.md'; Chinese = 'docs/WARM_FAST_PATH_ZH.md' },
     @{ English = 'docs/BUILD_SYSTEM_BENCHMARK.md'; Chinese = 'docs/BUILD_SYSTEM_BENCHMARK_ZH.md' },
-    @{ English = 'docs/V5_5_CUMULATIVE_EVIDENCE.md'; Chinese = 'docs/V5_5_CUMULATIVE_EVIDENCE_ZH.md' }
+    @{ English = 'docs/V5_5_CUMULATIVE_EVIDENCE.md'; Chinese = 'docs/V5_5_CUMULATIVE_EVIDENCE_ZH.md' },
+    @{ English = 'docs/PROCESS_LIFETIME.md'; Chinese = 'docs/PROCESS_LIFETIME_ZH.md' }
 )
 
 $failures = [System.Collections.Generic.List[string]]::new()

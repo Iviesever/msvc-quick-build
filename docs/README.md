@@ -28,6 +28,7 @@ This is the authoritative index for MQB's maintained documentation.
 | Exact MSVC parameter inventory | [`MSVC_PARAMETER_INVENTORY.md`](MSVC_PARAMETER_INVENTORY.md) | [`MSVC_PARAMETER_INVENTORY_ZH.md`](MSVC_PARAMETER_INVENTORY_ZH.md) |
 | MSVC parameter coverage contract | [`MSVC_PARAMETER_COVERAGE.md`](MSVC_PARAMETER_COVERAGE.md) | [`MSVC_PARAMETER_COVERAGE_ZH.md`](MSVC_PARAMETER_COVERAGE_ZH.md) |
 | Persistent warm source-discovery fast path | [`WARM_FAST_PATH.md`](WARM_FAST_PATH.md) | [`WARM_FAST_PATH_ZH.md`](WARM_FAST_PATH_ZH.md) |
+| Request-owned process lifetime | [`PROCESS_LIFETIME.md`](PROCESS_LIFETIME.md) | [`PROCESS_LIFETIME_ZH.md`](PROCESS_LIFETIME_ZH.md) |
 
 ## Development, validation, and release
 
