@@ -245,8 +245,11 @@ std::string prefix(const std::string& profile) {
     return "";
 }
 RunResult compile(const MsvcToolchain& tc, const fs::path& dir, const std::string& profile,
-                  const std::string& stem) {
+                  const std::string& stem, bool large_object = false) {
     auto args = flags(dir, profile);
+    // The fixed 24k-function /ZI drain fixture exceeds ordinary COFF sections.
+    // Keep its input/debug/PDB behavior; widen only its object section indices.
+    if (large_object) args.push_back("/bigobj");
     if (pch(profile)) {
         args.push_back("/Yucommon.hpp"); args.push_back("/Fp" + path_text(dir / "common.pch"));
     }
@@ -312,12 +315,12 @@ int root(int argc, wchar_t** argv, bool drain) {
     // Fixture watchdog only; not a product cancellation deadline.
     require(::WaitForSingleObject(release.value, 120000) == WAIT_OBJECT_0, "root fixture watchdog");
     if (!drain) return 0;
-    const auto first = compile(tc, dir, profile, "work0");
+    const auto first = compile(tc, dir, profile, "work0", true);
     const auto status = ::WaitForSingleObject(cancel.value, 0);
     require(status == WAIT_TIMEOUT || status == WAIT_OBJECT_0, "admission cancellation wait failed");
     const bool stopped = status == WAIT_OBJECT_0;
     int pending_exit = -2;
-    if (!stopped) pending_exit = exit_code(compile(tc, dir, profile, "work1"));
+    if (!stopped) pending_exit = exit_code(compile(tc, dir, profile, "work1", true));
     write(dir / "drain.json", "{\"stop_observed\":" + std::string{stopped ? "true" : "false"}
           + ",\"work_compiles_dispatched\":" + (stopped ? "1" : "2")
           + ",\"first_compile_exit\":" + std::to_string(exit_code(first))
