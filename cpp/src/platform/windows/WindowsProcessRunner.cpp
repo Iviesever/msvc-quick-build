@@ -96,7 +96,7 @@ public:
     }
 
     [[nodiscard]] static std::expected<ProcThreadAttributeList, ProcessError>
-    for_handle_list(const std::span<HANDLE> handles);
+    for_launch(std::span<HANDLE> handles, std::span<HANDLE> jobs);
 
 private:
     explicit ProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST list) noexcept
@@ -156,16 +156,19 @@ struct EnvironmentEntry {
 }
 
 std::expected<ProcThreadAttributeList, ProcessError>
-ProcThreadAttributeList::for_handle_list(const std::span<HANDLE> handles) {
-    if (handles.empty()) {
+ProcThreadAttributeList::for_launch(
+    const std::span<HANDLE> handles,
+    const std::span<HANDLE> jobs) {
+    const DWORD count = static_cast<DWORD>(!handles.empty()) + static_cast<DWORD>(!jobs.empty());
+    if (count == 0) {
         return std::unexpected(error(
             ProcessErrorCode::invalid_specification,
             ERROR_INVALID_PARAMETER,
-            "inherited handle whitelist is empty"));
+            "process attribute list is empty"));
     }
 
     SIZE_T bytes = 0;
-    ::InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+    ::InitializeProcThreadAttributeList(nullptr, count, 0, &bytes);
     if (bytes == 0) {
         return std::unexpected(error(
             ProcessErrorCode::launch_failed,
@@ -182,7 +185,7 @@ ProcThreadAttributeList::for_handle_list(const std::span<HANDLE> handles) {
             "failed to allocate process attribute list"));
     }
 
-    if (!::InitializeProcThreadAttributeList(raw, 1, 0, &bytes)) {
+    if (!::InitializeProcThreadAttributeList(raw, count, 0, &bytes)) {
         const DWORD native_code = ::GetLastError();
         ::HeapFree(::GetProcessHeap(), 0, raw);
         return std::unexpected(error(
@@ -192,7 +195,7 @@ ProcThreadAttributeList::for_handle_list(const std::span<HANDLE> handles) {
     }
 
     ProcThreadAttributeList result{raw};
-    if (!::UpdateProcThreadAttribute(
+    if (!handles.empty() && !::UpdateProcThreadAttribute(
             result.get(),
             0,
             PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
@@ -205,7 +208,72 @@ ProcThreadAttributeList::for_handle_list(const std::span<HANDLE> handles) {
             ::GetLastError(),
             "UpdateProcThreadAttribute failed for inherited handle whitelist"));
     }
+    // Assignment is part of CreateProcess, before the initial thread can run.
+    // A post-launch AssignProcessToJobObject would leave a child-escape window.
+    if (!jobs.empty() && !::UpdateProcThreadAttribute(
+            result.get(), 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+            jobs.data(), jobs.size_bytes(), nullptr, nullptr)) {
+        return std::unexpected(error(
+            ProcessErrorCode::launch_failed, ::GetLastError(),
+            "UpdateProcThreadAttribute failed for request-owned job"));
+    }
     return result;
+}
+
+struct SignalCancellation {
+    HANDLE event;
+    void operator()() const noexcept { ::SetEvent(event); }
+};
+
+[[nodiscard]] process::ProcessResult cancelled_result() {
+    return process::ProcessResult{
+        .exit_code = static_cast<int>(ERROR_CANCELLED),
+        .termination = process::ProcessTermination::cancelled,
+    };
+}
+
+// Owns only this launch's unnamed, non-inheritable Job. No breakaway flags.
+// Setup failure must not silently fall back to an unmanaged process.
+[[nodiscard]] std::expected<UniqueHandle, ProcessError> create_process_job() {
+    UniqueHandle job{::CreateJobObjectW(nullptr, nullptr)};
+    if (!job.valid()) {
+        return std::unexpected(error(
+            ProcessErrorCode::launch_failed, ::GetLastError(), "CreateJobObjectW failed"));
+    }
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!::SetInformationJobObject(job.get(), JobObjectExtendedLimitInformation,
+                                  &limits, sizeof(limits))) {
+        return std::unexpected(error(
+            ProcessErrorCode::launch_failed, ::GetLastError(),
+            "failed to set request-owned job limits"));
+    }
+    return job;
+}
+
+// The root alone is not a quiescence witness: descendants may still own pipe
+// writers or artifact handles. Job handles are not generally signaled at zero
+// active processes. Query accounting after termination instead of waiting on
+// the Job handle or returning as soon as TerminateJobObject has been requested.
+[[nodiscard]] std::expected<void, ProcessError> terminate_and_drain_job(
+    const HANDLE job, const DWORD exit_code) {
+    if (!::TerminateJobObject(job, exit_code)) {
+        return std::unexpected(error(
+            ProcessErrorCode::wait_failed, ::GetLastError(), "TerminateJobObject failed"));
+    }
+    for (;;) {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+        if (!::QueryInformationJobObject(job, JobObjectBasicAccountingInformation,
+                                        &accounting, sizeof(accounting), nullptr)) {
+            return std::unexpected(error(
+                ProcessErrorCode::wait_failed, ::GetLastError(),
+                "failed to establish request-owned job quiescence"));
+        }
+        if (accounting.ActiveProcesses == 0) return {};
+        // Cleanup-only wait, never a no-op/background polling thread. Kernel
+        // teardown has no promised wall-clock upper bound.
+        ::Sleep(1);
+    }
 }
 
 [[nodiscard]] bool contains_nul(const std::string_view value) noexcept {
@@ -585,6 +653,28 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
         creation_flags |= CREATE_UNICODE_ENVIRONMENT;
     }
 
+    if (spec.cancellation.stop_requested()) return cancelled_result();
+
+    UniqueHandle process_job;
+    UniqueHandle cancellation_event;
+    if (spec.cancellation.stop_possible()) {
+        auto job = create_process_job();
+        if (!job) return std::unexpected(job.error());
+        process_job = std::move(*job);
+        cancellation_event.reset(::CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        if (!cancellation_event.valid()) {
+            return std::unexpected(error(
+                ProcessErrorCode::launch_failed, ::GetLastError(),
+                "failed to create process cancellation event"));
+        }
+    }
+    // The callback is destroyed before its event; stop requests never touch
+    // handles that have already been closed or borrow another invocation's state.
+    std::optional<std::stop_callback<SignalCancellation>> cancellation_callback;
+    if (cancellation_event.valid()) {
+        cancellation_callback.emplace(spec.cancellation, SignalCancellation{cancellation_event.get()});
+    }
+
     std::optional<PipePair> stdout_pipe;
     std::optional<PipePair> stderr_pipe;
     if (spec.capture_stdout) {
@@ -611,8 +701,11 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
     UniqueHandle child_stdin;
     UniqueHandle child_stdout;
     UniqueHandle child_stderr;
-    std::optional<ProcThreadAttributeList> attribute_list;
     std::vector<HANDLE> inherited_handles;
+    std::vector<HANDLE> process_jobs;
+    if (process_job.valid()) process_jobs.push_back(process_job.get());
+    // Attribute values must outlive the attribute list, not merely its creation.
+    std::optional<ProcThreadAttributeList> attribute_list;
 
     const bool use_explicit_standard_handles = spec.capture_stdout || spec.capture_stderr;
     if (use_explicit_standard_handles) {
@@ -648,7 +741,9 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
             startup_info.hStdOutput,
             startup_info.hStdError,
         };
-        auto attributes = ProcThreadAttributeList::for_handle_list(inherited_handles);
+    }
+    if (use_explicit_standard_handles || process_job.valid()) {
+        auto attributes = ProcThreadAttributeList::for_launch(inherited_handles, process_jobs);
         if (!attributes) {
             return std::unexpected(attributes.error());
         }
@@ -663,6 +758,8 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
     if (mqb::performance::current_collector() != nullptr && instrumented_process) {
         execution_evidence.emplace(instrumented_process->work_kind);
     }
+
+    if (spec.cancellation.stop_requested()) return cancelled_result();
 
     PROCESS_INFORMATION process_info{};
     const auto launch_started = std::chrono::steady_clock::now();
@@ -711,55 +808,84 @@ WindowsProcessRunner::run(const process::ProcessSpec& spec) {
     std::optional<std::thread> stdout_reader;
     std::optional<std::thread> stderr_reader;
 
-    if (stdout_pipe) {
-        stdout_reader.emplace([&] {
-            read_pipe(stdout_pipe->read.get(), result.stdout_text, stdout_error);
-        });
-    }
-    if (stderr_pipe) {
-        stderr_reader.emplace([&] {
-            read_pipe(stderr_pipe->read.get(), result.stderr_text, stderr_error);
-        });
+    const auto join_readers = [&] {
+        if (stdout_reader && stdout_reader->joinable()) stdout_reader->join();
+        if (stderr_reader && stderr_reader->joinable()) stderr_reader->join();
+    };
+    const auto abort_processes = [&]() noexcept {
+        if (process_job.valid()) {
+            ::TerminateJobObject(process_job.get(), ERROR_OPERATION_ABORTED);
+            // Last-handle close is also the fail-closed fallback if termination
+            // or accounting failed; never report a successful cancellation then.
+            process_job.reset();
+        } else {
+            ::TerminateProcess(process_handle.get(), ERROR_OPERATION_ABORTED);
+        }
+        ::WaitForSingleObject(process_handle.get(), INFINITE);
+    };
+    try {
+        if (stdout_pipe) {
+            stdout_reader.emplace([&] {
+                read_pipe(stdout_pipe->read.get(), result.stdout_text, stdout_error);
+            });
+        }
+        if (stderr_pipe) {
+            stderr_reader.emplace([&] {
+                read_pipe(stderr_pipe->read.get(), result.stderr_text, stderr_error);
+            });
+        }
+    } catch (...) {
+        // In particular, failure starting the second reader must not destroy
+        // a joinable first thread or leave a managed writer running.
+        abort_processes();
+        join_readers();
+        throw;
     }
 
-    const DWORD wait_result = ::WaitForSingleObject(process_handle.get(), INFINITE);
+    DWORD wait_result = WAIT_FAILED;
+    bool cancelled = false;
+    if (cancellation_event.valid()) {
+        const HANDLE wait_handles[]{cancellation_event.get(), process_handle.get()};
+        wait_result = ::WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
+        // Cancellation wins when both are observed ready. A stop arriving after
+        // root-completion selection need not change an already completed result.
+        cancelled = wait_result == WAIT_OBJECT_0;
+    } else {
+        wait_result = ::WaitForSingleObject(process_handle.get(), INFINITE);
+    }
     if (wait_result == WAIT_FAILED) {
         const DWORD native_code = ::GetLastError();
-        ::TerminateProcess(process_handle.get(), ERROR_OPERATION_ABORTED);
-        ::WaitForSingleObject(process_handle.get(), INFINITE);
-        if (stdout_reader) {
-            stdout_reader->join();
-        }
-        if (stderr_reader) {
-            stderr_reader->join();
-        }
+        abort_processes();
+        join_readers();
         return std::unexpected(error(
-            ProcessErrorCode::wait_failed,
-            native_code,
-            "WaitForSingleObject failed"));
+            ProcessErrorCode::wait_failed, native_code, "process completion wait failed"));
     }
 
-    DWORD exit_code = 0;
-    if (!::GetExitCodeProcess(process_handle.get(), &exit_code)) {
+    DWORD exit_code = ERROR_CANCELLED;
+    if (!cancelled && !::GetExitCodeProcess(process_handle.get(), &exit_code)) {
         const DWORD native_code = ::GetLastError();
-        if (stdout_reader) {
-            stdout_reader->join();
-        }
-        if (stderr_reader) {
-            stderr_reader->join();
-        }
+        abort_processes();
+        join_readers();
         return std::unexpected(error(
-            ProcessErrorCode::wait_failed,
-            native_code,
-            "GetExitCodeProcess failed"));
+            ProcessErrorCode::wait_failed, native_code, "GetExitCodeProcess failed"));
     }
-
-    if (stdout_reader) {
-        stdout_reader->join();
+    if (process_job.valid()) {
+        // A stoppable request owns descendants even on normal root exit. End
+        // their lifetime before joining readers whose pipe writers they inherited.
+        auto drained = terminate_and_drain_job(
+            process_job.get(), cancelled ? ERROR_CANCELLED : ERROR_PROCESS_ABORTED);
+        if (!drained) {
+            const auto failure = drained.error();
+            abort_processes();
+            join_readers();
+            return std::unexpected(failure);
+        }
+        ::WaitForSingleObject(process_handle.get(), INFINITE);
     }
-    if (stderr_reader) {
-        stderr_reader->join();
-    }
+    join_readers();
+    result.termination = cancelled
+        ? process::ProcessTermination::cancelled
+        : process::ProcessTermination::exited;
 
     if (stdout_error || stderr_error) {
         return std::unexpected(error(
