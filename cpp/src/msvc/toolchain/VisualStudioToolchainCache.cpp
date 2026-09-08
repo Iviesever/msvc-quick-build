@@ -8,6 +8,8 @@
 #include <fstream>
 #include <iomanip>
 #include <optional>
+#include <span>
+#include <spanstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -16,6 +18,7 @@
 
 #include "ToolchainDiscoveryPrimitives.hpp"
 #include "VisualStudioToolchainDiscovery.hpp"
+#include "mqb/core/BoundedCacheReader.hpp"
 #include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
@@ -322,15 +325,22 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
     try {
         std::error_code error_code;
         if (!fs::is_regular_file(cache_file, error_code) || error_code) return std::nullopt;
-        const auto size = fs::file_size(cache_file, error_code);
-        if (error_code || size > max_cache_size) return std::nullopt;
         const auto modified = fs::last_write_time(cache_file, error_code);
         if (error_code) return std::nullopt;
         const auto now = fs::file_time_type::clock::now();
         if (modified > now || now - modified > max_cache_age) return std::nullopt;
-        std::ifstream stream{cache_file, std::ios::binary};
-        if (!stream) return std::nullopt;
-        evidence.opened(static_cast<std::uint64_t>(size));
+        // Preserve the ordinary-file and age policies above. Bind the byte
+        // limit to the opened stream, not a pathname queried before the open.
+        std::ifstream file_stream{cache_file, std::ios::binary};
+        if (!file_stream) return std::nullopt;
+        auto bytes = mqb::read_bounded_cache_stream(
+            file_stream, static_cast<std::size_t>(max_cache_size),
+            [&evidence](const std::uint64_t size) { evidence.opened(size); });
+        if (!bytes) return std::nullopt;
+        // The payload owns the storage for the complete unchanged v9 decoder.
+        // No second payload copy and no unbounded formatted file read.
+        std::ispanstream stream{std::span<const char>{
+            reinterpret_cast<const char*>(bytes->data()), bytes->size()}};
         auto record = read_record(stream);
         if (!record || !cache_key_matches(*record, options) || record->binary_stamp.empty()) return std::nullopt;
 
