@@ -14,6 +14,7 @@
 #include <future>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
@@ -152,6 +153,90 @@ void require_default_host() {
     require(size == 0 && ::GetLastError() == ERROR_ENVVAR_NOT_FOUND,
             "default endpoint experiment rejects an ambient endpoint override");
 }
+// The default experiment observes the discovered environment, not a repaired
+// version of it. Reject even an explicit removal/empty assignment before any
+// normalization; private endpoint replacement remains fixture-only behavior.
+void configure_fixture_environment(std::vector<mqb::process::EnvironmentVariable>& environment,
+                                   bool default_endpoint, const std::string& fixture_id) {
+    const auto is_endpoint = [](const auto& e) {
+        return _stricmp(e.name.c_str(), "_MSPDBSRV_ENDPOINT_") == 0;
+    };
+    if (default_endpoint) {
+        require(std::none_of(environment.begin(), environment.end(), is_endpoint),
+                "default endpoint experiment rejects a toolchain endpoint override");
+    } else {
+        std::erase_if(environment, is_endpoint);
+        environment.push_back({"_MSPDBSRV_ENDPOINT_", fixture_id, false});
+    }
+    for (const char* name : {"CL", "_CL_", "LINK", "_LINK_"}) {
+        std::erase_if(environment, [&](const auto& e) { return _stricmp(e.name.c_str(), name) == 0; });
+        environment.push_back({name, "", true});
+    }
+}
+void emit_outer_diagnostics(const RunResult& result, std::ostream& out, std::ostream& err) {
+    if (result) { out << result->stdout_text; err << result->stderr_text; }
+    else err << "OUTER_CLEANUP_ERROR " << result.error().message << " native=" << result.error().native_code << '\n';
+    // Postflight enumeration/writes can throw. Flush captured diagnostics first.
+    out.flush();
+    err.flush();
+}
+int evidence_contract_self_test() {
+    using Environment = std::vector<mqb::process::EnvironmentVariable>;
+    const auto equal = [](const Environment& a, const Environment& b) {
+        return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](const auto& x, const auto& y) {
+            return x.name == y.name && x.value == y.value && x.remove == y.remove;
+        });
+    };
+    unsigned checks = 0;
+    for (const auto& entry : Environment{{"_MSPDBSRV_ENDPOINT_", "polluted", false},
+                                        {"_mSpDbSrV_eNdPoInT_", "", false},
+                                        {"_mspdbsrv_endpoint_", "", true}}) {
+        Environment input{{"CL", "must-not-be-normalized", false}, entry};
+        const auto before = input;
+        bool rejected = false;
+        try { configure_fixture_environment(input, true, "unused"); }
+        catch (const std::runtime_error& e) {
+            rejected = std::string{e.what()}.find("toolchain endpoint override") != std::string::npos;
+        }
+        require(rejected && equal(input, before), "polluted default environment was reset instead of rejected");
+        ++checks;
+    }
+    Environment clean{{"PATH", "preserved", false}, {"_MSPDBSRV_ENDPOINT_X", "lookalike", false}};
+    configure_fixture_environment(clean, true, "must-not-be-used");
+    Environment expected{{"PATH", "preserved", false}, {"_MSPDBSRV_ENDPOINT_X", "lookalike", false},
+                         {"CL", "", true}, {"_CL_", "", true}, {"LINK", "", true}, {"_LINK_", "", true}};
+    require(equal(clean, expected), "clean default environment changed endpoint state");
+    ++checks;
+    Environment isolated{{"PATH", "preserved", false}, {"_MSPDBSRV_ENDPOINT_", "old", false},
+                         {"_mspdbsrv_endpoint_", "", true}, {"cl", "/unexpected", false}};
+    configure_fixture_environment(isolated, false, "fixture-only");
+    expected = {{"PATH", "preserved", false}, {"_MSPDBSRV_ENDPOINT_", "fixture-only", false},
+                {"CL", "", true}, {"_CL_", "", true}, {"LINK", "", true}, {"_LINK_", "", true}};
+    require(equal(isolated, expected), "private endpoint normalization changed");
+    ++checks;
+    std::ostringstream out, err;
+    ProcessResult captured;
+    captured.stdout_text = "original stdout\n";
+    captured.stderr_text = "original stderr\n";
+    try {
+        emit_outer_diagnostics(RunResult{captured}, out, err);
+        throw std::runtime_error("injected postflight failure");
+    } catch (const std::runtime_error& e) { err << e.what() << '\n'; }
+    require(out.str() == "original stdout\n" &&
+            err.str() == "original stderr\ninjected postflight failure\n", "postflight lost captured output");
+    ++checks;
+    std::ostringstream failed_out, failed_err;
+    mqb::process::ProcessError error;
+    error.message = "unproven cleanup";
+    error.native_code = 42;
+    emit_outer_diagnostics(std::unexpected(error), failed_out, failed_err);
+    require(failed_out.str().empty() && failed_err.str() == "OUTER_CLEANUP_ERROR unproven cleanup native=42\n",
+            "infrastructure diagnostic missing");
+    ++checks;
+    std::cout << "EVIDENCE_CONTRACT_SELF_TEST " << checks << " checks passed (synthetic; no MSVC run)\n";
+    return 0;
+}
+
 std::vector<Process> new_servers(const std::vector<Process>& before, const fs::path& compiler) {
     auto now = census(L"mspdbsrv.exe");
     std::vector<Process> result;
@@ -354,13 +439,8 @@ int measure(int argc, wchar_t** argv, bool default_endpoint) {
         throw std::runtime_error("MSVC discovery failed; see discovery.error.txt");
     }
     auto tc = std::move(*discovered);
-    // Private endpoints are still fixture isolation only. The default mode
-    // removes the override; fixture_id then names events, never the PDB endpoint.
-    for (const char* name : {"_MSPDBSRV_ENDPOINT_", "CL", "_CL_", "LINK", "_LINK_"}) {
-        std::erase_if(tc.environment, [&](const auto& e) { return _stricmp(e.name.c_str(), name) == 0; });
-        const bool private_endpoint = !default_endpoint && name == std::string{"_MSPDBSRV_ENDPOINT_"};
-        tc.environment.push_back({name, private_endpoint ? utf8(fixture_id) : "", !private_endpoint});
-    }
+    if (default_endpoint) require_default_host(); // Discovery may change the effective environment.
+    configure_fixture_environment(tc.environment, default_endpoint, utf8(fixture_id));
     write(dir / "toolchain.txt", path_text(tc.identity.compiler) + '\n' + tc.identity.version + '\n'
           + tc.identity.binary_stamp + "\nendpoint=" + (default_endpoint ? "<unset/default>" : utf8(fixture_id)) + '\n');
     auto before = census(L"mspdbsrv.exe");
@@ -521,6 +601,7 @@ int wmain(int argc, wchar_t** argv) {
     try {
         require(argc >= 2, "use --case/--default-case/--measure/--root");
         const std::wstring mode = argv[1];
+        if (mode == L"--evidence-contract-self-test") return evidence_contract_self_test();
         if (mode == L"--root" || mode == L"--drain-root") return root(argc, argv, mode == L"--drain-root");
         if (mode == L"--measure" || mode == L"--measure-default") return measure(argc, argv, mode == L"--measure-default");
         const bool default_endpoint = mode == L"--default-case";
@@ -545,6 +626,7 @@ int wmain(int argc, wchar_t** argv) {
         spec.cancellation = lifetime.get_token();
         WindowsProcessRunner runner;
         auto result = runner.run(spec);
+        emit_outer_diagnostics(result, std::cout, std::cerr);
         if (default_endpoint) {
             const auto remaining = census(L"mspdbsrv.exe");
             const bool clean = result.has_value() && remaining.empty();
@@ -552,15 +634,11 @@ int wmain(int argc, wchar_t** argv) {
                   + identities(remaining) + ",\"outer_lifecycle_verified\":" + (result ? "true" : "false")
                   + ",\"cleanup_verified\":" + (clean ? "true" : "false") + "}\n");
             if (!clean) {
-                if (result) { std::cout << result->stdout_text; std::cerr << result->stderr_text; }
-                else std::cerr << result.error().message << '\n';
                 std::cerr << "DEFAULT_ENDPOINT_CLEANUP_UNPROVEN: do not run another case\n";
                 return 1;
             }
         }
-        if (!result) { std::cerr << "OUTER_CLEANUP_ERROR " << result.error().message << '\n'; return 1; }
-        std::cout << result->stdout_text;
-        std::cerr << result->stderr_text;
+        if (!result) return 1;
         return result->exit_code;
     } catch (const std::exception& e) {
         std::cerr << "PROBE_INFRASTRUCTURE_FAILURE " << e.what() << '\n';
