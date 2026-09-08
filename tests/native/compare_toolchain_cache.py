@@ -86,7 +86,8 @@ def main() -> None:
         # Product-level fallback uses real discovery; the native reader test
         # separately forbids processes on hits and requires fallback on misses.
         case = cases[0]
-        files = list((case.root / '.mqb/cache/toolchain').glob('*.mqbcache'))
+        # Application uses .cache; the standalone locator's default uses .mqbcache.
+        files = list((case.root / '.mqb/cache/toolchain').glob('*.cache'))
         h.require(len(files) == 1, 'Expected exactly one toolchain cache fixture')
         cache = files[0]
         for damage in ('empty', 'truncated', 'trailing', 'oversized', 'missing'):
