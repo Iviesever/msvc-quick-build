@@ -1,0 +1,73 @@
+name: Archive Cache Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/src/core/cache/ArchiveCacheFile.cpp'
+      - 'cpp/include/mqb/core/BoundedCacheReader.hpp'
+      - 'cpp/tests/core/cache/archive_cache_file_tests.cpp'
+      - 'tests/native/compare_archive.py'
+      - 'tests/native/compare_reporting.py'
+      - '.github/workflows/archive-evidence.yml'
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Baseline ref resolved before building
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archive-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Static archive contracts and independent ABBA
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || inputs.base_ref }}
+          path: baseline
+          persist-credentials: false
+      - name: Build exact baseline and candidate with the same seed
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+          $seed = & (Join-Path $root 'tests/native/acquire_seed.ps1') -RepoRoot $root -OutputRoot (Join-Path $env:GITHUB_WORKSPACE 'archive-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($side in @('baseline', 'candidate')) {
+            $root = Join-Path $env:GITHUB_WORKSPACE $side
+            $version = (Get-Content (Join-Path $root 'VERSION') -Raw).Trim()
+            $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') -BuilderMqbPath $seed -RepoRoot $root -Version $version -Configuration Release -Clean -OutputPath (Join-Path $env:GITHUB_WORKSPACE "archive-out/$side/mqb.exe")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Test-Path $mqb -PathType Leaf)) { throw "Missing $side binary" }
+          }
+      - name: Static warm, cold, mutation and bad-cache recovery evidence
+        shell: pwsh
+        run: |
+          $baseSha = git -C baseline rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $headSha = git -C candidate rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python candidate/tests/native/compare_archive.py --baseline archive-out/baseline/mqb.exe --candidate archive-out/candidate/mqb.exe --base-sha $baseSha --head-sha $headSha --output archive-out/evidence
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain all raw observations, including partial failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mqb-archive-evidence
+          path: archive-out/evidence/
+          retention-days: 30
+          if-no-files-found: warn

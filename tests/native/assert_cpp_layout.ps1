@@ -192,6 +192,7 @@ $coreLeafFiles = [ordered]@{
 Assert-LeafLayout -Root (Join-Path $srcRoot 'core') -LeafFiles $coreLeafFiles
 Assert-LeafLayout -Root (Join-Path $testsRoot 'core') -LeafFiles ([ordered]@{
     'cache' = @(
+        'archive_cache_file_tests.cpp',
         'compile_cache_file_tests.cpp', 'compile_cache_tests.cpp',
         'link_cache_file_tests.cpp', 'link_state_tests.cpp',
         'module_scan_cache_tests.cpp'
