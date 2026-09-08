@@ -1,0 +1,99 @@
+name: Release Cumulative Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'tests/native/compare_release_cumulative.py'
+      - 'tests/native/compare_reporting.py'
+      - '.github/workflows/release-cumulative-evidence.yml'
+  workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: Candidate ref resolved and recorded before building
+        required: true
+        default: '6f24bb4d2f5e323eb7b3823c3acf367dcccf9446'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-cumulative-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Released v5.4.0 versus accepted candidate
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact evidence harness
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Checkout immutable released v5.4.0 source
+        uses: actions/checkout@v7
+        with:
+          ref: d041668de836b9eb9a36e2d6b96ff2114c5c358a
+          path: baseline
+          persist-credentials: false
+      - name: Checkout accepted candidate, separate from harness
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.candidate_ref || '6f24bb4d2f5e323eb7b3823c3acf367dcccf9446' }}
+          path: candidate
+          persist-credentials: false
+      - name: Verify schema handling and build both exact Release trees
+        shell: pwsh
+        run: |
+          python harness/tests/native/compare_release_cumulative.py --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $candidate = Join-Path $PWD 'candidate'
+          $seed = & (Join-Path $candidate 'tests/native/acquire_seed.ps1') -RepoRoot $candidate -OutputRoot (Join-Path $PWD 'cumulative-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($side in @('baseline', 'candidate')) {
+            $root = Join-Path $PWD $side
+            $version = (Get-Content (Join-Path $root 'VERSION') -Raw).Trim()
+            $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') -BuilderMqbPath $seed -RepoRoot $root -Version $version -Configuration Release -Clean -OutputPath (Join-Path $PWD "cumulative-out/$side/mqb.exe")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) { throw "Missing $side MQB" }
+          }
+      - name: Fixed timings-OFF cumulative ABBA and separate correctness audits
+        shell: pwsh
+        run: |
+          $baseSha = git -C baseline rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $headSha = git -C candidate rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $baseTree = git -C baseline rev-parse 'HEAD^{tree}'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $headTree = git -C candidate rev-parse 'HEAD^{tree}'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $harnessSha = git -C harness rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python harness/tests/native/compare_release_cumulative.py --baseline cumulative-out/baseline/mqb.exe --candidate cumulative-out/candidate/mqb.exe --base-sha $baseSha --head-sha $headSha --base-tree $baseTree --head-tree $headTree --harness-sha $harnessSha --output cumulative-out/evidence
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain exact harness, source identity and all observations
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force cumulative-out/provenance | Out-Null
+          git -C harness rev-parse HEAD | Set-Content cumulative-out/provenance/harness-sha.txt
+          git -C baseline rev-parse HEAD | Set-Content cumulative-out/provenance/baseline-sha.txt
+          git -C candidate rev-parse HEAD | Set-Content cumulative-out/provenance/candidate-sha.txt
+          Copy-Item harness/tests/native/compare_release_cumulative.py cumulative-out/provenance/
+          Copy-Item harness/tests/native/compare_reporting.py cumulative-out/provenance/
+          Get-FileHash cumulative-out/baseline/mqb.exe, cumulative-out/candidate/mqb.exe -Algorithm SHA256 -ErrorAction Continue | ConvertTo-Json | Set-Content cumulative-out/provenance/binary-hashes.json
+      - name: Upload raw evidence, including failures and adverse samples
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mqb-release-cumulative-evidence
+          path: |
+            cumulative-out/evidence/
+            cumulative-out/provenance/
+          retention-days: 90
+          if-no-files-found: warn
