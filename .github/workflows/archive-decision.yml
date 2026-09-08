@@ -1,0 +1,54 @@
+name: Archive Merge Decision
+on:
+  push:
+    branches: [perf/archive-merge-decision]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: 4bab036f8ca8b2982acaa8969572329ceba5579a
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: bf70ed1024ab37ced2393e73edc4ed8e3c4868bb
+          path: candidate
+          persist-credentials: false
+      - name: Build exact binaries and public save API probes
+        shell: pwsh
+        run: |
+          $seed = & ./candidate/tests/native/acquire_seed.ps1 -RepoRoot (Join-Path $PWD 'candidate') -OutputRoot (Join-Path $PWD 'seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($side in @('baseline','candidate')) {
+            $root = Join-Path $PWD $side
+            $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') -BuilderMqbPath $seed -RepoRoot $root -Version 5.4.0 -Configuration Release -Clean -OutputPath (Join-Path $PWD "out/$side/mqb.exe")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $seed build harness/archive_save_probe.cpp "$side/cpp/src/core/cache/ArchiveCacheFile.cpp" --no-discover --env vs --release --std latest -I "$side/cpp/include" -o "probe-$side"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Copy-Item ".mqb/bin/probe-$side.exe" "out/$side/probe.exe"
+            git -C $side rev-parse HEAD
+          }
+      - name: Fixed 40 rebuild pairs and 24 cache save API pairs
+        shell: pwsh
+        run: |
+          python harness/archive_decision.py out/baseline/mqb.exe out/candidate/mqb.exe out/baseline/probe.exe out/candidate/probe.exe out/evidence
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: archive-merge-decision
+          path: out/evidence/
+          retention-days: 30
+          if-no-files-found: warn
