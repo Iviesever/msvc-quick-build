@@ -37,6 +37,7 @@ This is the authoritative index for MQB's maintained documentation.
 | Self-hosting and release contract | [`SELF_HOSTING_EN.md`](SELF_HOSTING_EN.md) | [`SELF_HOSTING.md`](SELF_HOSTING.md) |
 | Performance governance | [`PERFORMANCE_GOVERNANCE.md`](PERFORMANCE_GOVERNANCE.md) | [`PERFORMANCE_GOVERNANCE_ZH.md`](PERFORMANCE_GOVERNANCE_ZH.md) |
 | Build-system comparison methodology | [`BUILD_SYSTEM_BENCHMARK.md`](BUILD_SYSTEM_BENCHMARK.md) | [`BUILD_SYSTEM_BENCHMARK_ZH.md`](BUILD_SYSTEM_BENCHMARK_ZH.md) |
+| v5.5.0 cumulative evidence / release boundary | [`V5_5_CUMULATIVE_EVIDENCE.md`](V5_5_CUMULATIVE_EVIDENCE.md) | [`V5_5_CUMULATIVE_EVIDENCE_ZH.md`](V5_5_CUMULATIVE_EVIDENCE_ZH.md) |
 | Contributing | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | [`../CONTRIBUTING_ZH.md`](../CONTRIBUTING_ZH.md) |
 
 ## Language parity rule
