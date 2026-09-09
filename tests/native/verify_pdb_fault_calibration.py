@@ -13,6 +13,14 @@ import verify_pdb_file_trace as trace
 import verify_pdb_invocations as invocation
 
 
+def diagnostic_names_path(text: str, path: str) -> bool:
+    # Native filesystem paths may retain '/' while MSVC prints '\\'. Compare
+    # the complete normalized path, never just a basename or a path prefix.
+    value = path.replace("/", "\\").casefold()
+    message = text.replace("/", "\\").casefold()
+    return bool(value) and re.search(r"(?<![\w.\\])" + re.escape(value) + r"(?![\w.\\])", message) is not None
+
+
 def failure_chain(begin, end, summary, first, recovery, pairs, arm, target):
     trace.need(arm in ("baseline", "conflict"), "unknown expected arm")
     for row in (begin, end, summary):
@@ -118,7 +126,7 @@ def analyse(root, native_root, capture, events, audited, arm):
         if stem in ("seed/warm", "A/warm"):
             trace.need(result["exit_code"] == 0, "seed/A positive control failed")
         if stem == "B/work0" and arm == "conflict":
-            trace.need(begin["path"].casefold() in text.casefold(), "failure diagnostic does not name locked B PDB")
+            trace.need(diagnostic_names_path(text, begin["path"]), "failure diagnostic does not name locked B PDB")
     trace.need(rows["A/warm"]["after_run_qpc"] < begin["open_before_qpc"], "placeholder created before positive preparation")
     service = begin["service"][0]
     compiler_begin = trace.load(root / "B/work0.invocation-begin.json")
@@ -191,6 +199,16 @@ def self_test():
         try: failure_chain(b,e,s,f,r,p,"baseline","b.pdb")
         except (ValueError,KeyError,TypeError) as exc: error=str(exc)
         rows.append(dict(name=name,expected_accepted=not failed,accepted=error is None,passed=(error is None)==(not failed),error=error))
+    for name, path, text, expected in [
+        ("diagnostic-full-native-path", r"D:\case\B\compiler.pdb", r"C1041: cannot open 'D:\case\B\compiler.pdb'", True),
+        ("diagnostic-mixed-separator", r"D:\case\B/compiler.pdb", r"C1041: cannot open 'd:\case\b\compiler.pdb'", True),
+        ("diagnostic-forward-separator", r"D:\case\B\compiler.pdb", "C1041: cannot open 'D:/case/B/compiler.pdb'", True),
+        ("diagnostic-wrong-directory", r"D:\case\B\compiler.pdb", r"C1041: cannot open 'D:\other\B\compiler.pdb'", False),
+        ("diagnostic-prefix-not-exact-file", r"D:\case\B\compiler.pdb", r"C1041: cannot open 'D:\case\B\compiler.pdb2'", False),
+        ("diagnostic-wrong-volume", r"D:\case\B\compiler.pdb", r"C1041: cannot open 'C:\case\B\compiler.pdb'", False),
+    ]:
+        accepted = diagnostic_names_path(text, path)
+        rows.append(dict(name=name,expected_accepted=expected,accepted=accepted,passed=accepted==expected))
     return dict(synthetic_only=True,cases=rows,passed=all(r["passed"] for r in rows))
 
 
