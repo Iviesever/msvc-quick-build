@@ -409,10 +409,19 @@ struct InvocationSpan {
         FILETIME created{}, exited{}, kernel{}, user{};
         require(::QueryPerformanceFrequency(&frequency) && frequency.QuadPart > 0, "invocation QPF failed");
         require(::GetProcessTimes(::GetCurrentProcess(), &created, &exited, &kernel, &user), "invocation owner identity failed");
+        // The compiler and fixture may reside on different volumes. Preserve
+        // the executable's native DOS-device mapping; do not guess from the ETL directory.
+        const auto executable_root = executable.root_name().wstring();
+        wchar_t executable_device[32768]{};
+        require(executable_root.size() == 2 && executable_root[1] == L':' &&
+                ::QueryDosDeviceW(executable_root.c_str(), executable_device, 32768) != 0,
+                "invocation executable device mapping unavailable");
         begin = invocation_tick();
         write(directory / (label + ".invocation-begin.json"),
               "{\"schema\":1,\"clock\":\"QPC\",\"label\":" + (quoted)(label)
               + ",\"executable\":" + (quoted)(path_text(executable))
+              + ",\"executable_dos_root\":" + (quoted)(utf8(executable_root))
+              + ",\"executable_device_root\":" + (quoted)(utf8(executable_device))
               + ",\"owner_pid\":" + std::to_string(::GetCurrentProcessId())
               + ",\"owner_created_filetime\":" + std::to_string(ticks(created))
               + ",\"frequency\":" + std::to_string(frequency.QuadPart)

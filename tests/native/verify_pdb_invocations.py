@@ -37,6 +37,13 @@ def bind_span(begin: dict, end: dict, result: dict, capture: dict, events: list[
     trace.need(begin.get("clock") == "QPC" and begin.get("label") == label, "wrong span clock/label")
     trace.need(trace.canonical(begin["executable"], capture) == trace.canonical(executable, capture), "span executable mismatch")
     trace.need(trace.integer(begin.get("frequency"), "frequency") == capture["qpc_frequency"], "span clock frequency mismatch")
+    dos, device = begin.get("executable_dos_root"), begin.get("executable_device_root")
+    trace.need(isinstance(dos, str) and re.fullmatch(r"[A-Za-z]:", dos) is not None and
+               isinstance(device, str) and device.casefold().startswith("\\device\\") and
+               len(device) > 8 and not device.endswith("\\"), "missing/invalid executable device mapping")
+    executable_mapping = dict(dos_root=dos, device_root=device)
+    image_key = trace.canonical(executable, executable_mapping)
+    trace.need(image_key.startswith(dos.casefold() + "\\"), "executable drive differs from captured mapping")
     low = trace.integer(begin.get("before_run_qpc"), "span begin")
     high = trace.integer(end.get("after_run_qpc"), "span end")
     trace.need(type(end.get("before_run_qpc")) is int and end["before_run_qpc"] == low, "span pairing mismatch")
@@ -63,7 +70,7 @@ def bind_span(begin: dict, end: dict, result: dict, capture: dict, events: list[
         if data.get("ParentProcessID") != owner or not low <= event["qpc"] <= high:
             continue
         image = data.get("ImageName")
-        if isinstance(image, str) and trace.canonical(image, capture) == trace.canonical(executable, capture):
+        if isinstance(image, str) and trace.canonical(image, executable_mapping) == image_key:
             candidates.append({"pid": trace.integer(data.get("ProcessID"), "child pid"),
                                "created_filetime": trace.integer(data.get("CreateTime"), "child creation"),
                                "start_qpc": event["qpc"], "image": image})
@@ -169,7 +176,8 @@ def self_test() -> dict:
     capture = {"clock": "QPC", "qpc_frequency": 1000, "dos_root": "C:", "device_root": "\\Device\\V",
                "child": {"before_launch_qpc": 1, "after_wait_qpc": 1000}}
     begin = {"schema": 1, "clock": "QPC", "label": "work0", "executable": "C:\\cl.exe", "owner_pid": 10,
-             "owner_created_filetime": 20, "frequency": 1000, "before_run_qpc": 100}
+             "owner_created_filetime": 20, "frequency": 1000, "before_run_qpc": 100,
+             "executable_dos_root": "C:", "executable_device_root": "\\Device\\V"}
     end = {"schema": 1, "before_run_qpc": 100, "after_run_qpc": 200, "infrastructure_error": False, "exit_code": 0,
            "safe_to_transfer_write_lease": False}
     result = {"exit_code": 0, "cancelled": False}
@@ -180,6 +188,10 @@ def self_test() -> dict:
         ("single-child", True, lambda b, e, r, v: None),
         ("original-nonzero-preserved", True, lambda b, e, r, v: (e.update(exit_code=2), r.update(exit_code=2))),
         ("two-B-candidates-not-guessed", True, lambda b, e, r, v: v.append(dict(v[1], data=dict(v[1]["data"], ProcessID=12, CreateTime=22)))),
+        ("cross-volume-compiler", True, lambda b, e, r, v: (b.update(executable_device_root="\\Device\\ToolVolume"), v[1]["data"].update(ImageName="\\Device\\ToolVolume\\cl.exe"))),
+        ("device-map-missing", False, lambda b, e, r, v: b.pop("executable_device_root")),
+        ("device-map-wrong", False, lambda b, e, r, v: b.update(executable_device_root="\\Device\\Wrong")),
+        ("dos-map-wrong", False, lambda b, e, r, v: b.update(executable_dos_root="Z:")),
         ("wrong-schema", False, lambda b, e, r, v: b.update(schema=True)),
         ("wrong-label", False, lambda b, e, r, v: b.update(label="work1")),
         ("wrong-frequency", False, lambda b, e, r, v: b.update(frequency=999)),
