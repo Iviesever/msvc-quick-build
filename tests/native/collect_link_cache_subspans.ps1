@@ -23,7 +23,8 @@ function Assert-LinkCacheSubspans {
             -not [double]::IsFinite([double]$Work.$field) -or $Work.$field -lt 0) { throw "Invalid work interval: $field" }
         if ($NoSave -and $Work.$field -ne 0) { throw 'A no-save invocation cannot invent write work.' }
     }
-    //PLACEHOLDER
+    # Each public JSON duration is independently rounded to 0.001 ms. These are
+    # serialization tolerances, NOT performance acceptance/noise allowances.
     $disjoint = $Work.link_cache_serialize + $Work.link_cache_prepare + $Work.link_cache_stream + $Work.link_cache_install
     if ($disjoint -gt $Work.link_cache_write + 0.005) { throw 'Save children exceed inclusive save.' }
     if ($Work.link_cache_write_payload + $Work.link_cache_flush -gt $Work.link_cache_stream + 0.003) {
