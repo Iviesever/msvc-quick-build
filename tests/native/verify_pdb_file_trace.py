@@ -140,7 +140,9 @@ def audit(capture: dict, decode: dict, events: list[dict], case_root: str) -> di
                 errors.append("ambiguous outstanding Create IRP")
             pending[irp] = event
         elif event["id"] == 24:
-            status = integer(data.get("NtStatus"), "NtStatus")
+            # The selected manifest provider names this field Status. Do not
+            # confuse its schema with classic FileIo_OpEnd's NtStatus spelling.
+            status = integer(data.get("Status"), "native Status")
             need(status <= 0xFFFFFFFF, "invalid NTSTATUS width")
             begin = pending.pop(irp, None)
             if begin is None:
@@ -195,7 +197,7 @@ def self_test() -> dict:
                            qpc=time, decode_error=None, data=data, raw_payload=""))
     def pair(path, time, status, irp, pid=1, tid=2):
         event("file", 12, time, dict(Irp=irp, FileObject=irp + 100, FileName=path, IssuingThreadId=tid), pid, tid)
-        event("file", 24, time + 1, dict(Irp=irp, NtStatus=status), pid, tid)
+        event("file", 24, time + 1, dict(Irp=irp, Status=status), pid, tid)
     for name, start in (("before", 10), ("after", 100)):
         pair(capture[name]["path"], start + 1, 0, start)
         pair(capture[name]["path"], start + 6, 0xC0000043, start)  # Legitimate completed IRP reuse.
@@ -212,9 +214,9 @@ def self_test() -> dict:
         ("stop-error", False, lambda c, d, e: c.update(stop_status=5)),
         ("decode-error", False, lambda c, d, e: d.update(decode_errors=1)),
         ("capped-file", False, lambda c, d, e: d.update(etl_bytes=256 * 1024 * 1024)),
-        ("missing-status", False, lambda c, d, e: e[3]["data"].pop("NtStatus")),
-        ("fabricated-zero-status", False, lambda c, d, e: e[3]["data"].update(NtStatus=0)),
-        ("string-status", False, lambda c, d, e: e[3]["data"].update(NtStatus="3221225539")),
+        ("missing-status", False, lambda c, d, e: e[3]["data"].pop("Status")),
+        ("fabricated-zero-status", False, lambda c, d, e: e[3]["data"].update(Status=0)),
+        ("string-status", False, lambda c, d, e: e[3]["data"].update(Status="3221225539")),
         ("wrong-IRP", False, lambda c, d, e: e[3]["data"].update(Irp=999)),
         ("wrong-marker-process", False, lambda c, d, e: e[2].update(pid=99)),
         ("wrong-child-creation", False, lambda c, d, e: c["child"].update(created_filetime=42)),

@@ -17,6 +17,8 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <set>
+#include <tuple>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -180,14 +182,25 @@ std::string calibration(const fs::path& path) {
 }
 // TDH decodes selected named properties from the host's actual event schema.
 // Raw payload/version/flags are retained; no guessed hard-coded byte offsets.
-std::string event_data(EVENT_RECORD* event) {
+std::string event_data(EVENT_RECORD* event, std::string* schema) {
     ULONG bytes{};
     auto status = ::TdhGetEventInformation(event, 0, nullptr, nullptr, &bytes);
     require(status == ERROR_INSUFFICIENT_BUFFER && bytes <= 1024 * 1024, "TDH event metadata unavailable");
     Buffer storage(bytes); auto* info = storage.as<TRACE_EVENT_INFO>();
     checked(::TdhGetEventInformation(event, 0, nullptr, info, &bytes), "TdhGetEventInformation");
-    const std::vector<std::wstring> selected{L"Irp", L"FileObject", L"FileName", L"NtStatus", L"IssuingThreadId", L"ThreadId",
+    const std::vector<std::wstring> selected{L"Irp", L"FileObject", L"FileName", L"Status", L"NtStatus", L"IssuingThreadId", L"ThreadId",
         L"CreateOptions", L"CreateAttributes", L"ShareAccess", L"ProcessID", L"ThreadID", L"CreateTime", L"ImageName", L"ParentProcessID"};
+    if (schema) {
+        *schema = "[";
+        for (ULONG i = 0; i < info->TopLevelPropertyCount; ++i) {
+            const auto& p = info->EventPropertyInfoArray[i];
+            if (i) *schema += ',';
+            *schema += "{\"name\":" + js(utf8(bounded_string(info, bytes, p.NameOffset)))
+                + ",\"flags\":" + std::to_string(p.Flags)
+                + ",\"in_type\":" + ((p.Flags & PropertyStruct) ? "null" : std::to_string(p.nonStructType.InType)) + "}";
+        }
+        *schema += ']';
+    }
     std::string out = "{"; bool first = true;
     for (ULONG i = 0; i < info->TopLevelPropertyCount; ++i) {
         const auto& property = info->EventPropertyInfoArray[i];
@@ -205,6 +218,11 @@ std::string event_data(EVENT_RECORD* event) {
         const auto type = property.nonStructType.InType;
         if (type == TDH_INTYPE_UNICODESTRING) {
             encoded = js(utf8(bounded_string(data, size, 0)));
+        } else if (type == TDH_INTYPE_ANSISTRING) {
+            // ProcessStop v2 ImageName is ANSI; retain exact bytes rather than
+            // guessing an encoding or replacing the Unicode ProcessStart identity.
+            require(data[size - 1] == 0, "unterminated ANSI event property");
+            encoded = "{\"encoding\":\"opaque-ansi\",\"bytes\":" + js(hex(data, size - 1)) + "}";
         } else if ((type == TDH_INTYPE_UINT32 || type == TDH_INTYPE_HEXINT32 || type == TDH_INTYPE_UINT64 ||
                     type == TDH_INTYPE_HEXINT64 || type == TDH_INTYPE_POINTER || type == TDH_INTYPE_FILETIME) && (size == 4 || size == 8)) {
             std::uint64_t number{}; std::memcpy(&number, data, size); encoded = std::to_string(number);
@@ -217,6 +235,7 @@ std::string event_data(EVENT_RECORD* event) {
 struct Decoder {
     std::ofstream output;
     std::uint64_t total{}, selected{}, errors{}, capped{};
+    std::set<std::tuple<bool, USHORT, UCHAR>> schemas;
     explicit Decoder(const fs::path& file) : output(file, std::ios::binary) { require(bool(output), "cannot open events output"); }
     static void WINAPI callback(EVENT_RECORD* event) noexcept {
         auto& self = *static_cast<Decoder*>(event->UserContext);
@@ -227,13 +246,15 @@ struct Decoder {
         if (!(is_file && (id == 12 || id == 24)) && !(is_process && id >= 1 && id <= 4)) return;
         if (++self.selected > 500000) { ++self.capped; return; }
         try {
-            std::string decoded, error;
-            try { decoded = event_data(event); } catch (const std::exception& e) { error = e.what(); ++self.errors; decoded = "null"; }
+            std::string decoded, error, schema = "null";
+            const bool first_schema = self.schemas.emplace(is_file, id, event->EventHeader.EventDescriptor.Version).second;
+            try { decoded = event_data(event, first_schema ? &schema : nullptr); } catch (const std::exception& e) { error = e.what(); ++self.errors; decoded = "null"; }
             self.output << "{\"sequence\":" << self.total << ",\"provider\":" << js(is_file ? "file" : "process")
                 << ",\"id\":" << id << ",\"version\":" << unsigned(event->EventHeader.EventDescriptor.Version)
                 << ",\"flags\":" << event->EventHeader.Flags << ",\"pid\":" << event->EventHeader.ProcessId
                 << ",\"tid\":" << event->EventHeader.ThreadId << ",\"qpc\":" << event->EventHeader.TimeStamp.QuadPart
                 << ",\"raw_payload\":" << js(hex(event->UserData, event->UserDataLength))
+                << ",\"property_schema\":" << schema
                 << ",\"decode_error\":" << (error.empty() ? "null" : js(error)) << ",\"data\":" << decoded << "}\n";
             if (!self.output) ++self.errors;
         } catch (...) { ++self.errors; }
