@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$InputRoot,
     [Parameter(Mandatory)][string]$OutputRoot,
     [string]$RepoRoot = (Join-Path $PSScriptRoot '../..'),
-    [ValidateSet('calibration', 'invocations', 'preexisting', 'query-contrast')][string]$Study = 'calibration'
+    [ValidateSet('calibration', 'invocations', 'preexisting', 'query-contrast', 'b-pdb-fault')][string]$Study = 'calibration'
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -54,13 +54,14 @@ if ($Study -eq 'query-contrast') {
     # Both arms trace identically; only the four coordinator RM queries differ.
     $plan = @('rm-on','rm-off','rm-off','rm-on','rm-on','rm-off','rm-off','rm-on')
 }
+if ($Study -eq 'b-pdb-fault') { $plan = @('baseline','conflict','conflict','baseline') }
 $expected = $plan.Count
 Write-Json (Join-Path $OutputRoot 'plan.json') @{
     study=$Study; modes=$plan; cases=$expected; pairs=($expected/2); controlled_conflicts_per_trace=2; adaptive_retries=$false
     preexisting_profile=$(if ($Study -in @('preexisting','query-contrast')) { 'zi-debug' } else { $null })
     traced_slots=$(if ($Study -eq 'preexisting') { 4 } else { $expected })
     readiness_wait_limit_ms=10000; negative_readiness_cases=1
-    note='Positive native sharing conflicts are separate from original MSVC outcomes; no forced C1041.'
+    note=$(if ($Study -eq 'b-pdb-fault') { 'Deliberate cold B-PDB conflict calibration, not a historical C1041 reproduction or an original positive control.' } else { 'Positive native sharing conflicts are separate from original MSVC outcomes; no forced C1041.' })
 }
 # One separately labeled refusal control: omit the file-provider enable request.
 # It must wait to its fixed deadline without issuing calibration or launching the
@@ -86,6 +87,42 @@ Write-Json (Join-Path $negative 'result.json') @{
     sentinel_exists=(Test-Path -LiteralPath $sentinel); negative_readiness_verified=$negativeOk
 }
 if (-not $negativeOk) { throw 'Missing-readiness refusal control failed; no compiler cases attempted.' }
+if ($Study -eq 'b-pdb-fault') {
+    # These separately labeled injected cases never enter the original positive
+    # matrix. Native exit zero means calibration expectations, not B compile zero.
+    $rows = [Collections.Generic.List[object]]::new()
+    $roots = [Collections.Generic.List[string]]::new()
+    foreach ($index in 0..3) {
+        $arm=$plan[$index]; $slot=Join-Path $OutputRoot ('{0:D2}-{1}' -f ($index+1),$arm)
+        New-Item -ItemType Directory -Path $slot | Out-Null
+        $fixture=Join-Path $slot 'fixture'; $trace=Join-Path $slot 'trace'; $roots.Add($fixture)
+        $arguments=@($trace,$probe,'--pdb-fault-case',$fixture,$arm)
+        Write-Json (Join-Path $slot 'arguments.json') $arguments
+        $output=@(& $tracer @arguments 2>&1); $nativeExit=$LASTEXITCODE
+        $output | Set-Content -LiteralPath (Join-Path $slot 'output.txt') -Encoding utf8
+        & python (Join-Path $PSScriptRoot 'verify_pdb_fault_calibration.py') --trace $trace --fixture $fixture `
+            --native-root $fixture --arm $arm --output (Join-Path $slot 'fault-audit.json')
+        $auditExit=$LASTEXITCODE
+        $accepted=$nativeExit -eq 0 -and $auditExit -eq 0
+        $rows.Add([pscustomobject]@{ name=('{0:D2}-{1}' -f ($index+1),$arm); arm=$arm
+            native_exit=$nativeExit; audit_exit=$auditExit; calibration_verified=$accepted; original_positive_control=$false })
+        Write-Json (Join-Path $OutputRoot 'summary.json') @{
+            study=$Study; expected=4; completed=$rows.Count; cases=@($rows.ToArray()); not_run=(4-$rows.Count)
+            negative_readiness_verified=$negativeOk; original_positive_control=$false
+            historical_cause_resolved=$false; authorizes_held_pr_merge=$false; safe_to_transfer_write_lease=$false
+        }
+        if (-not $accepted) { throw 'Fault calibration evidence incomplete or expectation failed; remaining slots not attempted.' }
+    }
+    foreach ($pair in 0..1) {
+        $left=$roots[$pair*2]; $right=$roots[$pair*2+1]
+        & python (Join-Path $PSScriptRoot 'verify_pdb_invocations.py') --compare-pair $left $right `
+            --left-native-root $left --right-native-root $right --output (Join-Path $OutputRoot "input-pair-$pair.json")
+        if ($LASTEXITCODE -ne 0) { throw 'Fault calibration paired inputs differ.' }
+    }
+    Write-Json (Join-Path $OutputRoot 'input-equivalence.json') @{ expected_pairs=2; all_pairs_verified=$true }
+    return
+}
+
 # Reuse actual prior validators without executing their discovery/build bodies.
 foreach ($definition in @(
     @{ file='collect_msvc_service_ownership.ps1'; names=@('Get-OwnershipDiagnosticErrors','Test-OwnershipCleanupEnvelope','Assert-OwnershipObservation') },

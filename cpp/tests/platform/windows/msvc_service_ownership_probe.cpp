@@ -624,6 +624,106 @@ int root(int argc, wchar_t** argv, bool drain) {
     return stopped && exit_code(first) == 0 ? 0 : 1;
 }
 
+// Dedicated cold-B calibration, never an ordinary positive control. Both arms
+// own a newly created empty placeholder; only its release point differs. This
+// does not reproduce the historical warm/concurrent PDB failure or prove a lease.
+int pdb_fault_calibration(int argc, wchar_t** argv) {
+    require(argc == 4, "PDB fault calibration arguments");
+    require_default_host();
+    const fs::path dir = fs::absolute(argv[2]);
+    const std::string arm = utf8(argv[3]);
+    require(arm == "baseline" || arm == "conflict", "unknown PDB fault calibration arm");
+    record_invocation_spans = true;
+    const auto before = census(L"mspdbsrv.exe");
+    require(before.empty(), "fault calibration refuses preexisting host services");
+    WindowsProcessRunner runner;
+    mqb::msvc::DiscoveryOptions options;
+    options.preference = mqb::msvc::ToolchainPreference::visual_studio;
+    options.cache_file = fs::path{};
+    auto found = mqb::msvc::MsvcToolchainLocator{runner}.discover(options);
+    require(found.has_value(), "fault calibration toolchain discovery failed");
+    auto tc = std::move(*found);
+    require_default_host();
+    configure_fixture_environment(tc.environment, true, "unused");
+    require(census(L"mspdbsrv.exe").empty(), "discovery started an unexpected service");
+    write(dir / "toolchain.txt", path_text(tc.identity.compiler) + '\n' + tc.identity.version + '\n'
+          + tc.identity.binary_stamp + "\nendpoint=<unset/default>\n");
+    prepare(tc, dir / "seed", "zi-debug");
+    auto servers = new_servers(before, tc.identity.compiler);
+    require(servers.size() == 1 && alive(servers[0].handle.value), "calibration seed service identity unavailable");
+    const auto& server = servers[0];
+    prepare(tc, dir / "A", "zi-debug");
+    require(fs::create_directory(dir / "B"), "calibration B directory must be new");
+    workload(dir / "B", "zi-debug"); // Original fixed 6000-function B TU.
+    const auto target = dir / "B/compiler.pdb";
+    FILETIME created{}, exited{}, kernel{}, user{};
+    require(::GetProcessTimes(::GetCurrentProcess(), &created, &exited, &kernel, &user), "holder identity unavailable");
+    const auto open_before = invocation_tick();
+    Handle holder{::CreateFileW(target.c_str(), GENERIC_READ | GENERIC_WRITE | DELETE, 0, nullptr,
+                               CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr)};
+    const auto open_error = holder ? ERROR_SUCCESS : ::GetLastError();
+    const auto open_after = invocation_tick();
+    require(bool(holder), "new calibration placeholder open failed native=" + std::to_string(open_error));
+    FILE_ID_INFO held_id{};
+    require(::GetFileInformationByHandleEx(holder.value, FileIdInfo, &held_id, sizeof(held_id)), "holder file identity unavailable");
+    std::string id;
+    constexpr char digits[] = "0123456789abcdef";
+    for (const auto byte : held_id.FileId.Identifier) { id += digits[byte >> 4]; id += digits[byte & 15]; }
+    const std::string begin = "{\"schema\":1,\"kind\":\"injected-cold-B-PDB-calibration\",\"arm\":" + (quoted)(arm)
+        + ",\"path\":" + (quoted)(path_text(target)) + ",\"owner_pid\":" + std::to_string(::GetCurrentProcessId())
+        + ",\"owner_tid\":" + std::to_string(::GetCurrentThreadId()) + ",\"owner_created_filetime\":" + std::to_string(ticks(created))
+        + ",\"open_before_qpc\":" + std::to_string(open_before) + ",\"open_after_qpc\":" + std::to_string(open_after)
+        + ",\"desired_access\":3221291008,\"share_mode\":0,\"creation_disposition\":1,\"open_error\":0"
+        + ",\"volume_serial\":" + (quoted)(std::to_string(held_id.VolumeSerialNumber)) + ",\"file_id\":" + (quoted)(id)
+        + ",\"service\":" + identities(servers) + ",\"historical_cause_resolved\":false,\"safe_to_transfer_write_lease\":false}\n";
+    write(dir / "holder-begin.json", begin);
+    // Failures preserve their original native status. Delete only this fresh
+    // empty placeholder by its held HANDLE, not by a re-resolved path.
+    auto release_placeholder = [&] {
+        LARGE_INTEGER size{};
+        require(::GetFileSizeEx(holder.value, &size) && size.QuadPart == 0, "placeholder changed while exclusively held");
+        const auto delete_before = invocation_tick();
+        FILE_DISPOSITION_INFO disposition{}; disposition.DeleteFile = TRUE;
+        const auto marked = ::SetFileInformationByHandle(holder.value, FileDispositionInfo, &disposition, sizeof(disposition));
+        const auto delete_error = marked ? ERROR_SUCCESS : ::GetLastError();
+        const auto delete_after = invocation_tick();
+        const auto low = invocation_tick();
+        const auto closed = ::CloseHandle(holder.value);
+        const auto close_error = closed ? ERROR_SUCCESS : ::GetLastError();
+        const auto high = invocation_tick();
+        if (closed) holder.value = nullptr;
+        const auto attributes = ::GetFileAttributesW(target.c_str());
+        const auto absence_error = attributes == INVALID_FILE_ATTRIBUTES ? ::GetLastError() : ERROR_SUCCESS;
+        const auto removed = invocation_tick();
+        write(dir / "holder-end.json", "{\"schema\":1,\"delete_before_qpc\":" + std::to_string(delete_before)
+            + ",\"delete_after_qpc\":" + std::to_string(delete_after) + ",\"release_before_qpc\":" + std::to_string(low)
+            + ",\"release_after_qpc\":" + std::to_string(high) + ",\"remove_after_qpc\":" + std::to_string(removed)
+            + ",\"delete_error\":" + std::to_string(delete_error) + ",\"close_error\":" + std::to_string(close_error)
+            + ",\"absence_error\":" + std::to_string(absence_error)
+            + ",\"held_bytes_before_release\":0,\"safe_to_transfer_write_lease\":false}\n");
+        require(marked && closed && absence_error == ERROR_FILE_NOT_FOUND, "calibration placeholder cleanup failed");
+    };
+    if (arm == "baseline") release_placeholder();
+    const auto first = compile(tc, dir / "B", "zi-debug", "work0");
+    // compile() has saved the complete ORIGINAL result and diagnostics. The
+    // first failure is never overwritten by the one later recovery invocation.
+    if (arm == "conflict") release_placeholder();
+    std::ifstream source{dir / "B/work0.cpp", std::ios::binary};
+    const std::string contents{std::istreambuf_iterator<char>{source}, std::istreambuf_iterator<char>{}};
+    require(!source.bad() && !contents.empty(), "calibration source copy failed");
+    write(dir / "B/recovery.cpp", contents);
+    const auto recovery = compile(tc, dir / "B", "zi-debug", "recovery");
+    const bool service_alive = alive(server.handle.value);
+    const bool expected_first = first && first->termination == mqb::process::ProcessTermination::exited &&
+        (arm == "baseline" ? first->exit_code == 0 : first->exit_code != 0);
+    const bool recovery_ok = recovery && recovery->termination == mqb::process::ProcessTermination::exited && recovery->exit_code == 0;
+    write(dir / "b-pdb-calibration.json", "{\"schema\":1,\"kind\":\"injected-cold-B-PDB-calibration\",\"arm\":" + (quoted)(arm)
+        + ",\"original_B_exit\":" + std::to_string(exit_code(first)) + ",\"recovery_B_exit\":" + std::to_string(exit_code(recovery))
+        + ",\"original_service_survived\":" + (service_alive ? "true" : "false")
+        + ",\"original_positive_control\":false,\"historical_cause_resolved\":false,\"safe_to_transfer_write_lease\":false}\n");
+    return expected_first && recovery_ok && service_alive ? 0 : 1;
+}
+
 int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = false, bool failure_study = false,
             bool query_study = false) {
     require(argc == ((pdb_study || query_study) ? 8 : 7), "measure arguments");
@@ -848,7 +948,7 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
         + ",\"warm_pdb_owners\":" + (query_observed ? warm_owners.identities : "null")
         + ",\"active_pdb_owner_error\":" + (query_observed ? std::to_string(active_owners.error) : "null")
         + ",\"active_pdb_owners\":" + (query_observed ? active_owners.identities : "null")
-        + ",\"B_pdb_service_identity_observed\":" + (query_observed ? ((warm_owners.includes_server || active_owners.includes_server) ? "true" : "false") : "null")
+        + ",\"B_pdb_service_identity_observed\":" + ((query_observed) ? ((warm_owners.includes_server || active_owners.includes_server) ? "true" : "false") : "null")
         + ",\"A_exit\":" + std::to_string(exit_code(a_result))
         + ",\"B0_exit\":" + std::to_string(exit_code(b0_result)) + ",\"B1_exit\":" + std::to_string(exit_code(b1_result))
         + ",\"B_link_exit\":" + std::to_string(linked) + ",\"B_run_exit\":" + std::to_string(executed)
@@ -869,6 +969,7 @@ int wmain(int argc, wchar_t** argv) {
     try {
         require(argc >= 2, "use --case/--default-case/--measure/--root");
         const std::wstring mode = argv[1];
+        if (mode == L"--measure-pdb-fault") return pdb_fault_calibration(argc, argv);
         if (mode == L"--pdb-identity-self-test") {
             require(argc == 3, "identity test arguments"); return pdb_identity_self_test(fs::absolute(argv[2]));
         }
@@ -882,12 +983,14 @@ int wmain(int argc, wchar_t** argv) {
         if (mode == L"--root" || mode == L"--drain-root") return root(argc, argv, mode == L"--drain-root");
         if (mode == L"--measure-pdb") return measure(argc, argv, true, true);
         if (mode == L"--measure" || mode == L"--measure-default") return measure(argc, argv, mode == L"--measure-default");
+        const bool fault_calibration = mode == L"--pdb-fault-case";
         const bool pdb_study = mode == L"--pdb-case";
         const bool query_study = mode == L"--query-contrast-case";
         const bool failure_study = mode == L"--invocation-case" || query_study;
-        const bool default_endpoint = mode == L"--default-case" || pdb_study || failure_study;
-        require((mode == L"--case" || default_endpoint) && argc == ((pdb_study || query_study) ? 8 : 7), "case arguments");
+        const bool default_endpoint = mode == L"--default-case" || pdb_study || failure_study || fault_calibration;
+        require((mode == L"--case" || default_endpoint) && argc == (fault_calibration ? 4 : ((pdb_study || query_study) ? 8 : 7)), "case arguments");
         const fs::path dir = fs::absolute(argv[2]);
+        if (fault_calibration) require(!fs::exists(dir), "fault case must not reuse any directory");
         fs::create_directories(dir);
         if (default_endpoint) {
             require_default_host();
@@ -901,7 +1004,7 @@ int wmain(int argc, wchar_t** argv) {
         // No global service termination, PID-authorized kill, or product changes.
         ProcessSpec spec;
         spec.executable = self();
-        spec.arguments = {query_study ? "--measure-query-contrast" : (failure_study ? "--measure-invocations" :
+        spec.arguments = {fault_calibration ? "--measure-pdb-fault" : query_study ? "--measure-query-contrast" : (failure_study ? "--measure-invocations" :
             (pdb_study ? "--measure-pdb" : (default_endpoint ? "--measure-default" : "--measure")))};
         for (int i = 2; i < argc; ++i) spec.arguments.push_back(utf8(argv[i]));
         std::stop_source lifetime;

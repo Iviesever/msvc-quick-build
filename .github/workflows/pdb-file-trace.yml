@@ -7,6 +7,7 @@ on:
       - 'cpp/tests/platform/windows/msvc_service_ownership_probe.cpp'
       - 'tests/native/verify_pdb_invocations.py'
       - 'tests/native/verify_pdb_observers.py'
+      - 'tests/native/verify_pdb_fault_calibration.py'
       - 'tests/native/collect_pdb_file_trace.ps1'
       - 'tests/native/verify_pdb_file_trace.py'
       - '.github/workflows/pdb-file-trace.yml'
@@ -34,6 +35,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/native/verify_pdb_observers.py --self-test --output .mqb/observer-contracts.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/native/verify_pdb_fault_calibration.py --self-test --output .mqb/pdb-fault-contracts.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $tokens=$null; $errors=$null
           [void][Management.Automation.Language.Parser]::ParseFile(
             (Join-Path $PWD 'tests/native/collect_pdb_file_trace.ps1'),[ref]$tokens,[ref]$errors)
@@ -46,6 +49,7 @@ jobs:
             .mqb/file-trace-contracts.json
             .mqb/invocation-contracts.json
             .mqb/observer-contracts.json
+            .mqb/pdb-fault-contracts.json
           include-hidden-files: true
           retention-days: 30
   build:
@@ -235,6 +239,41 @@ jobs:
             !.mqb/pdb-query-contrast-trace/**/*.pdb
             !.mqb/pdb-query-contrast-trace/**/*.pch
             !.mqb/pdb-query-contrast-trace/**/*.exe
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  fault-calibration:
+    name: Two fixed cold B-PDB conflict calibration pairs
+    needs: [build, contract]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: file-trace-input
+          path: native-input
+      - shell: pwsh
+        env:
+          MQB_OWNERSHIP_DISPOSABLE_HOST: '1'
+        run: |
+          & ./tests/native/collect_pdb_file_trace.ps1 -InputRoot (Join-Path $PWD 'native-input') `
+            -OutputRoot (Join-Path $PWD '.mqb/pdb-fault-calibration') -RepoRoot $PWD -Study b-pdb-fault
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve injected and original outcomes separately
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pdb-fault-calibration-evidence
+          path: |
+            .mqb/pdb-fault-calibration/**
+            !.mqb/pdb-fault-calibration/**/*.obj
+            !.mqb/pdb-fault-calibration/**/*.pdb
+            !.mqb/pdb-fault-calibration/**/*.pch
+            !.mqb/pdb-fault-calibration/**/*.exe
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
