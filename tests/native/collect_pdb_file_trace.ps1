@@ -113,6 +113,10 @@ foreach ($index in 0..($expected-1)) {
         & python (Join-Path $PSScriptRoot 'verify_pdb_invocations.py') --trace $trace --fixture $fixture `
             --native-root $fixture --profile $profile --output (Join-Path $slot 'invocation-audit.json')
         $outcomeExit=$LASTEXITCODE
+        & python (Join-Path $PSScriptRoot 'verify_pdb_observers.py') --trace $trace --fixture $fixture `
+            --native-root $fixture --profile $profile --output (Join-Path $slot 'observer-audit.json')
+        $observerExit=$LASTEXITCODE
+        if ($observerExit -ne 0) { $errors.Add('Observer API boundary evidence or original control failed.') }
     }
     try {
         if ($code -ne 0) { throw "Native trace capture failed with $code; no retry." }

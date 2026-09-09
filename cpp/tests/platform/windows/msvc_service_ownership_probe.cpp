@@ -7,6 +7,7 @@
 #include <restartmanager.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <expected>
@@ -251,6 +252,54 @@ std::vector<Process> new_servers(const std::vector<Process>& before, const fs::p
 }
 
 
+// Only explicit invocation investigations collect observer calls. Set before
+// workers start; coordinator observations are synchronous on one thread.
+bool record_invocation_spans = false;
+struct ObserverCalls {
+    struct Call { const char* api{}; DWORD tid{}, status{}; std::uint64_t before{}, after{}; };
+    std::array<Call, 8> calls{}; // Start/Register/four GetList attempts/End <= 7.
+    std::size_t count{};
+    DWORD pid{::GetCurrentProcessId()};
+    std::uint64_t created{}, frequency{};
+    bool clock_ok{true}, overflow{};
+    ObserverCalls() {
+        FILETIME c{}, e{}, k{}, u{}; LARGE_INTEGER f{};
+        require(::GetProcessTimes(::GetCurrentProcess(), &c, &e, &k, &u) != FALSE,
+                "observer owner identity unavailable");
+        require(::QueryPerformanceFrequency(&f) != FALSE && f.QuadPart > 0, "observer QPF unavailable");
+        created = ticks(c); frequency = static_cast<std::uint64_t>(f.QuadPart);
+    }
+    std::uint64_t stamp() noexcept {
+        LARGE_INTEGER q{};
+        if (!::QueryPerformanceCounter(&q) || q.QuadPart < 0) { clock_ok = false; return 0; }
+        return static_cast<std::uint64_t>(q.QuadPart);
+    }
+    template<class Function> DWORD call(const char* api, Function&& function) noexcept {
+        static_assert(noexcept(function())); // Native return/GetLastError captured BEFORE QPC/serialization.
+        if (count == calls.size()) { overflow = true; return function(); }
+        auto& row = calls[count++]; row.api = api; row.tid = ::GetCurrentThreadId();
+        row.before = stamp(); row.status = function(); row.after = stamp();
+        return row.status;
+    }
+    std::string json() const {
+        std::string out = "{\"schema\":1,\"clock\":\"QPC\",\"frequency\":" + std::to_string(frequency)
+            + ",\"owner_pid\":" + std::to_string(pid) + ",\"owner_created_filetime\":" + std::to_string(created)
+            + ",\"clock_ok\":" + (clock_ok ? "true" : "false") + ",\"overflow\":" + (overflow ? "true" : "false")
+            + ",\"safe_to_transfer_write_lease\":false,\"calls\":[";
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto& row = calls[i]; if (i) out += ',';
+            out += "{\"api\":" + (quoted)(row.api) + ",\"tid\":" + std::to_string(row.tid)
+                + ",\"before_qpc\":" + std::to_string(row.before) + ",\"after_qpc\":" + std::to_string(row.after)
+                + ",\"native_status\":" + std::to_string(row.status) + "}";
+        }
+        return out + "]}";
+    }
+};
+template<class Function> DWORD observer_call(ObserverCalls* calls, const char* api, Function&& function) noexcept {
+    static_assert(noexcept(function()));
+    return calls ? calls->call(api, std::forward<Function>(function)) : function();
+}
+
 // Metadata-only snapshots are observations, not locks or writer-quiescence
 // certificates. Share all access and close every handle before returning.
 struct FileIdentity {
@@ -258,13 +307,21 @@ struct FileIdentity {
     DWORD open_error{}, identity_error{};
     FILE_ID_INFO id{};
     fs::path path;
+    std::optional<ObserverCalls> observer;
     explicit FileIdentity(const fs::path& file) : path(file) {
-        handle = Handle{::CreateFileW(file.c_str(), FILE_READ_ATTRIBUTES,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
-        if (!handle) { open_error = ::GetLastError(); return; }
-        if (!::GetFileInformationByHandleEx(handle.value, FileIdInfo, &id, sizeof(id)))
-            identity_error = ::GetLastError();
+        if (record_invocation_spans) observer.emplace();
+        auto* log = observer ? &*observer : nullptr;
+        open_error = observer_call(log, "CreateFileW", [&]() noexcept -> DWORD {
+            handle = Handle{::CreateFileW(file.c_str(), FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+            return handle ? ERROR_SUCCESS : ::GetLastError();
+        });
+        if (!handle) return;
+        identity_error = observer_call(log, "GetFileInformationByHandleEx", [&]() noexcept -> DWORD {
+            return ::GetFileInformationByHandleEx(handle.value, FileIdInfo, &id, sizeof(id))
+                ? ERROR_SUCCESS : ::GetLastError();
+        });
     }
     bool known() const { return bool(handle) && identity_error == ERROR_SUCCESS; }
     std::string json() const {
@@ -277,7 +334,8 @@ struct FileIdentity {
             + ",\"open_error\":" + std::to_string(open_error)
             + ",\"identity_error\":" + (handle ? std::to_string(identity_error) : "null")
             + ",\"volume_serial\":" + (known() ? (quoted)(std::to_string(id.VolumeSerialNumber)) : "null")
-            + ",\"file_id\":" + (known() ? (quoted)(file_id) : "null") + "}";
+            + ",\"file_id\":" + (known() ? (quoted)(file_id) : "null")
+            + (observer ? ",\"observer\":" + observer->json() : "") + "}";
     }
 };
 bool same_file(const FileIdentity& a, const FileIdentity& b) {
@@ -343,22 +401,29 @@ int pdb_identity_self_test(const fs::path& dir) {
 }
 
 struct Owners { DWORD error{}; bool includes_server{}; std::string identities{"[]"}; };
-Owners pdb_owners(const fs::path& pdb, const Process& server) {
+Owners pdb_owners(const fs::path& pdb, const Process& server, ObserverCalls* log = nullptr) {
     DWORD session{};
     wchar_t key[CCH_RM_SESSION_KEY + 1]{};
-    DWORD error = ::RmStartSession(&session, 0, key);
+    DWORD error = observer_call(log, "RmStartSession", [&]() noexcept { return ::RmStartSession(&session, 0, key); });
     if (error != ERROR_SUCCESS) return {error, false, "[]"};
-    struct End { DWORD session; ~End() { ::RmEndSession(session); } } end{session};
+    struct End {
+        DWORD session; ObserverCalls* log;
+        ~End() { observer_call(log, "RmEndSession", [&]() noexcept { return ::RmEndSession(session); }); }
+    } end{session, log};
     const auto path = pdb.wstring();
     LPCWSTR resource = path.c_str();
-    error = ::RmRegisterResources(session, 1, &resource, 0, nullptr, 0, nullptr);
+    error = observer_call(log, "RmRegisterResources", [&]() noexcept {
+        return ::RmRegisterResources(session, 1, &resource, 0, nullptr, 0, nullptr);
+    });
     if (error != ERROR_SUCCESS) return {error, false, "[]"};
     std::vector<RM_PROCESS_INFO> processes(8);
     UINT count{}, needed{};
     DWORD reasons{};
     for (unsigned attempt = 0; attempt != 4; ++attempt) {
         count = static_cast<UINT>(processes.size());
-        error = ::RmGetList(session, &needed, &count, processes.data(), &reasons);
+        error = observer_call(log, "RmGetList", [&]() noexcept {
+            return ::RmGetList(session, &needed, &count, processes.data(), &reasons);
+        });
         if (error != ERROR_MORE_DATA) break;
         if (needed > 4096) return {ERROR_MORE_DATA, false, "[]"};
         processes.resize(std::max<std::size_t>(needed, processes.size() * 2));
@@ -391,7 +456,6 @@ void save_result(const fs::path& dir, const std::string& label, const RunResult&
 }
 // Set only by explicit investigation entry points, before launching any worker.
 // Each helper is a separate process. Normal matrices do not take new timestamps.
-bool record_invocation_spans = false;
 std::uint64_t invocation_tick() {
     LARGE_INTEGER value{};
     require(::QueryPerformanceCounter(&value) && value.QuadPart >= 0, "invocation QPC failed");
@@ -648,7 +712,15 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     require(after_b.size() == 1 && same(server, after_b[0]), "B did not retain the same observed endpoint service");
     unsigned query_count = 0;
     auto resource_owners = [&](const fs::path& file) {
-        if (!pdb_study) return pdb_owners(file, server);
+        if (!pdb_study) {
+            if (!failure_study) return pdb_owners(file, server);
+            ObserverCalls calls;
+            const auto result = pdb_owners(file, server, &calls); // Includes native RmEndSession in the log.
+            write(dir / ("observer-query-" + std::to_string(query_count++) + ".json"),
+                "{\"path\":" + (quoted)(path_text(file)) + ",\"query_error\":" + std::to_string(result.error)
+                + ",\"observer\":" + calls.json() + "}\n");
+            return result;
+        }
         const auto started = std::chrono::steady_clock::now().time_since_epoch().count();
         const auto result = query_enabled ? pdb_owners(file, server) : Owners{ERROR_NOT_SUPPORTED, false, "[]"};
         write(dir / ("rm-query-" + std::to_string(query_count++) + ".json"),

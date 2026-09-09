@@ -6,6 +6,7 @@ on:
       - 'cpp/tests/platform/windows/pdb_file_event_probe.cpp'
       - 'cpp/tests/platform/windows/msvc_service_ownership_probe.cpp'
       - 'tests/native/verify_pdb_invocations.py'
+      - 'tests/native/verify_pdb_observers.py'
       - 'tests/native/collect_pdb_file_trace.ps1'
       - 'tests/native/verify_pdb_file_trace.py'
       - '.github/workflows/pdb-file-trace.yml'
@@ -31,6 +32,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/native/verify_pdb_invocations.py --self-test --output .mqb/invocation-contracts.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/native/verify_pdb_observers.py --self-test --output .mqb/observer-contracts.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $tokens=$null; $errors=$null
           [void][Management.Automation.Language.Parser]::ParseFile(
             (Join-Path $PWD 'tests/native/collect_pdb_file_trace.ps1'),[ref]$tokens,[ref]$errors)
@@ -42,6 +45,7 @@ jobs:
           path: |
             .mqb/file-trace-contracts.json
             .mqb/invocation-contracts.json
+            .mqb/observer-contracts.json
           include-hidden-files: true
           retention-days: 30
   build:
