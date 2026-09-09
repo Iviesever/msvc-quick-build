@@ -7,6 +7,7 @@
 #include <restartmanager.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <expected>
@@ -251,6 +252,54 @@ std::vector<Process> new_servers(const std::vector<Process>& before, const fs::p
 }
 
 
+// Only explicit invocation investigations collect observer calls. Set before
+// workers start; coordinator observations are synchronous on one thread.
+bool record_invocation_spans = false;
+struct ObserverCalls {
+    struct Call { const char* api{}; DWORD tid{}, status{}; std::uint64_t before{}, after{}; };
+    std::array<Call, 8> calls{}; // Start/Register/four GetList attempts/End <= 7.
+    std::size_t count{};
+    DWORD pid{::GetCurrentProcessId()};
+    std::uint64_t created{}, frequency{};
+    bool clock_ok{true}, overflow{};
+    ObserverCalls() {
+        FILETIME c{}, e{}, k{}, u{}; LARGE_INTEGER f{};
+        require(::GetProcessTimes(::GetCurrentProcess(), &c, &e, &k, &u) != FALSE,
+                "observer owner identity unavailable");
+        require(::QueryPerformanceFrequency(&f) != FALSE && f.QuadPart > 0, "observer QPF unavailable");
+        created = ticks(c); frequency = static_cast<std::uint64_t>(f.QuadPart);
+    }
+    std::uint64_t stamp() noexcept {
+        LARGE_INTEGER q{};
+        if (!::QueryPerformanceCounter(&q) || q.QuadPart < 0) { clock_ok = false; return 0; }
+        return static_cast<std::uint64_t>(q.QuadPart);
+    }
+    template<class Function> DWORD call(const char* api, Function&& function) noexcept {
+        static_assert(noexcept(function())); // Native return/GetLastError captured BEFORE QPC/serialization.
+        if (count == calls.size()) { overflow = true; return function(); }
+        auto& row = calls[count++]; row.api = api; row.tid = ::GetCurrentThreadId();
+        row.before = stamp(); row.status = function(); row.after = stamp();
+        return row.status;
+    }
+    std::string json() const {
+        std::string out = "{\"schema\":1,\"clock\":\"QPC\",\"frequency\":" + std::to_string(frequency)
+            + ",\"owner_pid\":" + std::to_string(pid) + ",\"owner_created_filetime\":" + std::to_string(created)
+            + ",\"clock_ok\":" + (clock_ok ? "true" : "false") + ",\"overflow\":" + (overflow ? "true" : "false")
+            + ",\"safe_to_transfer_write_lease\":false,\"calls\":[";
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto& row = calls[i]; if (i) out += ',';
+            out += "{\"api\":" + (quoted)(row.api) + ",\"tid\":" + std::to_string(row.tid)
+                + ",\"before_qpc\":" + std::to_string(row.before) + ",\"after_qpc\":" + std::to_string(row.after)
+                + ",\"native_status\":" + std::to_string(row.status) + "}";
+        }
+        return out + "]}";
+    }
+};
+template<class Function> DWORD observer_call(ObserverCalls* calls, const char* api, Function&& function) noexcept {
+    static_assert(noexcept(function()));
+    return calls ? calls->call(api, std::forward<Function>(function)) : function();
+}
+
 // Metadata-only snapshots are observations, not locks or writer-quiescence
 // certificates. Share all access and close every handle before returning.
 struct FileIdentity {
@@ -258,13 +307,21 @@ struct FileIdentity {
     DWORD open_error{}, identity_error{};
     FILE_ID_INFO id{};
     fs::path path;
+    std::optional<ObserverCalls> observer;
     explicit FileIdentity(const fs::path& file) : path(file) {
-        handle = Handle{::CreateFileW(file.c_str(), FILE_READ_ATTRIBUTES,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
-        if (!handle) { open_error = ::GetLastError(); return; }
-        if (!::GetFileInformationByHandleEx(handle.value, FileIdInfo, &id, sizeof(id)))
-            identity_error = ::GetLastError();
+        if (record_invocation_spans) observer.emplace();
+        auto* log = observer ? &*observer : nullptr;
+        open_error = observer_call(log, "CreateFileW", [&]() noexcept -> DWORD {
+            handle = Handle{::CreateFileW(file.c_str(), FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+            return handle ? ERROR_SUCCESS : ::GetLastError();
+        });
+        if (!handle) return;
+        identity_error = observer_call(log, "GetFileInformationByHandleEx", [&]() noexcept -> DWORD {
+            return ::GetFileInformationByHandleEx(handle.value, FileIdInfo, &id, sizeof(id))
+                ? ERROR_SUCCESS : ::GetLastError();
+        });
     }
     bool known() const { return bool(handle) && identity_error == ERROR_SUCCESS; }
     std::string json() const {
@@ -277,7 +334,8 @@ struct FileIdentity {
             + ",\"open_error\":" + std::to_string(open_error)
             + ",\"identity_error\":" + (handle ? std::to_string(identity_error) : "null")
             + ",\"volume_serial\":" + (known() ? (quoted)(std::to_string(id.VolumeSerialNumber)) : "null")
-            + ",\"file_id\":" + (known() ? (quoted)(file_id) : "null") + "}";
+            + ",\"file_id\":" + (known() ? (quoted)(file_id) : "null")
+            + (observer ? ",\"observer\":" + observer->json() : "") + "}";
     }
 };
 bool same_file(const FileIdentity& a, const FileIdentity& b) {
@@ -343,22 +401,29 @@ int pdb_identity_self_test(const fs::path& dir) {
 }
 
 struct Owners { DWORD error{}; bool includes_server{}; std::string identities{"[]"}; };
-Owners pdb_owners(const fs::path& pdb, const Process& server) {
+Owners pdb_owners(const fs::path& pdb, const Process& server, ObserverCalls* log = nullptr) {
     DWORD session{};
     wchar_t key[CCH_RM_SESSION_KEY + 1]{};
-    DWORD error = ::RmStartSession(&session, 0, key);
+    DWORD error = observer_call(log, "RmStartSession", [&]() noexcept { return ::RmStartSession(&session, 0, key); });
     if (error != ERROR_SUCCESS) return {error, false, "[]"};
-    struct End { DWORD session; ~End() { ::RmEndSession(session); } } end{session};
+    struct End {
+        DWORD session; ObserverCalls* log;
+        ~End() { observer_call(log, "RmEndSession", [&]() noexcept { return ::RmEndSession(session); }); }
+    } end{session, log};
     const auto path = pdb.wstring();
     LPCWSTR resource = path.c_str();
-    error = ::RmRegisterResources(session, 1, &resource, 0, nullptr, 0, nullptr);
+    error = observer_call(log, "RmRegisterResources", [&]() noexcept {
+        return ::RmRegisterResources(session, 1, &resource, 0, nullptr, 0, nullptr);
+    });
     if (error != ERROR_SUCCESS) return {error, false, "[]"};
     std::vector<RM_PROCESS_INFO> processes(8);
     UINT count{}, needed{};
     DWORD reasons{};
     for (unsigned attempt = 0; attempt != 4; ++attempt) {
         count = static_cast<UINT>(processes.size());
-        error = ::RmGetList(session, &needed, &count, processes.data(), &reasons);
+        error = observer_call(log, "RmGetList", [&]() noexcept {
+            return ::RmGetList(session, &needed, &count, processes.data(), &reasons);
+        });
         if (error != ERROR_MORE_DATA) break;
         if (needed > 4096) return {ERROR_MORE_DATA, false, "[]"};
         processes.resize(std::max<std::size_t>(needed, processes.size() * 2));
@@ -391,7 +456,6 @@ void save_result(const fs::path& dir, const std::string& label, const RunResult&
 }
 // Set only by explicit investigation entry points, before launching any worker.
 // Each helper is a separate process. Normal matrices do not take new timestamps.
-bool record_invocation_spans = false;
 std::uint64_t invocation_tick() {
     LARGE_INTEGER value{};
     require(::QueryPerformanceCounter(&value) && value.QuadPart >= 0, "invocation QPC failed");
@@ -560,19 +624,129 @@ int root(int argc, wchar_t** argv, bool drain) {
     return stopped && exit_code(first) == 0 ? 0 : 1;
 }
 
-int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = false, bool failure_study = false) {
-    require(argc == (pdb_study ? 8 : 7), "measure arguments");
+// Dedicated cold-B calibration, never an ordinary positive control. Both arms
+// own a newly created empty placeholder; only its release point differs. This
+// does not reproduce the historical warm/concurrent PDB failure or prove a lease.
+int pdb_fault_calibration(int argc, wchar_t** argv) {
+    require(argc == 4, "PDB fault calibration arguments");
+    require_default_host();
+    const fs::path dir = fs::absolute(argv[2]);
+    const std::string arm = utf8(argv[3]);
+    require(arm == "baseline" || arm == "conflict", "unknown PDB fault calibration arm");
+    record_invocation_spans = true;
+    const auto before = census(L"mspdbsrv.exe");
+    require(before.empty(), "fault calibration refuses preexisting host services");
+    WindowsProcessRunner runner;
+    mqb::msvc::DiscoveryOptions options;
+    options.preference = mqb::msvc::ToolchainPreference::visual_studio;
+    options.cache_file = fs::path{};
+    auto found = mqb::msvc::MsvcToolchainLocator{runner}.discover(options);
+    require(found.has_value(), "fault calibration toolchain discovery failed");
+    auto tc = std::move(*found);
+    require_default_host();
+    configure_fixture_environment(tc.environment, true, "unused");
+    require(census(L"mspdbsrv.exe").empty(), "discovery started an unexpected service");
+    write(dir / "toolchain.txt", path_text(tc.identity.compiler) + '\n' + tc.identity.version + '\n'
+          + tc.identity.binary_stamp + "\nendpoint=<unset/default>\n");
+    prepare(tc, dir / "seed", "zi-debug");
+    auto servers = new_servers(before, tc.identity.compiler);
+    require(servers.size() == 1 && alive(servers[0].handle.value), "calibration seed service identity unavailable");
+    const auto& server = servers[0];
+    prepare(tc, dir / "A", "zi-debug");
+    require(fs::create_directory(dir / "B"), "calibration B directory must be new");
+    workload(dir / "B", "zi-debug"); // Original fixed 6000-function B TU.
+    const auto target = dir / "B/compiler.pdb";
+    FILETIME created{}, exited{}, kernel{}, user{};
+    require(::GetProcessTimes(::GetCurrentProcess(), &created, &exited, &kernel, &user), "holder identity unavailable");
+    const auto open_before = invocation_tick();
+    Handle holder{::CreateFileW(target.c_str(), GENERIC_READ | GENERIC_WRITE | DELETE, 0, nullptr,
+                               CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr)};
+    const auto open_error = holder ? ERROR_SUCCESS : ::GetLastError();
+    const auto open_after = invocation_tick();
+    require(bool(holder), "new calibration placeholder open failed native=" + std::to_string(open_error));
+    FILE_ID_INFO held_id{};
+    require(::GetFileInformationByHandleEx(holder.value, FileIdInfo, &held_id, sizeof(held_id)), "holder file identity unavailable");
+    std::string id;
+    constexpr char digits[] = "0123456789abcdef";
+    for (const auto byte : held_id.FileId.Identifier) { id += digits[byte >> 4]; id += digits[byte & 15]; }
+    const std::string begin = "{\"schema\":1,\"kind\":\"injected-cold-B-PDB-calibration\",\"arm\":" + (quoted)(arm)
+        + ",\"path\":" + (quoted)(path_text(target)) + ",\"owner_pid\":" + std::to_string(::GetCurrentProcessId())
+        + ",\"owner_tid\":" + std::to_string(::GetCurrentThreadId()) + ",\"owner_created_filetime\":" + std::to_string(ticks(created))
+        + ",\"open_before_qpc\":" + std::to_string(open_before) + ",\"open_after_qpc\":" + std::to_string(open_after)
+        + ",\"desired_access\":3221291008,\"share_mode\":0,\"creation_disposition\":1,\"open_error\":0"
+        + ",\"volume_serial\":" + (quoted)(std::to_string(held_id.VolumeSerialNumber)) + ",\"file_id\":" + (quoted)(id)
+        + ",\"service\":" + identities(servers) + ",\"historical_cause_resolved\":false,\"safe_to_transfer_write_lease\":false}\n";
+    write(dir / "holder-begin.json", begin);
+    // Failures preserve their original native status. Delete only this fresh
+    // empty placeholder by its held HANDLE, not by a re-resolved path.
+    auto release_placeholder = [&] {
+        LARGE_INTEGER size{};
+        require(::GetFileSizeEx(holder.value, &size) && size.QuadPart == 0, "placeholder changed while exclusively held");
+        const auto delete_before = invocation_tick();
+        FILE_DISPOSITION_INFO disposition{}; disposition.DeleteFile = TRUE;
+        const auto marked = ::SetFileInformationByHandle(holder.value, FileDispositionInfo, &disposition, sizeof(disposition));
+        const auto delete_error = marked ? ERROR_SUCCESS : ::GetLastError();
+        const auto delete_after = invocation_tick();
+        const auto low = invocation_tick();
+        const auto closed = ::CloseHandle(holder.value);
+        const auto close_error = closed ? ERROR_SUCCESS : ::GetLastError();
+        const auto high = invocation_tick();
+        if (closed) holder.value = nullptr;
+        const auto attributes = ::GetFileAttributesW(target.c_str());
+        const auto absence_error = attributes == INVALID_FILE_ATTRIBUTES ? ::GetLastError() : ERROR_SUCCESS;
+        const auto removed = invocation_tick();
+        write(dir / "holder-end.json", "{\"schema\":1,\"delete_before_qpc\":" + std::to_string(delete_before)
+            + ",\"delete_after_qpc\":" + std::to_string(delete_after) + ",\"release_before_qpc\":" + std::to_string(low)
+            + ",\"release_after_qpc\":" + std::to_string(high) + ",\"remove_after_qpc\":" + std::to_string(removed)
+            + ",\"delete_error\":" + std::to_string(delete_error) + ",\"close_error\":" + std::to_string(close_error)
+            + ",\"absence_error\":" + std::to_string(absence_error)
+            + ",\"held_bytes_before_release\":0,\"safe_to_transfer_write_lease\":false}\n");
+        require(marked && closed && absence_error == ERROR_FILE_NOT_FOUND, "calibration placeholder cleanup failed");
+    };
+    if (arm == "baseline") release_placeholder();
+    const auto first = compile(tc, dir / "B", "zi-debug", "work0");
+    // compile() has saved the complete ORIGINAL result and diagnostics. The
+    // first failure is never overwritten by the one later recovery invocation.
+    if (arm == "conflict") release_placeholder();
+    std::ifstream source{dir / "B/work0.cpp", std::ios::binary};
+    const std::string contents{std::istreambuf_iterator<char>{source}, std::istreambuf_iterator<char>{}};
+    require(!source.bad() && !contents.empty(), "calibration source copy failed");
+    write(dir / "B/recovery.cpp", contents);
+    const auto recovery = compile(tc, dir / "B", "zi-debug", "recovery");
+    const bool service_alive = alive(server.handle.value);
+    const bool expected_first = first && first->termination == mqb::process::ProcessTermination::exited &&
+        (arm == "baseline" ? first->exit_code == 0 : first->exit_code != 0);
+    const bool recovery_ok = recovery && recovery->termination == mqb::process::ProcessTermination::exited && recovery->exit_code == 0;
+    write(dir / "b-pdb-calibration.json", "{\"schema\":1,\"kind\":\"injected-cold-B-PDB-calibration\",\"arm\":" + (quoted)(arm)
+        + ",\"original_B_exit\":" + std::to_string(exit_code(first)) + ",\"recovery_B_exit\":" + std::to_string(exit_code(recovery))
+        + ",\"original_service_survived\":" + (service_alive ? "true" : "false")
+        + ",\"original_positive_control\":false,\"historical_cause_resolved\":false,\"safe_to_transfer_write_lease\":false}\n");
+    return expected_first && recovery_ok && service_alive ? 0 : 1;
+}
+
+int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = false, bool failure_study = false,
+            bool query_study = false) {
+    require(argc == ((pdb_study || query_study) ? 8 : 7), "measure arguments");
     if (default_endpoint) require_default_host();
     const fs::path dir = fs::absolute(argv[2]);
     const std::string profile = utf8(argv[3]), origin = utf8(argv[4]), ending = utf8(argv[5]);
     const std::wstring fixture_id = argv[6];
     const bool drain = ending == "drain";
     if (failure_study) {
-        require(default_endpoint && !pdb_study && origin == "A-started" && drain &&
-                (profile == "pch-release" || profile == "modules-debug"), "unsupported invocation study case");
+        const bool original_study = origin == "A-started" &&
+            (profile == "pch-release" || profile == "modules-debug");
+        const bool preexisting_study = origin == "preexisting" && profile == "zi-debug";
+        require(default_endpoint && !pdb_study && drain && (original_study || preexisting_study),
+                "unsupported invocation study case");
         record_invocation_spans = true;
     }
-    const bool query_enabled = !pdb_study || std::wstring{argv[7]} == L"rm-on";
+    if (query_study) {
+        require(failure_study && origin == "preexisting" && profile == "zi-debug" && drain,
+                "query contrast only supports preexisting Zi Debug drain");
+        require(std::wstring{argv[7]} == L"rm-on" || std::wstring{argv[7]} == L"rm-off", "unknown query contrast mode");
+    }
+    const bool query_enabled = !(pdb_study || query_study) || std::wstring{argv[7]} == L"rm-on";
+    const bool query_observed = !query_study || query_enabled;
     if (pdb_study) {
         require(default_endpoint && profile == "pch-release" && origin == "A-started" && drain,
                 "PDB study only supports the predeclared PCH Release A-started drain case");
@@ -585,6 +759,9 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     require(ending == "cancel" || ending == "normal" || ending == "unmanaged-normal"
             || (default_endpoint && drain), "unknown ending");
     fs::create_directories(dir);
+    if (query_study) write(dir / "query-policy.json", "{\"schema\":1,\"profile\":\"zi-debug\",\"origin\":\"preexisting\""
+        ",\"rm_queries_enabled\":" + std::string{query_enabled ? "true" : "false"}
+        + ",\"expected_query_slots\":4,\"historical_cause_resolved\":false,\"safe_to_transfer_write_lease\":false}\n");
     WindowsProcessRunner runner;
     mqb::msvc::DiscoveryOptions options;
     options.preference = mqb::msvc::ToolchainPreference::visual_studio;
@@ -648,7 +825,23 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     require(after_b.size() == 1 && same(server, after_b[0]), "B did not retain the same observed endpoint service");
     unsigned query_count = 0;
     auto resource_owners = [&](const fs::path& file) {
-        if (!pdb_study) return pdb_owners(file, server);
+        if (!pdb_study) {
+            if (!failure_study) return pdb_owners(file, server);
+            if (query_study && !query_enabled) {
+                // No Restart Manager API is called. Unknown is not an empty owner set.
+                write(dir / ("observer-query-" + std::to_string(query_count++) + ".json"),
+                    "{\"path\":" + (quoted)(path_text(file))
+                    + ",\"attempted\":false,\"query_error\":null,\"owners\":null,\"observer\":null}\n");
+                return Owners{ERROR_NOT_SUPPORTED, false, "null"}; // Internal only; public query fields are null.
+            }
+            ObserverCalls calls;
+            const auto result = pdb_owners(file, server, &calls); // Includes native RmEndSession in the log.
+            write(dir / ("observer-query-" + std::to_string(query_count++) + ".json"),
+                "{\"path\":" + (quoted)(path_text(file)) + ",\"query_error\":" + std::to_string(result.error)
+                + (query_study ? ",\"attempted\":true,\"owners\":" + result.identities : "")
+                + ",\"observer\":" + calls.json() + "}\n");
+            return result;
+        }
         const auto started = std::chrono::steady_clock::now().time_since_epoch().count();
         const auto result = query_enabled ? pdb_owners(file, server) : Owners{ERROR_NOT_SUPPORTED, false, "[]"};
         write(dir / ("rm-query-" + std::to_string(query_count++) + ".json"),
@@ -745,17 +938,17 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
         + ",\"A_compiler_overlap_observed\":" + (a_overlap ? "true" : "false")
         + ",\"A_observed_compilers_signaled\":" + (drain ? (a_handles_signaled ? "true" : "false") : "null")
         + ",\"A_pending_compile_dispatched\":" + (drain ? (pending_dispatched ? "true" : "false") : "null")
-        + ",\"A_pdb_owner_at_request_error\":" + (drain ? std::to_string(a_owners_at_request.error) : "null")
-        + ",\"A_pdb_owners_at_request\":" + a_owners_at_request.identities
-        + ",\"A_pdb_owner_after_A_error\":" + (default_endpoint ? std::to_string(a_owners_after.error) : "null")
-        + ",\"A_pdb_owners_after_A\":" + a_owners_after.identities
-        + ",\"A_pdb_service_owner_after_A\":" + (default_endpoint ? (a_owners_after.includes_server ? "true" : "false") : "null")
+        + ",\"A_pdb_owner_at_request_error\":" + (drain && query_observed ? std::to_string(a_owners_at_request.error) : "null")
+        + ",\"A_pdb_owners_at_request\":" + (query_observed ? a_owners_at_request.identities : "null")
+        + ",\"A_pdb_owner_after_A_error\":" + (default_endpoint && query_observed ? std::to_string(a_owners_after.error) : "null")
+        + ",\"A_pdb_owners_after_A\":" + (query_observed ? a_owners_after.identities : "null")
+        + ",\"A_pdb_service_owner_after_A\":" + (default_endpoint && query_observed ? (a_owners_after.includes_server ? "true" : "false") : "null")
         + ",\"drain_control_ok\":" + (drain_ok ? "true" : "false")
-        + ",\"warm_pdb_owner_error\":" + std::to_string(warm_owners.error)
-        + ",\"warm_pdb_owners\":" + warm_owners.identities
-        + ",\"active_pdb_owner_error\":" + std::to_string(active_owners.error)
-        + ",\"active_pdb_owners\":" + active_owners.identities
-        + ",\"B_pdb_service_identity_observed\":" + ((warm_owners.includes_server || active_owners.includes_server) ? "true" : "false")
+        + ",\"warm_pdb_owner_error\":" + (query_observed ? std::to_string(warm_owners.error) : "null")
+        + ",\"warm_pdb_owners\":" + (query_observed ? warm_owners.identities : "null")
+        + ",\"active_pdb_owner_error\":" + (query_observed ? std::to_string(active_owners.error) : "null")
+        + ",\"active_pdb_owners\":" + (query_observed ? active_owners.identities : "null")
+        + ",\"B_pdb_service_identity_observed\":" + ((query_observed) ? ((warm_owners.includes_server || active_owners.includes_server) ? "true" : "false") : "null")
         + ",\"A_exit\":" + std::to_string(exit_code(a_result))
         + ",\"B0_exit\":" + std::to_string(exit_code(b0_result)) + ",\"B1_exit\":" + std::to_string(exit_code(b1_result))
         + ",\"B_link_exit\":" + std::to_string(linked) + ",\"B_run_exit\":" + std::to_string(executed)
@@ -776,6 +969,7 @@ int wmain(int argc, wchar_t** argv) {
     try {
         require(argc >= 2, "use --case/--default-case/--measure/--root");
         const std::wstring mode = argv[1];
+        if (mode == L"--measure-pdb-fault") return pdb_fault_calibration(argc, argv);
         if (mode == L"--pdb-identity-self-test") {
             require(argc == 3, "identity test arguments"); return pdb_identity_self_test(fs::absolute(argv[2]));
         }
@@ -784,15 +978,19 @@ int wmain(int argc, wchar_t** argv) {
             record_invocation_spans = true;
             return root(argc, argv, true);
         }
+        if (mode == L"--measure-query-contrast") return measure(argc, argv, true, false, true, true);
         if (mode == L"--measure-invocations") return measure(argc, argv, true, false, true);
         if (mode == L"--root" || mode == L"--drain-root") return root(argc, argv, mode == L"--drain-root");
         if (mode == L"--measure-pdb") return measure(argc, argv, true, true);
         if (mode == L"--measure" || mode == L"--measure-default") return measure(argc, argv, mode == L"--measure-default");
+        const bool fault_calibration = mode == L"--pdb-fault-case";
         const bool pdb_study = mode == L"--pdb-case";
-        const bool failure_study = mode == L"--invocation-case";
-        const bool default_endpoint = mode == L"--default-case" || pdb_study || failure_study;
-        require((mode == L"--case" || default_endpoint) && argc == (pdb_study ? 8 : 7), "case arguments");
+        const bool query_study = mode == L"--query-contrast-case";
+        const bool failure_study = mode == L"--invocation-case" || query_study;
+        const bool default_endpoint = mode == L"--default-case" || pdb_study || failure_study || fault_calibration;
+        require((mode == L"--case" || default_endpoint) && argc == (fault_calibration ? 4 : ((pdb_study || query_study) ? 8 : 7)), "case arguments");
         const fs::path dir = fs::absolute(argv[2]);
+        if (fault_calibration) require(!fs::exists(dir), "fault case must not reuse any directory");
         fs::create_directories(dir);
         if (default_endpoint) {
             require_default_host();
@@ -806,7 +1004,8 @@ int wmain(int argc, wchar_t** argv) {
         // No global service termination, PID-authorized kill, or product changes.
         ProcessSpec spec;
         spec.executable = self();
-        spec.arguments = {failure_study ? "--measure-invocations" : (pdb_study ? "--measure-pdb" : (default_endpoint ? "--measure-default" : "--measure"))};
+        spec.arguments = {fault_calibration ? "--measure-pdb-fault" : query_study ? "--measure-query-contrast" : (failure_study ? "--measure-invocations" :
+            (pdb_study ? "--measure-pdb" : (default_endpoint ? "--measure-default" : "--measure")))};
         for (int i = 2; i < argc; ++i) spec.arguments.push_back(utf8(argv[i]));
         std::stop_source lifetime;
         spec.cancellation = lifetime.get_token();

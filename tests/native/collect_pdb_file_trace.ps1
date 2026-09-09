@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$InputRoot,
     [Parameter(Mandatory)][string]$OutputRoot,
     [string]$RepoRoot = (Join-Path $PSScriptRoot '../..'),
-    [ValidateSet('calibration', 'invocations')][string]$Study = 'calibration'
+    [ValidateSet('calibration', 'invocations', 'preexisting', 'query-contrast', 'b-pdb-fault')][string]$Study = 'calibration'
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -46,11 +46,22 @@ if ($Study -eq 'invocations') {
     $plan = @('pch-release','modules-debug','modules-debug','pch-release',
               'pch-release','modules-debug','modules-debug','pch-release')
 }
+if ($Study -eq 'preexisting') {
+    # T/U, U/T, T/U, U/T; the original untraced mode gets no ETW or sidecars.
+    $plan = @('traced','untraced','untraced','traced','traced','untraced','untraced','traced')
+}
+if ($Study -eq 'query-contrast') {
+    # Both arms trace identically; only the four coordinator RM queries differ.
+    $plan = @('rm-on','rm-off','rm-off','rm-on','rm-on','rm-off','rm-off','rm-on')
+}
+if ($Study -eq 'b-pdb-fault') { $plan = @('baseline','conflict','conflict','baseline') }
 $expected = $plan.Count
 Write-Json (Join-Path $OutputRoot 'plan.json') @{
     study=$Study; modes=$plan; cases=$expected; pairs=($expected/2); controlled_conflicts_per_trace=2; adaptive_retries=$false
+    preexisting_profile=$(if ($Study -in @('preexisting','query-contrast')) { 'zi-debug' } else { $null })
+    traced_slots=$(if ($Study -eq 'preexisting') { 4 } else { $expected })
     readiness_wait_limit_ms=10000; negative_readiness_cases=1
-    note='Positive native sharing conflicts are separate from original MSVC outcomes; no forced C1041.'
+    note=$(if ($Study -eq 'b-pdb-fault') { 'Deliberate cold B-PDB conflict calibration, not a historical C1041 reproduction or an original positive control.' } else { 'Positive native sharing conflicts are separate from original MSVC outcomes; no forced C1041.' })
 }
 # One separately labeled refusal control: omit the file-provider enable request.
 # It must wait to its fixed deadline without issuing calibration or launching the
@@ -76,9 +87,45 @@ Write-Json (Join-Path $negative 'result.json') @{
     sentinel_exists=(Test-Path -LiteralPath $sentinel); negative_readiness_verified=$negativeOk
 }
 if (-not $negativeOk) { throw 'Missing-readiness refusal control failed; no compiler cases attempted.' }
+if ($Study -eq 'b-pdb-fault') {
+    # These separately labeled injected cases never enter the original positive
+    # matrix. Native exit zero means calibration expectations, not B compile zero.
+    $rows = [Collections.Generic.List[object]]::new()
+    $roots = [Collections.Generic.List[string]]::new()
+    foreach ($index in 0..3) {
+        $arm=$plan[$index]; $slot=Join-Path $OutputRoot ('{0:D2}-{1}' -f ($index+1),$arm)
+        New-Item -ItemType Directory -Path $slot | Out-Null
+        $fixture=Join-Path $slot 'fixture'; $trace=Join-Path $slot 'trace'; $roots.Add($fixture)
+        $arguments=@($trace,$probe,'--pdb-fault-case',$fixture,$arm)
+        Write-Json (Join-Path $slot 'arguments.json') $arguments
+        $output=@(& $tracer @arguments 2>&1); $nativeExit=$LASTEXITCODE
+        $output | Set-Content -LiteralPath (Join-Path $slot 'output.txt') -Encoding utf8
+        & python (Join-Path $PSScriptRoot 'verify_pdb_fault_calibration.py') --trace $trace --fixture $fixture `
+            --native-root $fixture --arm $arm --output (Join-Path $slot 'fault-audit.json')
+        $auditExit=$LASTEXITCODE
+        $accepted=$nativeExit -eq 0 -and $auditExit -eq 0
+        $rows.Add([pscustomobject]@{ name=('{0:D2}-{1}' -f ($index+1),$arm); arm=$arm
+            native_exit=$nativeExit; audit_exit=$auditExit; calibration_verified=$accepted; original_positive_control=$false })
+        Write-Json (Join-Path $OutputRoot 'summary.json') @{
+            study=$Study; expected=4; completed=$rows.Count; cases=@($rows.ToArray()); not_run=(4-$rows.Count)
+            negative_readiness_verified=$negativeOk; original_positive_control=$false
+            historical_cause_resolved=$false; authorizes_held_pr_merge=$false; safe_to_transfer_write_lease=$false
+        }
+        if (-not $accepted) { throw 'Fault calibration evidence incomplete or expectation failed; remaining slots not attempted.' }
+    }
+    foreach ($pair in 0..1) {
+        $left=$roots[$pair*2]; $right=$roots[$pair*2+1]
+        & python (Join-Path $PSScriptRoot 'verify_pdb_invocations.py') --compare-pair $left $right `
+            --left-native-root $left --right-native-root $right --output (Join-Path $OutputRoot "input-pair-$pair.json")
+        if ($LASTEXITCODE -ne 0) { throw 'Fault calibration paired inputs differ.' }
+    }
+    Write-Json (Join-Path $OutputRoot 'input-equivalence.json') @{ expected_pairs=2; all_pairs_verified=$true }
+    return
+}
+
 # Reuse actual prior validators without executing their discovery/build bodies.
 foreach ($definition in @(
-    @{ file='collect_msvc_service_ownership.ps1'; names=@('Get-OwnershipDiagnosticErrors','Test-OwnershipCleanupEnvelope') },
+    @{ file='collect_msvc_service_ownership.ps1'; names=@('Get-OwnershipDiagnosticErrors','Test-OwnershipCleanupEnvelope','Assert-OwnershipObservation') },
     @{ file='collect_pdb_open_investigation.ps1'; names=@('Assert-PdbQuery','Assert-PdbPair') }
 )) {
     $tokens=$null; $errors=$null
@@ -93,41 +140,66 @@ foreach ($definition in @(
     }
 }
 $rows = [Collections.Generic.List[object]]::new()
+$fixtureRoots = [Collections.Generic.List[string]]::new()
 foreach ($index in 0..($expected-1)) {
     $mode = $plan[$index]; $name = ('{0:D2}-{1}' -f ($index+1),$mode)
     $slot = Join-Path $OutputRoot $name
     $fixture = Join-Path $slot 'fixture'; $trace = Join-Path $slot 'trace'
     New-Item -ItemType Directory -Path $slot | Out-Null
-    $profile = if ($Study -eq 'invocations') { $mode } else { 'pch-release' }
-    $probeMode = if ($Study -eq 'invocations') { '--invocation-case' } else { '--pdb-case' }
-    $arguments = @($trace,$probe,$probeMode,$fixture,$profile,'A-started','drain',('trace-'+[guid]::NewGuid().ToString('N')))
-    if ($Study -eq 'calibration') { $arguments += $mode }
+    $isQueryContrast = $Study -eq 'query-contrast'
+    $isPreexisting = $Study -in @('preexisting','query-contrast')
+    $isTraced = -not ($isPreexisting -and $mode -eq 'untraced')
+    $hasInvocations = $Study -eq 'invocations' -or ($isPreexisting -and $isTraced)
+    $profile = if ($isPreexisting) { 'zi-debug' } elseif ($Study -eq 'invocations') { $mode } else { 'pch-release' }
+    $caseOrigin = if ($isPreexisting) { 'preexisting' } else { 'A-started' }
+    $probeMode = if ($isQueryContrast) { '--query-contrast-case' } elseif (-not $isTraced) { '--default-case' } elseif ($hasInvocations) { '--invocation-case' } else { '--pdb-case' }
+    $arguments = @($probeMode,$fixture,$profile,$caseOrigin,'drain',('trace-'+[guid]::NewGuid().ToString('N')))
+    if ($Study -eq 'calibration' -or $isQueryContrast) { $arguments += $mode }
+    $program = $probe
+    if ($isTraced) { $arguments = @($trace,$probe) + $arguments; $program = $tracer }
     Write-Json (Join-Path $slot 'arguments.json') $arguments
-    $output = @(& $tracer @arguments 2>&1); $code = $LASTEXITCODE
+    $fixtureRoots.Add($fixture)
+    $output = @(& $program @arguments 2>&1); $code = $LASTEXITCODE
     $output | Set-Content -LiteralPath (Join-Path $slot 'output.txt') -Encoding utf8
     $errors = [Collections.Generic.List[string]]::new(); $originalOk=$null; $cleanup=$null
     $outcomeExit=$null
-    if ($Study -eq 'invocations') {
+    if ($hasInvocations) {
         # Always preserve original outcome diagnostics, even when the recorder
         # failed. An independently complete trace is not compiler success.
         & python (Join-Path $PSScriptRoot 'verify_pdb_invocations.py') --trace $trace --fixture $fixture `
-            --native-root $fixture --profile $profile --output (Join-Path $slot 'invocation-audit.json')
+            --native-root $fixture --profile $profile --origin $caseOrigin --output (Join-Path $slot 'invocation-audit.json')
         $outcomeExit=$LASTEXITCODE
+        $queryOptions = @()
+        if ($isQueryContrast) { $queryOptions = @('--query-mode',$mode) }
+        & python (Join-Path $PSScriptRoot 'verify_pdb_observers.py') --trace $trace --fixture $fixture `
+            --native-root $fixture --profile $profile --origin $caseOrigin @queryOptions --output (Join-Path $slot 'observer-audit.json')
+        $observerExit=$LASTEXITCODE
+        if ($observerExit -ne 0) { $errors.Add('Observer API boundary evidence or original control failed.') }
     }
     try {
-        if ($code -ne 0) { throw "Native trace capture failed with $code; no retry." }
-        if ($Study -eq 'invocations' -and $outcomeExit -ne 0) { throw 'Invocation evidence or original compiler control failed.' }
-        & python (Join-Path $PSScriptRoot 'verify_pdb_file_trace.py') --trace $trace --case-root $fixture --require-readiness --output (Join-Path $slot 'trace-audit.json')
-        if ($LASTEXITCODE -ne 0) { throw 'Trace integrity/calibration gate failed.' }
+        if ($code -ne 0) { throw "Native recorder/fixture failed with $code; no retry." }
+        if ($hasInvocations -and $outcomeExit -ne 0) { throw 'Invocation evidence or original compiler control failed.' }
+        if ($isTraced) {
+            & python (Join-Path $PSScriptRoot 'verify_pdb_file_trace.py') --trace $trace --case-root $fixture --require-readiness --output (Join-Path $slot 'trace-audit.json')
+            if ($LASTEXITCODE -ne 0) { throw 'Trace integrity/calibration gate failed.' }
+        } else {
+            if (Test-Path -LiteralPath $trace) { throw 'Untraced control created a trace directory.' }
+            $unexpected = @(Get-ChildItem -LiteralPath $fixture -Recurse -File | Where-Object {
+                $_.Name -match '\.(invocation-begin|invocation-end)\.json$' -or
+                $_.Name -like 'observer-query-*' -or $_.Name -like 'pdb-before-*' -or
+                $_.Name -like 'pdb-after-*' -or $_.Name -eq 'events.etl'
+            })
+            if ($unexpected.Count) { throw 'Untraced control contains investigation sidecars.' }
+        }
         $envelope=Get-Content -LiteralPath (Join-Path $fixture 'default-envelope.json') -Raw | ConvertFrom-Json
         $cleanup=Test-OwnershipCleanupEnvelope $envelope
         if (-not $cleanup) { throw 'Original fixture cleanup unproven.' }
         $observation=Get-Content -LiteralPath (Join-Path $fixture 'observation.json') -Raw | ConvertFrom-Json
-        if ($observation.profile -cne $profile -or $observation.origin -cne 'A-started' -or $observation.ending -cne 'drain' -or
+        if ($observation.profile -cne $profile -or $observation.origin -cne $caseOrigin -or $observation.ending -cne 'drain' -or
             $observation.endpoint_mode -cne 'default' -or $observation.safe_to_transfer_write_lease -isnot [bool] -or
             $observation.safe_to_transfer_write_lease -or $observation.safe_to_integrate_cancellation -isnot [bool] -or
             $observation.safe_to_integrate_cancellation) { throw 'Wrong original fixture identity/safety fields.' }
-        $diagnostics=@(Get-OwnershipDiagnosticErrors $fixture $profile 'A-started' 'drain' $observation)
+        $diagnostics=@(Get-OwnershipDiagnosticErrors $fixture $profile $caseOrigin 'drain' $observation)
         # This prior helper is strict about successful drain controls. Preserve
         # failures as failures; do not relabel an A compiler failure as calibration.
         if ($diagnostics.Count) { throw ($diagnostics -join '; ') }
@@ -141,18 +213,54 @@ foreach ($index in 0..($expected-1)) {
                 Assert-PdbPair $snapshot.pdb; Assert-PdbPair $snapshot.pch
             }
         }
-        $capture=Get-Content -LiteralPath (Join-Path $trace 'capture.json') -Raw | ConvertFrom-Json
-        $originalOk=$capture.child.exit_code -eq 0 -and $observation.lifecycle_ok -eq $true -and $observation.drain_control_ok -eq $true
+        if ($isTraced) {
+            $capture=Get-Content -LiteralPath (Join-Path $trace 'capture.json') -Raw | ConvertFrom-Json
+            $originalOk=$capture.child.exit_code -eq 0 -and $observation.lifecycle_ok -eq $true -and $observation.drain_control_ok -eq $true
+        } else {
+            # Reuse the original matrix's assertion, with raw first-A and seed
+            # outcomes checked separately. Recovery never supplies these values.
+            Assert-OwnershipObservation $observation 'default' $profile $caseOrigin 'drain'
+            foreach ($stem in @('A/work0','seed/warm')) {
+                $first=Get-Content -LiteralPath (Join-Path $fixture "$stem.result.json") -Raw | ConvertFrom-Json
+                if (($first.exit_code -isnot [long] -and $first.exit_code -isnot [int]) -or
+                    $first.exit_code -ne 0 -or $first.cancelled -isnot [bool] -or $first.cancelled) {
+                    throw "Untraced original compiler control failed: $stem"
+                }
+            }
+            $originalOk=$true
+        }
         if (-not $originalOk) { throw 'Original natural-drain control failed; traced failure is not a passing control.' }
     } catch { $errors.Add($_.Exception.Message) }
-    $rows.Add([pscustomobject]@{ name=$name; mode=$mode; capture_exit=$code; invocation_audit_exit=$outcomeExit; cleanup_verified=$cleanup
+    $rows.Add([pscustomobject]@{ name=$name; mode=$mode; recorder_used=$isTraced; profile=$profile; origin=$caseOrigin
+        process_exit=$code; capture_exit=$(if ($isTraced) { $code } else { $null }); invocation_audit_exit=$outcomeExit; cleanup_verified=$cleanup
         original_control_ok=$originalOk; accepted=($errors.Count -eq 0); errors=@($errors.ToArray()) })
     Write-Json (Join-Path $OutputRoot 'summary.json') @{
         study=$Study; expected=$expected; completed=$rows.Count; cases=@($rows.ToArray()); not_run=($expected-$rows.Count)
-        negative_readiness_verified=$negativeOk
+        negative_readiness_verified=$negativeOk; input_equivalence_verified=$null
         historical_cause_resolved=$false; authorizes_held_pr_merge=$false; safe_to_transfer_write_lease=$false
     }
     if ($errors.Count) { throw 'Stopped at failed evidence/control gate; remaining slots not attempted, no adaptive retry.' }
+}
+if ($Study -in @('preexisting','query-contrast')) {
+    $pairs = [Collections.Generic.List[object]]::new()
+    foreach ($pair in 0..3) {
+        $left=$fixtureRoots[$pair*2]; $right=$fixtureRoots[$pair*2+1]
+        $auditPath=Join-Path $OutputRoot ("input-pair-$pair.json")
+        & python (Join-Path $PSScriptRoot 'verify_pdb_invocations.py') --compare-pair $left $right `
+            --left-native-root $left --right-native-root $right --output $auditPath
+        $pairOk=$LASTEXITCODE -eq 0
+        $pairs.Add([pscustomobject]@{ pair=$pair+1; accepted=$pairOk; report=$auditPath })
+        Write-Json (Join-Path $OutputRoot 'input-equivalence.json') @{
+            expected_pairs=4; completed_pairs=$pairs.Count; pairs=@($pairs.ToArray())
+            all_pairs_verified=($pairOk -and $pairs.Count -eq 4)
+        }
+        if (-not $pairOk) { throw 'Paired original inputs differ; evidence not accepted.' }
+    }
+    Write-Json (Join-Path $OutputRoot 'summary.json') @{
+        study=$Study; expected=8; completed=$rows.Count; cases=@($rows.ToArray()); not_run=0
+        negative_readiness_verified=$negativeOk; input_equivalence_verified=$true
+        historical_cause_resolved=$false; authorizes_held_pr_merge=$false; safe_to_transfer_write_lease=$false
+    }
 }
 # This executable inventory is kept outside every timed/native capture and is
 # not an attestation of in-flight loaded modules or the separate ABBA pair.
