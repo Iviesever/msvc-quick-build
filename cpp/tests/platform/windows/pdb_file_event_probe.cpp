@@ -469,7 +469,7 @@ int record(int argc, wchar_t** argv) {
     const auto etl = dir / "events.etl";
     const auto session_name = L"MQB-PdbFileTrace-" + std::to_wstring(::GetCurrentProcessId()) + L"-" + std::to_wstring(qpc());
     Session session{etl, session_name};
-    LiveReadiness live{session_name, device, dir.root_name().wstring(), frequency.QuadPart};
+    LiveReadiness live{session_name, device, dir.root_name().wstring(), static_cast<std::uint64_t>(frequency.QuadPart)};
     std::string failure, before = "null", after = "null", child = "null";
     try {
         // Provider registration/configuration is not recording readiness. Observe
