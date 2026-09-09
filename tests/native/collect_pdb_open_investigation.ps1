@@ -164,7 +164,8 @@ foreach ($slot in $plan) {
             $drain.safe_to_transfer_write_lease -isnot [bool] -or $drain.safe_to_transfer_write_lease -or
             (Test-Path -LiteralPath (Join-Path $dir 'A/work1.argv.txt'))) { throw 'Original drain outcome mismatch.' }
         if ($code -ne 0 -and $code -ne 1) { throw 'Unexpected outer exit.' }
-        //PLACEHOLDER
+        # A nonzero original compiler result remains a recorded failure, not a
+        # rejected record or a passing drain control. Never replace it by B recovery.
         $compiler=(Get-Content -LiteralPath (Join-Path $dir 'toolchain.txt'))[0]
         $toolDir=[IO.Path]::GetDirectoryName($compiler)
         foreach ($name in @('cl.exe','c1xx.dll','c2.dll','mspdbcore.dll','mspdbsrv.exe','link.exe')) {
