@@ -1,0 +1,139 @@
+name: PDB Open Investigation
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/tests/platform/windows/msvc_service_ownership_probe.cpp'
+      - 'tests/native/collect_pdb_open_investigation.ps1'
+      - '.github/workflows/pdb-open-investigation.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: pdb-open-investigation-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  contract:
+    name: PDB identity record contracts
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - shell: pwsh
+        run: |
+          & ./tests/native/collect_pdb_open_investigation.ps1 -SelfTest `
+            -OutputRoot (Join-Path $PWD '.mqb/pdb-record-contracts')
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pdb-record-contracts
+          path: .mqb/pdb-record-contracts/**
+          include-hidden-files: true
+          retention-days: 30
+  build:
+    name: Build exact ownership probe
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build candidate and probe with MQB, without measuring ownership
+        shell: pwsh
+        run: |
+          $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
+            -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $mqb = & (Join-Path $PWD 'tests/native/build_mqb.ps1') `
+            -BuilderMqbPath $seed -RepoRoot $PWD `
+            -Version ((Get-Content -LiteralPath 'VERSION' -Raw).Trim()) `
+            -Configuration Release -Clean -OutputPath (Join-Path $PWD 'native-out/endpoint/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & (Join-Path $PWD 'tests/native/collect_msvc_service_ownership.ps1') `
+            -MqbPath $mqb -RepoRoot $PWD -BuildOnly `
+            -OutputRoot (Join-Path $PWD '.mqb/default-endpoint-build')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path 'native-out/endpoint-input' -Force | Out-Null
+          Copy-Item -LiteralPath $mqb -Destination 'native-out/endpoint-input/mqb.exe'
+          Copy-Item -LiteralPath '.mqb/bin/msvc_service_ownership_probe.exe' -Destination 'native-out/endpoint-input/'
+          Copy-Item -LiteralPath '.mqb/default-endpoint-build/probe.identity.json' -Destination 'native-out/endpoint-input/'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pdb-investigation-input
+          path: native-out/endpoint-input/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain probe build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pdb-investigation-build-evidence
+          path: .mqb/default-endpoint-build/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  observe:
+    name: Fixed eight-case PCH PDB query comparison
+    needs: [build, contract]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: pdb-investigation-input
+          path: native-input
+      - name: Check physical file identity and sharing error contracts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path '.mqb/pdb-identity-tests' | Out-Null
+          $output = @(& ./native-input/msvc_service_ownership_probe.exe --pdb-identity-self-test `
+            (Join-Path $PWD '.mqb/pdb-identity-tests/files') 2>&1)
+          $code = $LASTEXITCODE
+          $output | Set-Content -LiteralPath '.mqb/pdb-identity-tests/output.txt' -Encoding utf8
+          if ($code -ne 0) { exit $code }
+      - name: Collect fixed PCH Release A-started drain query-on and query-off pairs
+        shell: pwsh
+        env:
+          MQB_OWNERSHIP_DISPOSABLE_HOST: '1'
+        run: |
+          & ./tests/native/collect_pdb_open_investigation.ps1 `
+            -MqbPath (Join-Path $PWD 'native-input/mqb.exe') `
+            -ProbePath (Join-Path $PWD 'native-input/msvc_service_ownership_probe.exe') `
+            -ProbeIdentityPath (Join-Path $PWD 'native-input/probe.identity.json') `
+            -RepoRoot $PWD -OutputRoot (Join-Path $PWD '.mqb/pdb-open-investigation')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain complete prefix and original failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pdb-open-investigation-evidence
+          path: |
+            .mqb/pdb-identity-tests/**
+            .mqb/pdb-open-investigation/**
+            !.mqb/pdb-open-investigation/**/*.obj
+            !.mqb/pdb-open-investigation/**/*.pdb
+            !.mqb/pdb-open-investigation/**/*.pch
+            !.mqb/pdb-open-investigation/**/*.exe
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Retain input binaries and post-cleanup failed PDB PCH bytes separately
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pdb-open-investigation-binaries
+          path: |
+            .mqb/pdb-open-investigation/*.exe
+            .mqb/pdb-open-investigation/failure-files/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
