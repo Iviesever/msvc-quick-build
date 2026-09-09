@@ -624,8 +624,9 @@ int root(int argc, wchar_t** argv, bool drain) {
     return stopped && exit_code(first) == 0 ? 0 : 1;
 }
 
-int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = false, bool failure_study = false) {
-    require(argc == (pdb_study ? 8 : 7), "measure arguments");
+int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = false, bool failure_study = false,
+            bool query_study = false) {
+    require(argc == ((pdb_study || query_study) ? 8 : 7), "measure arguments");
     if (default_endpoint) require_default_host();
     const fs::path dir = fs::absolute(argv[2]);
     const std::string profile = utf8(argv[3]), origin = utf8(argv[4]), ending = utf8(argv[5]);
@@ -639,7 +640,13 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
                 "unsupported invocation study case");
         record_invocation_spans = true;
     }
-    const bool query_enabled = !pdb_study || std::wstring{argv[7]} == L"rm-on";
+    if (query_study) {
+        require(failure_study && origin == "preexisting" && profile == "zi-debug" && drain,
+                "query contrast only supports preexisting Zi Debug drain");
+        require(std::wstring{argv[7]} == L"rm-on" || std::wstring{argv[7]} == L"rm-off", "unknown query contrast mode");
+    }
+    const bool query_enabled = !(pdb_study || query_study) || std::wstring{argv[7]} == L"rm-on";
+    const bool query_observed = !query_study || query_enabled;
     if (pdb_study) {
         require(default_endpoint && profile == "pch-release" && origin == "A-started" && drain,
                 "PDB study only supports the predeclared PCH Release A-started drain case");
@@ -652,6 +659,9 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     require(ending == "cancel" || ending == "normal" || ending == "unmanaged-normal"
             || (default_endpoint && drain), "unknown ending");
     fs::create_directories(dir);
+    if (query_study) write(dir / "query-policy.json", "{\"schema\":1,\"profile\":\"zi-debug\",\"origin\":\"preexisting\""
+        ",\"rm_queries_enabled\":" + std::string{query_enabled ? "true" : "false"}
+        + ",\"expected_query_slots\":4,\"historical_cause_resolved\":false,\"safe_to_transfer_write_lease\":false}\n");
     WindowsProcessRunner runner;
     mqb::msvc::DiscoveryOptions options;
     options.preference = mqb::msvc::ToolchainPreference::visual_studio;
@@ -717,10 +727,18 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     auto resource_owners = [&](const fs::path& file) {
         if (!pdb_study) {
             if (!failure_study) return pdb_owners(file, server);
+            if (query_study && !query_enabled) {
+                // No Restart Manager API is called. Unknown is not an empty owner set.
+                write(dir / ("observer-query-" + std::to_string(query_count++) + ".json"),
+                    "{\"path\":" + (quoted)(path_text(file))
+                    + ",\"attempted\":false,\"query_error\":null,\"owners\":null,\"observer\":null}\n");
+                return Owners{ERROR_NOT_SUPPORTED, false, "null"}; // Internal only; public query fields are null.
+            }
             ObserverCalls calls;
             const auto result = pdb_owners(file, server, &calls); // Includes native RmEndSession in the log.
             write(dir / ("observer-query-" + std::to_string(query_count++) + ".json"),
                 "{\"path\":" + (quoted)(path_text(file)) + ",\"query_error\":" + std::to_string(result.error)
+                + (query_study ? ",\"attempted\":true,\"owners\":" + result.identities : "")
                 + ",\"observer\":" + calls.json() + "}\n");
             return result;
         }
@@ -820,17 +838,17 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
         + ",\"A_compiler_overlap_observed\":" + (a_overlap ? "true" : "false")
         + ",\"A_observed_compilers_signaled\":" + (drain ? (a_handles_signaled ? "true" : "false") : "null")
         + ",\"A_pending_compile_dispatched\":" + (drain ? (pending_dispatched ? "true" : "false") : "null")
-        + ",\"A_pdb_owner_at_request_error\":" + (drain ? std::to_string(a_owners_at_request.error) : "null")
-        + ",\"A_pdb_owners_at_request\":" + a_owners_at_request.identities
-        + ",\"A_pdb_owner_after_A_error\":" + (default_endpoint ? std::to_string(a_owners_after.error) : "null")
-        + ",\"A_pdb_owners_after_A\":" + a_owners_after.identities
-        + ",\"A_pdb_service_owner_after_A\":" + (default_endpoint ? (a_owners_after.includes_server ? "true" : "false") : "null")
+        + ",\"A_pdb_owner_at_request_error\":" + (drain && query_observed ? std::to_string(a_owners_at_request.error) : "null")
+        + ",\"A_pdb_owners_at_request\":" + (query_observed ? a_owners_at_request.identities : "null")
+        + ",\"A_pdb_owner_after_A_error\":" + (default_endpoint && query_observed ? std::to_string(a_owners_after.error) : "null")
+        + ",\"A_pdb_owners_after_A\":" + (query_observed ? a_owners_after.identities : "null")
+        + ",\"A_pdb_service_owner_after_A\":" + (default_endpoint && query_observed ? (a_owners_after.includes_server ? "true" : "false") : "null")
         + ",\"drain_control_ok\":" + (drain_ok ? "true" : "false")
-        + ",\"warm_pdb_owner_error\":" + std::to_string(warm_owners.error)
-        + ",\"warm_pdb_owners\":" + warm_owners.identities
-        + ",\"active_pdb_owner_error\":" + std::to_string(active_owners.error)
-        + ",\"active_pdb_owners\":" + active_owners.identities
-        + ",\"B_pdb_service_identity_observed\":" + ((warm_owners.includes_server || active_owners.includes_server) ? "true" : "false")
+        + ",\"warm_pdb_owner_error\":" + (query_observed ? std::to_string(warm_owners.error) : "null")
+        + ",\"warm_pdb_owners\":" + (query_observed ? warm_owners.identities : "null")
+        + ",\"active_pdb_owner_error\":" + (query_observed ? std::to_string(active_owners.error) : "null")
+        + ",\"active_pdb_owners\":" + (query_observed ? active_owners.identities : "null")
+        + ",\"B_pdb_service_identity_observed\":" + (query_observed ? ((warm_owners.includes_server || active_owners.includes_server) ? "true" : "false") : "null")
         + ",\"A_exit\":" + std::to_string(exit_code(a_result))
         + ",\"B0_exit\":" + std::to_string(exit_code(b0_result)) + ",\"B1_exit\":" + std::to_string(exit_code(b1_result))
         + ",\"B_link_exit\":" + std::to_string(linked) + ",\"B_run_exit\":" + std::to_string(executed)
@@ -859,14 +877,16 @@ int wmain(int argc, wchar_t** argv) {
             record_invocation_spans = true;
             return root(argc, argv, true);
         }
+        if (mode == L"--measure-query-contrast") return measure(argc, argv, true, false, true, true);
         if (mode == L"--measure-invocations") return measure(argc, argv, true, false, true);
         if (mode == L"--root" || mode == L"--drain-root") return root(argc, argv, mode == L"--drain-root");
         if (mode == L"--measure-pdb") return measure(argc, argv, true, true);
         if (mode == L"--measure" || mode == L"--measure-default") return measure(argc, argv, mode == L"--measure-default");
         const bool pdb_study = mode == L"--pdb-case";
-        const bool failure_study = mode == L"--invocation-case";
+        const bool query_study = mode == L"--query-contrast-case";
+        const bool failure_study = mode == L"--invocation-case" || query_study;
         const bool default_endpoint = mode == L"--default-case" || pdb_study || failure_study;
-        require((mode == L"--case" || default_endpoint) && argc == (pdb_study ? 8 : 7), "case arguments");
+        require((mode == L"--case" || default_endpoint) && argc == ((pdb_study || query_study) ? 8 : 7), "case arguments");
         const fs::path dir = fs::absolute(argv[2]);
         fs::create_directories(dir);
         if (default_endpoint) {
@@ -881,7 +901,8 @@ int wmain(int argc, wchar_t** argv) {
         // No global service termination, PID-authorized kill, or product changes.
         ProcessSpec spec;
         spec.executable = self();
-        spec.arguments = {failure_study ? "--measure-invocations" : (pdb_study ? "--measure-pdb" : (default_endpoint ? "--measure-default" : "--measure"))};
+        spec.arguments = {query_study ? "--measure-query-contrast" : (failure_study ? "--measure-invocations" :
+            (pdb_study ? "--measure-pdb" : (default_endpoint ? "--measure-default" : "--measure")))};
         for (int i = 2; i < argc; ++i) spec.arguments.push_back(utf8(argv[i]));
         std::stop_source lifetime;
         spec.cancellation = lifetime.get_token();

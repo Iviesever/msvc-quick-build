@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$InputRoot,
     [Parameter(Mandatory)][string]$OutputRoot,
     [string]$RepoRoot = (Join-Path $PSScriptRoot '../..'),
-    [ValidateSet('calibration', 'invocations', 'preexisting')][string]$Study = 'calibration'
+    [ValidateSet('calibration', 'invocations', 'preexisting', 'query-contrast')][string]$Study = 'calibration'
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -50,10 +50,14 @@ if ($Study -eq 'preexisting') {
     # T/U, U/T, T/U, U/T; the original untraced mode gets no ETW or sidecars.
     $plan = @('traced','untraced','untraced','traced','traced','untraced','untraced','traced')
 }
+if ($Study -eq 'query-contrast') {
+    # Both arms trace identically; only the four coordinator RM queries differ.
+    $plan = @('rm-on','rm-off','rm-off','rm-on','rm-on','rm-off','rm-off','rm-on')
+}
 $expected = $plan.Count
 Write-Json (Join-Path $OutputRoot 'plan.json') @{
     study=$Study; modes=$plan; cases=$expected; pairs=($expected/2); controlled_conflicts_per_trace=2; adaptive_retries=$false
-    preexisting_profile=$(if ($Study -eq 'preexisting') { 'zi-debug' } else { $null })
+    preexisting_profile=$(if ($Study -in @('preexisting','query-contrast')) { 'zi-debug' } else { $null })
     traced_slots=$(if ($Study -eq 'preexisting') { 4 } else { $expected })
     readiness_wait_limit_ms=10000; negative_readiness_cases=1
     note='Positive native sharing conflicts are separate from original MSVC outcomes; no forced C1041.'
@@ -105,14 +109,15 @@ foreach ($index in 0..($expected-1)) {
     $slot = Join-Path $OutputRoot $name
     $fixture = Join-Path $slot 'fixture'; $trace = Join-Path $slot 'trace'
     New-Item -ItemType Directory -Path $slot | Out-Null
-    $isPreexisting = $Study -eq 'preexisting'
+    $isQueryContrast = $Study -eq 'query-contrast'
+    $isPreexisting = $Study -in @('preexisting','query-contrast')
     $isTraced = -not ($isPreexisting -and $mode -eq 'untraced')
     $hasInvocations = $Study -eq 'invocations' -or ($isPreexisting -and $isTraced)
     $profile = if ($isPreexisting) { 'zi-debug' } elseif ($Study -eq 'invocations') { $mode } else { 'pch-release' }
     $caseOrigin = if ($isPreexisting) { 'preexisting' } else { 'A-started' }
-    $probeMode = if (-not $isTraced) { '--default-case' } elseif ($hasInvocations) { '--invocation-case' } else { '--pdb-case' }
+    $probeMode = if ($isQueryContrast) { '--query-contrast-case' } elseif (-not $isTraced) { '--default-case' } elseif ($hasInvocations) { '--invocation-case' } else { '--pdb-case' }
     $arguments = @($probeMode,$fixture,$profile,$caseOrigin,'drain',('trace-'+[guid]::NewGuid().ToString('N')))
-    if ($Study -eq 'calibration') { $arguments += $mode }
+    if ($Study -eq 'calibration' -or $isQueryContrast) { $arguments += $mode }
     $program = $probe
     if ($isTraced) { $arguments = @($trace,$probe) + $arguments; $program = $tracer }
     Write-Json (Join-Path $slot 'arguments.json') $arguments
@@ -127,8 +132,10 @@ foreach ($index in 0..($expected-1)) {
         & python (Join-Path $PSScriptRoot 'verify_pdb_invocations.py') --trace $trace --fixture $fixture `
             --native-root $fixture --profile $profile --origin $caseOrigin --output (Join-Path $slot 'invocation-audit.json')
         $outcomeExit=$LASTEXITCODE
+        $queryOptions = @()
+        if ($isQueryContrast) { $queryOptions = @('--query-mode',$mode) }
         & python (Join-Path $PSScriptRoot 'verify_pdb_observers.py') --trace $trace --fixture $fixture `
-            --native-root $fixture --profile $profile --origin $caseOrigin --output (Join-Path $slot 'observer-audit.json')
+            --native-root $fixture --profile $profile --origin $caseOrigin @queryOptions --output (Join-Path $slot 'observer-audit.json')
         $observerExit=$LASTEXITCODE
         if ($observerExit -ne 0) { $errors.Add('Observer API boundary evidence or original control failed.') }
     }
@@ -197,7 +204,7 @@ foreach ($index in 0..($expected-1)) {
     }
     if ($errors.Count) { throw 'Stopped at failed evidence/control gate; remaining slots not attempted, no adaptive retry.' }
 }
-if ($Study -eq 'preexisting') {
+if ($Study -in @('preexisting','query-contrast')) {
     $pairs = [Collections.Generic.List[object]]::new()
     foreach ($pair in 0..3) {
         $left=$fixtureRoots[$pair*2]; $right=$fixtureRoots[$pair*2+1]
@@ -210,7 +217,7 @@ if ($Study -eq 'preexisting') {
             expected_pairs=4; completed_pairs=$pairs.Count; pairs=@($pairs.ToArray())
             all_pairs_verified=($pairOk -and $pairs.Count -eq 4)
         }
-        if (-not $pairOk) { throw 'Traced/untraced original inputs differ; evidence not accepted.' }
+        if (-not $pairOk) { throw 'Paired original inputs differ; evidence not accepted.' }
     }
     Write-Json (Join-Path $OutputRoot 'summary.json') @{
         study=$Study; expected=8; completed=$rows.Count; cases=@($rows.ToArray()); not_run=0

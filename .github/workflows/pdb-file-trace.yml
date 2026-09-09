@@ -202,3 +202,39 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
+
+  query-contrast:
+    name: Four fixed RM-query on/off pairs on preexisting Zi drain
+    needs: [build, contract]
+    # Different disposable VM; never compile tools on the observation host.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: file-trace-input
+          path: native-input
+      - shell: pwsh
+        env:
+          MQB_OWNERSHIP_DISPOSABLE_HOST: '1'
+        run: |
+          & ./tests/native/collect_pdb_file_trace.ps1 -InputRoot (Join-Path $PWD 'native-input') `
+            -OutputRoot (Join-Path $PWD '.mqb/pdb-query-contrast-trace') -RepoRoot $PWD -Study query-contrast
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve raw ETL, decoded events and original diagnostics on every outcome
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pdb-query-contrast-evidence
+          path: |
+            .mqb/pdb-query-contrast-trace/**
+            !.mqb/pdb-query-contrast-trace/**/*.obj
+            !.mqb/pdb-query-contrast-trace/**/*.pdb
+            !.mqb/pdb-query-contrast-trace/**/*.pch
+            !.mqb/pdb-query-contrast-trace/**/*.exe
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30

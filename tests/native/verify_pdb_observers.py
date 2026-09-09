@@ -103,18 +103,78 @@ def correlate(calls, pairs):
     return rows
 
 
-def analyse(root, native_root, capture, events, audited):
+# Query-off is an explicit experimental arm, never an inferred successful
+# empty result. The CLI supplies expected mode independently of recorded data.
+QUERY_FIELDS = (
+    ("warm_pdb_owner_error", "warm_pdb_owners"),
+    ("active_pdb_owner_error", "active_pdb_owners"),
+    ("A_pdb_owner_at_request_error", "A_pdb_owners_at_request"),
+    ("A_pdb_owner_after_A_error", "A_pdb_owners_after_A"),
+)
+QUERY_FLAGS = ("B_pdb_service_identity_observed", "A_pdb_service_owner_after_A")
+
+
+def validate_query_policy(policy, observation, mode):
+    trace.need(mode in ("rm-on", "rm-off"), "unknown expected query mode")
+    enabled = mode == "rm-on"
+    trace.need(type(policy) is dict and type(policy.get("schema")) is int and policy["schema"] == 1 and
+               policy.get("rm_queries_enabled") is enabled and
+               type(policy.get("expected_query_slots")) is int and policy["expected_query_slots"] == 4 and
+               policy.get("historical_cause_resolved") is False and policy.get("safe_to_transfer_write_lease") is False,
+               "query policy identity/slots/authority mismatch")
+    trace.need(policy.get("profile") == observation.get("profile") == "zi-debug" and
+               policy.get("origin") == observation.get("origin") == "preexisting" and
+               observation.get("ending") == "drain" and observation.get("endpoint_mode") == "default",
+               "query contrast shape mismatch")
+    for error_field, owners_field in QUERY_FIELDS:
+        trace.need(error_field in observation and owners_field in observation, "query observation fields missing")
+        if enabled:
+            uint(observation[error_field], error_field)
+            trace.need(type(observation[owners_field]) is list, "attempted query owners not an array")
+        else:
+            trace.need(observation[error_field] is None and observation[owners_field] is None,
+                       "unattempted query invented result or empty owner set")
+    for flag in QUERY_FLAGS:
+        trace.need(flag in observation and (type(observation[flag]) is bool if enabled else observation[flag] is None),
+                   "query-off invented resource identity")
+    return enabled
+
+
+def query_group_calls(group, name, capture, events, owner, enabled):
+    if enabled is None:  # Original investigation format, not a query contrast.
+        return group_calls(group, "query", name, capture, events, owner)
+    trace.need(group.get("attempted") is enabled, "query arm disagrees with attempted flag")
+    trace.need(all(field in group for field in ("query_error", "owners", "observer")), "query slot fields missing")
+    if not enabled:
+        trace.need(all(group[field] is None for field in ("query_error", "owners", "observer")),
+                   "unattempted query fabricated a native API/outcome")
+        return []
+    trace.need(type(group["owners"]) is list, "attempted query owner inventory invalid")
+    return group_calls(group, "query", name, capture, events, owner)
+
+
+def analyse(root, native_root, capture, events, audited, query_mode=None):
     expected = {f"observer-query-{n}.json" for n in range(4)}
     trace.need({p.name for p in root.glob("observer-query-*.json")} == expected, "observer query inventory incomplete/unexpected")
     begin = trace.load(root / "B/warm.invocation-begin.json")
     owner = (begin["owner_pid"], begin["owner_created_filetime"])
     rootkey = trace.canonical(native_root, capture).rstrip("\\")
     calls = []
+    enabled = None
+    observation = trace.load(root / "observation.json")
+    if query_mode is not None:
+        enabled = validate_query_policy(trace.load(root / "query-policy.json"), observation, query_mode)
+    else:
+        trace.need(not (root / "query-policy.json").exists(), "explicit expected query mode required")
     process_events = [e for e in events if e["provider"] == "process"]
     for n, side in enumerate(("B", "B", "A", "A")):
         group = trace.load(root / f"observer-query-{n}.json")
         trace.need(trace.canonical(group["path"], capture) == rootkey + "\\" + side.lower() + "\\compiler.pdb", "query target mismatch")
-        calls += group_calls(group, "query", f"query-{n}", capture, process_events, owner)
+        calls += query_group_calls(group, f"query-{n}", capture, process_events, owner, enabled)
+        if enabled is not None:
+            error_field, owners_field = QUERY_FIELDS[n]
+            trace.need(group["query_error"] == observation[error_field] and group["owners"] == observation[owners_field],
+                       "query slot disagrees with original observation")
     for phase in ("before-A", "after-A", "after-B"):
         snapshot = trace.load(root / f"pdb-{phase}.json")
         for kind, filename in (("pdb", "compiler.pdb"), ("pch", "common.pch")):
@@ -128,6 +188,8 @@ def analyse(root, native_root, capture, events, audited):
     trace.need(all(a["after_qpc"] <= b["before_qpc"] for a, b in zip(ordered, ordered[1:])), "coordinator API intervals overlap")
     matched = correlate(calls, [e for e in audited["target_open_pairs"] if e["path"].startswith(rootkey + "\\")])
     return dict(schema=1, observer_evidence_complete=True, observer_calls=calls, events=matched,
+                query_mode=query_mode, attempted_query_slots=(None if enabled is None else (4 if enabled else 0)),
+                unattempted_query_slots=(None if enabled is None else (0 if enabled else 4)),
                 nonzero_events=[e for e in matched if e["event"]["ntstatus"] != 0],
                 unmatched_events=sum(not e["contained_call_indices"] for e in matched),
                 historical_cause_resolved=False, causal_attribution_proven=False, safe_to_transfer_write_lease=False)
@@ -224,14 +286,77 @@ def self_test():
         rows.append(dict(name=name,passed=ok,classification=r["classification"]))
     ambiguous=correlate(calls+[calls[1]],[event])[0]
     rows.append(dict(name="ambiguous-candidates-retained",passed=ambiguous["classification"]=="ambiguous" and ambiguous["contained_call_indices"]==[1,4]))
+    policy = dict(schema=1, profile="zi-debug", origin="preexisting", expected_query_slots=4,
+                  rm_queries_enabled=False, historical_cause_resolved=False, safe_to_transfer_write_lease=False)
+    off_observation = dict(profile="zi-debug", origin="preexisting", ending="drain", endpoint_mode="default")
+    for names in QUERY_FIELDS:
+        for field in names: off_observation[field] = None
+    for flag in QUERY_FLAGS: off_observation[flag] = None
+    for name, accepted, mutate in [
+        ("query-off-null-observations", True, lambda p, o: None),
+        ("query-off-empty-owner-set-refused", False, lambda p, o: o.update(warm_pdb_owners=[])),
+        ("query-off-zero-error-refused", False, lambda p, o: o.update(warm_pdb_owner_error=0)),
+        ("query-off-false-identity-refused", False, lambda p, o: o.update(B_pdb_service_identity_observed=False)),
+        ("query-off-missing-null-field", False, lambda p, o: o.pop("active_pdb_owners")),
+        ("query-off-missing-policy-mode", False, lambda p, o: p.pop("rm_queries_enabled")),
+        ("query-off-wrong-mode", False, lambda p, o: p.update(rm_queries_enabled=True)),
+        ("query-policy-string-bool", False, lambda p, o: p.update(rm_queries_enabled="false")),
+        ("query-policy-bool-schema", False, lambda p, o: p.update(schema=True)),
+        ("query-policy-wrong-slots", False, lambda p, o: p.update(expected_query_slots=3)),
+        ("query-policy-wrong-profile", False, lambda p, o: p.update(profile="pch-release")),
+        ("query-policy-wrong-origin", False, lambda p, o: o.update(origin="A-started")),
+        ("query-policy-cause-claim", False, lambda p, o: p.update(historical_cause_resolved=True)),
+        ("query-policy-lease-claim", False, lambda p, o: p.update(safe_to_transfer_write_lease=True)),
+    ]:
+        pol, obs = copy.deepcopy((policy, off_observation)); mutate(pol, obs); error = None
+        try: validate_query_policy(pol, obs, "rm-off")
+        except (ValueError, KeyError, TypeError) as exc: error = str(exc)
+        rows.append(dict(name=name, expected_accepted=accepted, accepted=error is None, passed=(error is None)==accepted, error=error))
+    on_policy = dict(policy, rm_queries_enabled=True)
+    on_observation = copy.deepcopy(off_observation)
+    for error_field, owners_field in QUERY_FIELDS: on_observation[error_field] = 0; on_observation[owners_field] = []
+    for flag in QUERY_FLAGS: on_observation[flag] = False
+    for name, accepted, mutate in [
+        ("query-on-real-results", True, lambda p, o: None),
+        ("query-on-nonzero-native-return-preserved", True, lambda p, o: o.update(warm_pdb_owner_error=5)),
+        ("query-on-null-error-refused", False, lambda p, o: o.update(warm_pdb_owner_error=None)),
+        ("query-on-null-owners-refused", False, lambda p, o: o.update(warm_pdb_owners=None)),
+    ]:
+        pol, obs = copy.deepcopy((on_policy, on_observation)); mutate(pol, obs); error = None
+        try: validate_query_policy(pol, obs, "rm-on")
+        except (ValueError, KeyError, TypeError) as exc: error = str(exc)
+        rows.append(dict(name=name, expected_accepted=accepted, accepted=error is None, passed=(error is None)==accepted, error=error))
+    off_group = dict(path=group["path"], attempted=False, query_error=None, owners=None, observer=None)
+    for name, accepted, mutate in [
+        ("query-slot-not-attempted", True, lambda g: None),
+        ("query-slot-fake-success", False, lambda g: g.update(query_error=0)),
+        ("query-slot-empty-list", False, lambda g: g.update(owners=[])),
+        ("query-slot-fake-api-log", False, lambda g: g.update(observer=group["observer"])),
+        ("query-slot-missing-observer", False, lambda g: g.pop("observer")),
+        ("query-slot-wrong-flag", False, lambda g: g.update(attempted=True)),
+    ]:
+        g=copy.deepcopy(off_group); mutate(g); error=None
+        try:
+            result=query_group_calls(g,"q",capture,events,(20,100),False)
+            trace.need(result==[],"query-off fabricated native calls")
+        except (ValueError,KeyError,TypeError) as exc: error=str(exc)
+        rows.append(dict(name=name,expected_accepted=accepted,accepted=error is None,passed=(error is None)==accepted,error=error))
+    for name, accepted, mutate in [
+        ("query-slot-on-original-log", True, lambda g: None),
+        ("query-slot-on-missing-native-log", False, lambda g: g.update(observer=None)),
+    ]:
+        g=copy.deepcopy(group); g.update(attempted=True,owners=[]); mutate(g); error=None
+        try: query_group_calls(g,"q",capture,events,(20,100),True)
+        except (ValueError,KeyError,TypeError) as exc: error=str(exc)
+        rows.append(dict(name=name,expected_accepted=accepted,accepted=error is None,passed=(error is None)==accepted,error=error))
     return dict(synthetic_only=True,cases=rows,passed=all(r["passed"] for r in rows))
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--self-test",action="store_true");p.add_argument("--trace",type=Path);p.add_argument("--fixture",type=Path)
-    p.add_argument("--native-root");p.add_argument("--profile",choices=("pch-release","modules-debug","zi-debug"));p.add_argument("--output",required=True,type=Path)
-    p.add_argument("--origin", choices=("A-started","preexisting"), default="A-started")
+    p.add_argument("--native-root");p.add_argument("--profile",choices=("pch-release","modules-debug","zi-debug"));p.add_argument("--origin",choices=("A-started","preexisting"),default="A-started");p.add_argument("--output",required=True,type=Path)
+    p.add_argument("--query-mode", choices=("rm-on","rm-off"))
     a=p.parse_args();trace.need(not a.output.exists(),"refuse to overwrite audit")
     report=dict(observer_evidence_complete=False,historical_cause_resolved=False,safe_to_transfer_write_lease=False)
     try:
@@ -244,7 +369,7 @@ def main():
             native=a.native_root or str(a.fixture)
             audited=trace.audit(capture,decode,events,native,require_readiness=True)
             original=invocation.analyse(a.fixture,native,a.profile,capture,events,audited,origin=a.origin)
-            report=analyse(a.fixture,native,capture,events,audited)
+            report=analyse(a.fixture,native,capture,events,audited,query_mode=a.query_mode)
             report["original_control_ok"]=original["original_control_ok"]
             report["original_failed_invocations"]=original["original_failed_invocations"]
             ok=original["original_control_ok"] and not original["recovery_failed"]
