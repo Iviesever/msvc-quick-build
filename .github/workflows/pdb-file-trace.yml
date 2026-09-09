@@ -86,7 +86,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   observe:
-    name: Native failure calibration and four fixed traced MSVC cases
+    name: Recording readiness refusal and four fixed traced MSVC cases
     needs: [build, contract]
     # Different disposable VM; never compile tools on the observation host.
     runs-on: windows-latest

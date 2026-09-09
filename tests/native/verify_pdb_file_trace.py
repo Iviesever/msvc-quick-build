@@ -41,8 +41,8 @@ def canonical(path: str, capture: dict) -> str:
     return value
 
 
-def audit(capture: dict, decode: dict, events: list[dict], case_root: str) -> dict:
-    need(type(capture.get("schema")) is int and capture["schema"] == 1 and capture.get("clock") == "QPC", "unknown capture schema/clock")
+def checked_events(capture: dict, decode: dict, events: list[dict], *, failed_capture: bool = False) -> list[dict]:
+    need(type(capture.get("schema")) is int and capture["schema"] in (1, 2) and capture.get("clock") == "QPC", "unknown capture schema/clock")
     integer(capture.get("qpc_frequency"), "qpc_frequency")
     need(capture["qpc_frequency"] > 0, "zero QPC frequency")
     for field in ("stop_status", "events_lost", "log_buffers_lost", "realtime_buffers_lost"):
@@ -50,7 +50,8 @@ def audit(capture: dict, decode: dict, events: list[dict], case_root: str) -> di
     for field in ("process_trace_status", "close_trace_status", "decode_errors", "capped_events", "log_header_events_lost"):
         need(integer(decode.get(field), field) == 0, f"incomplete decode: {field}")
     need(0 < integer(decode.get("etl_bytes"), "etl_bytes") < 256 * 1024 * 1024, "missing/capped ETL")
-    need(capture.get("failure") is None, "native capture failure")
+    if not failed_capture:
+        need(capture.get("failure") is None, "native capture failure")
     need(capture.get("historical_cause_resolved") is False and capture.get("safe_to_transfer_write_lease") is False,
          "trace must not authorize historical cause or writer lease")
     need(integer(decode.get("selected_events"), "selected_events") == len(events), "selected-event count mismatch")
@@ -62,7 +63,96 @@ def audit(capture: dict, decode: dict, events: list[dict], case_root: str) -> di
         sequences.add(sequence)
         integer(event.get("qpc"), "qpc")
         need(event.get("decode_error") is None and type(event.get("data")) is dict, "undecoded selected event")
-    events = sorted(events, key=lambda e: (e["qpc"], e["sequence"]))
+    return sorted(events, key=lambda e: (e["qpc"], e["sequence"]))
+
+
+def readiness_state(capture: dict) -> dict:
+    need(capture.get("schema") == 2, "capture has no recording-readiness contract")
+    state = capture.get("readiness")
+    need(type(state) is dict and type(state.get("schema")) is int and state["schema"] == 1 and
+         state.get("mode") == "same-session-real-time", "missing/invalid readiness state")
+    for field, expected in (("wait_limit_ms", 10000), ("pending_irp_limit", 8192),
+                            ("decode_errors", 0), ("process_trace_status", 0)):
+        need(integer(state.get(field), field) == expected, f"readiness limit/health mismatch: {field}")
+    # CloseTrace can successfully initiate an asynchronous real-time close.
+    need(integer(state.get("close_trace_status"), "live close status") in (0, 7007), "live close failed")
+    need(state.get("error") is None, "live readiness decoding failed")
+    start = integer(state.get("start_qpc"), "readiness start")
+    deadline = integer(state.get("deadline_qpc"), "readiness deadline")
+    need(start > 0 and deadline == start + capture["qpc_frequency"] * 10, "readiness budget changed")
+    integer(state.get("decision_qpc"), "readiness decision")
+    return state
+
+
+def validate_readiness(capture: dict, events: list[dict]) -> None:
+    state = readiness_state(capture)
+    need(state.get("accepted") is True and state.get("file_provider_withheld") is False and
+         state.get("phase") == "admitted" and integer(state.get("wait_status"), "wait status") == 0,
+         "recording not ready for child admission")
+    begin = capture["before"]
+    ack = integer(state.get("opening_ack_qpc"), "opening acknowledgement")
+    provider_ack = integer(state.get("provider_ack_qpc"), "provider acknowledgement")
+    need(state["start_qpc"] <= provider_ack < begin["start_qpc"] <= begin["denied_after_qpc"] <= ack
+         <= state["deadline_qpc"] and ack < capture["child"]["before_launch_qpc"] and
+         state["decision_qpc"] == ack, "child admitted before event-backed readiness or after deadline")
+    keys = ("provider", "id", "version", "pid", "tid", "qpc", "raw_payload")
+    indexed: dict[tuple, list[dict]] = {}
+    for event in events:
+        indexed.setdefault(tuple(event.get(k) for k in keys), []).append(event)
+    def pair_evidence(pair: dict) -> tuple[dict, dict]:
+        need(type(pair) is dict, "readiness pair missing")
+        matched = []
+        for member in ("begin", "end"):
+            e = pair.get(member)
+            need(type(e) is dict and all(k in e for k in keys), "readiness event identity missing")
+            candidates = indexed.get(tuple(e[k] for k in keys), [])
+            need(len(candidates) == 1 and candidates[0]["data"] == e.get("data"),
+                 "live readiness evidence absent/ambiguous/different in authoritative ETL")
+            matched.append(candidates[0])
+        a, b = matched
+        need(a["provider"] == b["provider"] == "file" and a["id"] == 12 and b["id"] == 24 and
+             integer(a["data"].get("Irp"), "readiness IRP") == integer(b["data"].get("Irp"), "readiness end IRP") and
+             a["qpc"] <= b["qpc"], "invalid readiness Create/OperationEnd correlation")
+        need(integer(b["data"].get("Status"), "readiness Status") <= 0xffffffff, "bad readiness status width")
+        return a, b
+    a, b = pair_evidence(state.get("provider_pair"))
+    need(b["data"]["Status"] == 0 and state["start_qpc"] <= a["qpc"] <= b["qpc"] <= provider_ack,
+         "provider readiness is not backed by a successful real event pair")
+    pairs = state.get("opening_pairs")
+    need(type(pairs) is list and len(pairs) == 2, "opening readiness pairs missing")
+    statuses = []
+    for pair in pairs:
+        a, b = pair_evidence(pair)
+        need(canonical(a["data"]["FileName"], capture) == canonical(begin["path"], capture) and
+             a["pid"] == begin["owner"]["pid"] and
+             a["data"].get("IssuingThreadId", a["data"].get("ThreadId", a["tid"])) == begin["owner"]["tid"],
+             "opening readiness path/process/thread mismatch")
+        status = b["data"]["Status"]; statuses.append(status)
+        low, high = ((begin["start_qpc"], begin["denied_before_qpc"]) if status == 0
+                     else (begin["denied_before_qpc"], begin["denied_after_qpc"]))
+        need(low <= a["qpc"] <= b["qpc"] <= high <= ack, "opening live evidence outside native interval")
+    need(sorted(statuses) == [0, 0xc0000043], "opening readiness lacks one success and one controlled failure")
+
+
+def audit_no_readiness(capture: dict, decode: dict, events: list[dict], *, sentinel_exists: bool) -> dict:
+    events = checked_events(capture, decode, events, failed_capture=True)
+    state = readiness_state(capture)
+    need(state.get("file_provider_withheld") is True and state.get("accepted") is False and
+         state.get("phase") == "waiting-provider" and integer(state.get("wait_status"), "wait status") == 258,
+         "negative run did not time out at withheld-provider readiness gate")
+    need(state["decision_qpc"] >= state["deadline_qpc"], "negative test did not exercise the bounded wait")
+    need(state.get("provider_pair") is None and state.get("provider_ack_qpc") is None and
+         state.get("opening_ack_qpc") is None and state.get("opening_pairs") == [], "negative run fabricated readiness")
+    need(capture.get("failure") == "recording readiness timeout; compiler not admitted" and
+         capture.get("child") is None and capture.get("before") is None and capture.get("after") is None and
+         not sentinel_exists, "child/calibration admitted without recording readiness")
+    need(not any(e["provider"] == "file" for e in events), "withheld provider unexpectedly delivered file events")
+    return {"negative_readiness_passed": True, "child_not_admitted": True, "calibration_not_attempted": True,
+            "historical_cause_resolved": False, "safe_to_transfer_write_lease": False}
+
+
+def audit(capture: dict, decode: dict, events: list[dict], case_root: str, *, require_readiness: bool = False) -> dict:
+    events = checked_events(capture, decode, events)
     markers = [capture.get("before"), capture.get("after")]
     need(all(type(m) is dict for m in markers), "missing boundary calibration")
     child = capture.get("child")
@@ -71,6 +161,8 @@ def audit(capture: dict, decode: dict, events: list[dict], case_root: str) -> di
         integer(child.get(field), field)
     need(markers[0]["denied_after_qpc"] < child["before_launch_qpc"] <= child["after_wait_qpc"] < markers[1]["start_qpc"],
          "calibrations do not bracket the child")
+    if require_readiness or capture["schema"] == 2:
+        validate_readiness(capture, events)
     marker_paths = {canonical(m["path"], capture): m for m in markers}
     need(len(marker_paths) == 2, "boundary markers reused")
     root = canonical(case_root, capture).rstrip("\\") + "\\"
@@ -174,7 +266,7 @@ def audit(capture: dict, decode: dict, events: list[dict], case_root: str) -> di
         opens = [p for p in real if p["path"] == root + side + "\\compiler.pdb" and p["process_identity"] is not None
                  and p["process_identity"]["image"].replace("/", "\\").rsplit("\\", 1)[-1].casefold() in ("cl.exe", "mspdbsrv.exe")]
         need(bool(opens), f"no event-time compiler/service process identity for {side.upper()} PDB opens")
-    return {"schema": 1, "integrity_checks_passed": True, "calibrated_conflicts": 2, "calibrated_successes": 2,
+    return {"schema": 1, "readiness_verified": capture["schema"] == 2, "integrity_checks_passed": True, "calibrated_conflicts": 2, "calibrated_successes": 2,
             "target_open_pairs": completed, "real_open_pairs": len(real),
             "real_failed_opens": [p for p in real if p["ntstatus"] & 0x80000000],
             "unattributed_real_opens": sum(p["process_identity"] is None for p in real),
@@ -236,6 +328,59 @@ def self_test() -> dict:
             failure = str(exc)
         rows.append(dict(name=name, expected_accepted=expected, accepted=failure is None,
                          passed=(failure is None) == expected, error=failure))
+    # Old schemas remain usable for OFFLINE historical audit, not new captures.
+    live_capture, live_decode, live_events = copy.deepcopy((capture, decode, events))
+    event("file", 12, 3, dict(Irp=999, FileObject=1999, FileName="C:\\provider-ready", IssuingThreadId=2))
+    event("file", 24, 4, dict(Irp=999, Status=0))
+    live_events.extend(copy.deepcopy(events[-2:]))
+    live_decode.update(selected_events=len(live_events), total_events=len(live_events))
+    live_capture["schema"] = 2
+    live_capture["readiness"] = dict(schema=1, mode="same-session-real-time", wait_limit_ms=10000, pending_irp_limit=8192,
+        file_provider_withheld=False, accepted=True, phase="admitted", start_qpc=1, deadline_qpc=100000001,
+        provider_ack_qpc=5, opening_ack_qpc=30, decision_qpc=30, wait_status=0, decode_errors=0, error=None,
+        process_trace_status=0, close_trace_status=7007,
+        provider_pair=dict(begin=copy.deepcopy(live_events[-2]), end=copy.deepcopy(live_events[-1])),
+        opening_pairs=[dict(begin=copy.deepcopy(live_events[i]), end=copy.deepcopy(live_events[i+1])) for i in (0, 2)])
+    tests = [
+        ("event-backed-readiness", True, lambda c, d, e: None),
+        ("readiness-not-acknowledged", False, lambda c, d, e: c["readiness"].update(accepted=False)),
+        ("readiness-missing-live-pair", False, lambda c, d, e: c["readiness"].update(provider_pair=None)),
+        ("readiness-pair-not-in-ETL", False, lambda c, d, e: c["readiness"]["provider_pair"]["begin"].update(qpc=2)),
+        ("readiness-decoder-disagrees", False, lambda c, d, e: c["readiness"]["opening_pairs"][1]["end"]["data"].update(Status=0)),
+        ("readiness-after-child-launch", False, lambda c, d, e: c["readiness"].update(opening_ack_qpc=41, decision_qpc=41)),
+        ("readiness-native-timeout", False, lambda c, d, e: c["readiness"].update(wait_status=258)),
+        ("readiness-live-close-error", False, lambda c, d, e: c["readiness"].update(close_trace_status=6)),
+        ("readiness-live-process-error", False, lambda c, d, e: c["readiness"].update(process_trace_status=5)),
+        ("readiness-live-decode-error", False, lambda c, d, e: c["readiness"].update(decode_errors=1)),
+        ("readiness-before-provider-event", False, lambda c, d, e: c["readiness"].update(provider_ack_qpc=2)),
+        ("readiness-wrong-budget", False, lambda c, d, e: c["readiness"].update(wait_limit_ms=1)),
+        ("readiness-duplicate-calibration", False, lambda c, d, e: c["readiness"]["opening_pairs"].__setitem__(1, copy.deepcopy(c["readiness"]["opening_pairs"][0]))),
+        ("readiness-capture-downgraded", False, lambda c, d, e: c.update(schema=1)),
+    ]
+    for name, expected, change in tests:
+        c, d, e = copy.deepcopy((live_capture, live_decode, live_events)); change(c, d, e)
+        failure = None
+        try: audit(c, d, e, "C:\\case", require_readiness=True)
+        except (EvidenceError, KeyError, TypeError) as exc: failure = str(exc)
+        rows.append(dict(name=name, expected_accepted=expected, accepted=failure is None, passed=(failure is None)==expected, error=failure))
+    negative = copy.deepcopy(live_capture)
+    negative.update(child=None, before=None, after=None, failure="recording readiness timeout; compiler not admitted")
+    negative["readiness"].update(accepted=False, file_provider_withheld=True, phase="waiting-provider", wait_status=258,
+        decision_qpc=100000002, provider_pair=None, provider_ack_qpc=None, opening_ack_qpc=None, opening_pairs=[])
+    negative_events = [e for e in live_events if e["provider"] != "file"]
+    negative_decode = dict(live_decode, selected_events=len(negative_events), total_events=len(negative_events))
+    for name, expected, change, sentinel in [
+        ("negative-withheld-provider-no-child", True, lambda c: None, False),
+        ("negative-sentinel-created", False, lambda c: None, True),
+        ("negative-child-launched", False, lambda c: c.update(child={"pid": 10}), False),
+        ("negative-calibration-issued", False, lambda c: c.update(before={"path": "bad"}), False),
+        ("negative-wait-not-exercised", False, lambda c: c["readiness"].update(decision_qpc=2), False),
+        ("negative-provider-not-withheld", False, lambda c: c["readiness"].update(file_provider_withheld=False), False),
+    ]:
+        c = copy.deepcopy(negative); change(c); failure = None
+        try: audit_no_readiness(c, negative_decode, negative_events, sentinel_exists=sentinel)
+        except (EvidenceError, KeyError, TypeError) as exc: failure = str(exc)
+        rows.append(dict(name=name, expected_accepted=expected, accepted=failure is None, passed=(failure is None)==expected, error=failure))
     return {"synthetic_only": True, "cases": rows, "passed": all(r["passed"] for r in rows)}
 
 
@@ -244,6 +389,9 @@ def main() -> int:
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--trace", type=Path)
     parser.add_argument("--case-root")
+    parser.add_argument("--require-readiness", action="store_true")
+    parser.add_argument("--expect-no-readiness", action="store_true")
+    parser.add_argument("--sentinel", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     need(not args.output.exists(), "refusing to overwrite prior audit")
@@ -256,7 +404,14 @@ def main() -> int:
             need((args.trace / "events.etl").stat().st_size == decode["etl_bytes"], "ETL size mismatch")
             with (args.trace / "events.jsonl").open(encoding="utf-8-sig") as source:
                 events = [json.loads(line) for line in source]
-            result = audit(capture, decode, events, args.case_root); accepted = True
+            if capture.get("schema") == 2:
+                need(load(args.trace / "readiness.json") == capture.get("readiness"), "readiness record mismatch")
+            if args.expect_no_readiness:
+                need(args.sentinel is not None, "negative readiness sentinel path required")
+                result = audit_no_readiness(capture, decode, events, sentinel_exists=args.sentinel.exists())
+            else:
+                result = audit(capture, decode, events, args.case_root, require_readiness=args.require_readiness)
+            accepted = True
     except (EvidenceError, KeyError, TypeError, ValueError, OSError) as exc:
         result = {"integrity_checks_passed": False, "error": str(exc), "historical_cause_resolved": False}; accepted = False
     args.output.parent.mkdir(parents=True, exist_ok=True)

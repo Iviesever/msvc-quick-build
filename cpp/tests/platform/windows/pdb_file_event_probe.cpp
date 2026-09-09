@@ -9,6 +9,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <condition_variable>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <thread>
 #include <cstdint>
 #include <climits>
 #include <utility>
@@ -133,7 +139,7 @@ struct Session {
         p->Wnode.BufferSize = static_cast<ULONG>(buffer.words.size() * sizeof(std::uint64_t));
         p->Wnode.Flags = WNODE_FLAG_TRACED_GUID; p->Wnode.ClientContext = 1; // QPC timestamps.
         p->BufferSize = 256; p->MinimumBuffers = 32; p->MaximumBuffers = 128;
-        p->LogFileMode = EVENT_TRACE_FILE_MODE_SEQUENTIAL; p->MaximumFileSize = 256; p->FlushTimer = 1;
+        p->LogFileMode = EVENT_TRACE_FILE_MODE_SEQUENTIAL | EVENT_TRACE_REAL_TIME_MODE; p->MaximumFileSize = 256; p->FlushTimer = 1;
         p->LoggerNameOffset = sizeof(EVENT_TRACE_PROPERTIES);
         p->LogFileNameOffset = p->LoggerNameOffset + static_cast<ULONG>((name.size() + 1) * sizeof(wchar_t));
         auto* base = reinterpret_cast<char*>(p);
@@ -161,7 +167,11 @@ std::string process_identity() {
     return "{\"pid\":" + std::to_string(::GetCurrentProcessId()) + ",\"tid\":" + std::to_string(::GetCurrentThreadId())
         + ",\"created_filetime\":" + std::to_string(filetime(created)) + "}";
 }
-std::string calibration(const fs::path& path) {
+struct CalibrationWindow {
+    std::uint64_t start{}, denied_before{}, denied_after{};
+    DWORD pid{}, tid{};
+};
+std::string calibration(const fs::path& path, CalibrationWindow* window = nullptr) {
     const auto start = qpc();
     Handle owner{::CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
                               nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr)};
@@ -174,6 +184,7 @@ std::string calibration(const fs::path& path) {
     const DWORD error = denied ? ERROR_SUCCESS : ::GetLastError();
     const auto after = qpc();
     require(!denied && error == ERROR_SHARING_VIOLATION, "controlled sharing conflict missing native=" + std::to_string(error));
+    if (window) *window = {start, before, after, ::GetCurrentProcessId(), ::GetCurrentThreadId()};
     return "{\"path\":" + js(utf8(path.wstring())) + ",\"owner\":" + process_identity()
         + ",\"start_qpc\":" + std::to_string(start) + ",\"denied_before_qpc\":" + std::to_string(before)
         + ",\"denied_after_qpc\":" + std::to_string(after) + ",\"win32_error\":" + std::to_string(error)
@@ -182,7 +193,11 @@ std::string calibration(const fs::path& path) {
 }
 // TDH decodes selected named properties from the host's actual event schema.
 // Raw payload/version/flags are retained; no guessed hard-coded byte offsets.
-std::string event_data(EVENT_RECORD* event, std::string* schema) {
+struct FileFields {
+    std::optional<std::uint64_t> irp, status, issuing_tid;
+    std::wstring path;
+};
+std::string event_data(EVENT_RECORD* event, std::string* schema, FileFields* fields = nullptr) {
     ULONG bytes{};
     auto status = ::TdhGetEventInformation(event, 0, nullptr, nullptr, &bytes);
     require(status == ERROR_INSUFFICIENT_BUFFER && bytes <= 1024 * 1024, "TDH event metadata unavailable");
@@ -217,7 +232,9 @@ std::string event_data(EVENT_RECORD* event, std::string* schema) {
         std::string encoded;
         const auto type = property.nonStructType.InType;
         if (type == TDH_INTYPE_UNICODESTRING) {
-            encoded = js(utf8(bounded_string(data, size, 0)));
+            const auto text = bounded_string(data, size, 0);
+            encoded = js(utf8(text));
+            if (fields && name == L"FileName") fields->path = text;
         } else if (type == TDH_INTYPE_ANSISTRING) {
             // ProcessStop v2 ImageName is ANSI; retain exact bytes rather than
             // guessing an encoding or replacing the Unicode ProcessStart identity.
@@ -226,6 +243,11 @@ std::string event_data(EVENT_RECORD* event, std::string* schema) {
         } else if ((type == TDH_INTYPE_UINT32 || type == TDH_INTYPE_HEXINT32 || type == TDH_INTYPE_UINT64 ||
                     type == TDH_INTYPE_HEXINT64 || type == TDH_INTYPE_POINTER || type == TDH_INTYPE_FILETIME) && (size == 4 || size == 8)) {
             std::uint64_t number{}; std::memcpy(&number, data, size); encoded = std::to_string(number);
+            if (fields) {
+                if (name == L"Irp") fields->irp = number;
+                if (name == L"Status") fields->status = number;
+                if (name == L"IssuingThreadId" || name == L"ThreadId") fields->issuing_tid = number;
+            }
         } else { throw std::runtime_error("unsupported selected field " + utf8(name) + " type=" + std::to_string(type)); }
         if (!first) out += ','; first = false;
         out += js(utf8(name)) + ':' + encoded;
@@ -260,15 +282,183 @@ struct Decoder {
         } catch (...) { ++self.errors; }
     }
 };
+// Consume the SAME file+real-time session. No sleep, readiness-marker retry, or
+// discarded calibration. The ETL remains authoritative: offline audit must find
+// these exact live-observed payloads again, plus both original boundary controls.
+struct LiveReadiness {
+    struct Event {
+        std::uint64_t stamp{}, irp{}, status{}, issuing_tid{};
+        DWORD pid{}, tid{};
+        std::wstring path;
+        std::string json;
+    };
+    struct Pair {
+        Event begin, end;
+        std::string json() const { return "{\"begin\":" + begin.json + ",\"end\":" + end.json + "}"; }
+    };
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::map<std::uint64_t, Event> pending;
+    std::optional<Pair> provider_pair;
+    std::vector<Pair> opening_pairs;
+    std::wstring name, device, drive, target;
+    EVENT_TRACE_LOGFILEW log{};
+    TRACEHANDLE trace{INVALID_PROCESSTRACE_HANDLE};
+    std::jthread consumer;
+    std::chrono::steady_clock::time_point deadline;
+    std::uint64_t frequency{}, started_qpc{}, expires_qpc{}, provider_ack{}, opening_ack{}, decision_qpc{};
+    std::uint64_t errors{};
+    ULONG process_status{ERROR_INVALID_STATE}, close_status{ERROR_INVALID_STATE};
+    DWORD wait_status{ERROR_INVALID_STATE};
+    bool active{}, admitted{}, done{};
+    std::string phase{"not-started"}, error;
+
+    LiveReadiness(std::wstring session, std::wstring device_root, std::wstring dos_root, std::uint64_t hz)
+        : name(std::move(session)), device(std::move(device_root)), drive(std::move(dos_root)), frequency(hz) {
+        log.LoggerName = name.data();
+        log.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD | PROCESS_TRACE_MODE_RAW_TIMESTAMP;
+        log.EventRecordCallback = callback; log.Context = this;
+        trace = ::OpenTraceW(&log);
+        require(trace != INVALID_PROCESSTRACE_HANDLE, "OpenTrace live readiness failed native=" + std::to_string(::GetLastError()));
+        try {
+            consumer = std::jthread([this] {
+                const auto result = ::ProcessTrace(&trace, 1, nullptr, nullptr);
+                std::lock_guard lock{mutex}; process_status = result; done = true; changed.notify_all();
+            });
+        } catch (...) { ::CloseTrace(trace); trace = INVALID_PROCESSTRACE_HANDLE; throw; }
+    }
+    ~LiveReadiness() { finish(); }
+    void finish() {
+        if (trace == INVALID_PROCESSTRACE_HANDLE) return;
+        // ERROR_CTX_CLOSE_PENDING is a documented successful real-time close.
+        // Joining can wait for ETW's queued buffers; this is not a hard deadline.
+        close_status = ::CloseTrace(trace);
+        if (consumer.joinable()) consumer.join();
+        trace = INVALID_PROCESSTRACE_HANDLE;
+    }
+    void start() {
+        std::lock_guard lock{mutex};
+        require(!active, "readiness may only start once");
+        active = true; started_qpc = qpc(); expires_qpc = started_qpc + frequency * 10;
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+        phase = "waiting-provider";
+    }
+    std::wstring canonical(std::wstring path) const {
+        std::replace(path.begin(), path.end(), L'/', L'\\');
+        if (path.size() > device.size() && path[device.size()] == L'\\' &&
+            ::CompareStringOrdinal(path.data(), static_cast<int>(device.size()), device.data(), static_cast<int>(device.size()), TRUE) == CSTR_EQUAL)
+            path = drive + path.substr(device.size());
+        if (path.starts_with(L"\\??\\") || path.starts_with(L"\\\\?\\")) path.erase(0, 4);
+        return path;
+    }
+    static void WINAPI callback(EVENT_RECORD* record) noexcept {
+        auto& self = *static_cast<LiveReadiness*>(record->UserContext);
+        try {
+            std::lock_guard lock{self.mutex};
+            if (!self.active || self.admitted || self.errors || self.wait_status == WAIT_TIMEOUT) return;
+            const auto id = record->EventHeader.EventDescriptor.Id;
+            if (!::IsEqualGUID(record->EventHeader.ProviderId, file_provider) || (id != 12 && id != 24)) return;
+            FileFields fields;
+            const auto data = event_data(record, nullptr, &fields);
+            require(fields.irp.has_value(), "live event missing IRP");
+            Event event;
+            event.stamp = static_cast<std::uint64_t>(record->EventHeader.TimeStamp.QuadPart);
+            event.irp = *fields.irp; event.pid = record->EventHeader.ProcessId; event.tid = record->EventHeader.ThreadId;
+            event.issuing_tid = fields.issuing_tid.value_or(event.tid);
+            event.path = self.canonical(fields.path);
+            event.json = "{\"provider\":\"file\",\"id\":" + std::to_string(id)
+                + ",\"version\":" + std::to_string(record->EventHeader.EventDescriptor.Version)
+                + ",\"pid\":" + std::to_string(event.pid) + ",\"tid\":" + std::to_string(event.tid)
+                + ",\"qpc\":" + std::to_string(event.stamp)
+                + ",\"raw_payload\":" + js(hex(record->UserData, record->UserDataLength)) + ",\"data\":" + data + "}";
+            if (event.stamp < self.started_qpc) return;
+            if (id == 12) {
+                require(!event.path.empty(), "live Create missing file name");
+                require(self.pending.size() < 8192 && !self.pending.contains(event.irp), "live pending IRP ambiguity/cap");
+                self.pending.emplace(event.irp, std::move(event));
+            } else {
+                require(fields.status.has_value() && *fields.status <= 0xffffffffULL, "live end missing native Status");
+                event.status = *fields.status;
+                const auto it = self.pending.find(event.irp);
+                if (it == self.pending.end()) return; // Other operations also emit OperationEnd.
+                Pair pair{std::move(it->second), std::move(event)}; self.pending.erase(it);
+                require(pair.begin.stamp <= pair.end.stamp, "live completion precedes Create");
+                if (!self.provider_pair && pair.end.status == ERROR_SUCCESS) {
+                    self.provider_pair = pair; self.provider_ack = qpc();
+                }
+                if (!self.target.empty() && _wcsicmp(pair.begin.path.c_str(), self.target.c_str()) == 0) {
+                    require(self.opening_pairs.size() < 2, "duplicate opening calibration pair");
+                    self.opening_pairs.push_back(std::move(pair));
+                }
+                self.changed.notify_all();
+            }
+        } catch (const std::exception& e) {
+            std::lock_guard lock{self.mutex}; ++self.errors; self.error = e.what(); self.changed.notify_all();
+        } catch (...) {
+            std::lock_guard lock{self.mutex}; ++self.errors; self.changed.notify_all();
+        }
+    }
+    template<class Predicate> void wait(std::unique_lock<std::mutex>& lock, Predicate satisfied) {
+        if (!changed.wait_until(lock, deadline, [&] { return errors || done || satisfied(); }) || qpc() > expires_qpc) {
+            wait_status = WAIT_TIMEOUT; decision_qpc = qpc();
+            throw std::runtime_error("recording readiness timeout; compiler not admitted");
+        }
+        require(errors == 0 && !done && satisfied(), "recording readiness unavailable: " + error);
+    }
+    void wait_provider() {
+        std::unique_lock lock{mutex}; wait(lock, [&] { return provider_pair.has_value(); });
+    }
+    void arm(const fs::path& marker) {
+        std::lock_guard lock{mutex};
+        require(provider_pair.has_value() && target.empty(), "invalid opening calibration admission");
+        target = canonical(marker.wstring()); phase = "waiting-opening-calibration";
+    }
+    void wait_calibration(const CalibrationWindow& window) {
+        std::unique_lock lock{mutex}; wait(lock, [&] { return opening_pairs.size() == 2; });
+        unsigned good{}, denied{};
+        for (const auto& pair : opening_pairs) {
+            require(pair.begin.pid == window.pid && pair.begin.issuing_tid == window.tid, "live marker process/thread mismatch");
+            if (pair.end.status == 0 && window.start <= pair.begin.stamp && pair.end.stamp <= window.denied_before) ++good;
+            if (pair.end.status == 0xc0000043ULL && window.denied_before <= pair.begin.stamp && pair.end.stamp <= window.denied_after) ++denied;
+        }
+        require(good == 1 && denied == 1, "live opening calibration status/order mismatch");
+        opening_ack = qpc();
+        require(opening_ack <= expires_qpc, "opening acknowledgement exceeded readiness deadline");
+        wait_status = WAIT_OBJECT_0; decision_qpc = opening_ack; admitted = true; phase = "admitted";
+        pending.clear(); // No further live decoding; offline ETL audit checks the entire trace.
+    }
+    bool healthy() const {
+        return admitted && errors == 0 && process_status == ERROR_SUCCESS &&
+            (close_status == ERROR_SUCCESS || close_status == ERROR_CTX_CLOSE_PENDING);
+    }
+    std::string report(bool withheld) const {
+        std::string pairs = "[";
+        for (const auto& pair : opening_pairs) { if (pairs.size() > 1) pairs += ','; pairs += pair.json(); }
+        return "{\"schema\":1,\"mode\":\"same-session-real-time\",\"wait_limit_ms\":10000,\"pending_irp_limit\":8192"
+            ",\"file_provider_withheld\":" + std::string{withheld ? "true" : "false"}
+            + ",\"accepted\":" + (admitted ? "true" : "false") + ",\"phase\":" + js(phase)
+            + ",\"start_qpc\":" + std::to_string(started_qpc) + ",\"deadline_qpc\":" + std::to_string(expires_qpc)
+            + ",\"provider_ack_qpc\":" + (provider_pair ? std::to_string(provider_ack) : "null")
+            + ",\"opening_ack_qpc\":" + (admitted ? std::to_string(opening_ack) : "null")
+            + ",\"decision_qpc\":" + std::to_string(decision_qpc)
+            + ",\"wait_status\":" + std::to_string(wait_status) + ",\"decode_errors\":" + std::to_string(errors)
+            + ",\"error\":" + (error.empty() ? "null" : js(error))
+            + ",\"process_trace_status\":" + std::to_string(process_status) + ",\"close_trace_status\":" + std::to_string(close_status)
+            + ",\"provider_pair\":" + (provider_pair ? provider_pair->json() : "null")
+            + ",\"opening_pairs\":" + pairs + "]}";
+    }
+};
 int record(int argc, wchar_t** argv) {
-    require(argc >= 4, "use pdb_file_event_probe OUTPUT-DIRECTORY EXECUTABLE [ARGV...]");
+    const bool withhold_file = argc > 1 && std::wstring_view{argv[1]} == L"--test-withhold-file-provider";
+    const int offset = withhold_file ? 1 : 0;
+    require(argc >= 4 + offset, "use pdb_file_event_probe OUTPUT-DIRECTORY EXECUTABLE [ARGV...]");
     for (const auto& expected : std::array<std::pair<const wchar_t*, const wchar_t*>, 3>{{
         {L"MQB_OWNERSHIP_DISPOSABLE_HOST", L"1"}, {L"GITHUB_ACTIONS", L"true"}, {L"RUNNER_ENVIRONMENT", L"github-hosted"}}}) {
         wchar_t value[128]{};
         require(::GetEnvironmentVariableW(expected.first, value, 128) > 0 && std::wstring_view{value} == expected.second,
                 "event recording requires an explicitly disposable hosted VM");
     }
-    const fs::path dir = fs::absolute(argv[1]);
+    const fs::path dir = fs::absolute(argv[1 + offset]);
     require(!fs::exists(dir), "refusing to overwrite an earlier trace"); fs::create_directories(dir);
     wchar_t device[32768]{};
     require(::QueryDosDeviceW(dir.root_name().c_str(), device, 32768) != 0, "QueryDosDevice failed");
@@ -279,13 +469,22 @@ int record(int argc, wchar_t** argv) {
     const auto etl = dir / "events.etl";
     const auto session_name = L"MQB-PdbFileTrace-" + std::to_wstring(::GetCurrentProcessId()) + L"-" + std::to_wstring(qpc());
     Session session{etl, session_name};
+    LiveReadiness live{session_name, device, dir.root_name().wstring(), frequency.QuadPart};
     std::string failure, before = "null", after = "null", child = "null";
     try {
-        session.enable(file_provider, file_mask); session.enable(process_provider, process_mask);
-        before = calibration(dir / "calibration-before.pdb");
-        const fs::path executable = fs::absolute(argv[2]);
+        // Provider registration/configuration is not recording readiness. Observe
+        // a complete real event pair, then acknowledge the single opening marker.
+        live.start();
+        if (!withhold_file) session.enable(file_provider, file_mask);
+        session.enable(process_provider, process_mask);
+        live.wait_provider();
+        live.arm(dir / "calibration-before.pdb");
+        CalibrationWindow opening{};
+        before = calibration(dir / "calibration-before.pdb", &opening);
+        live.wait_calibration(opening);
+        const fs::path executable = fs::absolute(argv[2 + offset]);
         std::vector<std::wstring> arguments;
-        for (int i = 3; i < argc; ++i) arguments.emplace_back(argv[i]);
+        for (int i = 3 + offset; i < argc; ++i) arguments.emplace_back(argv[i]);
         auto command = mqb::platform::windows::build_command_line(executable.wstring(), arguments);
         STARTUPINFOW startup{}; startup.cb = sizeof(startup); PROCESS_INFORMATION information{};
         // This test launcher owns only the root HANDLE. The existing ownership
@@ -305,15 +504,18 @@ int record(int argc, wchar_t** argv) {
         after = calibration(dir / "calibration-after.pdb");
     } catch (const std::exception& e) { failure = e.what(); }
     session.stop();
+    live.finish(); // CloseTrace targets the consumer, not the controller session.
+    const auto readiness = live.report(withhold_file);
+    save(dir / "readiness.json", readiness + "\n");
     auto* health = session.properties();
     // Stop result/loss counters survive even if TDH decoding subsequently fails.
-    save(dir / "capture.json", "{\"schema\":1,\"session\":" + js(utf8(session_name))
+    save(dir / "capture.json", "{\"schema\":2,\"session\":" + js(utf8(session_name))
         + ",\"dos_root\":" + js(utf8(dir.root_name().wstring())) + ",\"device_root\":" + js(utf8(device))
         + ",\"qpc_frequency\":" + std::to_string(frequency.QuadPart)
         + ",\"clock\":\"QPC\",\"file_mask\":" + std::to_string(file_mask) + ",\"process_mask\":" + std::to_string(process_mask)
         + ",\"stop_status\":" + std::to_string(session.stop_status) + ",\"events_lost\":" + std::to_string(health->EventsLost)
         + ",\"log_buffers_lost\":" + std::to_string(health->LogBuffersLost) + ",\"realtime_buffers_lost\":" + std::to_string(health->RealTimeBuffersLost)
-        + ",\"maximum_file_mb\":256,\"child\":" + child + ",\"before\":" + before + ",\"after\":" + after
+        + ",\"readiness\":" + readiness + ",\"maximum_file_mb\":256,\"child\":" + child + ",\"before\":" + before + ",\"after\":" + after
         + ",\"failure\":" + (failure.empty() ? "null" : js(failure))
         + ",\"historical_cause_resolved\":false,\"safe_to_transfer_write_lease\":false}\n");
     checked(session.stop_status, "ControlTrace stop");
@@ -328,13 +530,19 @@ int record(int argc, wchar_t** argv) {
         + ",\"total_events\":" + std::to_string(decoder.total) + ",\"selected_events\":" + std::to_string(decoder.selected)
         + ",\"decode_errors\":" + std::to_string(decoder.errors) + ",\"capped_events\":" + std::to_string(decoder.capped)
         + ",\"etl_bytes\":" + std::to_string(fs::file_size(etl)) + ",\"log_header_events_lost\":" + std::to_string(log.LogfileHeader.EventsLost) + "}\n");
-    require(failure.empty() && result == ERROR_SUCCESS && closed == ERROR_SUCCESS && decoder.errors == 0 && decoder.capped == 0 &&
+    require(failure.empty() && live.healthy() && result == ERROR_SUCCESS && closed == ERROR_SUCCESS && decoder.errors == 0 && decoder.capped == 0 &&
         bool(decoder.output) && health->EventsLost == 0 && health->LogBuffersLost == 0 && health->RealTimeBuffersLost == 0 &&
         log.LogfileHeader.EventsLost == 0 && fs::file_size(etl) < 256ULL * 1024 * 1024, "capture incomplete; retain diagnostics, do not interpret missing events");
     return 0; // Collection only. Original child success is evaluated separately.
 }
 }
 int wmain(int argc, wchar_t** argv) {
-    try { return record(argc, argv); }
+    try {
+        if (argc == 3 && std::wstring_view{argv[1]} == L"--test-child-sentinel") {
+            save(fs::path{argv[2]}, "CHILD_WAS_ADMITTED\n");
+            return 0;
+        }
+        return record(argc, argv);
+    }
     catch (const std::exception& e) { std::cerr << "FILE_TRACE_INFRASTRUCTURE_FAILURE " << e.what() << '\n'; return 1; }
 }
