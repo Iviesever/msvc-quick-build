@@ -6,6 +6,7 @@ Overlapping B invocations retain multiple candidate children; never choose by or
 from __future__ import annotations
 import argparse
 import copy
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -78,11 +79,40 @@ def bind_span(begin: dict, end: dict, result: dict, capture: dict, events: list[
     return candidates
 
 
+def investigation_shape(profile: str, origin: str) -> bool:
+    # Add only the failed control's exact shape; no implicit broadening to
+    # arbitrary profiles, service origins or cancellation policies.
+    return ((origin == "A-started" and profile in ("pch-release", "modules-debug"))
+            or (origin == "preexisting" and profile == "zi-debug"))
+
+
+def input_equivalence(left: Path, right: Path, left_native: str, right_native: str) -> dict:
+    """Compare complete generated inputs, not timings or successful outcomes."""
+    def inventory(root: Path) -> dict[str, Path]:
+        return {p.relative_to(root).as_posix(): p for p in root.rglob("*") if p.is_file()
+                and (p.suffix in (".cpp", ".hpp", ".ixx") or p.name.endswith(".argv.txt"))}
+    a, b = inventory(left), inventory(right)
+    trace.need(bool(a) and set(a) == set(b), "paired input inventories differ or are empty")
+    trace.need(bool(left_native) and bool(right_native), "paired native roots missing")
+    compared = []
+    for name in sorted(a):
+        x, y = a[name].read_bytes(), b[name].read_bytes()
+        if name.endswith(".argv.txt"):
+            # Exact full directory identity only: never strip arbitrary paths,
+            # executable identities, flags, timestamps or compiler outcomes.
+            x = x.decode("utf-8-sig").replace(left_native, "<fixture>").encode("utf-8")
+            y = y.decode("utf-8-sig").replace(right_native, "<fixture>").encode("utf-8")
+        trace.need(x == y, "paired original input differs: " + name)
+        compared.append(dict(path=name, normalized_sha256=hashlib.sha256(x).hexdigest()))
+    return dict(input_equivalence_verified=True, compared=compared,
+                historical_cause_resolved=False, safe_to_transfer_write_lease=False)
+
+
 def analyse(root: Path, native_root: str, profile: str, capture: dict,
-            events: list[dict], event_audit: dict) -> dict:
+            events: list[dict], event_audit: dict, origin: str = "A-started") -> dict:
     observation = trace.load(root / "observation.json")
-    trace.need(observation.get("profile") == profile and profile in ("pch-release", "modules-debug") and
-               observation.get("origin") == "A-started" and observation.get("ending") == "drain" and
+    trace.need(observation.get("profile") == profile and investigation_shape(profile, origin) and
+               observation.get("origin") == origin and observation.get("ending") == "drain" and
                observation.get("endpoint_mode") == "default", "wrong original case identity")
     trace.need(observation.get("safe_to_transfer_write_lease") is False and
                observation.get("safe_to_integrate_cancellation") is False, "invalid original safety fields")
@@ -92,7 +122,10 @@ def analyse(root: Path, native_root: str, profile: str, capture: dict,
     for f in ("A_exit", "B0_exit", "B1_exit", "B_link_exit", "B_run_exit", "recovery_compile_exit"):
         signed_code(observation.get(f))
     expected = ["A/warm", "A/work0", "B/warm", "B/work0", "B/work1", "B/recovery"]
-    expected += [f"{side}/{'prefix' if profile == 'pch-release' else 'provider'}" for side in ("A", "B")]
+    if profile in ("pch-release", "modules-debug"):
+        expected += [f"{side}/{'prefix' if profile == 'pch-release' else 'provider'}" for side in ("A", "B")]
+    if origin == "preexisting":
+        expected.append("seed/warm")
     if observation["B0_exit"] == observation["B1_exit"] == 0:
         expected.append("B/link")
         if observation["B_link_exit"] == 0:
@@ -165,7 +198,7 @@ def analyse(root: Path, native_root: str, profile: str, capture: dict,
     trace.need(first["exit_code"] == drain["first_compile_exit"], "original A failure replaced by drain outcome")
     passed = control_ok(observation, drain) and all(r["exit_code"] == 0 for r in rows if r["phase"] == "original")
     trace.need(capture["child"]["exit_code"] == (0 if passed else 1), "fixture outcome disagrees with original control")
-    return {"schema": 1, "evidence_complete": True, "original_control_ok": passed, "profile": profile,
+    return {"schema": 1, "evidence_complete": True, "original_control_ok": passed, "profile": profile, "origin": origin,
             "physical_snapshots": snapshots, "invocations": rows, "original_failed_invocations": [r["stem"] for r in rows if r["phase"] == "original" and r["exit_code"] != 0],
             "recovery_failed": any(r["exit_code"] != 0 for r in rows if r["phase"] == "recovery"),
             "all_recorded_real_failed_opens": event_audit["real_failed_opens"],
@@ -244,16 +277,27 @@ def self_test() -> dict:
         ("disk-argv-exe-mismatch", "pch-release", "argv", False, False),
         ("disk-PDB-alias", "pch-release", "alias", False, False),
         ("disk-PDB-identity-missing", "pch-release", "identity", False, False),
+        ("disk-zi-preexisting-intact", "zi-debug", "none", True, True),
+        ("disk-zi-preexisting-B-failure-retained", "zi-debug", "B-fail", True, False),
+        ("disk-zi-preexisting-A-failure-retained", "zi-debug", "A-fail", True, False),
+        ("disk-zi-preexisting-seed-missing", "zi-debug", "seed-missing", False, False),
+        ("disk-zi-preexisting-seed-result-masked", "zi-debug", "seed-masked", False, False),
+        ("disk-zi-preexisting-seed-diagnostic-missing", "zi-debug", "seed-diagnostic", False, False),
+        ("disk-zi-preexisting-wrong-origin", "zi-debug", "origin", False, False),
+        ("disk-zi-preexisting-seed-failed", "zi-debug", "seed-fail", True, False),
     ]:
         failure = None
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             c = dict(capture, child=dict(capture["child"], exit_code=0, after_wait_qpc=10000))
-            o = dict(original, profile=profile, origin="A-started", ending="drain", endpoint_mode="default",
+            origin = "preexisting" if profile == "zi-debug" else "A-started"
+            o = dict(original, profile=profile, origin=origin, ending="drain", endpoint_mode="default",
                      safe_to_transfer_write_lease=False, safe_to_integrate_cancellation=False)
             dr = dict(drain, safe_to_transfer_write_lease=False)
             records = ["A/warm", "A/work0", "B/warm", "B/work0", "B/work1", "B/recovery", "B/link", "B/run"]
-            records += [f"{side}/{'prefix' if profile == 'pch-release' else 'provider'}" for side in ("A", "B")]
+            if profile in ("pch-release", "modules-debug"):
+                records += [f"{side}/{'prefix' if profile == 'pch-release' else 'provider'}" for side in ("A", "B")]
+            if origin == "preexisting": records.append("seed/warm")
             def store(path, value):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(value), encoding="utf-8")
@@ -263,7 +307,8 @@ def self_test() -> dict:
                 owner = 10 if stem.startswith("A/") else 20
                 code = 2 if ((mutation in ("A-fail", "masked") and stem == "A/work0") or
                              (mutation == "B-fail" and stem == "B/work0") or
-                             (mutation == "recovery-fail" and stem == "B/recovery")) else 0
+                             (mutation == "recovery-fail" and stem == "B/recovery") or
+                             (mutation == "seed-fail" and stem == "seed/warm")) else 0
                 b = dict(begin, label=stem.split("/")[-1], owner_pid=owner, owner_created_filetime=owner*100,
                          before_run_qpc=100+i*60)
                 e = dict(end, before_run_qpc=b["before_run_qpc"], after_run_qpc=b["before_run_qpc"]+40, exit_code=code)
@@ -284,6 +329,13 @@ def self_test() -> dict:
                 for stem in ("B/link", "B/run"):
                     for f in root.glob(stem+".*"): f.unlink()
             if mutation == "recovery-fail": o["recovery_compile_exit"] = 2
+            if mutation == "seed-fail": c["child"]["exit_code"] = 1
+            if mutation == "origin": o["origin"] = "A-started"
+            if mutation == "seed-missing":
+                for f in root.glob("seed/warm.*"): f.unlink()
+            if mutation == "seed-masked":
+                store(root / "seed/warm.result.json", dict(exit_code=2, cancelled=False))
+            if mutation == "seed-diagnostic": (root / "seed/warm.stderr.txt").unlink()
             for phase in ("before-A", "after-A", "after-B"):
                 pair = {side: dict(path=f"C:\\case\\{side}\\compiler.pdb", open_error=0, identity_error=0,
                     volume_serial="1", file_id=("a" if side == "A" else "b")*32) for side in ("A", "B")}
@@ -300,11 +352,33 @@ def self_test() -> dict:
             if mutation == "missing-diagnostic": (root / "B/work0.stderr.txt").unlink()
             if mutation == "argv": (root / "B/work0.argv.txt").write_text("C:\\wrong.exe\n")
             try:
-                observed = analyse(root, "C:\\case", profile, c, event_rows, dict(target_open_pairs=[], real_failed_opens=[]))
+                observed = analyse(root, "C:\\case", profile, c, event_rows, dict(target_open_pairs=[], real_failed_opens=[]), origin=origin)
                 trace.need(observed["original_control_ok"] == original_ok, "original failure hidden by analysis")
                 if mutation == "recovery-fail": trace.need(observed["recovery_failed"], "recovery outcome omitted")
             except (ValueError, KeyError, TypeError, OSError) as exc: failure = str(exc)
         rows.append(dict(name=name, expected_accepted=accepted, accepted=failure is None, passed=(failure is None)==accepted, error=failure))
+    for name, mutate, expected in (
+        ("pair-identical", "none", True), ("pair-missing-source", "missing", False),
+        ("pair-source-diff", "source", False), ("pair-flag-diff", "flag", False),
+        ("pair-executable-diff", "exe", False), ("pair-extra-argv", "extra", False),
+    ):
+        error = None
+        with tempfile.TemporaryDirectory() as temp:
+            a, b = Path(temp)/"left", Path(temp)/"right"
+            for root, native in ((a, "C:\\left"), (b, "C:\\right")):
+                root.mkdir()
+                (root/"warm.cpp").write_bytes(b"int warm() { return 42; }\n")
+                (root/"warm.argv.txt").write_text("C:\\tools\\cl.exe\n/FS\n/Fd"+native+"\\compiler.pdb\n", encoding="utf-8")
+            if mutate == "missing": (b/"warm.cpp").unlink()
+            if mutate == "source": (b/"warm.cpp").write_bytes(b"different")
+            if mutate in ("flag", "exe"):
+                f=b/"warm.argv.txt"; text=f.read_text()
+                f.write_text(text.replace("/FS", "/Z7") if mutate=="flag" else text.replace("cl.exe", "other.exe"))
+            if mutate == "extra": (b/"extra.argv.txt").write_bytes(b"unexpected")
+            try: input_equivalence(a, b, "C:\\left", "C:\\right")
+            except (ValueError, KeyError, TypeError, OSError) as exc: error=str(exc)
+        rows.append(dict(name=name, expected_accepted=expected, accepted=error is None,
+                         passed=(error is None)==expected, error=error))
     return {"synthetic_only": True, "cases": rows, "passed": all(r["passed"] for r in rows)}
 
 
@@ -312,7 +386,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--trace", type=Path); parser.add_argument("--fixture", type=Path)
-    parser.add_argument("--native-root"); parser.add_argument("--profile", choices=("pch-release", "modules-debug"))
+    parser.add_argument("--native-root"); parser.add_argument("--profile", choices=("pch-release", "modules-debug", "zi-debug"))
+    parser.add_argument("--origin", choices=("A-started", "preexisting"), default="A-started")
+    parser.add_argument("--compare-pair", nargs=2, type=Path)
+    parser.add_argument("--left-native-root"); parser.add_argument("--right-native-root")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     trace.need(not args.output.exists(), "refuse to overwrite audit")
@@ -321,6 +398,10 @@ def main() -> int:
     try:
         if args.self_test:
             report = self_test(); accepted = report["passed"]
+        elif args.compare_pair:
+            a, b = args.compare_pair
+            report = input_equivalence(a, b, args.left_native_root or str(a), args.right_native_root or str(b))
+            accepted = True
         else:
             trace.need(args.trace is not None and args.fixture is not None and args.profile is not None, "missing input paths/profile")
             # Diagnostic inventory survives a trace failure; never hide an original C1041 behind a tracing error.
@@ -333,7 +414,7 @@ def main() -> int:
             events = [json.loads(line) for line in (args.trace / "events.jsonl").read_text(encoding="utf-8-sig").splitlines()]
             native = args.native_root or str(args.fixture)
             checked = trace.audit(capture, decode, events, native, require_readiness=True)
-            report.update(analyse(args.fixture, native, args.profile, capture, events, checked))
+            report.update(analyse(args.fixture, native, args.profile, capture, events, checked, origin=args.origin))
             accepted = report["original_control_ok"] and not report["recovery_failed"]
     except (ValueError, TypeError, KeyError, OSError) as exc:
         report["error"] = str(exc); accepted = False

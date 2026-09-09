@@ -230,7 +230,8 @@ def self_test():
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--self-test",action="store_true");p.add_argument("--trace",type=Path);p.add_argument("--fixture",type=Path)
-    p.add_argument("--native-root");p.add_argument("--profile",choices=("pch-release","modules-debug"));p.add_argument("--output",required=True,type=Path)
+    p.add_argument("--native-root");p.add_argument("--profile",choices=("pch-release","modules-debug","zi-debug"));p.add_argument("--output",required=True,type=Path)
+    p.add_argument("--origin", choices=("A-started","preexisting"), default="A-started")
     a=p.parse_args();trace.need(not a.output.exists(),"refuse to overwrite audit")
     report=dict(observer_evidence_complete=False,historical_cause_resolved=False,safe_to_transfer_write_lease=False)
     try:
@@ -242,7 +243,7 @@ def main():
             events=[json.loads(line) for line in (a.trace/"events.jsonl").read_text(encoding="utf-8-sig").splitlines()]
             native=a.native_root or str(a.fixture)
             audited=trace.audit(capture,decode,events,native,require_readiness=True)
-            original=invocation.analyse(a.fixture,native,a.profile,capture,events,audited)
+            original=invocation.analyse(a.fixture,native,a.profile,capture,events,audited,origin=a.origin)
             report=analyse(a.fixture,native,capture,events,audited)
             report["original_control_ok"]=original["original_control_ok"]
             report["original_failed_invocations"]=original["original_failed_invocations"]

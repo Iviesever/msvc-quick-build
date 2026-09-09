@@ -632,8 +632,11 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     const std::wstring fixture_id = argv[6];
     const bool drain = ending == "drain";
     if (failure_study) {
-        require(default_endpoint && !pdb_study && origin == "A-started" && drain &&
-                (profile == "pch-release" || profile == "modules-debug"), "unsupported invocation study case");
+        const bool original_study = origin == "A-started" &&
+            (profile == "pch-release" || profile == "modules-debug");
+        const bool preexisting_study = origin == "preexisting" && profile == "zi-debug";
+        require(default_endpoint && !pdb_study && drain && (original_study || preexisting_study),
+                "unsupported invocation study case");
         record_invocation_spans = true;
     }
     const bool query_enabled = !pdb_study || std::wstring{argv[7]} == L"rm-on";
