@@ -1,0 +1,138 @@
+name: Benchmark Attribution Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'tests/native/benchmark_mqb.ps1'
+      - 'tests/native/collect_benchmark_attribution.ps1'
+      - 'tests/native/verify_benchmark_attribution.ps1'
+      - '.github/workflows/benchmark-attribution.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: benchmark-attribution-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Attribution observer and evidence contracts
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Exercise actual helpers without running MSVC benchmarks
+        shell: pwsh
+        run: |
+          & ./tests/native/verify_benchmark_attribution.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: benchmark-attribution-contracts
+          path: .mqb/benchmark-attribution-contracts/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  investigate:
+    name: Fixed AA and AB attribution study
+    needs: contract
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact observer source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: observer
+      # Fixed investigation pair: separate from this PR's independent ABBA job.
+      - name: Checkout accepted runtime A
+        uses: actions/checkout@v7
+        with:
+          ref: d01bb920e030202c33639f59139491ac7f49117c
+          path: baseline
+      - name: Checkout held PR170 runtime B
+        uses: actions/checkout@v7
+        with:
+          ref: 283b50733601926840fdcd0474d10a06a4f75c7d
+          path: subject
+      - name: Build and preserve the exact measured binaries and source identities
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bootstrap = Join-Path $PWD 'attribution-bootstrap'
+          New-Item -ItemType Directory -Path $bootstrap | Out-Null
+          Start-Transcript -LiteralPath (Join-Path $bootstrap 'build-transcript.txt') | Out-Null
+          try {
+              function Git-Value([string]$Root, [string]$Expression) {
+                  $value = & git -C $Root rev-parse $Expression
+                  if ($LASTEXITCODE -ne 0) { throw "Cannot resolve $Root $Expression" }
+                  return ([string]$value).Trim()
+              }
+              $aRoot = Join-Path $PWD 'baseline'
+              $bRoot = Join-Path $PWD 'subject'
+              $observer = Join-Path $PWD 'observer'
+              $aHead = Git-Value $aRoot HEAD
+              $bHead = Git-Value $bRoot HEAD
+              if ($aHead -cne 'd01bb920e030202c33639f59139491ac7f49117c' -or
+                  $bHead -cne '283b50733601926840fdcd0474d10a06a4f75c7d') { throw 'Investigation refs drifted.' }
+              $production = [ordered]@{}
+              foreach ($path in @('cpp/src', 'cpp/include', 'cpp/mqb.json', 'VERSION')) {
+                  $a = Git-Value $aRoot "HEAD:$path"
+                  $b = Git-Value $bRoot "HEAD:$path"
+                  $production[$path] = @{ baseline = $a; candidate = $b; identical = ($a -ceq $b) }
+                  if ($a -cne $b) { throw "This study requires identical product input: $path" }
+              }
+              foreach ($root in @($aRoot, $bRoot, $observer)) {
+                  if ((Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim() -cne '5.5.0') { throw 'VERSION must remain 5.5.0.' }
+              }
+              $seed = & (Join-Path $observer 'tests/native/acquire_seed.ps1') `
+                  -RepoRoot $observer -OutputRoot (Join-Path $PWD 'attribution-seed')
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $aExe = & (Join-Path $aRoot 'tests/native/build_mqb.ps1') -BuilderMqbPath $seed `
+                  -RepoRoot $aRoot -Version '5.5.0' -Configuration Release -Clean `
+                  -OutputPath (Join-Path $bootstrap 'A/mqb.exe')
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $bExe = & (Join-Path $bRoot 'tests/native/build_mqb.ps1') -BuilderMqbPath $seed `
+                  -RepoRoot $bRoot -Version '5.5.0' -Configuration Release -Clean `
+                  -OutputPath (Join-Path $bootstrap 'B/mqb.exe')
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              [ordered]@{
+                  schema = 1; baseline_head = $aHead; candidate_head = $bHead; observer_head = (Git-Value $observer HEAD)
+                  baseline_tree = (Git-Value $aRoot 'HEAD^{tree}'); candidate_tree = (Git-Value $bRoot 'HEAD^{tree}')
+                  production_inputs = $production; version = '5.5.0'; configuration = 'Release'
+                  baseline_sha256 = (Get-FileHash -LiteralPath $aExe -Algorithm SHA256).Hash
+                  candidate_sha256 = (Get-FileHash -LiteralPath $bExe -Algorithm SHA256).Hash
+                  seed_sha256 = (Get-FileHash -LiteralPath $seed -Algorithm SHA256).Hash
+                  baseline_build_script_sha256 = (Get-FileHash -LiteralPath (Join-Path $aRoot 'tests/native/build_mqb.ps1')).Hash
+                  candidate_build_script_sha256 = (Get-FileHash -LiteralPath (Join-Path $bRoot 'tests/native/build_mqb.ps1')).Hash
+                  github_run_id = $env:GITHUB_RUN_ID; run_attempt = $env:GITHUB_RUN_ATTEMPT; runner_image = $env:ImageVersion
+              } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $bootstrap 'build-identity.json') -Encoding utf8
+          } finally { Stop-Transcript | Out-Null }
+      - name: Execute predeclared eight AA and eight AB pairs without adaptive retries
+        shell: pwsh
+        run: |
+          & (Join-Path $PWD 'observer/tests/native/collect_benchmark_attribution.ps1') `
+            -BaselineMqbPath (Join-Path $PWD 'attribution-bootstrap/A/mqb.exe') `
+            -CandidateMqbPath (Join-Path $PWD 'attribution-bootstrap/B/mqb.exe') `
+            -BuildIdentityPath (Join-Path $PWD 'attribution-bootstrap/build-identity.json') `
+            -OutputRoot (Join-Path $PWD 'attribution-study')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve binaries, raw invocation records, partial failures and all samples
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-attribution-evidence
+          path: |
+            attribution-bootstrap/**
+            attribution-study/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30

@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$MqbPath,
     [ValidateRange(1, 20)][int]$Iterations = 3,
-    [string]$OutputPath
+    [string]$OutputPath,
+    [string]$InvocationEvidenceDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,6 +23,67 @@ if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Get-FullPath $OutputPath
 }
 
+# Opt-in observer: preserve the legacy launcher and clock when this is absent.
+# Records are written AFTER timing and BEFORE result/timing validation. Native
+# stdout/stderr are already merged by PowerShell: these are text lines, not a
+# byte-exact or per-stream archive. No OS process/child trace is inferred.
+if (-not [string]::IsNullOrWhiteSpace($InvocationEvidenceDirectory)) {
+    $InvocationEvidenceDirectory = Get-FullPath $InvocationEvidenceDirectory
+    if (Test-Path -LiteralPath $InvocationEvidenceDirectory) { throw 'Invocation evidence already exists.' }
+    New-Item -ItemType Directory -Path $InvocationEvidenceDirectory -Force | Out-Null
+}
+
+function Invoke-ObservedMqb {
+    param([string]$Scenario, [int]$Iteration, [string]$WorkingDirectory, [string[]]$Arguments)
+    $PSNativeCommandUseErrorActionPreference = $false
+    $recordPath = Join-Path $InvocationEvidenceDirectory "$Iteration-$Scenario.json"
+    $startedPath = Join-Path $InvocationEvidenceDirectory "$Iteration-$Scenario.started.json"
+    if ((Test-Path -LiteralPath $recordPath) -or (Test-Path -LiteralPath $startedPath)) {
+        throw 'Refusing to replace an invocation record or unfinished attempt.'
+    }
+    [ordered]@{ schema = 1; scenario = $Scenario; iteration = $Iteration; executable = $MqbPath
+        argv = @($Arguments); working_directory = $WorkingDirectory; utc = [DateTime]::UtcNow.ToString('o')
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $startedPath -Encoding utf8
+    $output = @(); $exitCode = $null; $failure = $null; $pushed = $false
+    $beforeNative = $null; $afterNative = $null
+    $utc = [DateTime]::UtcNow.ToString('o')
+    $start = [Diagnostics.Stopwatch]::GetTimestamp()
+    try {
+        Push-Location -LiteralPath $WorkingDirectory
+        $pushed = $true
+        $beforeNative = [Diagnostics.Stopwatch]::GetTimestamp()
+        $output = @(& $MqbPath @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } catch { $failure = $_.ToString() }
+    finally {
+        $afterNative = [Diagnostics.Stopwatch]::GetTimestamp()
+        if ($pushed) {
+            try { Pop-Location } catch { $failure = "$failure`nPop-Location: $_" }
+        }
+        $end = [Diagnostics.Stopwatch]::GetTimestamp()
+    }
+    $factor = 1000.0 / [Diagnostics.Stopwatch]::Frequency
+    $elapsed = ($end - $start) * $factor
+    $lines = @($output | ForEach-Object { [string]$_ })
+    $record = [ordered]@{
+        schema = 1; scenario = $Scenario; iteration = $Iteration
+        executable = $MqbPath; argv = @($Arguments); working_directory = $WorkingDirectory
+        host_pid = $PID; root_pid = $null; utc_before = $utc
+        clock = 'Stopwatch.GetTimestamp'; frequency = [Diagnostics.Stopwatch]::Frequency
+        start_ticks = $start; before_native_ticks = $beforeNative; after_native_ticks = $afterNative; end_ticks = $end
+        external_ms = $elapsed
+        push_ms = $(if ($null -ne $beforeNative) { ($beforeNative - $start) * $factor } else { $null })
+        native_and_capture_ms = $(if ($null -ne $beforeNative) { ($afterNative - $beforeNative) * $factor } else { $null })
+        pop_ms = ($end - $afterNative) * $factor
+        exit_code = $exitCode; observer_error = $failure; output_lines = $lines
+        output_contract = 'PowerShell merged string lines; not original stream bytes or stream attribution'
+        observer_cost = 'Four clock reads; file serialization outside interval but may perturb subsequent samples'
+    }
+    $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $recordPath -Encoding utf8
+    if ($null -ne $failure) { throw "Observed invocation failed; original record retained: $failure" }
+    return [pscustomobject]@{ output = $output; exit_code = $exitCode; elapsed_ms = $elapsed }
+}
+
 function Invoke-TimedMqb {
     param(
         [Parameter(Mandatory = $true)][string]$Scenario,
@@ -30,13 +92,18 @@ function Invoke-TimedMqb {
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
 
-    Push-Location $WorkingDirectory
-    try {
-        $output = @(& $MqbPath @Arguments '--timings=json' 2>&1)
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        Pop-Location
+    if ($InvocationEvidenceDirectory) {
+        $observed = Invoke-ObservedMqb $Scenario $Iteration $WorkingDirectory ($Arguments + @('--timings=json'))
+        $output = $observed.output; $exitCode = $observed.exit_code
+    } else {
+        Push-Location $WorkingDirectory
+        try {
+            $output = @(& $MqbPath @Arguments '--timings=json' 2>&1)
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            Pop-Location
+        }
     }
 
     if ($exitCode -ne 0) {
@@ -88,15 +155,21 @@ function Invoke-UntimedMqb {
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
 
-    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    Push-Location $WorkingDirectory
-    try {
-        $output = @(& $MqbPath @Arguments 2>&1)
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        Pop-Location
-        $stopwatch.Stop()
+    if ($InvocationEvidenceDirectory) {
+        $observed = Invoke-ObservedMqb $Scenario $Iteration $WorkingDirectory $Arguments
+        $output = $observed.output; $exitCode = $observed.exit_code; $elapsed = $observed.elapsed_ms
+    } else {
+        $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+        Push-Location $WorkingDirectory
+        try {
+            $output = @(& $MqbPath @Arguments 2>&1)
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            Pop-Location
+            $stopwatch.Stop()
+        }
+        $elapsed = [double]$stopwatch.Elapsed.TotalMilliseconds
     }
     if ($exitCode -ne 0) {
         foreach ($line in $output) { Write-Host $line }
@@ -110,7 +183,7 @@ function Invoke-UntimedMqb {
     return [PSCustomObject]@{
         iteration = $Iteration
         scenario = $Scenario
-        total_ms = [double]$stopwatch.Elapsed.TotalMilliseconds
+        total_ms = $elapsed
         discovery_ms = 0.0
         dependency_scan_ms = 0.0
         compile_queue_ms = 0.0
@@ -124,7 +197,7 @@ function Invoke-UntimedMqb {
         link_misses = -1
         archive_hits = -1
         archive_misses = -1
-        measurement_source = 'external_stopwatch'
+        measurement_source = $(if ($InvocationEvidenceDirectory) { 'external_stopwatch_observed' } else { 'external_stopwatch' })
         timing_schema_version = 0
         attribution = $null
         counters = $null
@@ -314,6 +387,16 @@ int main() { return bench_value() == 42 ? 0 : 1; }
     }
 }
 finally {
+    if ($InvocationEvidenceDirectory) {
+        # Final source snapshots are NOT per-invocation inputs or timing-time state.
+        $snapshot = Join-Path $InvocationEvidenceDirectory 'post-suite-sources'
+        foreach ($file in @(Get-ChildItem -LiteralPath $benchmarkRoot -Recurse -File |
+            Where-Object { $_.Extension -in @('.cpp', '.hpp', '.ixx') })) {
+            $target = Join-Path $snapshot ([IO.Path]::GetRelativePath($benchmarkRoot, $file.FullName))
+            New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($target)) -Force | Out-Null
+            Copy-Item -LiteralPath $file.FullName -Destination $target
+        }
+    }
     Remove-Item -LiteralPath $benchmarkRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
