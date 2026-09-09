@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <fstream>
@@ -388,6 +389,45 @@ void save_result(const fs::path& dir, const std::string& label, const RunResult&
               + std::to_string(result.error().native_code) + "}\n");
     }
 }
+// Set only by explicit investigation entry points, before launching any worker.
+// Each helper is a separate process. Normal matrices do not take new timestamps.
+bool record_invocation_spans = false;
+std::uint64_t invocation_tick() {
+    LARGE_INTEGER value{};
+    require(::QueryPerformanceCounter(&value) && value.QuadPart >= 0, "invocation QPC failed");
+    return static_cast<std::uint64_t>(value.QuadPart);
+}
+struct InvocationSpan {
+    fs::path directory;
+    std::string label;
+    bool enabled{record_invocation_spans};
+    std::uint64_t begin{};
+    InvocationSpan(const fs::path& dir, const std::string& name, const fs::path& executable)
+        : directory(dir), label(name) {
+        if (!enabled) return;
+        LARGE_INTEGER frequency{};
+        FILETIME created{}, exited{}, kernel{}, user{};
+        require(::QueryPerformanceFrequency(&frequency) && frequency.QuadPart > 0, "invocation QPF failed");
+        require(::GetProcessTimes(::GetCurrentProcess(), &created, &exited, &kernel, &user), "invocation owner identity failed");
+        begin = invocation_tick();
+        write(directory / (label + ".invocation-begin.json"),
+              "{\"schema\":1,\"clock\":\"QPC\",\"label\":" + (quoted)(label)
+              + ",\"executable\":" + (quoted)(path_text(executable))
+              + ",\"owner_pid\":" + std::to_string(::GetCurrentProcessId())
+              + ",\"owner_created_filetime\":" + std::to_string(ticks(created))
+              + ",\"frequency\":" + std::to_string(frequency.QuadPart)
+              + ",\"before_run_qpc\":" + std::to_string(begin) + "}\n");
+    }
+    void finish(std::uint64_t returned, const RunResult& result) const {
+        if (!enabled) return;
+        write(directory / (label + ".invocation-end.json"),
+              "{\"schema\":1,\"before_run_qpc\":" + std::to_string(begin)
+              + ",\"after_run_qpc\":" + std::to_string(returned)
+              + ",\"infrastructure_error\":" + (result ? "false" : "true")
+              + ",\"exit_code\":" + (result ? std::to_string(result->exit_code) : "null")
+              + ",\"safe_to_transfer_write_lease\":false}\n");
+    }
+};
 RunResult invoke(const MsvcToolchain& toolchain, const fs::path& executable,
                  const fs::path& dir, const std::string& label, std::vector<std::string> arguments) {
     ProcessSpec spec;
@@ -399,8 +439,11 @@ RunResult invoke(const MsvcToolchain& toolchain, const fs::path& executable,
     for (const auto& arg : spec.arguments) command += arg + '\n';
     write(dir / (label + ".argv.txt"), command);
     WindowsProcessRunner runner;
+    InvocationSpan span{dir, label, executable};
     auto result = runner.run(spec); // Deliberately unmanaged real compiler / linker.
-    save_result(dir, label, result);
+    save_result(dir, label, result); // Original diagnostics survive a later timestamp/span-write failure.
+    const auto returned = span.enabled ? invocation_tick() : 0; // Includes diagnostic serialization.
+    span.finish(returned, result);
     return result;
 }
 int exit_code(const RunResult& r) { return r ? r->exit_code : -1; }
@@ -508,13 +551,18 @@ int root(int argc, wchar_t** argv, bool drain) {
     return stopped && exit_code(first) == 0 ? 0 : 1;
 }
 
-int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = false) {
+int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = false, bool failure_study = false) {
     require(argc == (pdb_study ? 8 : 7), "measure arguments");
     if (default_endpoint) require_default_host();
     const fs::path dir = fs::absolute(argv[2]);
     const std::string profile = utf8(argv[3]), origin = utf8(argv[4]), ending = utf8(argv[5]);
     const std::wstring fixture_id = argv[6];
     const bool drain = ending == "drain";
+    if (failure_study) {
+        require(default_endpoint && !pdb_study && origin == "A-started" && drain &&
+                (profile == "pch-release" || profile == "modules-debug"), "unsupported invocation study case");
+        record_invocation_spans = true;
+    }
     const bool query_enabled = !pdb_study || std::wstring{argv[7]} == L"rm-on";
     if (pdb_study) {
         require(default_endpoint && profile == "pch-release" && origin == "A-started" && drain,
@@ -556,7 +604,7 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     std::stop_source stop;
     ProcessSpec a;
     a.executable = self();
-    a.arguments = {drain ? "--drain-root" : "--root", path_text(tc.identity.compiler), path_text(dir / "A"), profile,
+    a.arguments = {failure_study ? "--invocation-drain-root" : (drain ? "--drain-root" : "--root"), path_text(tc.identity.compiler), path_text(dir / "A"), profile,
                    utf8(ready_name), utf8(release_name)};
     if (drain) a.arguments.push_back(utf8(cancel_name));
     a.environment = tc.environment;
@@ -603,7 +651,7 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
         return result;
     };
     auto warm_owners = resource_owners(dir / "B/compiler.pdb");
-    if (pdb_study) pdb_snapshot(dir, "before-A");
+    if (pdb_study || failure_study) pdb_snapshot(dir, "before-A");
     workload(dir / "B", profile);
     std::vector<Process> active_a;
     if (drain) {
@@ -644,7 +692,7 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     else require(::SetEvent(release.value) != FALSE, "release A failed");
     auto a_result = a_future.get();
     const auto settled = std::chrono::steady_clock::now();
-    if (pdb_study) pdb_snapshot(dir, "after-A");
+    if (pdb_study || failure_study) pdb_snapshot(dir, "after-A");
     const bool service_survived = alive(server.handle.value);
     // The surviving service can still own PDB resources after the A client exits.
     // An empty snapshot is not a durable no-writer certificate either.
@@ -652,7 +700,7 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     const bool a_handles_signaled = std::all_of(active_a.begin(), active_a.end(), [](const auto& p) { return !alive(p.handle.value); });
     const bool pending_dispatched = fs::exists(dir / "A/work1.argv.txt");
     auto b0_result = b0.get(), b1_result = b1.get();
-    if (pdb_study) pdb_snapshot(dir, "after-B");
+    if (pdb_study || failure_study) pdb_snapshot(dir, "after-B");
     int linked = -2, executed = -2;
     if (exit_code(b0_result) == 0 && exit_code(b1_result) == 0) {
         std::vector<std::string> args{"/NOLOGO", "/DEBUG", "/INCREMENTAL:NO", "/OUT:" + path_text(dir / "B/result.exe"),
@@ -723,11 +771,17 @@ int wmain(int argc, wchar_t** argv) {
             require(argc == 3, "identity test arguments"); return pdb_identity_self_test(fs::absolute(argv[2]));
         }
         if (mode == L"--evidence-contract-self-test") return evidence_contract_self_test();
+        if (mode == L"--invocation-drain-root") {
+            record_invocation_spans = true;
+            return root(argc, argv, true);
+        }
+        if (mode == L"--measure-invocations") return measure(argc, argv, true, false, true);
         if (mode == L"--root" || mode == L"--drain-root") return root(argc, argv, mode == L"--drain-root");
         if (mode == L"--measure-pdb") return measure(argc, argv, true, true);
         if (mode == L"--measure" || mode == L"--measure-default") return measure(argc, argv, mode == L"--measure-default");
         const bool pdb_study = mode == L"--pdb-case";
-        const bool default_endpoint = mode == L"--default-case" || pdb_study;
+        const bool failure_study = mode == L"--invocation-case";
+        const bool default_endpoint = mode == L"--default-case" || pdb_study || failure_study;
         require((mode == L"--case" || default_endpoint) && argc == (pdb_study ? 8 : 7), "case arguments");
         const fs::path dir = fs::absolute(argv[2]);
         fs::create_directories(dir);
@@ -743,7 +797,7 @@ int wmain(int argc, wchar_t** argv) {
         // No global service termination, PID-authorized kill, or product changes.
         ProcessSpec spec;
         spec.executable = self();
-        spec.arguments = {pdb_study ? "--measure-pdb" : (default_endpoint ? "--measure-default" : "--measure")};
+        spec.arguments = {failure_study ? "--measure-invocations" : (pdb_study ? "--measure-pdb" : (default_endpoint ? "--measure-default" : "--measure"))};
         for (int i = 2; i < argc; ++i) spec.arguments.push_back(utf8(argv[i]));
         std::stop_source lifetime;
         spec.cancellation = lifetime.get_token();
