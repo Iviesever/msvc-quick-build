@@ -1,0 +1,122 @@
+name: PDB File Event Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/tests/platform/windows/pdb_file_event_probe.cpp'
+      - 'tests/native/collect_pdb_file_trace.ps1'
+      - 'tests/native/verify_pdb_file_trace.py'
+      - '.github/workflows/pdb-file-trace.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: pdb-file-trace-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  contract:
+    name: File-event correlation record contracts
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - shell: pwsh
+        run: |
+          python tests/native/verify_pdb_file_trace.py --self-test --output .mqb/file-trace-contracts.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tokens=$null; $errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'tests/native/collect_pdb_file_trace.ps1'),[ref]$tokens,[ref]$errors)
+          if (@($errors).Count) { throw "$errors" }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: file-trace-contracts
+          path: .mqb/file-trace-contracts.json
+          include-hidden-files: true
+          retention-days: 30
+  build:
+    name: Build exact file-event recorder and ownership probe
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - shell: pwsh
+        run: |
+          $seed=& ./tests/native/acquire_seed.ps1 -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $mqb=& ./tests/native/build_mqb.ps1 -BuilderMqbPath $seed -RepoRoot $PWD -Version '5.5.0' `
+            -Configuration Release -Clean -OutputPath (Join-Path $PWD 'native-out/file-trace/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tests/native/collect_msvc_service_ownership.ps1 -MqbPath $mqb -RepoRoot $PWD -BuildOnly `
+            -OutputRoot (Join-Path $PWD '.mqb/file-trace-build')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $output=@(& $mqb cpp/tests/platform/windows/pdb_file_event_probe.cpp cpp/src/platform/windows/CommandLine.cpp `
+            --env vs --no-discover --std c++23 --release --runtime MT -I cpp/include `
+            --compiler-arg /W4 --compiler-arg /permissive- --lib advapi32.lib --lib tdh.lib -o pdb_file_event_probe 2>&1)
+          $code=$LASTEXITCODE
+          $output | Set-Content .mqb/file-trace-build/recorder-build.txt -Encoding utf8
+          $output | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0) { exit $code }
+          New-Item -ItemType Directory -Path 'native-out/file-trace-input' -Force | Out-Null
+          Copy-Item $mqb native-out/file-trace-input/mqb.exe
+          Copy-Item .mqb/bin/msvc_service_ownership_probe.exe,.mqb/bin/pdb_file_event_probe.exe,`
+            .mqb/file-trace-build/probe.identity.json native-out/file-trace-input/
+          @{ source_head=(& git rev-parse HEAD).Trim(); trace_sha256=(Get-FileHash .mqb/bin/pdb_file_event_probe.exe).Hash } |
+            ConvertTo-Json | Set-Content native-out/file-trace-input/file-trace.identity.json -Encoding utf8
+      - uses: actions/upload-artifact@v7
+        with:
+          name: file-trace-input
+          path: native-out/file-trace-input/*
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: file-trace-build
+          path: .mqb/file-trace-build/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+  observe:
+    name: Native failure calibration and four fixed traced MSVC cases
+    needs: [build, contract]
+    # Different disposable VM; never compile tools on the observation host.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: file-trace-input
+          path: native-input
+      - shell: pwsh
+        env:
+          MQB_OWNERSHIP_DISPOSABLE_HOST: '1'
+        run: |
+          & ./tests/native/collect_pdb_file_trace.ps1 -InputRoot (Join-Path $PWD 'native-input') `
+            -OutputRoot (Join-Path $PWD '.mqb/pdb-file-trace') -RepoRoot $PWD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve raw ETL, decoded events and original diagnostics on every outcome
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pdb-file-trace-evidence
+          path: |
+            .mqb/pdb-file-trace/**
+            !.mqb/pdb-file-trace/**/*.obj
+            !.mqb/pdb-file-trace/**/*.pdb
+            !.mqb/pdb-file-trace/**/*.pch
+            !.mqb/pdb-file-trace/**/*.exe
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
