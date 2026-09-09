@@ -13,6 +13,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -248,6 +249,98 @@ std::vector<Process> new_servers(const std::vector<Process>& before, const fs::p
     return result;
 }
 
+
+// Metadata-only snapshots are observations, not locks or writer-quiescence
+// certificates. Share all access and close every handle before returning.
+struct FileIdentity {
+    Handle handle;
+    DWORD open_error{}, identity_error{};
+    FILE_ID_INFO id{};
+    fs::path path;
+    explicit FileIdentity(const fs::path& file) : path(file) {
+        handle = Handle{::CreateFileW(file.c_str(), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+        if (!handle) { open_error = ::GetLastError(); return; }
+        if (!::GetFileInformationByHandleEx(handle.value, FileIdInfo, &id, sizeof(id)))
+            identity_error = ::GetLastError();
+    }
+    bool known() const { return bool(handle) && identity_error == ERROR_SUCCESS; }
+    std::string json() const {
+        std::string file_id;
+        constexpr char hex[] = "0123456789abcdef";
+        for (const auto byte : id.FileId.Identifier) {
+            file_id += hex[byte >> 4]; file_id += hex[byte & 15];
+        }
+        return "{\"path\":" + (quoted)(path_text(path))
+            + ",\"open_error\":" + std::to_string(open_error)
+            + ",\"identity_error\":" + (handle ? std::to_string(identity_error) : "null")
+            + ",\"volume_serial\":" + (known() ? (quoted)(std::to_string(id.VolumeSerialNumber)) : "null")
+            + ",\"file_id\":" + (known() ? (quoted)(file_id) : "null") + "}";
+    }
+};
+bool same_file(const FileIdentity& a, const FileIdentity& b) {
+    return a.known() && b.known() && a.id.VolumeSerialNumber == b.id.VolumeSerialNumber
+        && std::equal(std::begin(a.id.FileId.Identifier), std::end(a.id.FileId.Identifier),
+                      std::begin(b.id.FileId.Identifier));
+}
+std::string identity_pair(const fs::path& a, const fs::path& b) {
+    const FileIdentity left{a}, right{b}; // Simultaneously open identities.
+    return "{\"A\":" + left.json() + ",\"B\":" + right.json()
+        + ",\"same_file\":" + (left.known() && right.known()
+            ? (same_file(left, right) ? "true" : "false") : "null") + "}";
+}
+void pdb_snapshot(const fs::path& dir, const std::string& phase) {
+    const auto started = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto pdb = identity_pair(dir / "A/compiler.pdb", dir / "B/compiler.pdb");
+    const auto pch_files = identity_pair(dir / "A/common.pch", dir / "B/common.pch");
+    write(dir / ("pdb-" + phase + ".json"), "{\"phase\":" + (quoted)(phase)
+        + ",\"started_tick\":" + std::to_string(started)
+        + ",\"ended_tick\":" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
+        + ",\"desired_access\":128,\"share_mode\":7,\"pdb\":" + pdb + ",\"pch\":" + pch_files
+        + ",\"handles_closed_before_return\":true,\"safe_to_transfer_write_lease\":false}\n");
+}
+int pdb_identity_self_test(const fs::path& dir) {
+    require(!fs::exists(dir), "refuse to overwrite metadata test evidence");
+    fs::create_directories(dir);
+    write(dir / "one", "original"); write(dir / "two", "other");
+    fs::create_hard_link(dir / "one", dir / "alias");
+    unsigned checks = 0;
+    {
+        FileIdentity one{dir / "one"}, alias{dir / "alias"}, two{dir / "two"};
+        require(one.known() && alias.known() && two.known(), "known file identities unavailable"); ++checks;
+        require(same_file(one, alias), "hard-link identity not recognized"); ++checks;
+        require(!same_file(one, two), "distinct files reported identical"); ++checks;
+        write(dir / "identities.json", "[" + one.json() + "," + alias.json() + "," + two.json() + "]\n");
+    }
+    {
+        FileIdentity missing{dir / "missing"};
+        require(missing.open_error == ERROR_FILE_NOT_FOUND && !missing.known(), "missing file must preserve error2"); ++checks;
+        write(dir / "missing.json", missing.json() + '\n');
+    }
+    {
+        Handle exclusive{::CreateFileW((dir / "one").c_str(), GENERIC_READ | GENERIC_WRITE,
+            0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+        require(bool(exclusive), "exclusive control handle failed");
+        FileIdentity attributes{dir / "one"};
+        require(attributes.known(), "metadata snapshot conflicted with an exclusive data handle"); ++checks;
+        Handle denied{::CreateFileW((dir / "one").c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+        const DWORD error = denied ? ERROR_SUCCESS : ::GetLastError();
+        require(!denied && error == ERROR_SHARING_VIOLATION, "control data-read should preserve error32"); ++checks;
+        write(dir / "sharing.json", "{\"data_read_error\":" + std::to_string(error)
+            + ",\"metadata\":" + attributes.json() + "}\n");
+    }
+    std::ifstream input{dir / "one", std::ios::binary};
+    std::string contents{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    require(contents == "original", "metadata observation changed bytes"); ++checks;
+    write(dir / "contracts.json", "{\"checks\":" + std::to_string(checks)
+        + ",\"passed\":true,\"compiler_run\":false,\"historical_cause_resolved\":false}\n");
+    std::cout << "PDB_IDENTITY_CONTRACT " << checks << " checks passed (real files, no compiler)\n";
+    return 0;
+}
+
 struct Owners { DWORD error{}; bool includes_server{}; std::string identities{"[]"}; };
 Owners pdb_owners(const fs::path& pdb, const Process& server) {
     DWORD session{};
@@ -415,13 +508,19 @@ int root(int argc, wchar_t** argv, bool drain) {
     return stopped && exit_code(first) == 0 ? 0 : 1;
 }
 
-int measure(int argc, wchar_t** argv, bool default_endpoint) {
-    require(argc == 7, "measure arguments");
+int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = false) {
+    require(argc == (pdb_study ? 8 : 7), "measure arguments");
     if (default_endpoint) require_default_host();
     const fs::path dir = fs::absolute(argv[2]);
     const std::string profile = utf8(argv[3]), origin = utf8(argv[4]), ending = utf8(argv[5]);
     const std::wstring fixture_id = argv[6];
     const bool drain = ending == "drain";
+    const bool query_enabled = !pdb_study || std::wstring{argv[7]} == L"rm-on";
+    if (pdb_study) {
+        require(default_endpoint && profile == "pch-release" && origin == "A-started" && drain,
+                "PDB study only supports the predeclared PCH Release A-started drain case");
+        require(std::wstring{argv[7]} == L"rm-on" || std::wstring{argv[7]} == L"rm-off", "unknown PDB query mode");
+    }
     require(profile == "zi-debug" || profile == "ZI-debug" || profile == "zi-release"
             || profile == "pch-debug" || profile == "pch-release"
             || profile == "modules-debug" || profile == "modules-release", "unknown profile");
@@ -490,7 +589,21 @@ int measure(int argc, wchar_t** argv, bool default_endpoint) {
     prepare(tc, dir / "B", profile);
     auto after_b = new_servers(before, tc.identity.compiler);
     require(after_b.size() == 1 && same(server, after_b[0]), "B did not retain the same observed endpoint service");
-    auto warm_owners = pdb_owners(dir / "B/compiler.pdb", server);
+    unsigned query_count = 0;
+    auto resource_owners = [&](const fs::path& file) {
+        if (!pdb_study) return pdb_owners(file, server);
+        const auto started = std::chrono::steady_clock::now().time_since_epoch().count();
+        const auto result = query_enabled ? pdb_owners(file, server) : Owners{ERROR_NOT_SUPPORTED, false, "[]"};
+        write(dir / ("rm-query-" + std::to_string(query_count++) + ".json"),
+            "{\"path\":" + (quoted)(path_text(file)) + ",\"attempted\":" + (query_enabled ? "true" : "false")
+            + ",\"started_tick\":" + std::to_string(started)
+            + ",\"ended_tick\":" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
+            + ",\"error\":" + (query_enabled ? std::to_string(result.error) : "null")
+            + ",\"owners\":" + (query_enabled ? result.identities : "null") + "}\n");
+        return result;
+    };
+    auto warm_owners = resource_owners(dir / "B/compiler.pdb");
+    if (pdb_study) pdb_snapshot(dir, "before-A");
     workload(dir / "B", profile);
     std::vector<Process> active_a;
     if (drain) {
@@ -520,8 +633,8 @@ int measure(int argc, wchar_t** argv, bool default_endpoint) {
     } while (std::chrono::steady_clock::now() < deadline);
     for (const auto& p : active)
         require(_wcsicmp(p.image.c_str(), tc.identity.compiler.c_str()) == 0, "B compiler image mismatch");
-    const auto active_owners = pdb_owners(dir / "B/compiler.pdb", server);
-    const auto a_owners_at_request = drain ? pdb_owners(dir / "A/compiler.pdb", server) : Owners{};
+    const auto active_owners = resource_owners(dir / "B/compiler.pdb");
+    const auto a_owners_at_request = drain ? resource_owners(dir / "A/compiler.pdb") : Owners{};
     const bool a_overlap = std::any_of(active_a.begin(), active_a.end(), [](const auto& p) { return alive(p.handle.value); });
     const bool overlap = std::any_of(active.begin(), active.end(), [](const auto& p) { return alive(p.handle.value); });
     // These are retained-handle observations, not proof of an in-flight PDB RPC.
@@ -531,13 +644,15 @@ int measure(int argc, wchar_t** argv, bool default_endpoint) {
     else require(::SetEvent(release.value) != FALSE, "release A failed");
     auto a_result = a_future.get();
     const auto settled = std::chrono::steady_clock::now();
+    if (pdb_study) pdb_snapshot(dir, "after-A");
     const bool service_survived = alive(server.handle.value);
     // The surviving service can still own PDB resources after the A client exits.
     // An empty snapshot is not a durable no-writer certificate either.
-    const auto a_owners_after = default_endpoint ? pdb_owners(dir / "A/compiler.pdb", server) : Owners{};
+    const auto a_owners_after = default_endpoint ? resource_owners(dir / "A/compiler.pdb") : Owners{};
     const bool a_handles_signaled = std::all_of(active_a.begin(), active_a.end(), [](const auto& p) { return !alive(p.handle.value); });
     const bool pending_dispatched = fs::exists(dir / "A/work1.argv.txt");
     auto b0_result = b0.get(), b1_result = b1.get();
+    if (pdb_study) pdb_snapshot(dir, "after-B");
     int linked = -2, executed = -2;
     if (exit_code(b0_result) == 0 && exit_code(b1_result) == 0) {
         std::vector<std::string> args{"/NOLOGO", "/DEBUG", "/INCREMENTAL:NO", "/OUT:" + path_text(dir / "B/result.exe"),
@@ -591,6 +706,9 @@ int measure(int argc, wchar_t** argv, bool default_endpoint) {
         + ",\"lifecycle_ok\":" + (lifecycle_ok ? "true" : "false")
         + ",\"unmanaged_control_ok\":" + (control_ok ? "true" : "false")
         + ",\"safe_to_integrate_cancellation\":false,\"safe_to_transfer_write_lease\":false\n}\n";
+    if (pdb_study) write(dir / "pdb-study.json", "{\"schema\":1,\"rm_queries_enabled\":"
+        + std::string{query_enabled ? "true" : "false"} + ",\"query_slots\":" + std::to_string(query_count)
+        + ",\"historical_cause_resolved\":false,\"safe_to_transfer_write_lease\":false}\n");
     write(dir / "observation.json", report);
     std::cout << report;
     return lifecycle_ok && control_ok && drain_ok ? 0 : 1;
@@ -601,11 +719,16 @@ int wmain(int argc, wchar_t** argv) {
     try {
         require(argc >= 2, "use --case/--default-case/--measure/--root");
         const std::wstring mode = argv[1];
+        if (mode == L"--pdb-identity-self-test") {
+            require(argc == 3, "identity test arguments"); return pdb_identity_self_test(fs::absolute(argv[2]));
+        }
         if (mode == L"--evidence-contract-self-test") return evidence_contract_self_test();
         if (mode == L"--root" || mode == L"--drain-root") return root(argc, argv, mode == L"--drain-root");
+        if (mode == L"--measure-pdb") return measure(argc, argv, true, true);
         if (mode == L"--measure" || mode == L"--measure-default") return measure(argc, argv, mode == L"--measure-default");
-        const bool default_endpoint = mode == L"--default-case";
-        require((mode == L"--case" || default_endpoint) && argc == 7, "case arguments");
+        const bool pdb_study = mode == L"--pdb-case";
+        const bool default_endpoint = mode == L"--default-case" || pdb_study;
+        require((mode == L"--case" || default_endpoint) && argc == (pdb_study ? 8 : 7), "case arguments");
         const fs::path dir = fs::absolute(argv[2]);
         fs::create_directories(dir);
         if (default_endpoint) {
@@ -620,7 +743,7 @@ int wmain(int argc, wchar_t** argv) {
         // No global service termination, PID-authorized kill, or product changes.
         ProcessSpec spec;
         spec.executable = self();
-        spec.arguments = {default_endpoint ? "--measure-default" : "--measure"};
+        spec.arguments = {pdb_study ? "--measure-pdb" : (default_endpoint ? "--measure-default" : "--measure")};
         for (int i = 2; i < argc; ++i) spec.arguments.push_back(utf8(argv[i]));
         std::stop_source lifetime;
         spec.cancellation = lifetime.get_token();
