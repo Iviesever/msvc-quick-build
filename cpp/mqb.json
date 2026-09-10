@@ -105,7 +105,8 @@
       "src/orchestration/routing/MsvcTargetRouter.cpp",
       "src/platform/windows/CommandLine.cpp",
       "src/platform/windows/WindowsParallelismResources.cpp",
-      "src/platform/windows/WindowsProcessRunner.cpp"
+      "src/platform/windows/WindowsProcessRunner.cpp",
+      "src/platform/windows/WindowsWriteDomain.cpp"
     ]
   }
 }

@@ -1,0 +1,69 @@
+name: Physical Write Domain Admission
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/**'
+      - '.github/workflows/write-domain-admission.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: write-domain-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+jobs:
+  native:
+    name: Native write-domain ${{ matrix.configuration }}
+    runs-on: windows-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build exact current MQB and native domain cases
+        shell: pwsh
+        run: |
+          $seed = & ./tests/native/acquire_seed.ps1 -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $mqb = & ./tests/native/build_mqb.ps1 -BuilderMqbPath $seed -RepoRoot $PWD -Version '5.5.0' `
+            -Configuration '${{ matrix.configuration }}' -Clean -OutputPath (Join-Path $PWD 'native-out/domain/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $configuration = if ('${{ matrix.configuration }}' -eq 'Debug') { '--debug' } else { '--release' }
+          $runtime = if ('${{ matrix.configuration }}' -eq 'Debug') { 'MTd' } else { 'MT' }
+          & $mqb cpp/tests/platform/windows/windows_process_runner_tests.cpp `
+            cpp/src/platform/windows/CommandLine.cpp cpp/src/platform/windows/WindowsProcessRunner.cpp `
+            cpp/src/platform/windows/WindowsWriteDomain.cpp --env vs --no-discover --std c++23 `
+            $configuration --runtime $runtime -I cpp/include --compiler-arg /W4 --compiler-arg /permissive- `
+            --lib shell32.lib -o write_domain_probe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Fixed native identities, contention and residual-writer controls
+        shell: pwsh
+        run: |
+          $env:MQB_WRITE_DOMAIN_EVIDENCE_ROOT = Join-Path $PWD '.mqb/write-domain-evidence'
+          $output = @(& ./.mqb/bin/write_domain_probe.exe --write-domain-tests 2>&1)
+          $code = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          New-Item -ItemType Directory -Force .mqb/write-domain-evidence | Out-Null
+          $output | Set-Content .mqb/write-domain-evidence/native-output.txt -Encoding utf8
+          @{ source_head=(& git rev-parse HEAD).Trim(); configuration='${{ matrix.configuration }}'; native_exit=$code;
+             probe_sha256=(Get-FileHash .mqb/bin/write_domain_probe.exe).Hash; image=$env:ImageVersion;
+             run=$env:GITHUB_RUN_ID; attempt=$env:GITHUB_RUN_ATTEMPT } |
+            ConvertTo-Json | Set-Content .mqb/write-domain-evidence/provenance.json -Encoding utf8
+          exit $code
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: write-domain-${{ matrix.configuration }}
+          path: |
+            .mqb/write-domain-evidence/**
+            .mqb/bin/write_domain_probe.exe
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
