@@ -51,7 +51,15 @@ constexpr std::array<std::string_view, mqb::performance::work_kind_count> work_n
     "filesystem_snapshot_module_scan",
     "filesystem_snapshot_other",
     "target_reporting",
+    "link_cache_serialize",
+    "link_cache_prepare",
+    "link_cache_stream",
+    "link_cache_write_payload",
+    "link_cache_flush",
+    "link_cache_install",
 };
+static_assert(std::all_of(work_names.begin(), work_names.end(),
+    [](const std::string_view name) { return !name.empty(); }));
 
 constexpr std::array<std::string_view, mqb::performance::cache_kind_count> cache_names{
     "compile",

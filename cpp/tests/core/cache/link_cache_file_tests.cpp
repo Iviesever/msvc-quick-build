@@ -1,7 +1,9 @@
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -12,6 +14,7 @@
 #include "mqb/core/LinkCacheFile.hpp"
 #include "mqb/core/LinkOptions.hpp"
 #include "mqb/core/LinkerIdentity.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
 
 namespace {
 
@@ -32,6 +35,126 @@ struct TempTree {
         fs::remove_all(root, ignored);
     }
 };
+
+using Work = mqb::performance::WorkKind;
+using Evidence = mqb::performance::EvidenceSnapshot;
+constexpr std::array children{
+    Work::link_cache_serialize, Work::link_cache_prepare,
+    Work::link_cache_stream, Work::link_cache_install};
+constexpr std::size_t link_index = static_cast<std::size_t>(mqb::performance::CacheKind::link);
+
+std::chrono::nanoseconds work(const Evidence& evidence, const Work kind) {
+    return evidence.work[static_cast<std::size_t>(kind)];
+}
+
+void check_subspans(const Evidence& evidence) {
+    std::chrono::nanoseconds disjoint{};
+    for (const auto child : children) {
+        expect(work(evidence, child).count() >= 0, "subspan duration cannot be negative");
+        disjoint += work(evidence, child);
+    }
+    expect(disjoint <= work(evidence, Work::link_cache_write),
+           "disjoint save children must fit inside the inclusive save interval");
+    expect(work(evidence, Work::link_cache_write_payload) + work(evidence, Work::link_cache_flush)
+               <= work(evidence, Work::link_cache_stream),
+           "payload and flush are nested in stream, not additive wall time");
+}
+
+std::string file_bytes(const fs::path& file) {
+    std::ifstream stream{file, std::ios::binary};
+    expect(bool(stream), "comparison file must be readable");
+    return {std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
+}
+
+void test_save_evidence(const fs::path& root, const mqb::LinkCacheEntry& entry) {
+    using mqb::performance::Activation;
+    using mqb::performance::Collector;
+    const auto plain_file = root / "plain.linkcache";
+    Collector inactive;
+    const auto plain = mqb::LinkCacheFile::save(plain_file, entry);
+    expect(plain.has_value(), "unobserved save succeeds");
+    const auto plain_bytes = file_bytes(plain_file);
+    expect(!plain_bytes.empty(), "comparison is not two absent files");
+    expect(inactive.snapshot().cache_files_written[link_index] == 0,
+           "inactive collector must not receive writes");
+    for (const auto child : children) {
+        expect(work(inactive.snapshot(), child).count() == 0, "inactive subspans stay zero");
+    }
+
+    Collector observed;
+    const auto observed_file = root / "observed.linkcache";
+    {
+        Activation activation{observed};
+        expect(mqb::LinkCacheFile::save(observed_file, entry).has_value(), "observed create succeeds");
+        expect(mqb::LinkCacheFile::save(observed_file, entry).has_value(), "observed replacement succeeds");
+    }
+    const auto snapshot = observed.snapshot();
+    check_subspans(snapshot);
+    expect(file_bytes(observed_file) == plain_bytes, "observation preserves exact cache format bytes");
+    expect(snapshot.cache_files_written[link_index] == 2, "nested scopes do not double count writes");
+    expect(snapshot.cache_bytes_written[link_index] == 2 * plain_bytes.size(),
+           "nested scopes do not double count payload bytes");
+    expect(work(snapshot, Work::link_cache_stream).count() > 0, "actual stream lifetime is observed");
+    const auto loaded = mqb::LinkCacheFile::load(observed_file);
+    expect(loaded && loaded->has_value(), "observed cache remains loadable");
+
+    auto oversized = entry;
+    oversized.linker.version.assign(4u * 1024u * 1024u + 1u, 'x');
+    Collector rejected;
+    const auto invalid_file = root / "invalid.linkcache";
+    {
+        Activation activation{rejected};
+        const auto result = mqb::LinkCacheFile::save(invalid_file, oversized);
+        expect(!result && result.error().code == mqb::LinkCacheFileErrorCode::file_write_failed,
+               "serialization retains its original error category");
+    }
+    check_subspans(rejected.snapshot());
+    expect(!fs::exists(invalid_file), "serialization failure must not install a cache");
+    for (const auto child : {Work::link_cache_prepare, Work::link_cache_stream,
+                             Work::link_cache_write_payload, Work::link_cache_flush, Work::link_cache_install}) {
+        expect(work(rejected.snapshot(), child).count() == 0, "unreached phases are not invented");
+    }
+    expect(rejected.snapshot().cache_files_written[link_index] == 0, "serialization failure writes nothing");
+
+    const auto blocker = root / "not-a-directory";
+    { std::ofstream stream{blocker}; stream << "keep"; }
+    Collector preparation;
+    {
+        Activation activation{preparation};
+        const auto result = mqb::LinkCacheFile::save(blocker / "cache", entry);
+        expect(!result && result.error().code == mqb::LinkCacheFileErrorCode::file_write_failed,
+               "directory failure retains its original error category");
+    }
+    check_subspans(preparation.snapshot());
+    expect(preparation.snapshot().cache_files_written[link_index] == 0, "directory failure writes nothing");
+    expect(work(preparation.snapshot(), Work::link_cache_stream).count() == 0 &&
+           work(preparation.snapshot(), Work::link_cache_install).count() == 0,
+           "directory failure never enters stream or install");
+    expect(file_bytes(blocker) == "keep", "directory failure does not damage blocking file");
+
+    const auto directory = root / "nonempty.linkcache";
+    fs::create_directories(directory);
+    { std::ofstream stream{directory / "keep.txt"}; stream << "untouched"; }
+    const auto unobserved_error = mqb::LinkCacheFile::save(directory, entry);
+    Collector installation;
+    {
+        Activation activation{installation};
+        const auto result = mqb::LinkCacheFile::save(directory, entry);
+        expect(!result && !unobserved_error &&
+               result.error().code == mqb::LinkCacheFileErrorCode::replace_failed &&
+               result.error().message == unobserved_error.error().message &&
+               result.error().file == unobserved_error.error().file,
+               "observed install failure preserves original diagnostics and identity");
+    }
+    check_subspans(installation.snapshot());
+    expect(installation.snapshot().cache_files_written[link_index] == 1,
+           "failed install still records the actual temporary write");
+    expect(file_bytes(directory / "keep.txt") == "untouched", "failed install preserves destination contents");
+    for (const auto& item : fs::directory_iterator(root)) {
+        expect(!item.path().filename().string().starts_with("nonempty.linkcache.tmp."),
+               "failed install retains original temporary-file cleanup");
+    }
+}
 
 } // namespace
 
@@ -68,6 +191,7 @@ int main() {
         .file_inputs = file_inputs,
         .side_outputs = side_outputs,
     };
+    test_save_evidence(tree.root, entry);
 
     const fs::path file = tree.root / "cache" / "plugin.linkcache";
     const auto missing = mqb::LinkCacheFile::load(file);
