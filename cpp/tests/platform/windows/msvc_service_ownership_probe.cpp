@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <expected>
@@ -26,6 +27,7 @@
 #include <vector>
 
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
+#include "mqb/orchestration/BoundedWorkScheduler.hpp"
 #include "mqb/platform/windows/CommandLine.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 
@@ -590,7 +592,91 @@ void workload(const fs::path& dir, const std::string& profile, unsigned function
     }
 }
 
-int root(int argc, wchar_t** argv, bool drain) {
+// Fixture-only bridge from the parent's named event to the real scheduler API.
+// The 10ms wait is polling for bridge shutdown, NOT a cancellation deadline.
+// Only callback admission receives a token; compile() stays unmanaged.
+int scheduler_drain(const MsvcToolchain& tc, const fs::path& dir,
+                    const std::string& profile, HANDLE cancel) {
+    std::stop_source admission;
+    std::atomic<bool> callback_active{false};
+    bool event_observed = false;
+    bool forwarded_during_callback = false;
+    DWORD wait_error = ERROR_SUCCESS;
+    std::array<int, 2> codes{-2, -2};
+    std::size_t dispatched = 0;
+    std::string callback_exception;
+    std::jthread bridge([&](std::stop_token shutdown) {
+        while (!shutdown.stop_requested()) {
+            const auto status = ::WaitForSingleObject(cancel, 10);
+            if (status == WAIT_OBJECT_0) {
+                event_observed = true;
+                const bool active_before = callback_active.load(std::memory_order_acquire);
+                admission.request_stop();
+                forwarded_during_callback = active_before && callback_active.load(std::memory_order_acquire);
+                return;
+            }
+            if (status != WAIT_TIMEOUT) {
+                wait_error = status == WAIT_FAILED ? ::GetLastError() : ERROR_INVALID_FUNCTION;
+                if (wait_error == ERROR_SUCCESS) wait_error = ERROR_INVALID_FUNCTION;
+                admission.request_stop(); // Close admission but retain the bridge failure.
+                return;
+            }
+        }
+    });
+    const auto scheduled = mqb::orchestration::BoundedWorkScheduler::run_with_admission_stop(
+        2, 1, admission.get_token(), [&](std::size_t index) {
+            ++dispatched;
+            callback_active.store(true, std::memory_order_release);
+            struct Active {
+                std::atomic<bool>& flag;
+                ~Active() { flag.store(false, std::memory_order_release); }
+            } active{callback_active};
+            try {
+                codes.at(index) = exit_code(compile(tc, dir, profile, "work" + std::to_string(index), true));
+                return codes.at(index) == 0;
+            } catch (const std::exception& e) {
+                callback_exception = e.what();
+                throw; // Preserve callback_threw; never replace it with cancellation success.
+            } catch (...) {
+                callback_exception = "non-standard callback exception";
+                throw;
+            }
+        });
+    bridge.request_stop();
+    bridge.join(); // Synchronizes all bridge observations before serialization.
+    if (!callback_exception.empty()) std::cerr << "SCHEDULER_CALLBACK_ERROR " << callback_exception << '\n';
+    if (!scheduled) std::cerr << "SCHEDULER_ERROR " << scheduled.error().message << '\n';
+    if (wait_error != ERROR_SUCCESS) std::cerr << "SCHEDULER_BRIDGE_ERROR native=" << wait_error << '\n';
+    std::cerr.flush();
+    // Suppress ADL: a mutable std::string would prefer std::quoted over this JSON helper.
+    const std::string summary = "{\"schema\":1,\"api\":\"BoundedWorkScheduler::run_with_admission_stop\""
+        ",\"scheduler_succeeded\":" + std::string{scheduled ? "true" : "false"}
+        + ",\"worker_count\":" + (scheduled ? std::to_string(scheduled->worker_count) : "null")
+        + ",\"started_count\":" + (scheduled ? std::to_string(scheduled->started_count) : "null")
+        + ",\"stop_requested\":" + (scheduled ? (scheduled->stop_requested ? "true" : "false") : "null")
+        + ",\"admission_stop_observed\":" + (scheduled ? (scheduled->admission_stop_observed ? "true" : "false") : "null")
+        + ",\"stopped_before_all_items\":" + (scheduled ? (scheduled->stopped_before_all_items ? "true" : "false") : "null")
+        + ",\"event_observed\":" + (event_observed ? "true" : "false")
+        + ",\"forwarded_during_callback\":" + (forwarded_during_callback ? "true" : "false")
+        + ",\"bridge_wait_error\":" + std::to_string(wait_error)
+        + ",\"callback_exception\":" + (quoted)(callback_exception)
+        + ",\"scheduler_error_code\":" + (scheduled ? "null" : std::to_string(static_cast<int>(scheduled.error().code)))
+        + ",\"safe_to_transfer_write_lease\":false}\n";
+    write(dir / "scheduler.json", summary);
+    write(dir / "drain.json", "{\"stop_observed\":" + std::string{admission.stop_requested() ? "true" : "false"}
+          + ",\"work_compiles_dispatched\":" + std::to_string(dispatched)
+          + ",\"first_compile_exit\":" + std::to_string(codes[0])
+          + ",\"pending_compile_exit\":" + std::to_string(codes[1])
+          + ",\"safe_to_transfer_write_lease\":false}\n");
+    // callback_active covers compile/capture/diagnostics, not an in-flight RPC.
+    return scheduled && scheduled->worker_count == 1 && scheduled->started_count == 1
+        && scheduled->stop_requested && scheduled->admission_stop_observed && scheduled->stopped_before_all_items
+        && event_observed && forwarded_during_callback && wait_error == ERROR_SUCCESS
+        && callback_exception.empty() && dispatched == 1 && codes[0] == 0 && codes[1] == -2 ? 0 : 1;
+}
+
+
+int root(int argc, wchar_t** argv, bool drain, bool use_scheduler = false) {
     require(argc == (drain ? 8 : 7), "root arguments");
     MsvcToolchain tc;
     tc.identity.compiler = argv[2]; // Environment already supplied by the measured parent.
@@ -609,6 +695,7 @@ int root(int argc, wchar_t** argv, bool drain) {
     // Fixture watchdog only; not a product cancellation deadline.
     require(::WaitForSingleObject(release.value, 120000) == WAIT_OBJECT_0, "root fixture watchdog");
     if (!drain) return 0;
+    if (use_scheduler) return scheduler_drain(tc, dir, profile, cancel.value);
     const auto first = compile(tc, dir, profile, "work0", true);
     const auto status = ::WaitForSingleObject(cancel.value, 0);
     require(status == WAIT_TIMEOUT || status == WAIT_OBJECT_0, "admission cancellation wait failed");
@@ -731,7 +818,12 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     const fs::path dir = fs::absolute(argv[2]);
     const std::string profile = utf8(argv[3]), origin = utf8(argv[4]), ending = utf8(argv[5]);
     const std::wstring fixture_id = argv[6];
-    const bool drain = ending == "drain";
+    const bool use_scheduler = ending == "scheduler-drain";
+    const bool drain = ending == "drain" || use_scheduler;
+    // Existing observer/query/fault studies remain their original direct-drain
+    // controls. Do not relabel one of those helpers as a scheduler API run.
+    require(!use_scheduler || (!pdb_study && !failure_study && !query_study),
+            "scheduler drain is only available to the ownership matrix");
     if (failure_study) {
         const bool original_study = origin == "A-started" &&
             (profile == "pch-release" || profile == "modules-debug");
@@ -790,7 +882,7 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
     std::stop_source stop;
     ProcessSpec a;
     a.executable = self();
-    a.arguments = {failure_study ? "--invocation-drain-root" : (drain ? "--drain-root" : "--root"), path_text(tc.identity.compiler), path_text(dir / "A"), profile,
+    a.arguments = {failure_study ? "--invocation-drain-root" : (use_scheduler ? "--scheduler-drain-root" : (drain ? "--drain-root" : "--root")), path_text(tc.identity.compiler), path_text(dir / "A"), profile,
                    utf8(ready_name), utf8(release_name)};
     if (drain) a.arguments.push_back(utf8(cancel_name));
     a.environment = tc.environment;
@@ -933,6 +1025,7 @@ int measure(int argc, wchar_t** argv, bool default_endpoint, bool pdb_study = fa
         + ",\"B_observed_compilers\":" + identities(active)
         + ",\"endpoint_mode\":" + quoted(default_endpoint ? "default" : "private")
         + ",\"request_to_A_result_ms\":" + std::to_string(std::chrono::duration<double, std::milli>(settled - requested).count())
+        + ",\"scheduler_api_used\":" + (use_scheduler ? "true" : "false")
         + ",\"drain_requested\":" + (drain ? "true" : "false")
         + ",\"A_observed_compilers\":" + identities(active_a)
         + ",\"A_compiler_overlap_observed\":" + (a_overlap ? "true" : "false")
@@ -974,6 +1067,7 @@ int wmain(int argc, wchar_t** argv) {
             require(argc == 3, "identity test arguments"); return pdb_identity_self_test(fs::absolute(argv[2]));
         }
         if (mode == L"--evidence-contract-self-test") return evidence_contract_self_test();
+        if (mode == L"--scheduler-drain-root") return root(argc, argv, true, true);
         if (mode == L"--invocation-drain-root") {
             record_invocation_spans = true;
             return root(argc, argv, true);

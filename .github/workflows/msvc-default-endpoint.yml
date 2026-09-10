@@ -130,7 +130,7 @@ jobs:
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'guards.json') -Encoding utf8
           # Both native failures above are expected and independently asserted.
           exit 0
-      - name: Observe fixed 56-case default endpoint matrix
+      - name: Observe fixed 70-case default endpoint matrix
         shell: pwsh
         env:
           MQB_OWNERSHIP_DISPOSABLE_HOST: '1'

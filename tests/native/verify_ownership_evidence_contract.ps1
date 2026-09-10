@@ -35,6 +35,7 @@ function Write-Tool($Root, $Stem, [int]$Code = 0, [bool]$Cancelled = $false) {
 function New-Fixture([string]$Name, [string]$Mode, [string]$Profile, [string]$Origin, [string]$Ending) {
     $root = Join-Path $OutputRoot $Name
     New-Item -ItemType Directory -Path $root | Out-Null
+    $isDrain = $Ending -in @('drain', 'scheduler-drain')
     $observation = [pscustomobject]@{
         schema = 2; endpoint_mode = $Mode; profile = $Profile; origin = $Origin; ending = $Ending
         A_exit = $(if ($Ending -eq 'cancel') { 1223 } else { 0 })
@@ -42,9 +43,10 @@ function New-Fixture([string]$Name, [string]$Mode, [string]$Profile, [string]$Or
         lifecycle_ok = $true; unmanaged_control_ok = $true; drain_control_ok = $true
         safe_to_integrate_cancellation = $false; safe_to_transfer_write_lease = $false
         server_survived_A = $true; B_compiler_overlap_observed = $true
-        drain_requested = ($Ending -eq 'drain'); A_compiler_overlap_observed = ($Ending -eq 'drain')
-        A_observed_compilers_signaled = $(if ($Ending -eq 'drain') { $true } else { $null })
-        A_pending_compile_dispatched = $(if ($Ending -eq 'drain') { $false } else { $null })
+        scheduler_api_used = ($Ending -eq 'scheduler-drain')
+        drain_requested = $isDrain; A_compiler_overlap_observed = $isDrain
+        A_observed_compilers_signaled = $(if ($isDrain) { $true } else { $null })
+        A_pending_compile_dispatched = $(if ($isDrain) { $false } else { $null })
     }
     Write-Tool $root 'A' $observation.A_exit ($Ending -eq 'cancel')
     foreach ($stem in @('A/warm', 'B/warm', 'B/work0', 'B/work1', 'B/link', 'B/run', 'B/recovery')) { Write-Tool $root $stem }
@@ -54,11 +56,20 @@ function New-Fixture([string]$Name, [string]$Mode, [string]$Profile, [string]$Or
         if ($Profile.StartsWith('pch-')) { Write-Tool $root "$directory/prefix" }
         if ($Profile.StartsWith('modules-')) { Write-Tool $root "$directory/provider" }
     }
-    if ($Ending -eq 'drain') {
+    if ($isDrain) {
         Write-Tool $root 'A/work0'
         Write-Json (Join-Path $root 'A/drain.json') @{
             stop_observed = $true; work_compiles_dispatched = 1; first_compile_exit = 0
             pending_compile_exit = -2; safe_to_transfer_write_lease = $false
+        }
+    }
+    if ($Ending -eq 'scheduler-drain') {
+        Write-Json (Join-Path $root 'A/scheduler.json') @{
+            schema = 1; api = 'BoundedWorkScheduler::run_with_admission_stop'
+            scheduler_succeeded = $true; worker_count = 1; started_count = 1
+            stop_requested = $true; admission_stop_observed = $true; stopped_before_all_items = $true
+            event_observed = $true; forwarded_during_callback = $true; bridge_wait_error = 0
+            callback_exception = ''; scheduler_error_code = $null; safe_to_transfer_write_lease = $false
         }
     }
     return [pscustomobject]@{
@@ -96,7 +107,7 @@ foreach ($mode in @('private', 'default')) {
     foreach ($profile in @('zi-debug', 'ZI-debug', 'zi-release', 'pch-debug', 'pch-release', 'modules-debug', 'modules-release')) {
         foreach ($origin in @('preexisting', 'A-started')) {
             $endings = @('unmanaged-normal', 'normal', 'cancel')
-            if ($mode -eq 'default') { $endings += 'drain' }
+            if ($mode -eq 'default') { $endings += @('drain', 'scheduler-drain') }
             foreach ($ending in $endings) {
                 $label = if ($profile -ceq 'ZI-debug') { 'edit-continue-debug' } else { $profile }
                 Run-Case -Name "$mode-$label-$origin-$ending" -Mode $mode -Profile $profile -Origin $origin -Ending $ending
@@ -145,6 +156,24 @@ Run-Case 'adverse-managed-compile-retained' {
         }
     }
 } $true
+function Mutate-Scheduler($Fixture, [string]$Field, $Value) {
+    $path = Join-Path $Fixture.root 'A/scheduler.json'
+    $record = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    $record.$Field = $Value
+    Write-Json $path $record
+}
+Run-Case -Name 'scheduler-record-missing' -Ending scheduler-drain -ExpectAccepted $false -Mutate {
+    param($f) Remove-Item -LiteralPath (Join-Path $f.root 'A/scheduler.json')
+}
+Run-Case -Name 'scheduler-wrong-count' -Ending scheduler-drain -ExpectAccepted $false -Mutate { param($f) Mutate-Scheduler $f 'started_count' 2 }
+Run-Case -Name 'scheduler-wrong-api' -Ending scheduler-drain -ExpectAccepted $false -Mutate { param($f) Mutate-Scheduler $f 'api' 'direct-fixture' }
+Run-Case -Name 'scheduler-string-stop' -Ending scheduler-drain -ExpectAccepted $false -Mutate { param($f) Mutate-Scheduler $f 'admission_stop_observed' 'true' }
+Run-Case -Name 'scheduler-bridge-error' -Ending scheduler-drain -ExpectAccepted $false -Mutate { param($f) Mutate-Scheduler $f 'bridge_wait_error' 6 }
+Run-Case -Name 'scheduler-event-unseen' -Ending scheduler-drain -ExpectAccepted $false -Mutate { param($f) Mutate-Scheduler $f 'event_observed' $false }
+Run-Case -Name 'scheduler-stop-after-callback' -Ending scheduler-drain -ExpectAccepted $false -Mutate { param($f) Mutate-Scheduler $f 'forwarded_during_callback' $false }
+Run-Case -Name 'scheduler-callback-exception' -Ending scheduler-drain -ExpectAccepted $false -Mutate { param($f) Mutate-Scheduler $f 'callback_exception' 'retained original failure' }
+Run-Case -Name 'scheduler-failure' -Ending scheduler-drain -ExpectAccepted $false -Mutate { param($f) Mutate-Scheduler $f 'scheduler_succeeded' $false }
+Run-Case -Name 'scheduler-original-A-mismatch' -Ending scheduler-drain -ExpectAccepted $false -Mutate { param($f) Write-Tool $f.root 'A/work0' 1 }
 $failed = @($rows | Where-Object { -not $_.passed })
 Write-Host "OWNERSHIP_COLLECTOR_CONTRACT $($rows.Count) cases; $($failed.Count) failures (synthetic; no MSVC run)"
 if ($failed.Count -ne 0) { $failed | Format-List | Out-String | Write-Host; exit 1 }
