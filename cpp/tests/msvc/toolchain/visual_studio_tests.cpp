@@ -1,7 +1,14 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
+#include <cstdint>
+#include <stdexcept>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -12,6 +19,7 @@
 #include <utility>
 #include <vector>
 
+#include "../../../src/msvc/toolchain/VisualStudioEnvironment.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
@@ -196,6 +204,155 @@ void restore_cache_text(const fs::path& cache_file, const std::string& cache_tex
     stream << cache_text;
 }
 
+// These tests use real cmd.exe, file/pipe handles and the product environment
+// capture. The unprotected script is the old call shape, not a second product
+// implementation. Never print the captured environment: it may contain secrets.
+void verify_environment_input(const fs::path& installed_vcvars) {
+    using mqb::msvc::detail::capture_visual_studio_environment;
+    using mqb::msvc::detail::default_command_processor;
+    const auto root = unique_cache_root();
+    struct Cleanup {
+        fs::path root;
+        ~Cleanup() { std::error_code ignored; fs::remove_all(root, ignored); }
+    } cleanup{root};
+    const auto require = [](bool ok, const char* message) {
+        if (!ok) throw std::runtime_error(message);
+    };
+    try {
+        fs::create_directories(root);
+        const auto save = [&](const fs::path& path, const std::string& bytes) {
+            std::ofstream out(path, std::ios::binary);
+            out << bytes;
+            out.close();
+            require(bool(out), "stdin test script/input write failed");
+        };
+        const auto reader = root / "reader.cmd";
+        const auto rejected = root / "reject.cmd";
+        const auto legacy = root / "unprotected.cmd";
+        save(reader, "@echo off\r\nset \"MQB_STDIN_READ=unread\"\r\n"
+                     "set /p MQB_STDIN_READ=\r\n"
+                     "set \"VCToolsInstallDir=C:\\mqb-stdin-test\\\"\r\nexit /b 0\r\n");
+        save(rejected, "@exit /b 17\r\n");
+        save(legacy, "@echo off\r\ncall \"%MQB_VCVARS%\" %MQB_VC_TARGET% >nul 2>&1\r\n"
+                     "if errorlevel 1 exit /b %errorlevel%\r\nset\r\n");
+        const std::string input = "foreground-input\nsecond-line\n";
+        const auto input_file = root / "stdin.txt";
+        save(input_file, input);
+        struct Input {
+            HANDLE previous{::GetStdHandle(STD_INPUT_HANDLE)};
+            HANDLE read{INVALID_HANDLE_VALUE};
+            bool pipe{}, installed{};
+            Input(const fs::path& file, const std::string& bytes, bool is_pipe) : pipe(is_pipe) {
+                if (pipe) {
+                    HANDLE writer{};
+                    if (!::CreatePipe(&read, &writer, nullptr, 0)) return;
+                    DWORD written{};
+                    const bool filled = ::WriteFile(writer, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr)
+                        && written == bytes.size();
+                    ::CloseHandle(writer); // No inherited writer can hold EOF open.
+                    if (!filled) return;
+                } else {
+                    read = ::CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                }
+                installed = read != INVALID_HANDLE_VALUE && ::SetStdHandle(STD_INPUT_HANDLE, read) != FALSE;
+            }
+            ~Input() {
+                if (installed) ::SetStdHandle(STD_INPUT_HANDLE, previous);
+                if (read && read != INVALID_HANDLE_VALUE) ::CloseHandle(read);
+            }
+            Input(const Input&) = delete;
+            Input& operator=(const Input&) = delete;
+            std::uint64_t remaining() const {
+                if (pipe) {
+                    DWORD available{};
+                    if (::PeekNamedPipe(read, nullptr, 0, nullptr, &available, nullptr)) return available;
+                    if (::GetLastError() == ERROR_BROKEN_PIPE) return 0;
+                    throw std::runtime_error("stdin pipe observation failed");
+                }
+                LARGE_INTEGER zero{}, position{}, size{};
+                if (!::GetFileSizeEx(read, &size) || !::SetFilePointerEx(read, zero, &position, FILE_CURRENT)
+                    || position.QuadPart < 0 || size.QuadPart < position.QuadPart)
+                    throw std::runtime_error("stdin file-position observation failed");
+                return static_cast<std::uint64_t>(size.QuadPart - position.QuadPart);
+            }
+            std::string consume(std::size_t size) const {
+                std::string bytes(size, '\0');
+                DWORD received{};
+                if (!::ReadFile(read, bytes.data(), static_cast<DWORD>(bytes.size()), &received, nullptr))
+                    throw std::runtime_error("preserved stdin read failed");
+                bytes.resize(received);
+                return bytes;
+            }
+        };
+        mqb::platform::windows::WindowsProcessRunner native;
+        const auto unprotected = [&](const fs::path& batch) {
+            mqb::process::ProcessSpec spec;
+            spec.executable = default_command_processor();
+            spec.arguments = {"/d", "/u", "/c", legacy.generic_string()};
+            spec.environment = {{"MQB_VCVARS", batch.generic_string()}, {"MQB_VC_TARGET", "x64"}};
+            return native.run(spec);
+        };
+        const auto protected_call = [&](const fs::path& batch) {
+            return capture_visual_studio_environment(native, default_command_processor(), batch, mqb::Architecture::x64);
+        };
+        for (const bool pipe : {false, true}) {
+            for (const bool protect : {false, true}) {
+                Input redirected{input_file, input, pipe};
+                require(redirected.installed && redirected.remaining() == input.size(), "fresh stdin setup failed");
+                if (protect) {
+                    const auto result = protected_call(reader);
+                    require(result.has_value(), "protected reader environment capture failed");
+                    const auto value = std::find_if(result->variables.begin(), result->variables.end(), [](const auto& item) {
+                        return item.name == "MQB_STDIN_READ";
+                    });
+                    require(value != result->variables.end() && value->value == "unread", "bootstrap received foreground bytes");
+                    require(redirected.remaining() == input.size(), "bootstrap advanced foreground input");
+                    require(redirected.consume(input.size()) == input, "protected stdin bytes changed");
+                } else {
+                    const auto result = unprotected(reader);
+                    require(result && result->exit_code == 0, "unprotected reader control failed to execute");
+                    require(redirected.remaining() < input.size(), "reader calibration did not consume stdin");
+                }
+                std::cout << "STDIN_EVIDENCE reader " << (pipe ? "pipe" : "file")
+                    << " protected=" << protect << " verified=1\n";
+            }
+        }
+        {
+            Input redirected{input_file, input, false};
+            require(redirected.installed, "failure control stdin setup failed");
+            const auto result = protected_call(rejected);
+            require(!result && result.error().code == mqb::msvc::ToolchainErrorCode::visual_studio_environment_failed
+                && result.error().message.find("17") != std::string::npos, "bootstrap error17 was hidden");
+            require(redirected.remaining() == input.size(), "failed bootstrap consumed foreground input");
+            std::cout << "STDIN_EVIDENCE bootstrap-error17 preserved=1 input_unchanged=1\n";
+        }
+        require(fs::is_regular_file(installed_vcvars), "installed vcvarsall absent for fixed real contrast");
+        for (const bool protect : {false, true}) {
+            Input redirected{input_file, input, false};
+            require(redirected.installed && redirected.remaining() == input.size(), "real vcvars stdin setup failed");
+            if (protect) {
+                const auto result = protected_call(installed_vcvars);
+                require(result && result->vc_tools_root.has_value(), "protected installed vcvars capture failed");
+            } else {
+                const auto result = unprotected(installed_vcvars);
+                require(result && result->exit_code == 0, "unprotected installed vcvars control failed");
+            }
+            const auto remaining = redirected.remaining();
+            std::cout << "STDIN_EVIDENCE installed-vcvars protected=" << protect
+                << " bytes_before=" << input.size() << " bytes_after=" << remaining << '\n';
+            if (protect) {
+                require(remaining == input.size(), "installed vcvars consumed foreground input");
+                require(redirected.consume(input.size()) == input, "installed vcvars changed input bytes");
+            }
+            // Unprotected consumption is retained, not required to reproduce on
+            // every vendor image; the deliberate reader above is the calibration.
+        }
+    } catch (const std::exception& error) {
+        expect(false, error.what());
+    }
+}
+
 } // namespace
 
 int main() {
@@ -221,6 +378,9 @@ int main() {
     const auto result = locator.discover(options);
     expect(result.has_value(), "Visual Studio toolchain should be discoverable on the Windows CI image");
     if (result) {
+        const auto* tools = find_environment_variable(*result, "VCToolsInstallDir");
+        expect(tools != nullptr, "installed tools root is required for stdin ownership tests");
+        if (tools) verify_environment_input(visual_studio_installation_from_tools_root(tools->value) / "VC/Auxiliary/Build/vcvarsall.bat");
         expect(result->source == mqb::msvc::ToolchainSource::visual_studio,
                "forced VS discovery should preserve toolchain provenance");
         expect(!result->reused,
