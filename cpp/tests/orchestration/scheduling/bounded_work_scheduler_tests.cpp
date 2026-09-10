@@ -9,6 +9,7 @@
 
 #include "mqb/orchestration/BoundedWorkScheduler.hpp"
 #include "bounded_work_admission_cases.hpp"
+#include "bounded_work_batch_cases.hpp"
 
 namespace {
 
@@ -353,6 +354,7 @@ int main() {
     }
 
     failures += mqb::tests::bounded_work_admission_cases();
+    failures += mqb::tests::bounded_work_batch_cases();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

@@ -1,0 +1,91 @@
+name: Typed MSVC Work Batch Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/**'
+      - 'tests/native/collect_msvc_work_batch.ps1'
+      - '.github/workflows/msvc-work-batch.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: msvc-work-batch-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build exact candidate and typed batch fixture with MQB
+        shell: pwsh
+        run: |
+          $tokens=$null; $errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'tests/native/collect_msvc_work_batch.ps1'),[ref]$tokens,[ref]$errors)
+          if (@($errors).Count) { throw "$errors" }
+          $seed=& ./tests/native/acquire_seed.ps1 -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $mqb=& ./tests/native/build_mqb.ps1 -BuilderMqbPath $seed -RepoRoot $PWD -Version '5.5.0' `
+            -Configuration Release -Clean -OutputPath (Join-Path $PWD 'native-out/work-batch/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tests/native/collect_msvc_work_batch.ps1 -MqbPath $mqb -RepoRoot $PWD -BuildOnly `
+            -OutputRoot (Join-Path $PWD '.mqb/work-batch-build')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path 'native-out/work-batch-input' -Force | Out-Null
+          Copy-Item .mqb/bin/msvc_work_batch_probe.exe,.mqb/work-batch-build/probe.identity.json native-out/work-batch-input/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: exact-work-batch-input
+          path: native-out/work-batch-input/*
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: work-batch-build-evidence
+          path: .mqb/work-batch-build/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+  observe:
+    name: Six fixed real two-worker typed batches
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: exact-work-batch-input
+          path: native-input
+      - shell: pwsh
+        env:
+          MQB_BATCH_DISPOSABLE_HOST: '1'
+        run: |
+          & ./tests/native/collect_msvc_work_batch.ps1 -RepoRoot $PWD `
+            -PrebuiltProbePath (Join-Path $PWD 'native-input/msvc_work_batch_probe.exe') `
+            -ProbeIdentityPath (Join-Path $PWD 'native-input/probe.identity.json') `
+            -OutputRoot (Join-Path $PWD '.mqb/msvc-work-batch-evidence')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain original results and failures without retry
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: msvc-work-batch-evidence
+          path: |
+            .mqb/msvc-work-batch-evidence/**
+            !.mqb/msvc-work-batch-evidence/**/*.obj
+            !.mqb/msvc-work-batch-evidence/**/*.pdb
+            !.mqb/msvc-work-batch-evidence/**/*.exe
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30

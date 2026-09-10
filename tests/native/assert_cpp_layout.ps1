@@ -295,7 +295,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'orchestration') -LeafFiles ([orde
         'module_target_validation_tests.cpp'
     )
     'routing' = @('target_router_tests.cpp')
-    'scheduling' = @('bounded_work_scheduler_tests.cpp', 'bounded_work_admission_cases.hpp')
+    'scheduling' = @('bounded_work_scheduler_tests.cpp', 'bounded_work_admission_cases.hpp', 'bounded_work_batch_cases.hpp')
 })
 
 Write-Host 'C++ responsibility layout contract passed.'
