@@ -1,0 +1,83 @@
+name: Foreground No-op Attribution Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'tests/native/run_foreground_attribution.ps1'
+      - '.github/workflows/foreground-attribution.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foreground-attribution-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Fixed-source and unchanged observer contracts
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify actual source guards and existing observer helpers
+        shell: pwsh
+        run: |
+          if ([int]$env:GITHUB_RUN_ATTEMPT -ne 1) { throw 'A repeated attempt is not this fixed-budget study.' }
+          & ./tests/native/run_foreground_attribution.ps1 -SelfTest
+          & ./tests/native/verify_benchmark_attribution.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: foreground-attribution-contracts
+          path: .mqb/benchmark-attribution-contracts/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  investigate:
+    name: Original PR180 pair fixed eight AA and eight AB
+    needs: contract
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact evidence source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: observer
+      - name: Checkout accepted runtime A
+        uses: actions/checkout@v7
+        with:
+          ref: b16cf049d0c8443288d48a6f712e22e9df6309ea
+          path: baseline
+      - name: Checkout original rejected runtime B from performance599
+        uses: actions/checkout@v7
+        with:
+          ref: 5835825a0f5337b6491433f9f402ef9434087d09
+          path: subject
+      - name: Preserve source and binaries then run unchanged fixed-budget collector
+        shell: pwsh
+        run: |
+          & ./observer/tests/native/run_foreground_attribution.ps1 `
+            -BaselineRepoRoot (Join-Path $PWD 'baseline') `
+            -CandidateRepoRoot (Join-Path $PWD 'subject') `
+            -OutputRoot (Join-Path $PWD 'foreground-study')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve original observations and partial failures without retry
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: foreground-attribution-evidence
+          path: |
+            foreground-study/bootstrap/**
+            foreground-study/observed/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
