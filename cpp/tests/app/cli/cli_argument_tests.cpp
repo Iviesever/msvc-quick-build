@@ -3,6 +3,7 @@
 #include <functional>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <stop_token>
 #include <utility>
 #include <string_view>
@@ -31,7 +32,13 @@ void verify_build_completion() {
     using namespace mqb::app;
     using namespace std::chrono_literals;
     unsigned checks = 0;
-    const auto check = [&](bool value, const char* message) { ++checks; expect(value, message); };
+    // Keep test failures outside redirected product diagnostics: later stream
+    // resets must not erase the failing assertion or contaminate output checks.
+    std::vector<std::string> check_failures;
+    const auto check = [&](bool value, const char* message) {
+        ++checks;
+        if (!value) check_failures.emplace_back(message);
+    };
     struct Runner final : process::ProcessRunner {
         unsigned calls{};
         std::optional<process::ProcessSpec> received;
@@ -50,10 +57,8 @@ void verify_build_completion() {
         std::streambuf* previous_err{std::cerr.rdbuf(err.rdbuf())};
         ~Capture() { std::cout.rdbuf(previous_out); std::cerr.rdbuf(previous_err); }
     };
-    std::string captured_failures;
     {
         Capture capture;
-        const auto before_failures = failures;
         for (const int code : {2, 3, 4, 5}) {
             check(run_completed_build(std::unexpected(code), runner) == code,
                   "build exit codes survive without launching old artifacts");
@@ -112,9 +117,8 @@ void verify_build_completion() {
         check(removed.foreground && removed.foreground->environment[0].remove, "ASAN environment removal is not replaced by an empty assignment");
         check(!complete_build(false, "unused", {"unused"}, "unused", compiler, toolchain).foreground,
               "build-only does not materialize even an ASAN launch");
-        if (failures != before_failures) captured_failures = capture.err.str();
     }
-    if (!captured_failures.empty()) std::cerr << captured_failures;
+    for (const auto& message : check_failures) expect(false, message);
     std::cout << "build_completion_cases " << checks << " checks completed\n";
 }
 
