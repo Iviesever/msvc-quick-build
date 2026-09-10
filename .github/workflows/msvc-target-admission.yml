@@ -1,0 +1,111 @@
+name: Real MSVC Target Admission Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/**'
+      - 'tests/native/collect_msvc_target_admission.ps1'
+      - 'tests/native/verify_msvc_target_admission.py'
+      - '.github/workflows/msvc-target-admission.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: msvc-target-admission-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  contract:
+    name: Target evidence record contracts
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - shell: pwsh
+        run: |
+          python tests/native/verify_msvc_target_admission.py --self-test --output .mqb/target-admission-contracts.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: target-admission-contracts
+          path: .mqb/target-admission-contracts.json
+          include-hidden-files: true
+          retention-days: 30
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build exact candidate and target admission fixture with MQB
+        shell: pwsh
+        run: |
+          $tokens=$null; $errors=$null
+          [void][Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'tests/native/collect_msvc_target_admission.ps1'),[ref]$tokens,[ref]$errors)
+          if (@($errors).Count) { throw "$errors" }
+          $seed=& ./tests/native/acquire_seed.ps1 -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'native-seed')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $mqb=& ./tests/native/build_mqb.ps1 -BuilderMqbPath $seed -RepoRoot $PWD -Version '5.5.0' `
+            -Configuration Release -Clean -OutputPath (Join-Path $PWD 'native-out/target-admission/mqb.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tests/native/collect_msvc_target_admission.ps1 -MqbPath $mqb -RepoRoot $PWD -BuildOnly `
+            -OutputRoot (Join-Path $PWD '.mqb/target-admission-build')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path 'native-out/target-admission-input' -Force | Out-Null
+          Copy-Item .mqb/bin/msvc_target_admission_probe.exe,.mqb/target-admission-build/probe.identity.json native-out/target-admission-input/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: exact-target-admission-input
+          path: native-out/target-admission-input/*
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: target-admission-build-evidence
+          path: .mqb/target-admission-build/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+  observe:
+    name: Six fixed real two-worker target builds
+    needs: [build, contract]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: exact-target-admission-input
+          path: native-input
+      - shell: pwsh
+        env:
+          MQB_TARGET_DISPOSABLE_HOST: '1'
+        run: |
+          & ./tests/native/collect_msvc_target_admission.ps1 -RepoRoot $PWD `
+            -PrebuiltProbePath (Join-Path $PWD 'native-input/msvc_target_admission_probe.exe') `
+            -ProbeIdentityPath (Join-Path $PWD 'native-input/probe.identity.json') `
+            -OutputRoot (Join-Path $PWD '.mqb/msvc-target-admission-evidence')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain original results and failures without retry
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: msvc-target-admission-evidence
+          path: |
+            .mqb/msvc-target-admission-evidence/**
+            !.mqb/msvc-target-admission-evidence/**/*.obj
+            !.mqb/msvc-target-admission-evidence/**/*.pdb
+            !.mqb/msvc-target-admission-evidence/**/*.exe
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
