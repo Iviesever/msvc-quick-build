@@ -163,7 +163,9 @@ private:
     }
 
     script << "@echo off\r\n"
-           << "call \"%MQB_VCVARS%\" %MQB_VC_TARGET% >nul 2>&1\r\n"
+           // Environment bootstrap is noninteractive. Preserve foreground stdin
+           // for the eventual artifact, including non-seekable pipe input.
+           << "call \"%MQB_VCVARS%\" %MQB_VC_TARGET% <nul >nul 2>&1\r\n"
            << "if errorlevel 1 exit /b %errorlevel%\r\n"
            << "set\r\n";
     script.close();

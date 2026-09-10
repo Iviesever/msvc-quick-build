@@ -684,7 +684,14 @@ int wmain(int argc, wchar_t** argv) {
     wchar_t value[80]{};
     if (!GetEnvironmentVariableW(L"MQB_FOREGROUND_CONTRACT",value,80) || std::wcscmp(value,L"inherited-value")) return 83;
     std::string line;
-    if (!std::getline(std::cin,line) || line != "foreground-input") return 84;
+    const bool read_ok = static_cast<bool>(std::getline(std::cin,line));
+    if (!read_ok || line != "foreground-input") {
+        std::fprintf(stderr,"FOREGROUND_INPUT_FAILURE read=%d state=%u bytes=%zu hex=",
+            read_ok,static_cast<unsigned>(std::cin.rdstate()),line.size());
+        for (const unsigned char byte : line) std::fprintf(stderr,"%02x",static_cast<unsigned>(byte));
+        std::fputc('\n',stderr);
+        return 84;
+    }
     std::puts("FOREGROUND_STDOUT"); std::fputs("FOREGROUND_STDERR\n",stderr);
     return 37;
 }
