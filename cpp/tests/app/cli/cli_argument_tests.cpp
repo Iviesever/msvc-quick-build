@@ -1,8 +1,17 @@
+#include <chrono>
+#include <expected>
+#include <functional>
 #include <iostream>
+#include <sstream>
+#include <string>
+#include <stop_token>
+#include <utility>
 #include <string_view>
 #include <vector>
 
+#include "BuildCompletion.hpp"
 #include "Cli.hpp"
+#include "PerformanceTimings.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 
@@ -15,6 +24,102 @@ void expect(const bool condition, const std::string_view message) {
         ++failures;
         std::cerr << "FAIL: " << message << '\n';
     }
+}
+
+
+void verify_build_completion() {
+    using namespace mqb;
+    using namespace mqb::app;
+    using namespace std::chrono_literals;
+    unsigned checks = 0;
+    // Keep test failures outside redirected product diagnostics: later stream
+    // resets must not erase the failing assertion or contaminate output checks.
+    std::vector<std::string> check_failures;
+    const auto check = [&](bool value, const char* message) {
+        ++checks;
+        if (!value) check_failures.emplace_back(message);
+    };
+    struct Runner final : process::ProcessRunner {
+        unsigned calls{};
+        std::optional<process::ProcessSpec> received;
+        std::function<void()> on_run;
+        std::expected<process::ProcessResult, process::ProcessError> result{process::ProcessResult{}};
+        std::expected<process::ProcessResult, process::ProcessError> run(const process::ProcessSpec& spec) override {
+            ++calls; received = spec;
+            if (on_run) on_run();
+            return result;
+        }
+    } runner;
+    // Keep production output policy, but do not pollute the enclosing parser test.
+    struct Capture {
+        std::ostringstream out, err;
+        std::streambuf* previous_out{std::cout.rdbuf(out.rdbuf())};
+        std::streambuf* previous_err{std::cerr.rdbuf(err.rdbuf())};
+        ~Capture() { std::cout.rdbuf(previous_out); std::cerr.rdbuf(previous_err); }
+    };
+    {
+        Capture capture;
+        for (const int code : {2, 3, 4, 5}) {
+            check(run_completed_build(std::unexpected(code), runner) == code,
+                  "build exit codes survive without launching old artifacts");
+        }
+        check(run_completed_build(BuildCompletion{}, runner) == 0 && runner.calls == 0,
+              "successful build-only completion launches nothing");
+        check(capture.out.str().empty() && capture.err.str().empty(),
+              "no foreground label or duplicate diagnostic for build-only/error");
+        bool build_alive = false;
+        const auto build = [&]() -> BuildOutcome {
+            struct Scope { bool& alive; Scope(bool& a) : alive(a) { alive = true; } ~Scope() { alive = false; } } scope{build_alive};
+            CompilerOptions compiler;
+            msvc::MsvcToolchain toolchain;
+            toolchain.environment = {{"LIB", "must-not-leak", false}};
+            auto completion = complete_build(true, "game.exe", {"", "two words", "quote\"", "tail\\"}, "project", compiler, toolchain);
+            // No references into any mutable build request or environment survive.
+            toolchain.environment[0].value = "changed";
+            return completion;
+        };
+        runner.on_run = [&] { check(!build_alive, "build scope is destroyed before foreground execution"); };
+        runner.result = process::ProcessResult{.exit_code=37, .stdout_text="stdout\r\n", .stderr_text="stderr\r\n", .launch_duration=123ns};
+        mqb::app::performance::Session timings{mqb::app::performance::Format::disabled};
+        const auto complete = build();
+        check(!build_alive && complete && complete->foreground.has_value(), "owned completion remains after build locals die");
+        check(run_completed_build(complete, runner, &timings) == 37, "nonzero program exit remains the CLI exit");
+        check(runner.calls == 1 && runner.received.has_value(), "successful requested run launches exactly once");
+        const auto& spec = *runner.received;
+        check(spec.executable == "game.exe" && spec.working_directory == std::filesystem::path{"project"}, "owned executable and cwd preserved");
+        check(spec.arguments == std::vector<std::string>{"", "two words", "quote\"", "tail\\"}, "argv preserves empty/spaces/quotes/trailing slash");
+        check(spec.environment.empty() && spec.inherit_environment, "build-only environment does not leak to ordinary program");
+        check(spec.capture_stdout && spec.capture_stderr && !spec.cancellation.stop_possible(), "original capture and unmanaged foreground policy preserved");
+        check(timings.snapshot().run_startup == 123ns, "foreground launch timing still accumulated");
+        check(capture.out.str() == "[run] game.exe\nstdout\n" && capture.err.str() == "stderr\n", "original label/output/CRLF policy preserved");
+        capture.out.str(""); capture.err.str("");
+        runner.result = std::unexpected(process::ProcessError{.code=process::ProcessErrorCode::launch_failed, .native_code=2, .message="missing original executable"});
+        check(run_completed_build(complete, runner) == 6, "foreground launch error retains exit6");
+        check(capture.err.str().find("failed to run executable: missing original executable") != std::string::npos, "original launch error diagnostic retained");
+        auto invalid = *complete;
+        std::stop_source stop;
+        invalid.foreground->cancellation = stop.get_token();
+        const auto calls = runner.calls;
+        check(run_completed_build(invalid, runner) == 6 && runner.calls == calls, "reject accidental build token before invoking foreground runner");
+        CompilerOptions compiler;
+        compiler.additional_arguments = {"/fsanitize=address"};
+        msvc::MsvcToolchain toolchain;
+        toolchain.environment = {{"INCLUDE", "private", false}, {"pAtH", "asan-bin;old-path", false}, {"LIB", "private", false}};
+        auto sanitized = complete_build(true, "asan.exe", {"arg"}, "asan-project", compiler, toolchain);
+        toolchain.environment.clear();
+        check(sanitized.foreground && sanitized.foreground->environment.size() == 1, "ASAN launch owns only runtime PATH after toolchain destruction");
+        if (sanitized.foreground && sanitized.foreground->environment.size() == 1) {
+            const auto& path = sanitized.foreground->environment.front();
+            check(path.name == "pAtH" && path.value == "asan-bin;old-path" && !path.remove, "ASAN original PATH spelling/value/operation retained");
+        }
+        toolchain.environment = {{"PATH", "", true}};
+        auto removed = complete_build(true, "asan.exe", {}, "root", compiler, toolchain);
+        check(removed.foreground && removed.foreground->environment[0].remove, "ASAN environment removal is not replaced by an empty assignment");
+        check(!complete_build(false, "unused", {"unused"}, "unused", compiler, toolchain).foreground,
+              "build-only does not materialize even an ASAN launch");
+    }
+    for (const auto& message : check_failures) expect(false, message);
+    std::cout << "build_completion_cases " << checks << " checks completed\n";
 }
 
 } // namespace
@@ -519,6 +624,8 @@ int main() {
         auto parsed = mqb::cli::parse_arguments(arguments);
         expect(!parsed, "unknown options should be rejected");
     }
+
+    verify_build_completion();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

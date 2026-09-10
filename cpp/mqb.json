@@ -32,6 +32,7 @@
       "src/app/diagnostics/PerformanceTimings.cpp",
       "src/app/cli/Invocation.cpp",
       "src/app/targets/BuildIntrospectionSetup.cpp",
+      "src/app/targets/BuildCompletion.cpp",
       "src/app/targets/CompdbCommand.cpp",
       "src/app/targets/ModulePlanCommand.cpp",
       "src/app/targets/PlanCommand.cpp",

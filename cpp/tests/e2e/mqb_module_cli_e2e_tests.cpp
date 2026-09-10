@@ -171,7 +171,11 @@ int main(const int argc, char* argv[]) {
     write_text(
         tree.root / "main.cpp",
         "import math;\n"
-        "int main() { return answer() >= 40 ? 0 : 1; }\n");
+        "#include <cstdio>\n#include <cstring>\n"
+        "int main(int argc,char** argv) { if(argc>1) {\n"
+        " if(argc!=3 || std::strcmp(argv[1],\"\") || std::strcmp(argv[2],\"module argument\")) return 81;\n"
+        " std::puts(\"MODULE_FOREGROUND_OUT\"); std::fputs(\"MODULE_FOREGROUND_ERR\\n\",stderr); return 37; }\n"
+        " return answer() >= 40 ? 0 : 1; }\n");
 
     mqb::platform::windows::WindowsProcessRunner runner;
 
@@ -213,6 +217,23 @@ int main(const int argc, char* argv[]) {
                "warm module provider should reuse its compile cache");
         expect(contains_line(warm->stdout_text, "[up-to-date] module-cli.exe"),
                "warm module target should reuse its link cache");
+    }
+
+    {
+        mqb::process::ProcessSpec spec;
+        spec.executable=mqb_executable; spec.working_directory=tree.root;
+        spec.arguments={"main.cpp","math.ixx","--env","vs","--std","latest","--jobs","2","--verbose",
+                        "-o","module-cli","--run","--","","module argument"};
+        auto foreground=runner.run(spec);
+        expect(foreground.has_value(), "module foreground launch should execute");
+        if(foreground) {
+            std::cout << "FOREGROUND_EVIDENCE module-warm-run\n"; dump_failure(*foreground);
+            expect(foreground->exit_code==37 && foreground->stdout_text.find("MODULE_FOREGROUND_OUT")!=std::string::npos &&
+                   foreground->stderr_text.find("MODULE_FOREGROUND_ERR")!=std::string::npos,
+                   "module completion preserves empty argv, output and child exit code");
+            expect(foreground->stdout_text.find("[compile]")==std::string::npos && foreground->stdout_text.find("[link]")==std::string::npos,
+                   "module run handoff must preserve warm build cache behavior");
+        }
     }
 
     if (explicit_ifc) {

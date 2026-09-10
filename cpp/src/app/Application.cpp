@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "BuildCompletion.hpp"
 #include "Cli.hpp"
 #include "Diagnostics.hpp"
 #include "Invocation.hpp"
@@ -21,7 +22,6 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
 #include "mqb/discovery/SourceDiscovery.hpp"
-#include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcParameterCapabilities.hpp"
@@ -163,28 +163,14 @@ void print_pch_failure(const mqb::orchestration::IncrementalPchError& error) {
     }
 }
 
-} // namespace
-
-int Application::run(const std::span<const std::string_view> arguments) {
-    const auto application_started = performance::Clock::now();
-
-    auto parsed = mqb::cli::parse_arguments(arguments);
-    if (!parsed) {
-        std::cerr << "error: " << parsed.error().message << "\n\n" << mqb::cli::usage();
-        return 2;
-    }
-    auto options = std::move(*parsed);
-    if (options.show_help) {
-        std::cout << mqb::cli::usage();
-        return 0;
-    }
-
-    performance::Session timing_session{options.timings, application_started};
-
+// This scope owns all build-side objects, including discovery and the tool
+// runner. Return only owned foreground data, never a coordinator/reference.
+// Scope exit is NOT proof of external writer quiescence or safe lease release.
+[[nodiscard]] BuildOutcome build(mqb::cli::Options options, performance::Session& timing_session) {
     auto invocation = resolve_invocation(options);
     if (!invocation) {
         diagnostics::print_error(invocation.error());
-        return 2;
+        return std::unexpected(2);
     }
 
     auto project = prepare_project(options, invocation->directory);
@@ -194,7 +180,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         } else {
             diagnostics::print_error(project.error().message);
         }
-        return 2;
+        return std::unexpected(2);
     }
 
     auto& project_config = project->config;
@@ -207,7 +193,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
             project_config ? project_config->build.entry : std::nullopt);
         if (!entry) {
             diagnostics::print_error(entry.error());
-            return 2;
+            return std::unexpected(2);
         }
         invocation->requested_sources.push_back(std::move(*entry));
         if (options.verbose) {
@@ -228,7 +214,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
             options.compiler_arguments);
         if (!forced_includes) {
             diagnostics::print_error(forced_includes.error().message);
-            return 2;
+            return std::unexpected(2);
         }
         // First-class PCH remains typed MQB policy. Project only the compiler-visible
         // forced-include semantic into discovery after raw /FI operands, matching
@@ -260,7 +246,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
             diagnostics::print_error(message_with_path(
                 "source discovery failed: " + discovered.error().message,
                 discovered.error().path));
-            return 2;
+            return std::unexpected(2);
         }
         for (const auto& warning : discovered->warnings) {
             diagnostics::print_warning(message_with_path(
@@ -284,7 +270,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
     auto layout = mqb::ProjectArtifactLayout::create(project_root);
     if (!layout) {
         diagnostics::print_error(layout.error().message);
-        return 2;
+        return std::unexpected(2);
     }
 
     std::vector<mqb::orchestration::TargetSourceRequest> target_sources;
@@ -294,7 +280,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         if (!artifacts) {
             diagnostics::print_error(
                 artifacts.error().message + ": " + diagnostics::path_text(source));
-            return 2;
+            return std::unexpected(2);
         }
         target_sources.push_back(mqb::orchestration::TargetSourceRequest{
             .source = source,
@@ -307,7 +293,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
     auto target_artifacts = layout->for_target(target_name, options.build.target_kind);
     if (!target_artifacts) {
         diagnostics::print_error(target_artifacts.error().message);
-        return 2;
+        return std::unexpected(2);
     }
 
     add_portable_root_if_missing(options.portable_roots, project_root / "portable_msvc");
@@ -335,7 +321,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         diagnostics::print_error(message_with_path(
             toolchain.error().message,
             toolchain.error().path));
-        return 3;
+        return std::unexpected(3);
     }
 
     if (!validate_parameter_capabilities(
@@ -350,7 +336,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
             mqb::msvc::ParameterTool::librarian,
             options.librarian_arguments,
             toolchain->identity.version)) {
-        return 2;
+        return std::unexpected(2);
     }
 
     mqb::CompilerOptions compiler_options;
@@ -385,7 +371,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         if (module_target) {
             diagnostics::print_error(
                 "first-class PCH is not yet supported with the Modules/Header Unit pipeline");
-            return 2;
+            return std::unexpected(2);
         }
         const auto c_source = std::find_if(
             target_sources.begin(),
@@ -397,7 +383,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
             diagnostics::print_error(
                 "first-class PCH currently requires an ordinary C++ source set; C translation unit found: "
                 + diagnostics::path_text(display_source(project_root, c_source->source)));
-            return 2;
+            return std::unexpected(2);
         }
 
         auto allocated = layout->for_precompiled_header(
@@ -406,7 +392,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
             options.build.architecture);
         if (!allocated) {
             diagnostics::print_error(allocated.error().message);
-            return 2;
+            return std::unexpected(2);
         }
         pch_artifacts = std::move(*allocated);
 
@@ -424,7 +410,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         timing_session.add_target(pch_timings);
         if (!pch) {
             print_pch_failure(pch.error());
-            return 4;
+            return std::unexpected(4);
         }
 
         pch_compiled = pch->compile.compiled;
@@ -458,7 +444,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
         if (module_target) {
             diagnostics::print_error(
                 "static-library targets do not yet support the Modules/Header Unit pipeline");
-            return 2;
+            return std::unexpected(2);
         }
         if (project->subsystem_explicit
             || !options.library_directories.empty()
@@ -467,9 +453,9 @@ int Application::run(const std::span<const std::string_view> arguments) {
             diagnostics::print_error(
                 "static-library targets do not accept linker-only policy "
                 "(subsystem, library paths/libraries, or linker args)");
-            return 2;
+            return std::unexpected(2);
         }
-        return mqb::cli::run_static_target(
+        const int status = mqb::cli::run_static_target(
             mqb::cli::StaticCliTargetRequest{
                 .sources = std::move(target_sources),
                 .additional_objects = pch_artifacts
@@ -487,12 +473,14 @@ int Application::run(const std::span<const std::string_view> arguments) {
             },
             *toolchain,
             runner);
+        if (status != 0) return std::unexpected(status);
+        return BuildCompletion{};
     }
 
     if (!options.librarian_arguments.empty()) {
         diagnostics::print_error(
             "native MSVC librarian policy is only valid for static-library targets");
-        return 2;
+        return std::unexpected(2);
     }
 
     mqb::LinkOptions link_options;
@@ -506,7 +494,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
     link_options.additional_arguments = std::move(options.linker_arguments);
 
     if (module_target) {
-        return mqb::cli::run_module_target(
+        return mqb::cli::build_module_target(
             mqb::cli::ModuleCliTargetRequest{
                 .sources = std::move(target_sources),
                 .target = std::move(*target_artifacts),
@@ -591,7 +579,7 @@ int Application::run(const std::span<const std::string_view> arguments) {
     auto result = target_coordinator.run(request);
     if (!result) {
         diagnostics::print_target_failure(result.error());
-        return result.error().code == mqb::orchestration::IncrementalTargetErrorCode::link_failed ? 5 : 4;
+        return std::unexpected(result.error().code == mqb::orchestration::IncrementalTargetErrorCode::link_failed ? 5 : 4);
     }
 
     timing_session.add_target(result->timings);
@@ -603,31 +591,35 @@ int Application::run(const std::span<const std::string_view> arguments) {
     diagnostics::print_target_report(
         result->compiles, result->link, request.target.executable, project_root, options.verbose);
 
-    if (!options.build.run_after_build) {
+    return complete_build(
+        options.build.run_after_build, request.target.executable,
+        std::move(options.build.run_arguments), project_root,
+        request.compiler_options, *toolchain);
+}
+
+} // namespace
+
+int Application::run(const std::span<const std::string_view> arguments) {
+    const auto application_started = performance::Clock::now();
+
+    auto parsed = mqb::cli::parse_arguments(arguments);
+    if (!parsed) {
+        std::cerr << "error: " << parsed.error().message << "\n\n" << mqb::cli::usage();
+        return 2;
+    }
+    auto options = std::move(*parsed);
+    if (options.show_help) {
+        std::cout << mqb::cli::usage();
         return 0;
     }
 
-    std::cout << "[run] " << diagnostics::path_text(request.target.executable.filename()) << '\n';
-    mqb::process::ProcessSpec run_spec;
-    run_spec.executable = request.target.executable;
-    run_spec.arguments = options.build.run_arguments;
-    run_spec.working_directory = project_root;
-    run_spec.capture_stdout = true;
-    run_spec.capture_stderr = true;
-    if (mqb::msvc::MsvcAddressSanitizerPolicy::compiler_enabled(
-            request.compiler_options.additional_arguments)) {
-        mqb::msvc::MsvcAddressSanitizerPolicy::apply_runtime_path(run_spec, *toolchain);
-    }
+    performance::Session timing_session{options.timings, application_started};
 
-    auto run_result = runner.run(run_spec);
-    if (!run_result) {
-        diagnostics::print_error(
-            "failed to run executable: " + run_result.error().message);
-        return 6;
-    }
-    timing_session.record_run_startup(run_result->launch_duration);
-    diagnostics::print_process_output(*run_result);
-    return run_result->exit_code;
+    const auto completion = build(std::move(options), timing_session);
+    // Build objects are gone before a distinct foreground runner is created.
+    // Keep the application timing session alive through execution and reporting.
+    mqb::platform::windows::WindowsProcessRunner foreground_runner;
+    return run_completed_build(completion, foreground_runner, &timing_session);
 }
 
 } // namespace mqb::app

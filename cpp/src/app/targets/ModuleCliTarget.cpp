@@ -9,7 +9,6 @@
 #include "PerformanceTimings.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/TranslationUnitClassifier.hpp"
-#include "mqb/msvc/MsvcAddressSanitizerPolicy.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
 #include "mqb/msvc/MsvcLinker.hpp"
 #include "mqb/msvc/MsvcModuleDependencyScanner.hpp"
@@ -59,7 +58,7 @@ bool is_module_interface_source(const fs::path& source) {
     return kind && *kind == TranslationUnitKind::module_interface;
 }
 
-int run_module_target(
+app::BuildOutcome build_module_target(
     ModuleCliTargetRequest request,
     const msvc::MsvcToolchain& toolchain,
     process::ProcessRunner& runner) {
@@ -70,7 +69,7 @@ int run_module_target(
         if (!kind) {
             diagnostics::print_error(
                 "unsupported translation unit: " + diagnostics::path_text(source.source));
-            return 2;
+            return std::unexpected(2);
         }
         routed_sources.push_back(orchestration::RoutedTargetSourceRequest{
             .source = source.source,
@@ -136,7 +135,7 @@ int run_module_target(
     auto artifact_layout = ProjectArtifactLayout::create(request.project_root);
     if (!artifact_layout) {
         diagnostics::print_error(artifact_layout.error().message);
-        return 2;
+        return std::unexpected(2);
     }
 
     orchestration::RoutedTargetRequest target_request{
@@ -154,15 +153,15 @@ int run_module_target(
         if (result.error().ordinary_error) {
             const auto& ordinary = *result.error().ordinary_error;
             diagnostics::print_target_failure(ordinary);
-            return ordinary.code == orchestration::IncrementalTargetErrorCode::link_failed ? 5 : 4;
+            return std::unexpected(ordinary.code == orchestration::IncrementalTargetErrorCode::link_failed ? 5 : 4);
         }
         if (result.error().module_error) {
             const auto& module = *result.error().module_error;
             diagnostics::print_module_target_failure(module);
-            return module.code == orchestration::IncrementalModuleTargetErrorCode::link_failed ? 5 : 4;
+            return std::unexpected(module.code == orchestration::IncrementalModuleTargetErrorCode::link_failed ? 5 : 4);
         }
         diagnostics::print_error(result.error().message);
-        return 4;
+        return std::unexpected(4);
     }
 
     if (request.timings) {
@@ -180,31 +179,10 @@ int run_module_target(
         result->compiles, result->link, target_request.target.executable,
         request.project_root, request.verbose);
 
-    if (!request.run_after_build) {
-        return 0;
-    }
-    std::cout << "[run] " << diagnostics::path_text(target_request.target.executable.filename())
-              << '\n';
-    process::ProcessSpec run_spec;
-    run_spec.executable = target_request.target.executable;
-    run_spec.arguments = std::move(request.run_arguments);
-    run_spec.working_directory = request.project_root;
-    run_spec.capture_stdout = true;
-    run_spec.capture_stderr = true;
-    if (msvc::MsvcAddressSanitizerPolicy::compiler_enabled(
-            target_request.compiler_options.additional_arguments)) {
-        msvc::MsvcAddressSanitizerPolicy::apply_runtime_path(run_spec, toolchain);
-    }
-    auto run_result = runner.run(run_spec);
-    if (!run_result) {
-        diagnostics::print_error("failed to run executable: " + run_result.error().message);
-        return 6;
-    }
-    if (request.timings) {
-        request.timings->record_run_startup(run_result->launch_duration);
-    }
-    diagnostics::print_process_output(*run_result);
-    return run_result->exit_code;
+    return app::complete_build(
+        request.run_after_build, target_request.target.executable,
+        std::move(request.run_arguments), request.project_root,
+        target_request.compiler_options, toolchain);
 }
 
 } // namespace mqb::cli
