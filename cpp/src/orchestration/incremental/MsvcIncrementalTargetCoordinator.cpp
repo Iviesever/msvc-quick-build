@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -65,6 +66,20 @@ using CompileAttempt = detail::TargetCompileAttempt;
 
 std::expected<IncrementalTargetResult, IncrementalTargetError>
 MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) const {
+    return run_impl<false>(request, {});
+}
+
+std::expected<IncrementalTargetResult, IncrementalTargetError>
+MsvcIncrementalTargetCoordinator::run_with_compile_admission_stop(
+    const IncrementalTargetRequest& request, std::stop_token admission_stop) const {
+    if (!admission_stop.stop_possible()) return run(request);
+    return run_impl<true>(request, admission_stop);
+}
+
+template<bool WithAdmissionStop>
+std::expected<IncrementalTargetResult, IncrementalTargetError>
+MsvcIncrementalTargetCoordinator::run_impl(
+    const IncrementalTargetRequest& request, std::stop_token admission_stop) const {
     mqb::performance::ScopedWall validation_evidence{
         mqb::performance::WallKind::target_validation};
     if (request.sources.empty()) {
@@ -148,41 +163,85 @@ MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) c
     detail::FilesystemEvidenceTable* shared_evidence =
         filesystem_evidence ? &*filesystem_evidence : nullptr;
 
-    auto scheduled = detail::TargetCompileWave::run(
-        request,
-        compile_coordinator_,
-        request.force_downstream_rebuild,
-        shared_evidence,
-        attempts);
-    if (!scheduled) {
-        return std::unexpected(failure(
-            IncrementalTargetErrorCode::scheduling_failed,
-            "target compile scheduler failed: " + scheduled.error().message));
-    }
-    if (auto error = first_compile_error(request, attempts)) {
-        return std::unexpected(std::move(*error));
-    }
+    struct NoAdmissionEvidence {};
+    std::conditional_t<WithAdmissionStop, TargetAdmissionEvidence, NoAdmissionEvidence> admission;
+    const auto run_wave = [&](bool force, detail::FilesystemEvidenceTable* table)
+        -> std::expected<detail::TargetCompileWaveSummary, BoundedWorkError> {
+        if constexpr (!WithAdmissionStop) {
+            return detail::TargetCompileWave::run(
+                request, compile_coordinator_, force, table, attempts);
+        } else {
+            auto& wave = admission.waves.emplace_back();
+            try {
+                return detail::TargetCompileWave::run<true>(
+                    request, compile_coordinator_, force, table, attempts, admission_stop, &wave);
+            } catch (...) {
+                wave.setup_exception = std::current_exception();
+                return std::unexpected(BoundedWorkError{
+                    .code = BoundedWorkErrorCode::worker_start_failed,
+                    .message = "target compile wave setup failed",
+                });
+            }
+        }
+    };
+    auto scheduled = run_wave(request.force_downstream_rebuild, shared_evidence);
+    const auto wave_error = [&]() -> std::optional<IncrementalTargetError> {
+        if constexpr (!WithAdmissionStop) {
+            if (!scheduled) return failure(IncrementalTargetErrorCode::scheduling_failed,
+                "target compile scheduler failed: " + scheduled.error().message);
+            return first_compile_error(request, attempts);
+        } else {
+            // Prefer an actual compile failure to concurrent cancellation AND a
+            // scheduling error; all additional exceptions remain in the report.
+            auto error = first_compile_error(request, attempts);
+            const auto& wave = admission.waves.back();
+            const auto failed = [](const auto& phase) {
+                return phase && phase->outcome() == WorkBatchOutcome::failed;
+            };
+            const auto cancelled = [](const auto& phase) {
+                return phase && phase->outcome() == WorkBatchOutcome::cancelled;
+            };
+            if (!error && (!scheduled || wave.setup_exception
+                || failed(wave.inspection) || failed(wave.execution))) {
+                error = failure(IncrementalTargetErrorCode::scheduling_failed,
+                    scheduled ? "typed target compile wave failed"
+                              : "target compile scheduler failed: " + scheduled.error().message);
+            }
+            if (!error && (cancelled(wave.inspection) || cancelled(wave.execution)
+                || admission_stop.stop_requested())) {
+                error = failure(IncrementalTargetErrorCode::cancelled,
+                    "target compile admission stopped; terminal link was not admitted");
+            }
+            if (error) {
+                admission.waves.back().attempts = std::move(attempts);
+                error->admission = std::make_shared<TargetAdmissionEvidence>(std::move(admission));
+            }
+            return error;
+        }
+    };
+    if (auto error = wave_error()) return std::unexpected(std::move(*error));
 
     if (shared_evidence != nullptr
         && !shared_evidence->revalidate_shared()) {
         // This barrier remains AFTER miss execution. A dependency can change
         // while a compiler is running, not just during parallel inspection.
         // Rebuild the complete target without reusing any earlier decision.
-        scheduled = detail::TargetCompileWave::run(
-            request,
-            compile_coordinator_,
-            true,
-            nullptr,
-            attempts);
-        if (!scheduled) {
-            return std::unexpected(failure(
+        if constexpr (WithAdmissionStop) {
+            admission.waves.back().attempts = std::move(attempts);
+        }
+        scheduled = run_wave(true, nullptr);
+        if constexpr (!WithAdmissionStop) {
+            if (!scheduled) return std::unexpected(failure(
                 IncrementalTargetErrorCode::scheduling_failed,
-                "target conservative rebuild scheduler failed: "
-                    + scheduled.error().message));
+                "target conservative rebuild scheduler failed: " + scheduled.error().message));
         }
-        if (auto error = first_compile_error(request, attempts)) {
-            return std::unexpected(std::move(*error));
-        }
+        if (auto error = wave_error()) return std::unexpected(std::move(*error));
+    }
+
+    if constexpr (WithAdmissionStop) {
+        // This is the terminal-stage admission decision. Once it passes, a late
+        // stop does not terminate link or pretend its valid cache save rolled back.
+        if (auto error = wave_error()) return std::unexpected(std::move(*error));
     }
 
     timings.compile = std::chrono::duration_cast<std::chrono::nanoseconds>(

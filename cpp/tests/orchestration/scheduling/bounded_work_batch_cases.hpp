@@ -155,6 +155,24 @@ inline int bounded_work_batch_cases() {
         const auto void_result = run_work_batch(1, 1, {}, [](std::size_t) -> std::expected<void, int> { return {}; });
         check(void_result.all_succeeded(), "void expected successes supported");
     }
+    {
+        const auto complete = run_work_batch(3, ParallelismPolicy::fixed(2),
+            ParallelismWorkload::compilation, {}, good);
+        check(complete.all_succeeded() && (*complete.scheduling)->worker_count == 2,
+              "typed policy adapter uses the existing scheduler's fixed worker limit");
+        std::stop_source stop; stop.request_stop();
+        const auto cancelled = run_work_batch(3, ParallelismPolicy::automatic(),
+            ParallelismWorkload::compilation, stop.get_token(), good);
+        check(cancelled.outcome() == WorkBatchOutcome::cancelled && (*cancelled.scheduling)->worker_count == 0,
+              "pre-stopped automatic policy does not start workers");
+        const auto invalid = run_work_batch(3, ParallelismPolicy::fixed(0),
+            ParallelismWorkload::compilation, stop.get_token(), good);
+        check(invalid.outcome() == WorkBatchOutcome::failed && invalid.scheduling && !*invalid.scheduling,
+              "invalid policy cannot be reported as external cancellation");
+        const auto empty = run_work_batch(0, ParallelismPolicy::automatic(),
+            ParallelismWorkload::compilation, stop.get_token(), good);
+        check(empty.all_succeeded(), "typed policy adapter preserves valid empty no-op");
+    }
     std::cout << "bounded_work_batch_cases " << checks << " checks " << (failures == 0 ? "passed" : "failed") << '\n';
     return failures;
 }

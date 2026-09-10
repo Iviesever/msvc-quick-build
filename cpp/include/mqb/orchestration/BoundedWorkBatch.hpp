@@ -69,18 +69,13 @@ struct WorkBatchReport {
     }
 };
 
-// Explicit opt-in result-preserving adapter, not a second scheduler. The work
-// callable must return std::expected<T,E> by value. Nothrow move preserves the
-// original payload without risking a second exception while storing it. Errors
-// are never interpreted as cancellation; only scheduler admission observation
-// produces the cancelled batch outcome. Admitted work owns its synchronous end.
-// This API launches no process, passes no token to work and publishes no cache.
-// Existing scheduler/CLI callers are unchanged. Work may run concurrently.
-template<class Work, class Result = std::invoke_result_t<Work&, std::size_t>>
-    requires ExpectedWorkResult<Result>
-[[nodiscard]] WorkBatchReport<Result> run_work_batch(
-    std::size_t item_count, std::size_t max_workers,
-    std::stop_token admission_stop, Work&& work) {
+namespace detail {
+// Share payload ownership across numeric and policy overloads. The scheduler
+// remains the sole owner of parallelism resolution and platform resource policy.
+template<ExpectedWorkResult Result, class Work, class Schedule>
+[[nodiscard]] WorkBatchReport<Result> collect_work_batch(
+    std::size_t item_count, bool valid_limit, std::stop_token admission_stop,
+    Work&& work, Schedule&& schedule) {
     WorkBatchReport<Result> report;
     report.requested_count = item_count;
     try {
@@ -90,9 +85,8 @@ template<class Work, class Result = std::invoke_result_t<Work&, std::size_t>>
         std::stop_source private_lifetime;
         const auto token = admission_stop.stop_possible()
             ? admission_stop : private_lifetime.get_token();
-        if (max_workers != 0) report.attempts.resize(item_count);
-        report.scheduling.emplace(BoundedWorkScheduler::run_with_admission_stop(
-            item_count, max_workers, token, [&](std::size_t index) {
+        if (valid_limit) report.attempts.resize(item_count);
+        report.scheduling.emplace(schedule(token, [&](std::size_t index) {
                 auto& slot = report.attempts[index];
                 try {
                     slot.template emplace<1>(std::invoke(work, index));
@@ -109,6 +103,33 @@ template<class Work, class Result = std::invoke_result_t<Work&, std::size_t>>
         report.dispatch_exception = std::current_exception();
     }
     return report;
+}
+} // namespace detail
+
+// Explicit opt-in adapter, not a second scheduler. Work returns expected by
+// value; only admission is cancelled, never an admitted process/callback.
+template<class Work, class Result = std::invoke_result_t<Work&, std::size_t>>
+    requires ExpectedWorkResult<Result>
+[[nodiscard]] WorkBatchReport<Result> run_work_batch(
+    std::size_t item_count, std::size_t max_workers,
+    std::stop_token admission_stop, Work&& work) {
+    return detail::collect_work_batch<Result>(item_count, max_workers != 0,
+        admission_stop, std::forward<Work>(work), [&](auto token, auto&& callback) {
+            return BoundedWorkScheduler::run_with_admission_stop(
+                item_count, max_workers, token, callback);
+        });
+}
+
+template<class Work, class Result = std::invoke_result_t<Work&, std::size_t>>
+    requires ExpectedWorkResult<Result>
+[[nodiscard]] WorkBatchReport<Result> run_work_batch(
+    std::size_t item_count, ParallelismPolicy policy, ParallelismWorkload workload,
+    std::stop_token admission_stop, Work&& work) {
+    return detail::collect_work_batch<Result>(item_count, policy.valid(),
+        admission_stop, std::forward<Work>(work), [&](auto token, auto&& callback) {
+            return BoundedWorkScheduler::run_with_admission_stop(
+                item_count, policy, workload, token, callback);
+        });
 }
 
 } // namespace mqb::orchestration
