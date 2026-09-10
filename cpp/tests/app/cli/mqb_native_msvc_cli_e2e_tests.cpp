@@ -1,3 +1,8 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <chrono>
 #include <expected>
 #include <filesystem>
@@ -656,6 +661,106 @@ void verify_command_candidate_e2e(const fs::path& mqb_executable) {
     }
 }
 
+void verify_foreground_handoff(const fs::path& mqb_executable) {
+    const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+    TempTree tree{.root=fs::temp_directory_path() / ("mqb_foreground_" + std::to_string(unique))};
+    const auto root = tree.root / "foreground project";
+    const auto source = root / "main.cpp";
+    const auto input = root / "stdin.txt";
+    write_text(input, "foreground-input\n");
+    const std::string child = R"cpp(
+#define NOMINMAX
+#include <windows.h>
+#include <cstdio>
+#include <cwchar>
+#include <filesystem>
+#include <iostream>
+#include <string>
+int wmain(int argc, wchar_t** argv) {
+    if (argc != 6 || std::wcscmp(argv[1], L"") || std::wcscmp(argv[2], L"two words") ||
+        std::wcscmp(argv[3], L"quote\"inside") || std::wcscmp(argv[4], L"trailing\\") ||
+        std::wcscmp(argv[5], L"\u8fb9\u754c")) return 81;
+    if (std::filesystem::current_path().filename() != L"foreground project") return 82;
+    wchar_t value[80]{};
+    if (!GetEnvironmentVariableW(L"MQB_FOREGROUND_CONTRACT",value,80) || std::wcscmp(value,L"inherited-value")) return 83;
+    std::string line;
+    const bool read_ok = static_cast<bool>(std::getline(std::cin,line));
+    if (!read_ok || line != "foreground-input") {
+        std::fprintf(stderr,"FOREGROUND_INPUT_FAILURE read=%d state=%u bytes=%zu hex=",
+            read_ok,static_cast<unsigned>(std::cin.rdstate()),line.size());
+        for (const unsigned char byte : line) std::fprintf(stderr,"%02x",static_cast<unsigned>(byte));
+        std::fputc('\n',stderr);
+        return 84;
+    }
+    std::puts("FOREGROUND_STDOUT"); std::fputs("FOREGROUND_STDERR\n",stderr);
+    return 37;
+}
+)cpp";
+    write_text(source, child);
+    mqb::platform::windows::WindowsProcessRunner runner;
+    const auto launch = [&](std::vector<std::string> args) -> std::expected<mqb::process::ProcessResult, mqb::process::ProcessError> {
+        struct Input {
+            HANDLE old{::GetStdHandle(STD_INPUT_HANDLE)};
+            HANDLE file{INVALID_HANDLE_VALUE};
+            bool installed{};
+            explicit Input(const fs::path& path) {
+                file=::CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+                installed=file!=INVALID_HANDLE_VALUE && ::SetStdHandle(STD_INPUT_HANDLE,file)!=FALSE;
+            }
+            ~Input() { if(installed) ::SetStdHandle(STD_INPUT_HANDLE,old); if(file!=INVALID_HANDLE_VALUE) ::CloseHandle(file); }
+        } redirected{input};
+        expect(redirected.installed, "real CLI foreground stdin setup must succeed");
+        if (!redirected.installed) return std::unexpected(mqb::process::ProcessError{
+            .code=mqb::process::ProcessErrorCode::io_failed, .message="stdin setup failed"});
+        mqb::process::ProcessSpec spec;
+        spec.executable=mqb_executable; spec.arguments=std::move(args); spec.working_directory=root;
+        spec.environment.push_back({"MQB_FOREGROUND_CONTRACT","inherited-value",false});
+        return runner.run(spec);
+    };
+    const std::vector<std::string> tail{"--", "", "two words", "quote\"inside", "trailing\\", "\xe8\xbe\xb9\xe7\x95\x8c"};
+    // This child uses the Debug standard library: keep its CRT selection in
+    // the same configuration instead of mixing the default _DEBUG with /MT.
+    std::vector<std::string> args{"run","main.cpp","--env","vs","--no-discover","--std","c++23","--debug","--runtime","MTd","-o","foreground"};
+    args.insert(args.end(),tail.begin(),tail.end());
+    auto cold=launch(args);
+    expect(cold.has_value(), "cold build/run foreground command should launch");
+    if(cold) {
+        std::cout << "FOREGROUND_EVIDENCE cold-run\n"; dump_failure(*cold);
+        expect(cold->exit_code==37 && cold->stdout_text.find("FOREGROUND_STDOUT")!=std::string::npos &&
+               cold->stderr_text.find("FOREGROUND_STDERR")!=std::string::npos,
+               "real child preserves stdin/environment/cwd/Unicode argv and nonzero exit after build");
+    }
+    args.erase(args.begin()); args.insert(args.begin()+1,"--run");
+    auto warm=launch(args);
+    expect(warm.has_value(), "source-first --run compatibility should launch");
+    if(warm) {
+        std::cout << "FOREGROUND_EVIDENCE warm-source-first\n"; dump_failure(*warm);
+        expect(warm->exit_code==37 && warm->stdout_text.find("[compile]")==std::string::npos &&
+               warm->stdout_text.find("[link]")==std::string::npos && warm->stdout_text.find("[run] foreground.exe")!=std::string::npos,
+               "warm foreground command runs without compiling or linking");
+    }
+    write_text(source,child+"\nstatic_assert(false, \"MQB_FOREGROUND_BUILD_FAILURE\");\n");
+    force_newer_timestamp(source);
+    auto failed=launch(args);
+    expect(failed.has_value(), "failing build should launch the compiler without launching old program");
+    if(failed) {
+        std::cout << "FOREGROUND_EVIDENCE compile-failure\n"; dump_failure(*failed);
+        expect(failed->exit_code==4 && failed->stdout_text.find("[run]")==std::string::npos &&
+               failed->stdout_text.find("FOREGROUND_STDOUT")==std::string::npos &&
+               (failed->stdout_text+failed->stderr_text).find("MQB_FOREGROUND_BUILD_FAILURE")!=std::string::npos,
+               "compile failure preserves original diagnostics and never runs prior successful artifact");
+    }
+    write_text(source,"extern int missing_foreground_symbol(); int main(){return missing_foreground_symbol();}\n");
+    force_newer_timestamp(source);
+    auto link_failed=launch(args);
+    expect(link_failed.has_value(), "link-failing foreground command should launch");
+    if(link_failed) {
+        std::cout << "FOREGROUND_EVIDENCE link-failure\n"; dump_failure(*link_failed);
+        expect(link_failed->exit_code==5 && link_failed->stdout_text.find("[run]")==std::string::npos,
+               "link failure must not launch the previous artifact");
+    }
+}
+
 } // namespace
 
 int main(const int argc, char* argv[]) {
@@ -667,6 +772,7 @@ int main(const int argc, char* argv[]) {
     verify_parser_contract();
     verify_native_candidate_e2e(fs::path{argv[1]});
     verify_command_candidate_e2e(fs::path{argv[1]});
+    verify_foreground_handoff(fs::path{argv[1]});
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
