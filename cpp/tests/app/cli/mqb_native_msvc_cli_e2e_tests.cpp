@@ -711,7 +711,9 @@ int wmain(int argc, wchar_t** argv) {
         return runner.run(spec);
     };
     const std::vector<std::string> tail{"--", "", "two words", "quote\"inside", "trailing\\", "\xe8\xbe\xb9\xe7\x95\x8c"};
-    std::vector<std::string> args{"run","main.cpp","--env","vs","--no-discover","--std","c++23","--runtime","MT","-o","foreground"};
+    // This child uses the Debug standard library: keep its CRT selection in
+    // the same configuration instead of mixing the default _DEBUG with /MT.
+    std::vector<std::string> args{"run","main.cpp","--env","vs","--no-discover","--std","c++23","--debug","--runtime","MTd","-o","foreground"};
     args.insert(args.end(),tail.begin(),tail.end());
     auto cold=launch(args);
     expect(cold.has_value(), "cold build/run foreground command should launch");
