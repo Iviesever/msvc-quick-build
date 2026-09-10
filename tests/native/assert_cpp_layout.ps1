@@ -123,6 +123,7 @@ $appLeafFiles = [ordered]@{
     'project' = @('ProjectSetup.cpp', 'ProjectSetup.hpp')
     'targets' = @(
         'BuildIntrospectionSetup.cpp', 'BuildIntrospectionSetup.hpp',
+        'BuildCompletion.cpp', 'BuildCompletion.hpp',
         'CompdbCommand.cpp', 'CompdbCommand.hpp',
         'ModuleCliTarget.cpp', 'ModuleCliTarget.hpp',
         'ModulePlanCommand.cpp', 'ModulePlanCommand.hpp',

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "BuildCompletion.hpp"
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/LinkOptions.hpp"
 #include "mqb/core/ProjectArtifactLayout.hpp"
@@ -38,7 +39,7 @@ struct ModuleCliTargetRequest {
     std::vector<std::string> run_arguments;
 };
 
-[[nodiscard]] int run_module_target(
+[[nodiscard]] app::BuildOutcome build_module_target(
     ModuleCliTargetRequest request,
     const msvc::MsvcToolchain& toolchain,
     process::ProcessRunner& runner);
