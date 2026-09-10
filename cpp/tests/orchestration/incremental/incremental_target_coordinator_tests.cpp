@@ -7,6 +7,10 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
+#include <semaphore>
+#include <stop_token>
+#include <iterator>
 #include <iostream>
 #include <mutex>
 #include <set>
@@ -279,6 +283,271 @@ private:
                 root / ".mqb" / "cache" / "compile" / (name + ".cache"),
         },
     };
+}
+
+
+// These tests execute the PRODUCT target/compile/link/cache coordinators and
+// real filesystem cache persistence. Only the process boundary is deterministic;
+// this is not a claim of actual cl.exe execution or project-transaction rollback.
+class AdmissionToolRunner final : public mqb::process::ProcessRunner {
+public:
+    TargetToolRunner tools;
+    fs::path compiler;
+    std::function<void(const mqb::process::ProcessSpec&)> before_compile, before_link;
+    std::string throws_on, process_error_on;
+    std::atomic<bool> saw_process_token{false}, saw_execution_snapshot{false};
+    AdmissionToolRunner(const fs::path& cl, const fs::path& link, const fs::path& header)
+        : tools(cl, link, 1, header), compiler(cl) {}
+    std::expected<mqb::process::ProcessResult, mqb::process::ProcessError>
+    run(const mqb::process::ProcessSpec& spec) override {
+        if (spec.cancellation.stop_possible()) saw_process_token.store(true);
+        if (spec.executable == compiler) {
+            if (mqb::orchestration::detail::active_filesystem_evidence_table != nullptr)
+                saw_execution_snapshot.store(true);
+            if (before_compile) before_compile(spec);
+            const auto source = utf8_path(spec.arguments.back()).filename().string();
+            if (source == throws_on) throw std::runtime_error("original target callback exception");
+            if (source == process_error_on) return std::unexpected(mqb::process::ProcessError{
+                .code = mqb::process::ProcessErrorCode::launch_failed,
+                .native_code = 123, .message = "original target process failure",
+            });
+        } else if (before_link) before_link(spec);
+        return tools.run(spec);
+    }
+};
+
+struct AdmissionFixture {
+    TemporaryDirectory dir;
+    fs::path cl{dir.path() / "tools/cl.exe"}, link{dir.path() / "tools/link.exe"};
+    fs::path header{dir.path() / "src/common.hpp"};
+    mqb::msvc::MsvcToolchain toolchain{
+        .identity = {.compiler=cl, .version="target-admission-test", .binary_stamp="stable-test-tool"},
+        .linker=link, .vc_tools_root=dir.path() / "tools",
+    };
+    AdmissionToolRunner runner{cl, link, header};
+    mqb::msvc::MsvcCompileExecutor executor{toolchain, runner};
+    mqb::orchestration::MsvcIncrementalCompileCoordinator compile{toolchain, executor};
+    mqb::msvc::MsvcLinker linker{toolchain, runner};
+    mqb::orchestration::MsvcIncrementalLinkCoordinator linking{toolchain, linker};
+    mqb::orchestration::MsvcIncrementalTargetCoordinator target{compile, linking};
+    mqb::orchestration::IncrementalTargetRequest request;
+    explicit AdmissionFixture(std::size_t count=4) {
+        write_text(cl, "fake compiler identity"); write_text(link, "fake linker identity");
+        write_text(header, "#pragma once\n");
+        const std::array<const char*,4> names{"a.cpp","b.cpp","c.cpp","d.cpp"};
+        for (std::size_t i=0; i<count; ++i) request.sources.push_back(make_source(dir.path(),names[i]));
+        request.target = {.executable=dir.path()/".mqb/bin/target.exe", .link_cache=dir.path()/".mqb/cache/link/target.cache"};
+        request.working_directory=dir.path(); request.max_parallel_compiles=2;
+    }
+};
+std::string read_bytes(const fs::path& path) {
+    std::ifstream stream{path,std::ios::binary};
+    return std::string{std::istreambuf_iterator<char>{stream},std::istreambuf_iterator<char>{}};
+}
+void target_admission_cases() {
+    using namespace mqb::orchestration;
+    using namespace std::chrono_literals;
+    unsigned checks=0;
+    const auto check=[&](bool value,const char* message) { ++checks; expect(value,message); };
+    {
+        AdmissionFixture f;
+        std::stop_source stopped; stopped.request_stop();
+        auto invalid=f.request; invalid.max_parallel_compiles=0;
+        const auto rejected=f.target.run_with_compile_admission_stop(invalid,stopped.get_token());
+        check(!rejected && rejected.error().code==IncrementalTargetErrorCode::invalid_parallelism,
+              "validation error precedes pre-stop");
+        const auto result=f.target.run_with_compile_admission_stop(f.request,stopped.get_token());
+        check(!result && result.error().code==IncrementalTargetErrorCode::cancelled && result.error().admission,
+              "pre-stopped target returns typed cancellation with evidence");
+        check(f.runner.tools.compile_calls()==0 && f.runner.tools.link_calls()==0 && !fs::exists(f.dir.path()/".mqb"),
+              "pre-stop must publish neither compile nor link cache");
+        if (!result && result.error().admission) {
+            const auto& w=result.error().admission->waves.back();
+            check(w.inspection && w.inspection->outcome()==WorkBatchOutcome::cancelled && !w.execution,
+                  "pre-stop cannot execute previously uninspected items");
+            check(std::all_of(w.attempts.begin(),w.attempts.end(),[](const auto& a){return !a;}),
+                  "pre-stopped original attempts remain unentered");
+        }
+    }
+    // Missing object, corrupted/missing cache and final output repair continue to
+    // use the existing freshness authority, including shared-hit revalidation.
+    {
+        AdmissionFixture f;
+        std::stop_source stop;
+        const auto cold=f.target.run_with_compile_admission_stop(f.request,stop.get_token());
+        check(cold && cold->any_compiled && cold->link.linked && fs::exists(f.request.target.link_cache),
+              "opt-in success really links and saves the product link cache");
+        const int calls=f.runner.tools.compile_calls(), links=f.runner.tools.link_calls();
+        const auto warm=f.target.run_with_compile_admission_stop(f.request,stop.get_token());
+        check(warm && !warm->any_compiled && !warm->link.linked && f.runner.tools.compile_calls()==calls && f.runner.tools.link_calls()==links,
+              "opt-in all-hit target still skips compile and link execution");
+        fs::remove(f.request.sources[1].artifacts.object);
+        const auto miss=f.target.run_with_compile_admission_stop(f.request,stop.get_token());
+        check(miss && f.runner.tools.compile_calls()==calls+1 && miss->compiles[1].result.compiled && !miss->compiles[0].result.compiled,
+              "opt-in split wave executes only the original missing-object source index");
+        fs::remove(f.request.target.executable);
+        const auto output=f.target.run_with_compile_admission_stop(f.request,stop.get_token());
+        check(output && !output->any_compiled && output->link.linked,
+              "opt-in late output freshness still repairs missing executable");
+        const auto fallback=f.target.run_with_compile_admission_stop(f.request,{});
+        check(fallback && !fallback->any_compiled && !fallback->link.linked,
+              "non-stoppable explicit token delegates the legacy no-op path");
+        check(!f.runner.saw_process_token && !f.runner.saw_execution_snapshot,
+              "neither process kill tokens nor inspection snapshots enter compiler execution");
+    }
+    for (int mode=0; mode<5; ++mode) {
+        AdmissionFixture f;
+        check(f.target.run(f.request).has_value(),"prepare real warm product cache for stop/error test");
+        const auto old_link=read_bytes(f.request.target.link_cache);
+        const auto old_link_time=fs::last_write_time(f.request.target.link_cache);
+        const auto old_failed_cache=read_bytes(f.request.sources[1].artifacts.compile_cache);
+        for (std::size_t i=0;i<3;++i) fs::remove(f.request.sources[i].artifacts.object);
+        if (mode==1) f.runner.tools.fail_sources({"b.cpp"});
+        if (mode==2 || mode==3) f.runner.throws_on="b.cpp";
+        if (mode==3) f.runner.tools.fail_sources({"a.cpp"});
+        if (mode==4) f.runner.process_error_on="b.cpp";
+        std::stop_source stop;
+        std::counting_semaphore<2> entered{0},release{0};
+        std::atomic<unsigned> calls{0};
+        f.runner.before_compile=[&](const auto&) {
+            if (calls.fetch_add(1)<2) {entered.release();release.acquire();}
+        };
+        auto future=std::async(std::launch::async,[&]{return f.target.run_with_compile_admission_stop(f.request,stop.get_token());});
+        const bool one=entered.try_acquire_for(10s),two=entered.try_acquire_for(10s);
+        stop.request_stop(); release.release(2);
+        const auto result=future.get();
+        check(one&&two,"both product compile callbacks reach deterministic in-flight boundary");
+        const auto code=mode==0?IncrementalTargetErrorCode::cancelled:
+            (mode==2?IncrementalTargetErrorCode::scheduling_failed:IncrementalTargetErrorCode::compile_failed);
+        check(!result && result.error().code==code,"original target failure outranks concurrent cancellation");
+        check(f.runner.tools.link_calls()==1 && read_bytes(f.request.target.link_cache)==old_link
+              && fs::last_write_time(f.request.target.link_cache)==old_link_time,
+              "failed/cancelled target does not enter real linker or rewrite its existing link cache");
+        check(calls.load()==2 && !fs::exists(f.request.sources[2].artifacts.object),
+              "pending missing source never executes or satisfies target prerequisites");
+        check(!f.runner.saw_process_token && !f.runner.saw_execution_snapshot,
+              "stopped compilation still uses nonterminating, uncached execution evidence");
+        if (!result && result.error().admission) {
+            const auto& w=result.error().admission->waves.back();
+            check(w.execution_sources==std::vector<std::size_t>({0,1,2}) && w.inspection && w.inspection->all_succeeded(),
+                  "typed execution retains compact-miss to original-source mapping");
+            check(!w.attempts[2] && w.attempts[3] && w.attempts[3]->has_value() && !w.attempts[3]->value().compiled,
+                  "pending source and successful inspected cache hit remain distinct");
+            check(w.execution && w.execution->outcome()==(mode==0?WorkBatchOutcome::cancelled:WorkBatchOutcome::failed),
+                  "typed phase keeps original failure even when stop is also observed");
+            if (mode==1) {
+                const auto& original=w.attempts[1]->error().compile_error->compiler_error->process_result;
+                check(original && original->exit_code==2 && original->stderr_text=="simulated parallel compile failure: b.cpp",
+                      "target error preserves exact original compiler result and diagnostic");
+                check(read_bytes(f.request.sources[1].artifacts.compile_cache)==old_failed_cache,
+                      "failed compiler cannot publish a new source cache entry");
+            }
+            if (mode==2 || mode==3) {
+                const auto* exception=std::get_if<std::exception_ptr>(&w.execution->attempts[1]);
+                std::string message;
+                if (exception && *exception) try { std::rethrow_exception(*exception); }
+                catch(const std::runtime_error& e){message=e.what();}
+                check(message=="original target callback exception","original callback exception remains rethrowable at target boundary");
+                if(mode==3)check(result.error().source==f.request.sources[0].source,
+                                "real compile failure is primary even with a sibling exception and stop");
+            }
+            if(mode==4) {
+                const auto& native=w.attempts[1]->error().compile_error->compiler_error->process_error;
+                check(native && native->native_code==123 && native->message=="original target process failure",
+                      "process infrastructure failure is not converted into target cancellation");
+            }
+        } else check(false,"all interrupted opt-in waves retain their original evidence");
+    }
+    {
+        AdmissionFixture f;
+        f.request.max_parallel_compiles=1;
+        f.request.sources.back().artifacts.object.clear();
+        std::stop_source stop;
+        const auto result=f.target.run_with_compile_admission_stop(f.request,stop.get_token());
+        check(!result && result.error().code==IncrementalTargetErrorCode::compile_failed
+              && result.error().compile_error->code==IncrementalCompileErrorCode::planning_failed,
+              "inspection failure is preserved before any planned miss executes");
+        check(f.runner.tools.compile_calls()==0 && f.runner.tools.link_calls()==0 && !fs::exists(f.dir.path()/".mqb"),
+              "failed inspection prevents all compile/cache/link writes");
+        check(!result && result.error().admission && result.error().admission->waves[0].inspection
+              && !result.error().admission->waves[0].execution,"inspection-only failure has no invented execution batch");
+    }
+    {
+        AdmissionFixture f;
+        check(f.target.run(f.request).has_value(), "prepare sparse miss mapping");
+        f.request.max_parallel_compiles=1;
+        fs::remove(f.request.sources[1].artifacts.object);
+        fs::remove(f.request.sources[3].artifacts.object);
+        f.runner.tools.fail_sources({"d.cpp"});
+        std::stop_source stop;
+        const auto result=f.target.run_with_compile_admission_stop(f.request,stop.get_token());
+        check(!result && result.error().code==IncrementalTargetErrorCode::compile_failed
+              && result.error().source==f.request.sources[3].source,
+              "sparse miss failure retains original source rather than compact slot index");
+        if (!result && result.error().admission) {
+            const auto& wave=result.error().admission->waves.back();
+            check(wave.execution_sources==std::vector<std::size_t>({1,3}), "execution map retains noncontiguous sources");
+            const auto* failed=std::get_if<std::expected<void,TargetCompileFailure>>(&wave.execution->attempts[1]);
+            check(failed && !*failed && failed->error().source_index==3, "typed failure index resolves to original source payload");
+            check(wave.attempts[0] && !wave.attempts[0]->value().compiled && wave.attempts[1]->value().compiled,
+                  "original cache hit and completed miss remain separate evidence");
+        } else check(false,"sparse failure evidence retained");
+        check(f.runner.tools.link_calls()==1,"sparse partial success cannot publish target link state");
+    }
+    for (bool cancel_retry : {false,true}) {
+        AdmissionFixture f;
+        check(f.target.run(f.request).has_value(),"prepare shared dependency cache for conservative retry");
+        f.request.max_parallel_compiles=1;
+        fs::remove(f.request.sources[0].artifacts.object);
+        const auto old_time=fs::last_write_time(f.header);
+        const auto old_link=read_bytes(f.request.target.link_cache);
+        std::stop_source stop;
+        unsigned entered=0;
+        f.runner.before_compile=[&](const auto&) {
+            if(entered++==0) fs::last_write_time(f.header,old_time+2s);
+            else if(cancel_retry)stop.request_stop();
+        };
+        const auto result=f.target.run_with_compile_admission_stop(f.request,stop.get_token());
+        if(cancel_retry) {
+            check(!result && result.error().code==IncrementalTargetErrorCode::cancelled,
+                  "stop during conservative retry still blocks the target successor");
+            check(entered==2 && f.runner.tools.link_calls()==1 && read_bytes(f.request.target.link_cache)==old_link,
+                  "conservative retry does not publish old hits or rewrite link cache after stop");
+            if(!result && result.error().admission) {
+                const auto& waves=result.error().admission->waves;
+                check(waves.size()==2 && waves[0].attempts[3] && !waves[0].attempts[3]->value().compiled
+                      && waves[1].attempts[0] && !waves[1].attempts[1],
+                      "failed second pass retains the first completed wave and current not-entered slots");
+            } else check(false,"conservative retry evidence retained");
+        } else {
+            check(result && entered==5 && f.runner.tools.link_calls()==2,
+                  "post-execution freshness barrier still reruns one miss then all four sources");
+            check(result && std::all_of(result->compiles.begin(),result->compiles.end(),[](const auto& c){return c.result.compiled;}),
+                  "stale inspected hits never reach final link after mutation");
+        }
+        check(detail::active_filesystem_evidence_table==nullptr,"opt-in retry restores caller evidence TLS");
+    }
+    {
+        AdmissionFixture f(2);
+        f.request.force_downstream_rebuild=true;
+        std::stop_source stop;
+        f.runner.before_compile=[&](const auto&){stop.request_stop();};
+        const auto result=f.target.run_with_compile_admission_stop(f.request,stop.get_token());
+        check(!result && result.error().code==IncrementalTargetErrorCode::cancelled && f.runner.tools.link_calls()==0
+              && !fs::exists(f.request.target.link_cache),"small/forced direct path also blocks real link-cache publication");
+        check(!result && result.error().admission && !result.error().admission->waves[0].inspection
+              && result.error().admission->waves[0].execution,"direct path records execution only");
+    }
+    {
+        AdmissionFixture f;
+        std::stop_source stop;
+        f.runner.before_link=[&](const auto&){stop.request_stop();};
+        const auto result=f.target.run_with_compile_admission_stop(f.request,stop.get_token());
+        check(result && result->link.linked && fs::exists(f.request.target.link_cache) && stop.stop_requested(),
+              "late stop does not terminate or roll back an already-admitted terminal link");
+        check(!f.runner.saw_process_token,"even admitted terminal link receives no terminating token");
+    }
+    std::cout<<"target_compile_admission_cases "<<checks<<" checks completed\n";
 }
 
 template <typename Coordinator>
@@ -727,8 +996,7 @@ int main() {
         common_header};
     failing_runner.fail_sources({"b.cpp", "c.cpp"});
     mqb::msvc::MsvcCompileExecutor failing_executor{
-        toolchain,
-        failing_runner};
+        toolchain, failing_runner};
     mqb::orchestration::MsvcIncrementalCompileCoordinator
         failing_compile_coordinator{toolchain, failing_executor};
     mqb::msvc::MsvcLinker failing_linker{toolchain, failing_runner};
@@ -755,6 +1023,8 @@ int main() {
            "failure wave should still prove three concurrent in-flight compiles");
     expect(failing_runner.link_calls() == 0,
            "target must not link when any parallel compile fails");
+
+    target_admission_cases();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

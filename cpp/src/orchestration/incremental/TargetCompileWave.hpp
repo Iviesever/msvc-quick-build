@@ -4,6 +4,8 @@
 #include <expected>
 #include <memory>
 #include <optional>
+#include <numeric>
+#include <stop_token>
 #include <utility>
 #include <vector>
 
@@ -33,21 +35,52 @@ struct TargetCompileWaveSummary {
 // and conservative whole-target retry, including mutations during execution.
 class TargetCompileWave {
 public:
-    template <typename TargetRequest>
+    template <bool WithAdmissionStop = false, typename TargetRequest>
     [[nodiscard]] static std::expected<TargetCompileWaveSummary, BoundedWorkError>
     run(
         const TargetRequest& request,
         MsvcIncrementalCompileCoordinator& coordinator,
         const bool force_rebuild,
         FilesystemEvidenceTable* evidence_table,
-        std::vector<std::optional<TargetCompileAttempt>>& attempts) {
+        std::vector<std::optional<TargetCompileAttempt>>& attempts,
+        std::stop_token admission_stop = {},
+        TargetCompileWaveEvidence* typed = nullptr) {
         attempts.clear();
         attempts.resize(request.sources.size());
 
+        // Both paths below retain identical TLS/inspection/execution authority.
+        // The false specialization contains only the original scheduler call.
+        const auto dispatch = [&](std::size_t count, bool inspection, const auto& work)
+            -> std::expected<BoundedWorkSummary, BoundedWorkError> {
+            if constexpr (!WithAdmissionStop) {
+                return BoundedWorkScheduler::run(count, request.max_parallel_compiles, work);
+            } else {
+                auto& saved = inspection ? typed->inspection : typed->execution;
+                saved.emplace(run_work_batch(count, request.max_parallel_compiles,
+                    ParallelismWorkload::compilation, admission_stop,
+                    [&](std::size_t index) -> std::expected<void, TargetCompileFailure> {
+                        if (work(index)) return {};
+                        return std::unexpected(TargetCompileFailure{
+                            inspection ? index : typed->execution_sources[index]});
+                    }));
+                if (!saved->scheduling) {
+                    return std::unexpected(BoundedWorkError{
+                        .code = BoundedWorkErrorCode::worker_start_failed,
+                        .message = "typed compile batch did not produce a scheduler result",
+                    });
+                }
+                return *saved->scheduling;
+            }
+        };
+
         if (evidence_table == nullptr || force_rebuild) {
+            if constexpr (WithAdmissionStop) {
+                typed->execution_sources.resize(request.sources.size());
+                std::iota(typed->execution_sources.begin(), typed->execution_sources.end(), std::size_t{0});
+            }
             const auto direct = [&] {
-                return BoundedWorkScheduler::run(
-                    request.sources.size(), request.max_parallel_compiles,
+                return dispatch(
+                    request.sources.size(), false,
                     [&](const std::size_t index) {
                         auto compile_request = make_request(
                             request.sources[index], request.compiler_options,
@@ -101,11 +134,10 @@ public:
         const auto inspected = [&] {
             if (request.max_parallel_compiles == 1) {
                 ScopedFilesystemEvidenceActivation active{evidence_table};
-                return BoundedWorkScheduler::run(
-                    request.sources.size(), request.max_parallel_compiles, inspect_one);
+                return dispatch(request.sources.size(), true, inspect_one);
             }
-            return BoundedWorkScheduler::run(
-                request.sources.size(), request.max_parallel_compiles,
+            return dispatch(
+                request.sources.size(), true,
                 [&](const std::size_t index) {
                     ScopedFilesystemEvidenceActivation active{evidence_table};
                     return inspect_one(index);
@@ -124,6 +156,7 @@ public:
             if (pending[index]) misses.push_back(index);
         }
         if (misses.empty()) return summary;
+        if constexpr (WithAdmissionStop) typed->execution_sources = misses;
 
         const auto execute_one = [&](const std::size_t miss_index) {
             const std::size_t source_index = misses[miss_index];
@@ -136,11 +169,10 @@ public:
             // Execution and cache sealing must not consume inspection snapshots.
             if (request.max_parallel_compiles == 1 || misses.size() == 1) {
                 ScopedFilesystemEvidenceActivation suspended{nullptr};
-                return BoundedWorkScheduler::run(
-                    misses.size(), request.max_parallel_compiles, execute_one);
+                return dispatch(misses.size(), false, execute_one);
             }
-            return BoundedWorkScheduler::run(
-                misses.size(), request.max_parallel_compiles,
+            return dispatch(
+                misses.size(), false,
                 [&](const std::size_t index) {
                     ScopedFilesystemEvidenceActivation suspended{nullptr};
                     return execute_one(index);
