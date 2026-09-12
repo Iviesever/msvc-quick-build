@@ -1,4 +1,5 @@
 #include "mqb/platform/windows/WindowsWriteDomain.hpp"
+#include "mqb/platform/windows/WindowsWriteInventory.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -157,5 +158,135 @@ std::expected<void, WriteDomainError> WindowsWriteDomain::withdraw_unstarted() {
     state_->marker.value = INVALID_HANDLE_VALUE;
     state_->phase = WriteDomainPhase::pinned;
     return {};
+}
+} // namespace mqb::platform::windows
+
+namespace mqb::platform::windows {
+namespace {
+// This initial inventory boundary accepts ordinary absolute drive paths only.
+// It never normalizes '..' across a junction or interprets device/stream syntax.
+bool inventory_path_supported(const std::filesystem::path& path, WriteExtent extent) {
+    const auto drive = path.root_name().native();
+    if (!path.is_absolute() || drive.size() != 2 || drive[1] != L':'
+        || !((drive[0] >= L'A' && drive[0] <= L'Z') || (drive[0] >= L'a' && drive[0] <= L'z'))
+        || path.native().find(L'\0') != std::wstring::npos
+        || (extent != WriteExtent::file && extent != WriteExtent::directory_namespace)) return false;
+    if (extent == WriteExtent::file && (path.filename().empty() || path.filename() == L".")) return false;
+    for (const auto& component : path.relative_path()) {
+        const auto& name = component.native();
+        if (name.empty() || name == L".") continue;
+        if (name == L".." || name.back() == L'.' || name.back() == L' ') return false;
+        if (std::any_of(name.begin(), name.end(), [](wchar_t c) {
+            return c < 32 || std::wstring_view{L"<>:\"/\\|?*"}.find(c) != std::wstring_view::npos;
+        })) return false;
+        auto stem = name.substr(0, name.find(L'.'));
+        while (!stem.empty() && stem.back() == L' ') stem.pop_back();
+        for (auto& c : stem) if (c >= L'a' && c <= L'z') c = static_cast<wchar_t>(c - L'a' + L'A');
+        if (stem == L"CON" || stem == L"PRN" || stem == L"AUX" || stem == L"NUL"
+            || stem == L"CONIN$" || stem == L"CONOUT$" || stem == L"CLOCK$") return false;
+        if (stem.size() == 4 && (stem.starts_with(L"COM") || stem.starts_with(L"LPT"))
+            && ((stem[3] >= L'1' && stem[3] <= L'9') || stem[3] == L'\u00b9'
+                || stem[3] == L'\u00b2' || stem[3] == L'\u00b3')) return false;
+    }
+    return true;
+}
+void observe_inventory_leaf(HANDLE parent, const std::filesystem::path& path, PhysicalWriteObservation& out) {
+    const auto module = ::GetModuleHandleW(L"ntdll.dll");
+    const auto entry = module ? ::GetProcAddress(module, "NtCreateFile") : nullptr;
+    if (!entry) {
+        out.error = error(WriteDomainErrorCode::native_api_unavailable, "read-only NT file API unavailable", ::GetLastError());
+        return;
+    }
+    auto leaf = path.filename().native();
+    if (leaf.size() > 32766) {
+        out.error = error(WriteDomainErrorCode::invalid_root, "leaf name exceeds native UNICODE_STRING length");
+        return;
+    }
+    UNICODE_STRING name{};
+    name.Buffer = leaf.data();
+    name.Length = static_cast<USHORT>(leaf.size() * sizeof(wchar_t));
+    name.MaximumLength = name.Length;
+    OBJECT_ATTRIBUTES attributes{};
+    attributes.Length = sizeof(attributes); attributes.RootDirectory = parent; attributes.ObjectName = &name;
+    // Match native component spelling. Do not silently case-fold a leaf in an
+    // explicitly case-sensitive directory, or follow a final reparse point.
+    IO_STATUS_BLOCK io{};
+    Handle file;
+    const auto create = std::bit_cast<decltype(&::NtCreateFile)>(entry);
+    constexpr ULONG open_existing = 1, synchronous = 0x20, open_reparse = 0x200000;
+    const auto status = create(&file.value, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &attributes, &io,
+        nullptr, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        open_existing, synchronous | open_reparse, nullptr, 0);
+    if (status == static_cast<NTSTATUS>(0xc0000034UL)) {
+        // Absence under an exact-spelling lookup must not silently hide a case
+        // alias that Win32 writers could resolve. A second READ-ONLY probe is
+        // solely an ambiguity test, not authority to fold case-sensitive names.
+        attributes.Attributes = 0x40; // OBJ_CASE_INSENSITIVE
+        Handle case_alias;
+        IO_STATUS_BLOCK alias_io{};
+        const auto alias_status = create(&case_alias.value, FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            &attributes, &alias_io, nullptr, FILE_ATTRIBUTE_NORMAL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            open_existing, synchronous | open_reparse, nullptr, 0);
+        if (alias_status != static_cast<NTSTATUS>(0xc0000034UL)) {
+            out.error = error(WriteDomainErrorCode::identity_failed,
+                "missing exact leaf has unresolved case-alias semantics", 0, static_cast<std::uint32_t>(alias_status));
+            return;
+        }
+        out.file_absent = true; // Finite missing leaf; NEVER a missing parent.
+        return;
+    }
+    if (status != 0 || !file.valid() || io.Information != 1) {
+        out.error = error(WriteDomainErrorCode::open_failed, "leaf observation unavailable; not a missing-file certificate",
+            0, static_cast<std::uint32_t>(status));
+        return;
+    }
+    FILE_ATTRIBUTE_TAG_INFO attributes_info{};
+    FILE_STANDARD_INFO standard{};
+    FILE_ID_INFO identity{};
+    if (!::GetFileInformationByHandleEx(file.value, FileAttributeTagInfo, &attributes_info, sizeof(attributes_info))
+        || !::GetFileInformationByHandleEx(file.value, FileStandardInfo, &standard, sizeof(standard))
+        || !::GetFileInformationByHandleEx(file.value, FileIdInfo, &identity, sizeof(identity))) {
+        out.error = error(WriteDomainErrorCode::identity_failed, "leaf metadata identity unavailable", ::GetLastError());
+        return;
+    }
+    if ((attributes_info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) || standard.Directory
+        || standard.DeletePending || standard.NumberOfLinks != 1) {
+        out.error = error(WriteDomainErrorCode::identity_failed,
+            "leaf is reparse, directory, delete-pending or multiply linked; write scope unresolved");
+        return;
+    }
+    WriteDirectoryIdentity id;
+    id.volume = identity.VolumeSerialNumber;
+    std::memcpy(id.file.data(), identity.FileId.Identifier, id.file.size());
+    out.existing_file = id; // A finite observation, not a retained leaf/TOCTOU lock.
+}
+} // namespace
+
+WindowsWriteInventory WindowsWriteInventory::inspect(const WriteInventory& inventory) {
+    WindowsWriteInventory result;
+    result.unresolved_ = inventory.unresolved;
+    result.entries_.reserve(inventory.known.size());
+    for (const auto& declaration : inventory.known) {
+        result.entries_.push_back(PhysicalWriteObservation{.declaration = declaration});
+        auto& observation = result.entries_.back();
+        if (!inventory_path_supported(declaration.path, declaration.extent)) {
+            observation.error = error(WriteDomainErrorCode::invalid_root,
+                "destination must have unambiguous absolute drive-path components; no device/ADS/parent traversal");
+            continue;
+        }
+        const auto parent = declaration.extent == WriteExtent::file
+            ? declaration.path.parent_path() : declaration.path;
+        auto pin = WindowsWriteDomain::open(parent); // Read-only; never create missing parents or ascend.
+        if (!pin) { observation.error = pin.error(); continue; }
+        const auto identity = pin->identity();
+        std::size_t index = 0;
+        while (index != result.pins_.size() && result.pins_[index].identity() != identity) ++index;
+        if (index == result.pins_.size()) result.pins_.push_back(std::move(*pin));
+        observation.directory_index = index;
+        if (declaration.extent == WriteExtent::file)
+            observe_inventory_leaf(result.pins_[index].state_->directory.value, declaration.path, observation);
+    }
+    return result; // No reservation, cleanup, writer dispatch or completeness verdict.
 }
 } // namespace mqb::platform::windows
