@@ -76,3 +76,44 @@ loss and recursive write-set coverage are not inferred from positive local tests
 - [NtCreateFile: user-mode relative RootDirectory create](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile)
 - [GetFinalPathNameByHandleW: local volume GUID versus network shares](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)
 - [SetFileInformationByHandle: deletion through the held handle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle)
+
+## Read-only known-write inventory
+
+`WriteInventory` is an additive list of declarations and unresolved effects, not
+another build plan. `append_known_writes` reads the existing pure compile,
+header-unit, scan, link and archive recipes without invoking tools. LINK side
+output names come from the existing linker authority. Cache owners supply their
+already-resolved filename and an immediate parent replacement namespace; no
+hash/default-path policy or guessed temporary name is duplicated.
+
+Every native recipe retains an unresolved-effects entry. Explicit recipe outputs
+do not enumerate arbitrary argv/environment, implicit temporary files, object
+instructions or shared-service effects. Early discovery/toolchain/bootstrap
+writers and unresolved provider graphs must still be supplied by their owners.
+An empty gap vector is not an execution or lease authorization. Existing CLI,
+plan and compdb entry points do not adopt this API.
+
+`WindowsWriteInventory::inspect` uses read-only `WindowsWriteDomain` pins to map
+the exact physical parent of each known write, preserving original order and
+all gaps. Parent IDs are deduplicated only by held volume/file ID; nested and
+external directories remain separate. Missing parents are not created or replaced
+by the nearest existing ancestor. This initial mapping accepts ordinary absolute
+drive paths only, not UNC/extended/device namespaces, ADS, ambiguous reserved
+names, trailing dots/spaces or parent traversal. Dot components are preserved.
+
+Final file observations use HANDLE-relative `FILE_OPEN`, not a creation mode.
+Reparse, directory, delete-pending and multiple-hard-link leaves are rejected as
+unresolved. A missing exact leaf is checked for a case-insensitive alias before
+recording absence; a conflicting or unavailable second observation is uncertainty,
+not an absent-file certificate. This is not a case-sensitive-name merge policy.
+All observations are finite: the parent stays pinned but the leaf does not, so
+later pathname replacement, concurrent writers and multi-domain ordering remain
+unproved. The inventory has no reserve, complete, ready or recovery method.
+
+The native read-only tests inspect existing files, missing leaves/parents,
+Unicode/case/dot/junction aliases, retargeting, nested/external parents, hard links
+and invalid destinations. Tree bytes and modification times are compared before
+and after inspection and no marker or directory may appear. Case-alias uncertainty
+is preserved instead of being mislabeled missing. The original 39 admission tests
+remain unchanged and separate; neither suite is a complete build-write closure
+or native MSVC run under project leases.
