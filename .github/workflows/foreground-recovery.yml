@@ -40,7 +40,7 @@ jobs:
           $head = (git rev-parse HEAD).Trim()
           if ($head -ne $env:MQB_EXPECTED_HEAD) { throw 'Candidate identity mismatch.' }
           New-Item -ItemType Directory -Path recovery-evidence -ErrorAction Stop | Out-Null
-          git archive --format=zip --output=recovery-evidence/source.zip HEAD
+          git -c core.autocrlf=false archive --format=zip --output=recovery-evidence/source.zip HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           @{ head=$head; tree=(git rev-parse 'HEAD^{tree}').Trim(); base=$env:MQB_EXPECTED_BASE;
              configuration='${{ matrix.configuration }}'; version=(Get-Content VERSION -Raw).Trim(); run=$env:GITHUB_RUN_ID;

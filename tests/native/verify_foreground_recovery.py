@@ -16,6 +16,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 
 PHASES = (
     ("cold", "original", 37, False),
@@ -46,6 +47,20 @@ def artifacts(project: Path) -> dict:
         for p in sorted((project / ".mqb").rglob("*"))
         if p.is_file() and p.suffix.lower() in {".exe", ".obj", ".ifc"}
     }
+
+
+def check_mutation(evidence: dict) -> list[str]:
+    """Normal editing must create a fresh input, not a future-dated input."""
+    errors = []
+    modified = evidence["mtime_ns"]
+    previous = evidence["previous_source_mtime_ns"]
+    if previous is not None and modified <= previous:
+        errors.append("source mutation did not advance its actual filesystem timestamp")
+    if modified > evidence["observed_after_write_ns"]:
+        errors.append("source mutation is future-dated")
+    if any(modified <= item["mtime_ns"] for item in evidence["prior_artifacts"].values()):
+        errors.append("source mutation is not newer than the existing target artifacts")
+    return errors
 
 
 def source(variant: str, module: bool) -> str:
@@ -135,10 +150,19 @@ def run_case(mqb: Path, root: Path, configuration: str, module: bool) -> dict:
             main = project / "main.cpp"
             if variant != previous_variant:
                 old_time = main.stat().st_mtime_ns if main.exists() else None
+                prior_artifacts = artifacts(project)
                 main.write_text(source(variant, module), encoding="utf-8")
-                if old_time is not None:
-                    # Explicit freshness event; do not claim a same-timestamp test.
-                    os.utime(main, ns=(old_time + 2_000_000_000, old_time + 2_000_000_000))
+                # Use the real write time, never synthesize a future timestamp.
+                # A bad fixture fails before invocation; no sleep, retry or
+                # weakening of the product's source-vs-output freshness rule.
+                mutation = {"previous_source_mtime_ns": old_time,
+                            "mtime_ns": main.stat().st_mtime_ns,
+                            "observed_after_write_ns": time.time_ns(),
+                            "prior_artifacts": prior_artifacts}
+                save_json(record / "mutation.json", mutation)
+                mutation_errors = check_mutation(mutation)
+                if mutation_errors:
+                    raise RuntimeError("invalid fixture: " + "; ".join(mutation_errors))
                 previous_variant = variant
             for file in project.iterdir():
                 if file.suffix in {".cpp", ".ixx"}:
@@ -234,7 +258,14 @@ def self_test() -> None:
         assert check(negative, dict(evidence, stdout=diagnostic + "[run] recovery.exe"), ["compile-repaired"])
         assert check(negative, dict(evidence, stdout=""), ["compile-repaired"])
         assert check(negative, dict(evidence, events=["stale-child"]), ["compile-repaired"])
-    print("collector self-test: 3 positive controls and 16 rejecting mutations passed; no native execution")
+    mutation = {"previous_source_mtime_ns": 1, "mtime_ns": 3,
+                "observed_after_write_ns": 4, "prior_artifacts": {"obj": {"mtime_ns": 2}}}
+    assert not check_mutation(mutation)
+    assert not check_mutation(dict(mutation, previous_source_mtime_ns=None, prior_artifacts={}))
+    for bad in (dict(mutation, mtime_ns=1), dict(mutation, mtime_ns=5),
+                dict(mutation, prior_artifacts={"obj": {"mtime_ns": 3}})):
+        assert check_mutation(bad), bad
+    print("collector self-test: 5 positive controls and 19 rejecting mutations passed; no native execution")
 
 
 def main() -> int:
