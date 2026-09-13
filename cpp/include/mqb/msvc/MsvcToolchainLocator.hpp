@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "mqb/core/BuildTypes.hpp"
+#include "mqb/core/WriteInventory.hpp"
 #include "mqb/core/ToolchainIdentity.hpp"
 #include "mqb/process/Process.hpp"
 
@@ -83,6 +84,12 @@ public:
 
     [[nodiscard]] std::expected<MsvcToolchain, ToolchainError>
     discover(const DiscoveryOptions& options) const;
+
+    // Collect possible writes before selecting/discovering the toolchain. Does
+    // not run vswhere/vcvars, read environment/cache, or predict temporary names.
+    // Automatic selection retains possible VS effects even if portable may win.
+    static void collect_known_writes(WriteInventory& out, const DiscoveryOptions& options,
+                                     const std::filesystem::path& execution_cwd);
 
 private:
     process::ProcessRunner& runner_;

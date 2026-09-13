@@ -1,4 +1,5 @@
 #include "mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp"
+#include "mqb/msvc/MsvcWriteInventory.hpp"
 
 #include <algorithm>
 #include <expected>
@@ -602,6 +603,31 @@ MsvcIncrementalLinkCoordinator::inspect(const IncrementalLinkRequest& request) c
     auto state = inspect_link(request, toolchain_);
     if (!state) return std::unexpected(state.error());
     return std::move(state->inspection);
+}
+
+std::optional<msvc::LinkerError>
+MsvcIncrementalLinkCoordinator::collect_known_writes(
+    WriteInventory& out, const IncrementalLinkRequest& request) const {
+    out.add_cache(WriteStage::link, request.cache_file);
+    // Real library/defaultlib resolution needs objects which may not exist yet.
+    // This pure recipe identifies candidate outputs, not the final executed argv.
+    auto recipe = msvc::MsvcLinker::build_recipe(toolchain_, msvc::LinkInvocation{
+        .objects = request.objects,
+        .output = request.output,
+        .options = request.options,
+        .working_directory = request.working_directory.value_or(std::filesystem::path{}),
+    });
+    out.unresolved.push_back({WriteStage::link,
+        "pre-write LINK model precedes object/default-library routing and late freshness; final native effects remain unresolved"});
+    if (!recipe) {
+        out.add(WriteStage::link, WriteExtent::file, request.output,
+            request.working_directory.value_or(std::filesystem::path{}), "unvalidated target output declaration");
+        out.unresolved.push_back({WriteStage::link,
+            "link recipe construction failed; typed error retained by caller: " + recipe.error().message});
+        return recipe.error();
+    }
+    msvc::append_known_writes(out, *recipe);
+    return std::nullopt;
 }
 
 std::expected<IncrementalLinkResult, IncrementalLinkError>

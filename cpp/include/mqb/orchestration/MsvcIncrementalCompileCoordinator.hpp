@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "mqb/core/BuildPlan.hpp"
+#include "mqb/core/WriteInventory.hpp"
 #include "mqb/core/BuildPlanner.hpp"
 #include "mqb/core/CompileCache.hpp"
 #include "mqb/core/CompileCacheFile.hpp"
@@ -81,6 +82,12 @@ public:
     // without launching cl.exe or mutating cache/output state.
     [[nodiscard]] std::expected<IncrementalCompileInspection, IncrementalCompileError>
     inspect(const IncrementalCompileRequest& request) const;
+
+    // Model every candidate output/cache before execution, without loading cache
+    // or probing freshness. A returned error remains original typed recipe data;
+    // the additive inventory also retains a gap. Never an execution ticket.
+    [[nodiscard]] std::optional<msvc::CompileExecutorError>
+    collect_known_writes(WriteInventory& out, const IncrementalCompileRequest& request) const;
 
     [[nodiscard]] std::expected<IncrementalCompileResult, IncrementalCompileError>
     run(const IncrementalCompileRequest& request) const;

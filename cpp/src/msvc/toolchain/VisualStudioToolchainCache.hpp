@@ -7,6 +7,11 @@
 
 namespace mqb::msvc::detail {
 
+// Pure raw destination policy shared with pre-write collection. No cwd lookup,
+// filesystem access, or lexical parent traversal removal.
+[[nodiscard]] std::optional<std::filesystem::path>
+visual_studio_toolchain_cache_destination(const DiscoveryOptions& options);
+
 [[nodiscard]] std::optional<std::filesystem::path>
 visual_studio_toolchain_cache_file(const DiscoveryOptions& options);
 

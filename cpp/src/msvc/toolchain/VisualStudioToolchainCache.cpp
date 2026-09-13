@@ -89,16 +89,8 @@ struct ToolPaths {
 }
 
 [[nodiscard]] std::optional<fs::path> effective_cache_file(const DiscoveryOptions& options) {
-    if (options.vswhere_path || options.cmd_path) return std::nullopt;
-    if (options.cache_file) {
-        if (options.cache_file->empty()) return std::nullopt;
-        return stable_path(*options.cache_file);
-    }
-    const std::string filename =
-        "msvc-" + std::string{preference_name(options.preference)} + "-"
-        + detail::architecture_name(options.host_architecture) + "-"
-        + detail::architecture_name(options.target_architecture) + ".mqbcache";
-    return stable_path(fs::path{".mqb"} / "cache" / "toolchain" / filename);
+    const auto destination = visual_studio_toolchain_cache_destination(options);
+    return destination ? std::optional{stable_path(*destination)} : std::nullopt;
 }
 
 [[nodiscard]] bool environment_name_equal(const std::string_view left, const std::string_view right) {
@@ -577,6 +569,20 @@ void save_visual_studio_cache_best_effort(
 }
 
 } // namespace
+
+std::optional<std::filesystem::path>
+visual_studio_toolchain_cache_destination(const DiscoveryOptions& options) {
+    if (options.vswhere_path || options.cmd_path) return std::nullopt;
+    if (options.cache_file) {
+        if (options.cache_file->empty()) return std::nullopt;
+        return *options.cache_file;
+    }
+    const std::string filename =
+        "msvc-" + std::string{preference_name(options.preference)} + "-"
+        + detail::architecture_name(options.host_architecture) + "-"
+        + detail::architecture_name(options.target_architecture) + ".mqbcache";
+    return fs::path{".mqb"} / "cache" / "toolchain" / filename;
+}
 
 std::optional<std::filesystem::path>
 visual_studio_toolchain_cache_file(const DiscoveryOptions& options) {

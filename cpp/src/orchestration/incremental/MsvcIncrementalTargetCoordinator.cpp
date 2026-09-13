@@ -37,6 +37,29 @@ using CompileAttempt = detail::TargetCompileAttempt;
     };
 }
 
+IncrementalLinkRequest make_link_request(
+    const IncrementalTargetRequest& request, std::vector<fs::path> objects, bool any_compiled) {
+    LinkOptions effective_link_options = request.link_options;
+    msvc::MsvcAddressSanitizerPolicy::apply_link_policy(
+        request.compiler_options,
+        effective_link_options);
+    msvc::MsvcFuzzerPolicy::apply_link_policy(
+        request.compiler_options,
+        effective_link_options);
+    msvc::MsvcOpenMpPolicy::apply_link_policy(
+        request.compiler_options,
+        effective_link_options);
+
+    return {
+        .objects = std::move(objects),
+        .output = request.target.executable,
+        .options = std::move(effective_link_options),
+        .cache_file = request.target.link_cache,
+        .working_directory = request.working_directory,
+        .force_relink = request.force_downstream_rebuild || any_compiled,
+    };
+}
+
 [[nodiscard]] bool insert_unique(
     PathIdentitySet& seen,
     const fs::path& path) {
@@ -63,6 +86,26 @@ using CompileAttempt = detail::TargetCompileAttempt;
 }
 
 } // namespace
+
+TargetWriteCollection MsvcIncrementalTargetCoordinator::collect_prewrite_inventory(
+    const IncrementalTargetRequest& request, WriteInventory upstream) const {
+    TargetWriteCollection result{.inventory = std::move(upstream)};
+    result.compile_errors.reserve(request.sources.size());
+    auto objects = request.additional_objects;
+    for (const auto& source : request.sources) {
+        auto compile = detail::TargetCompileWave::make_request(source, request.compiler_options, false);
+        result.compile_errors.push_back(compile_coordinator_.collect_known_writes(result.inventory, compile));
+        objects.push_back(source.artifacts.object);
+    }
+    if (request.sources.empty())
+        result.inventory.unresolved.push_back({WriteStage::compile, "ordinary target sources not yet supplied"});
+    if (!request.additional_objects.empty() || request.compiler_options.precompiled_header)
+        result.inventory.unresolved.push_back({WriteStage::pch,
+            "additional object/PCH producer must supply its creator, metadata and cache writes separately"});
+    result.link_error = link_coordinator_.collect_known_writes(result.inventory,
+        make_link_request(request, std::move(objects), false));
+    return result;
+}
 
 std::expected<IncrementalTargetResult, IncrementalTargetError>
 MsvcIncrementalTargetCoordinator::run(const IncrementalTargetRequest& request) const {
@@ -273,25 +316,7 @@ MsvcIncrementalTargetCoordinator::run_impl(
         objects.push_back(request.sources[index].artifacts.object);
     }
 
-    LinkOptions effective_link_options = request.link_options;
-    msvc::MsvcAddressSanitizerPolicy::apply_link_policy(
-        request.compiler_options,
-        effective_link_options);
-    msvc::MsvcFuzzerPolicy::apply_link_policy(
-        request.compiler_options,
-        effective_link_options);
-    msvc::MsvcOpenMpPolicy::apply_link_policy(
-        request.compiler_options,
-        effective_link_options);
-
-    IncrementalLinkRequest link_request{
-        .objects = std::move(objects),
-        .output = request.target.executable,
-        .options = std::move(effective_link_options),
-        .cache_file = request.target.link_cache,
-        .working_directory = request.working_directory,
-        .force_relink = request.force_downstream_rebuild || result.any_compiled,
-    };
+    auto link_request = make_link_request(request, std::move(objects), result.any_compiled);
     const auto link_started = Clock::now();
     auto linked = link_coordinator_.run(link_request);
     timings.link = std::chrono::duration_cast<std::chrono::nanoseconds>(

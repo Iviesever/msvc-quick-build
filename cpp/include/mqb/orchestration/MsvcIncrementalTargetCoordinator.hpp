@@ -95,6 +95,14 @@ struct IncrementalTargetResult {
     bool any_compiled{false};
 };
 
+struct TargetWriteCollection {
+    WriteInventory inventory;
+    // Source-order slots, including failures. Missing upstream/provider details
+    // remain in inventory.unresolved; this is not full request validation.
+    std::vector<std::optional<msvc::CompileExecutorError>> compile_errors;
+    std::optional<msvc::LinkerError> link_error;
+};
+
 class MsvcIncrementalTargetCoordinator {
 public:
     MsvcIncrementalTargetCoordinator(
@@ -105,6 +113,13 @@ public:
 
     [[nodiscard]] std::expected<IncrementalTargetResult, IncrementalTargetError>
     run(const IncrementalTargetRequest& request) const;
+
+    // Explicit collection-only boundary. Append early discovery/toolchain owners'
+    // inventory before calling this. Builds candidate recipes even for cache hits;
+    // no tool, freshness/cache IO, directory creation or reservation is performed.
+    // Unknown producers and native effects remain gaps, never lease permission.
+    [[nodiscard]] TargetWriteCollection collect_prewrite_inventory(
+        const IncrementalTargetRequest& request, WriteInventory upstream) const;
 
     // Validation still precedes cancellation. Reuses the normal inspect/miss
     // execution and post-execution freshness barrier. A non-stoppable token
