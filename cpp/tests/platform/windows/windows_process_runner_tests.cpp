@@ -389,8 +389,10 @@ void test_lifetime(WindowsProcessRunner& runner, const fs::path& ordinary_helper
 } // namespace lifetime_tests
 
 #include "windows_write_domain_cases.hpp"
+#include "windows_write_inventory_cases.hpp"
 
 int wmain(const int argc, wchar_t** argv) {
+    if (argc == 2 && std::wstring_view{argv[1]} == L"--write-inventory-tests") return write_inventory_tests::run();
     if (argc == 2 && std::wstring_view{argv[1]} == L"--write-domain-tests") return write_domain_tests::run();
     const int domain_helper = write_domain_tests::helper(argc, argv);
     if (domain_helper >= 0) return domain_helper;
@@ -569,6 +571,7 @@ int wmain(const int argc, wchar_t** argv) {
 
     lifetime_tests::test_lifetime(runner, helper);
     failures += write_domain_tests::run();
+    failures += write_inventory_tests::run();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

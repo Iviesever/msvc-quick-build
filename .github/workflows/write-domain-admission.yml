@@ -57,12 +57,28 @@ jobs:
              run=$env:GITHUB_RUN_ID; attempt=$env:GITHUB_RUN_ATTEMPT } |
             ConvertTo-Json | Set-Content .mqb/write-domain-evidence/provenance.json -Encoding utf8
           exit $code
+      - name: Fixed read-only inventory mapping and no-write controls
+        if: success()
+        shell: pwsh
+        run: |
+          $env:MQB_WRITE_INVENTORY_EVIDENCE_ROOT = Join-Path $PWD '.mqb/write-inventory-evidence'
+          $output = @(& ./.mqb/bin/write_domain_probe.exe --write-inventory-tests 2>&1)
+          $code = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          New-Item -ItemType Directory -Force .mqb/write-inventory-evidence | Out-Null
+          $output | Set-Content .mqb/write-inventory-evidence/native-output.txt -Encoding utf8
+          @{ source_head=(& git rev-parse HEAD).Trim(); configuration='${{ matrix.configuration }}'; native_exit=$code;
+             probe_sha256=(Get-FileHash .mqb/bin/write_domain_probe.exe).Hash; image=$env:ImageVersion;
+             run=$env:GITHUB_RUN_ID; attempt=$env:GITHUB_RUN_ATTEMPT } |
+            ConvertTo-Json | Set-Content .mqb/write-inventory-evidence/provenance.json -Encoding utf8
+          exit $code
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: write-domain-${{ matrix.configuration }}
           path: |
             .mqb/write-domain-evidence/**
+            .mqb/write-inventory-evidence/**
             .mqb/bin/write_domain_probe.exe
           include-hidden-files: true
           if-no-files-found: warn

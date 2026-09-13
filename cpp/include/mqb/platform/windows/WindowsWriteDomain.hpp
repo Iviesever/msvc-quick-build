@@ -63,6 +63,7 @@ public:
 
     static constexpr wchar_t marker_name[] = L".mqb-write-claim-v1";
 private:
+    friend class WindowsWriteInventory; // Read-only HANDLE-relative leaf observations.
     struct State;
     std::unique_ptr<State> state_;
     explicit WindowsWriteDomain(std::unique_ptr<State>) noexcept;

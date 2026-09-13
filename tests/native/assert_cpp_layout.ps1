@@ -214,7 +214,7 @@ $msvcLeafFiles = [ordered]@{
         'CompilerArgumentBuilder.cpp', 'CompilerArgumentBuilder.hpp',
         'CompilerExecution.cpp', 'CompilerExecution.hpp',
         'CompilerInvocationValidation.cpp', 'CompilerInvocationValidation.hpp',
-        'MsvcCompileExecutor.cpp', 'MsvcCompiler.cpp', 'MsvcSourceDependenciesReader.cpp'
+        'MsvcCompileExecutor.cpp', 'MsvcCompiler.cpp', 'MsvcSourceDependenciesReader.cpp', 'MsvcWriteInventory.cpp'
     )
     'librarian' = @('MsvcLibrarian.cpp')
     'linker' = @('MsvcDefaultLibraryPolicy.cpp', 'MsvcLibraryResolver.cpp', 'MsvcLinker.cpp', 'MsvcLinkRecipe.cpp')
@@ -239,7 +239,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'msvc') -LeafFiles ([ordered]@{
     'compiler' = @(
         'compile_executor_tests.cpp', 'compile_integration_tests.cpp',
         'compiler_arguments_tests.cpp', 'incremental_loop_tests.cpp',
-        'source_dependencies_tests.cpp'
+        'source_dependencies_tests.cpp', 'write_inventory_cases.hpp'
     )
     'librarian' = @('librarian_arguments_tests.cpp')
     'linker' = @('library_resolver_tests.cpp', 'link_integration_tests.cpp', 'linker_arguments_tests.cpp')

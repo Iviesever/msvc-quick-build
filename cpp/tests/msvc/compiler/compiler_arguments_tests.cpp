@@ -8,6 +8,7 @@
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/msvc/MsvcCompiler.hpp"
+#include "write_inventory_cases.hpp"
 
 namespace {
 
@@ -296,6 +297,8 @@ int main() {
                    && invalid_reference.error().code == mqb::msvc::CompilerErrorCode::invalid_request,
                "empty logical module reference should fail validation");
     }
+
+    failures += mqb::tests::write_inventory_cases();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
