@@ -284,7 +284,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'orchestration') -LeafFiles ([orde
         'incremental_archive_coordinator_tests.cpp',
         'incremental_compile_coordinator_tests.cpp',
         'incremental_link_coordinator_tests.cpp',
-        'incremental_target_coordinator_tests.cpp'
+        'incremental_target_coordinator_tests.cpp', 'prewrite_inventory_cases.hpp'
     )
     'modules' = @(
         'header_unit_incremental_integration_tests.cpp',

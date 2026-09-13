@@ -15,6 +15,7 @@
 #include "mqb/core/CompileCacheFile.hpp"
 #include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
+#include "mqb/msvc/MsvcWriteInventory.hpp"
 #include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/msvc/MsvcSourceDependenciesReader.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
@@ -23,6 +24,15 @@
 
 namespace mqb::orchestration {
 namespace {
+
+msvc::CompileExecutionRequest make_execution_request(const IncrementalCompileRequest& request) {
+    return {
+        .unit = request.unit,
+        .options = request.options,
+        .source_dependencies_file = request.source_dependencies_file,
+        .working_directory = request.working_directory,
+    };
+}
 
 void append_snapshot_warning(
     std::vector<IncrementalCompileWarning>& warnings,
@@ -273,6 +283,28 @@ MsvcIncrementalCompileCoordinator::inspect(const IncrementalCompileRequest& requ
     return result;
 }
 
+std::optional<msvc::CompileExecutorError>
+MsvcIncrementalCompileCoordinator::collect_known_writes(
+    WriteInventory& out, const IncrementalCompileRequest& request) const {
+    // Cache persistence uses the caller's cache path directly, not cl's cwd.
+    // Refuse to invent that ambient cache base when the path is relative.
+    out.add_cache(WriteStage::compile, request.cache_file);
+    auto recipe = executor_.build_recipe(make_execution_request(request));
+    if (!recipe) {
+        // Even an invalid recipe cannot erase its explicitly declared outputs.
+        const auto base = request.working_directory.value_or(std::filesystem::path{});
+        for (const auto& output : request.unit.outputs)
+            out.add(WriteStage::compile, WriteExtent::file, output.path, base, "unvalidated compile output declaration");
+        out.add(WriteStage::compile, WriteExtent::file, request.source_dependencies_file, base,
+            "unvalidated dependency output declaration");
+        out.unresolved.push_back({WriteStage::compile,
+            "compile recipe construction failed; typed error retained by caller: " + recipe.error().message});
+        return recipe.error();
+    }
+    msvc::append_known_writes(out, *recipe);
+    return std::nullopt;
+}
+
 std::expected<IncrementalCompileResult, IncrementalCompileError>
 MsvcIncrementalCompileCoordinator::run(const IncrementalCompileRequest& request) const {
     auto inspected = inspect(request);
@@ -293,12 +325,7 @@ MsvcIncrementalCompileCoordinator::execute_inspected(
         return result;
     }
 
-    msvc::CompileExecutionRequest execution_request{
-        .unit = request.unit,
-        .options = request.options,
-        .source_dependencies_file = request.source_dependencies_file,
-        .working_directory = request.working_directory,
-    };
+    auto execution_request = make_execution_request(request);
     auto executed = executor_.execute(execution_request);
     if (!executed) {
         return std::unexpected(IncrementalCompileError{

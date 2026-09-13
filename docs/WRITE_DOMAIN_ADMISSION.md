@@ -117,3 +117,37 @@ and after inspection and no marker or directory may appear. Case-alias uncertain
 is preserved instead of being mislabeled missing. The original 39 admission tests
 remain unchanged and separate; neither suite is a complete build-write closure
 or native MSVC run under project leases.
+
+
+## Producer-owned pre-write collection
+
+Early producers now expose collection-only entry points:
+`SourceDiscovery::collect_known_writes` and
+`MsvcToolchainLocator::collect_known_writes`. Both append to `WriteInventory`
+before discovery/bootstrap is invoked. Cache defaults, overrides and disabling
+conditions share the actual producer's destination authority. Relative paths
+require an explicit execution cwd; collection never asks for ambient cwd. Source
+discovery's empty override means default, whereas toolchain's empty override
+means disabled. Automatic toolchain selection keeps possible VS effects even
+when a portable candidate has not yet been selected. Private bootstrap/temp and
+native-service effects remain unresolved, rather than guessed from the cache.
+
+`MsvcIncrementalTargetCoordinator::collect_prewrite_inventory(request, upstream)`
+then appends ordinary-target producers. It reuses the original compile-request
+factory and effective target link policy; its compile/link coordinators use pure
+recipe builders and add their actual cache paths/replacement namespaces. All
+candidate writes are included without probing current cache hits. Relative cache
+paths without a persistence cwd stay unresolved: cl's per-source working directory
+is not assumed to be the cache writer's cwd. Invalid recipes retain typed errors
+in source-order slots, known declarations, and explicit gaps; they do not hide
+later sources, LINK or upstream evidence. Final LINK library/object routing is
+still unresolved until actual objects and late freshness evidence exist.
+
+These calls do not execute any producer, load cache/freshness state, initialize a
+directory or acquire a domain. They describe possible writes, not a validated or
+frozen request, resumable build, closed native effect set or safe execution token.
+The ordinary run/CLI/plan/compdb path is not switched to a new admission policy.
+PCH/additional-object creators, module graphs, archive targets and other upstream
+producers still need their own aggregate connections; a provider input is not
+silently converted into ownership of its producer. Full producer closure and
+transaction/recovery admission remain separate requirements.

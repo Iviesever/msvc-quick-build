@@ -8,6 +8,8 @@
 #include <string>
 #include <string_view>
 
+#include "prewrite_inventory_cases.hpp"
+
 #include "mqb/core/Artifact.hpp"
 #include "mqb/core/BuildTypes.hpp"
 #include "mqb/core/CompilerOptions.hpp"
@@ -383,6 +385,8 @@ int main() {
     }
     expect(runner.calls == 5,
            "failed cold rebuild should still correspond to one compiler launch");
+
+    failures += mqb::tests::prewrite_inventory_cases();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

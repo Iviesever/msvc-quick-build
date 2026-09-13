@@ -48,11 +48,15 @@ struct WriteInventory {
 
     // The cache authority supplies its already-resolved filename. We deliberately
     // do not reproduce discovery/toolchain hashing/default-path policy here.
-    void add_cache(WriteStage stage, const std::filesystem::path& resolved_file) {
-        add(stage, WriteExtent::file, resolved_file, {}, "cache record");
-        if (resolved_file.is_absolute())
-            add(stage, WriteExtent::directory_namespace, resolved_file.parent_path(), {},
-                "cache replacement namespace (temporary names are not guessed)");
+    void add_cache(WriteStage stage, const std::filesystem::path& file,
+                   const std::filesystem::path& explicit_base = {}) {
+        const auto previous = known.size();
+        add(stage, WriteExtent::file, file, explicit_base, "cache record");
+        if (known.size() == previous) return;
+        // Copy before add() can invalidate the vector reference.
+        auto parent = known.back().path.parent_path();
+        add(stage, WriteExtent::directory_namespace, std::move(parent), {},
+            "cache replacement namespace (temporary names are not guessed)");
     }
 };
 } // namespace mqb

@@ -86,15 +86,20 @@ using detail::path_key;
     return result;
 }
 
+[[nodiscard]] std::optional<fs::path> cache_destination(
+    const bool enabled, const std::optional<fs::path>& requested, const fs::path& root) {
+    if (!enabled) return std::nullopt;
+    return requested && !requested->empty() ? *requested
+        : root / ".mqb" / "cache" / "discovery" / "source-discovery.mqbcache";
+}
+
 [[nodiscard]] std::optional<fs::path> prepare_cache_file(
     const bool enabled,
     const std::optional<fs::path>& requested,
     const fs::path& root) {
     if (!enabled) return std::nullopt;
     try {
-        const fs::path candidate = requested && !requested->empty()
-            ? *requested
-            : root / ".mqb" / "cache" / "discovery" / "source-discovery.mqbcache";
+        const fs::path candidate = *cache_destination(enabled, requested, root);
         std::error_code error_code;
         fs::path absolute = fs::absolute(candidate, error_code).lexically_normal();
         if (error_code) return std::nullopt;
@@ -115,6 +120,17 @@ void stabilize_cache_parent_best_effort(const fs::path& cache_file) noexcept {
 }
 
 } // namespace
+
+void SourceDiscovery::collect_known_writes(
+    WriteInventory& out, const Request& request, const fs::path& execution_cwd) {
+    if (request.persistent_cache && request.project_root.empty()
+        && (!request.cache_file || request.cache_file->empty())) {
+        out.unresolved.push_back({WriteStage::discovery, "discovery cache root not supplied"});
+        return;
+    }
+    if (const auto cache = cache_destination(request.persistent_cache, request.cache_file, request.project_root))
+        out.add_cache(WriteStage::discovery, *cache, execution_cwd);
+}
 
 std::expected<Result, Error>
 SourceDiscovery::discover(const Request& request) {

@@ -189,6 +189,8 @@ private:
         IncrementalCompileInspection inspection;
     };
 
+public:
+    // Shared with the owning target's collection-only pre-write entry.
     [[nodiscard]] static IncrementalCompileRequest make_request(
         const TargetSourceRequest& source,
         const CompilerOptions& options,

@@ -15,6 +15,15 @@ namespace mqb::msvc {
 
 namespace fs = std::filesystem;
 
+void MsvcToolchainLocator::collect_known_writes(
+    WriteInventory& out, const DiscoveryOptions& options, const fs::path& execution_cwd) {
+    if (options.preference == ToolchainPreference::portable) return;
+    if (const auto cache = detail::visual_studio_toolchain_cache_destination(options))
+        out.add_cache(WriteStage::toolchain, *cache, execution_cwd);
+    out.unresolved.push_back({WriteStage::toolchain,
+        "VS selection/bootstrap effects unresolved: invocation-private script, environment, native tools and shared-service writes"});
+}
+
 std::expected<MsvcToolchain, ToolchainError>
 MsvcToolchainLocator::discover(const DiscoveryOptions& options) const {
     mqb::performance::ScopedWall evidence{

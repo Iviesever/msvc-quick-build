@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "mqb/core/BuildPlan.hpp"
+#include "mqb/core/WriteInventory.hpp"
 #include "mqb/core/BuildPlanner.hpp"
 #include "mqb/core/LinkCache.hpp"
 #include "mqb/core/LinkCacheFile.hpp"
@@ -79,6 +80,12 @@ public:
     // launching link.exe or mutating link cache/output state.
     [[nodiscard]] std::expected<IncrementalLinkInspection, IncrementalLinkError>
     inspect(const IncrementalLinkRequest& request) const;
+
+    // Model every candidate output/cache before execution, without loading cache
+    // or probing freshness. A returned error remains original typed recipe data;
+    // the additive inventory also retains a gap. Never an execution ticket.
+    [[nodiscard]] std::optional<msvc::LinkerError>
+    collect_known_writes(WriteInventory& out, const IncrementalLinkRequest& request) const;
 
     [[nodiscard]] std::expected<IncrementalLinkResult, IncrementalLinkError>
     run(const IncrementalLinkRequest& request) const;

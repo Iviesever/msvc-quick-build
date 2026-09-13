@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "mqb/core/WriteInventory.hpp"
+
 namespace mqb::discovery {
 
 enum class WarningCode {
@@ -70,6 +72,12 @@ class SourceDiscovery {
 public:
     [[nodiscard]] static std::expected<Result, Error>
     discover(const Request& request);
+
+    // Collection only, before discover(): no cache read/write or directory
+    // enumeration. Relative request paths use the caller's execution cwd,
+    // never this process's ambient cwd. Does not validate inputs or grant a lease.
+    static void collect_known_writes(WriteInventory& out, const Request& request,
+                                     const std::filesystem::path& execution_cwd);
 };
 
 } // namespace mqb::discovery
