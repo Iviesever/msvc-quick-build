@@ -1,0 +1,86 @@
+name: PCH Failure Recovery
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/**'
+      - 'tests/native/verify_foreground_recovery.py'
+      - 'tests/native/verify_pch_recovery.py'
+      - '.github/workflows/pch-recovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pch-recovery-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    name: Exact-head ${{ matrix.configuration }} PCH recovery
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MQB_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      MQB_EXPECTED_BASE: ${{ github.event.pull_request.base.sha || '' }}
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MQB_EXPECTED_HEAD }}
+      - name: Preserve exact source and validate collector assertions
+        shell: pwsh
+        run: |
+          if ([int]$env:GITHUB_RUN_ATTEMPT -ne 1) { throw 'Repeated attempts do not replace the first evidence.' }
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne $env:MQB_EXPECTED_HEAD) { throw 'Candidate identity mismatch.' }
+          if ((Get-Content VERSION -Raw).Trim() -ne '5.5.0') { throw 'Frozen development version changed.' }
+          New-Item -ItemType Directory -Path pch-evidence -ErrorAction Stop | Out-Null
+          git -c core.autocrlf=false archive --format=zip --output=pch-evidence/source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @{ head=$head; tree=(git rev-parse 'HEAD^{tree}').Trim(); base=$env:MQB_EXPECTED_BASE;
+             configuration='${{ matrix.configuration }}'; version=(Get-Content VERSION -Raw).Trim(); run=$env:GITHUB_RUN_ID;
+             attempt=$env:GITHUB_RUN_ATTEMPT; image=$env:ImageVersion } |
+            ConvertTo-Json | Set-Content pch-evidence/provenance.json -Encoding utf8
+          python tests/native/verify_foreground_recovery.py --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/native/verify_pch_recovery.py --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build exact current MQB from pinned seed
+        shell: pwsh
+        run: |
+          Start-Transcript -Path pch-evidence/build-transcript.txt
+          try {
+            $seed = & ./tests/native/acquire_seed.ps1 -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'pch-seed')
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $version = (Get-Content VERSION -Raw).Trim()
+            $mqb = & ./tests/native/build_mqb.ps1 -BuilderMqbPath $seed -RepoRoot $PWD `
+              -Version $version -Configuration '${{ matrix.configuration }}' -Clean `
+              -OutputPath (Join-Path $PWD 'pch-evidence/mqb.exe')
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Get-FileHash -Algorithm SHA256 -LiteralPath $seed, $mqb |
+              Select-Object Path, Hash | ConvertTo-Json | Set-Content pch-evidence/binaries.json -Encoding utf8
+          } finally { Stop-Transcript }
+      - name: Run fixed PCH creator and consumer failure-repair sequences
+        shell: pwsh
+        run: |
+          python tests/native/verify_pch_recovery.py --mqb pch-evidence/mqb.exe `
+            --configuration '${{ matrix.configuration }}' --output pch-evidence/native
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain original diagnostics, cache generations and partial failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pch-recovery-${{ matrix.configuration }}
+          path: |
+            pch-evidence/**
+            !pch-evidence/native/**/project-*/.mqb/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
