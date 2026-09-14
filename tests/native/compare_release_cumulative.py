@@ -8,6 +8,7 @@ counters. Fixed sample counts and practical flags; retain every adverse sample.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
@@ -22,11 +23,17 @@ import shutil
 import statistics as stats
 import subprocess
 import tempfile
+import sys
 import time
 
 import compare_reporting as h
 
-RELEASE = 'd041668de836b9eb9a36e2d6b96ff2114c5c358a'
+RELEASE = '08cdc20a9f9380e18132d21a619288224fd07fd4'
+RELEASE_TREE = 'f6ecbed37e6c6caf135d18ec734955a266f491d3'
+CANDIDATE = '1c565ca9f364b0bcb380565c4684ea543b449e04'
+CANDIDATE_TREE = '96629b0d75061027ca0eacd4a5522806215b95f7'
+# Changing a measured tree is a new reviewed experiment, not a retry override.
+PINNED = {'baseline': (RELEASE, RELEASE_TREE), 'candidate': (CANDIDATE, CANDIDATE_TREE)}
 WARM_PAIRS = 40
 REBUILD_PAIRS = 20
 COLD_PAIRS = 6
@@ -34,6 +41,86 @@ COLD_PAIRS = 6
 
 def dump(path: Path, data) -> None:
     path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+
+
+def first_attempt(attempt: str) -> None:
+    h.require(attempt == '1', 'A repeated attempt cannot replace the first evidence')
+
+
+def validate_sources(sources, harness_sha):
+    h.require(re.fullmatch(r'[0-9a-f]{40}', harness_sha or '') is not None,
+              'Expected harness must be a full commit SHA')
+    h.require(harness_sha not in (RELEASE, CANDIDATE), 'Harness and measured trees need separate identities')
+    for side, source in sources.items():
+        h.require(source['version'] == '5.5.0', f'{side}: frozen development VERSION changed')
+        h.require(not source['dirty'], f'{side}: tracked source differs from its commit')
+        h.require(re.fullmatch(r'[0-9a-f]{40}', source['tree']) is not None, f'{side}: invalid tree')
+    for side, (sha, tree) in PINNED.items():
+        h.require((sources[side]['sha'], sources[side]['tree']) == (sha, tree),
+                  f'{side}: not the reviewed v5.5.0 baseline / frozen complete candidate')
+    h.require(sources['harness']['sha'] == harness_sha, 'Running a different harness commit')
+
+
+def git(root: Path, *arguments: str) -> str:
+    return subprocess.check_output(['git', '-C', str(root), *arguments], text=True).strip()
+
+
+def source_provenance(workspace: Path, harness_sha: str):
+    first_attempt(os.environ.get('GITHUB_RUN_ATTEMPT', '1'))
+    h.require((workspace / 'harness/tests/native/compare_release_cumulative.py').resolve()
+              == Path(__file__).resolve(), 'Script is not from the specified harness checkout')
+    sources = {}
+    for side in ('baseline', 'candidate', 'harness'):
+        root = workspace / side
+        sources[side] = {'sha': git(root, 'rev-parse', 'HEAD'),
+                         'tree': git(root, 'rev-parse', 'HEAD^{tree}'),
+                         'version': (root / 'VERSION').read_text(encoding='utf-8').strip(),
+                         'dirty': git(root, 'diff', '--name-only', 'HEAD')}
+    validate_sources(sources, harness_sha)
+    return {'sources': sources, 'run_id': os.environ.get('GITHUB_RUN_ID'),
+            'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
+            'python': sys.version, 'platform': platform.platform(),
+            'runner_image': os.environ.get('ImageOS'), 'runner_image_version': os.environ.get('ImageVersion')}
+
+
+def prepare_sources(workspace: Path, output: Path, provenance):
+    output.mkdir(parents=True, exist_ok=False)
+    dump(output / 'source-plan.json', {**provenance, 'retry_budget': 0,
+         'expected_pairs': 584, 'expected_recorded_invocations': 1446,
+         'warm_pairs': WARM_PAIRS, 'rebuild_pairs': REBUILD_PAIRS, 'cold_pairs': COLD_PAIRS,
+         'bootstrap_resamples': 5000, 'bootstrap_seed': 5500,
+         'release_authorized': False, 'historical_risks_cleared': False,
+         'binary_origin': 'Both unmodified release-source trees rebuilt with one pinned seed'})
+    # Before any build: archives preserve the exact harness and both source trees.
+    for side in ('baseline', 'candidate', 'harness'):
+        subprocess.run(['git', '-C', str(workspace / side), '-c', 'core.autocrlf=false',
+                        'archive', '--format=zip', '--output=' + str(output / (side + '-source.zip')), 'HEAD'],
+                       check=True)
+    dump(output / 'source-archive-hashes.json', {
+        p.name: h.digest(p.read_bytes()) for p in sorted(output.glob('*-source.zip'))})
+
+
+@contextmanager
+def retained_fixture(output, result, recorder):
+    with tempfile.TemporaryDirectory(prefix='mqb-cumulative-') as temporary:
+        try:
+            yield temporary
+        except Exception as error:
+            result.update(status='failed', error=f'{type(error).__name__}: {error}',
+                          recorded_invocations=len(recorder.calls))
+            # Keep inputs before TemporaryDirectory cleanup; never touch PDB/IDB.
+            # Existing Recorder retains raw diagnostics / calls, including failures.
+            try:
+                root = Path(temporary)
+                for source in root.rglob('*'):
+                    if source.is_file() and source.suffix in ('.cpp', '.hpp', '.ixx'):
+                        target = output / 'failure-inputs' / source.relative_to(root)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(source, target)
+            except Exception as snapshot_error:
+                result['input_snapshot_error'] = str(snapshot_error)
+            dump(output / 'cumulative.json', result)
+            raise
 
 
 def counts(recorder, row):
@@ -121,12 +208,67 @@ def self_test():
     old = {'label': 'schema1', 'timing': {'schema_version': 1, 'cache': {
         'compile': {'hits': 2, 'misses': 0}, 'link': {'hits': 1, 'misses': 0}}}}
     h.require(audit_warm(old, case)['counters'] is None, 'Unavailable historical counters became zero')
+    valid = {side: {'sha': sha, 'tree': tree, 'version': '5.5.0', 'dirty': ''}
+             for side, (sha, tree) in PINNED.items()}
+    valid['harness'] = {'sha': 'a' * 40, 'tree': 'b' * 40, 'version': '5.5.0', 'dirty': ''}
+    validate_sources(valid, 'a' * 40)
+    rejected = 0
+    for side in valid:
+        for field, bad in (('sha', 'c' * 40), ('tree', 'bad-tree'), ('version', '5.6.0'), ('dirty', 'modified.cpp')):
+            changed = {key: dict(value) for key, value in valid.items()}
+            changed[side][field] = bad
+            try:
+                validate_sources(changed, 'a' * 40)
+            except RuntimeError:
+                rejected += 1
+            else:
+                raise RuntimeError(f'Accepted incorrect {side}/{field}')
+    for wrong in (RELEASE, CANDIDATE, 'main', '', 'c' * 40):
+        try:
+            validate_sources(valid, wrong)
+        except RuntimeError:
+            rejected += 1
+        else:
+            raise RuntimeError('Accepted wrong harness identity')
+    first_attempt('1')
+    for attempt in ('0', '2', '', 'invalid'):
+        try:
+            first_attempt(attempt)
+        except RuntimeError:
+            rejected += 1
+        else:
+            raise RuntimeError('Accepted repeated/invalid attempt')
+    # Failure retention itself is tested without executing MQB.
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / 'evidence'
+        recorder = h.Recorder(out)
+        result = {'status': 'incomplete'}
+        try:
+            with retained_fixture(out, result, recorder) as inputs:
+                (Path(inputs) / 'failed.cpp').write_text('#error retained', encoding='utf-8')
+                (Path(inputs) / 'compiler.pdb').write_bytes(b'not to be copied')
+                raise RuntimeError('original failure')
+        except RuntimeError as error:
+            h.require(str(error) == 'original failure', 'Original failure replaced')
+        h.require(result['status'] == 'failed' and (out / 'failure-inputs/failed.cpp').is_file(),
+                  'Partial failure evidence lost')
+        h.require(not list(out.rglob('*.pdb')), 'Failure snapshot touched PDB')
+        try:
+            prepare_sources(Path(tmp), out, {})
+        except FileExistsError:
+            pass
+        else:
+            raise RuntimeError('Existing evidence overwritten')
+    h.require((WARM_PAIRS, REBUILD_PAIRS, COLD_PAIRS) == (40, 20, 6), 'Sample budget changed')
+    print(f'Cumulative entry: valid identities, {rejected} rejecting mutations, first-failure/no-overwrite passed.')
     print('Cumulative schema/statistics tests passed.')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--self-test', action='store_true')
+    parser.add_argument('--preflight', action='store_true')
+    parser.add_argument('--workspace', type=Path)
     for name in ('baseline', 'candidate', 'output'):
         parser.add_argument('--' + name, type=Path)
     for name in ('base-sha', 'head-sha', 'base-tree', 'head-tree', 'harness-sha'):
@@ -135,16 +277,27 @@ def main():
     self_test()
     if args.self_test:
         return
+    h.require(args.workspace and args.output and args.harness_sha, 'Missing source workspace/output/harness')
+    workspace = args.workspace.resolve()
+    provenance = source_provenance(workspace, args.harness_sha)
+    if args.preflight:
+        prepare_sources(workspace, args.output.resolve(), provenance)
+        return
     h.require(os.name == 'nt', 'Product evidence requires Windows/MSVC')
-    h.require(all(vars(args)[key] for key in vars(args) if key != 'self_test'), 'Missing exact identity/paths')
-    h.require(args.base_sha == RELEASE, 'Baseline must be the immutable released v5.4.0 source')
+    h.require(args.baseline and args.candidate, 'Missing binary paths')
+    h.require((args.base_sha, args.base_tree) == PINNED['baseline'], 'Incorrect v5.5.0 baseline identity')
+    h.require((args.head_sha, args.head_tree) == PINNED['candidate'], 'Incorrect complete candidate identity')
+    plan = json.loads((args.output.resolve().parent / 'provenance/source-plan.json').read_text(encoding='utf-8'))
+    h.require(plan['sources'] == provenance['sources'] and plan['run_id'] == provenance['run_id']
+              and plan['run_attempt'] == provenance['run_attempt'], 'Source/run identity changed since preflight')
     binaries = {'baseline': args.baseline.resolve(), 'candidate': args.candidate.resolve()}
     h.require(all(p.is_file() for p in binaries.values()), 'Missing binary')
     output = args.output.resolve()
     h.require(not output.exists(), 'Refusing to overwrite existing evidence')
     recorder = h.Recorder(output)
     (output / 'inventories').mkdir()
-    result = {'schema_version': 1, 'base_sha': args.base_sha, 'head_sha': args.head_sha,
+    result = {'schema_version': 1, 'status': 'incomplete', 'provenance': provenance,
+              'release_authorized': False, 'historical_risks_cleared': False, 'base_sha': args.base_sha, 'head_sha': args.head_sha,
               'base_tree': args.base_tree, 'head_tree': args.head_tree, 'harness_sha': args.harness_sha,
               'binary_sha256': {s: h.digest(p.read_bytes()) for s, p in binaries.items()},
               'created_utc': datetime.now(timezone.utc).isoformat(), 'platform': platform.platform(),
@@ -169,7 +322,7 @@ def main():
             'summary': comparison(pairs, warm=kind == 'warm'), 'pairs': pairs})
         save()
     save()
-    with tempfile.TemporaryDirectory(prefix='mqb-cumulative-') as temporary:
+    with retained_fixture(output, result, recorder) as temporary:
         cases = build_fixtures(Path(temporary))
         for key, case in cases.items():
             for side in binaries:
@@ -270,8 +423,12 @@ def main():
                 h.require(check.returncode == 0, f'{key}: built program returned failure')
             result['behavior_contracts'].append({'side': side, 'compiler_failure_exit': 4,
                                                 'recovery_and_program_runs': True})
+        h.require(len(recorder.calls) == 1446, 'Missing or extra original invocation records')
+        result.update(status='completed', recorded_invocations=len(recorder.calls),
+                      performance_flags=[s['name'] for s in result['scenarios']
+                                         if s['summary']['practical_regression_flag']])
         save()
-    (output / 'passed.txt').write_text('Cumulative 584 pairs and behavior contracts completed.\n', encoding='utf-8')
+    (output / 'passed.txt').write_text('Cumulative 584 pairs and behavior contracts completed; performance flags require separate disposition.\n', encoding='utf-8')
     print(json.dumps([{k: v for k, v in s.items() if k != 'pairs'} for s in result['scenarios']], indent=2))
 
 
