@@ -1,0 +1,117 @@
+name: Retained CPU Header Audit
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'cpp/tests/platform/windows/retained_cpu_header_probe.cpp'
+      - 'tests/native/audit_retained_cpu_headers.py'
+      - 'tests/native/test_retained_cpu_headers.py'
+      - '.github/workflows/retained-cpu-headers.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: retained-cpu-headers-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          persist-credentials: false
+      - name: Freeze source and run identity before execution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw 'No repeated attempt.' }
+          if ($env:EXPECTED_BASE -ne '55f57a84ad938da10d0e28b4578cd1aef6d7f903') { throw 'Wrong base.' }
+          if ((git rev-parse HEAD).Trim() -ne $env:EXPECTED_HEAD) { throw 'Wrong head.' }
+          if ((Get-Content VERSION -Raw).Trim() -ne '5.5.0') { throw 'VERSION changed.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory evidence -ErrorAction Stop | Out-Null
+          git archive --format=zip --output=evidence/source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @{ head=$env:EXPECTED_HEAD; base=$env:EXPECTED_BASE; tree=(git rev-parse 'HEAD^{tree}').Trim();
+             run=$env:GITHUB_RUN_ID; attempt=$env:GITHUB_RUN_ATTEMPT; image=$env:ImageVersion;
+             new_diagnostic_mqb_calls=0; new_etw_captures=0; planned_reader_build_calls=2;
+             original_etls=20; debug_calibration_replays=1 } |
+             ConvertTo-Json | Set-Content evidence/preflight.json -Encoding utf8
+      - name: Portable rejection tests and original contracts
+        shell: pwsh
+        run: |
+          python tests/native/test_retained_cpu_headers.py 2>&1 | Tee-Object evidence/tests.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/native/test_retained_process_stop.py 2>&1 | Tee-Object evidence/original-stop-tests.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/native/verify_pdb_file_trace.py --self-test --output evidence/original-trace-tests.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Obtain exact archived ETLs and fixed reader builder
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/artifacts/10339320139/zip" `
+            -Headers @{Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json'} -OutFile evidence/retained.zip
+          @'
+          import hashlib,io,json,sys,zipfile
+          from pathlib import Path
+          sys.path.insert(0,'tests/native')
+          import audit_retained_cpu_headers as a
+          a.need(a.retained.file_sha(Path('evidence/retained.zip'))==a.BUNDLE_SHA,'bundle hash')
+          with zipfile.ZipFile('evidence/retained.zip') as bundle:
+              raw=bundle.read('original-input.zip')
+          a.need(a.retained.sha(raw)==a.retained.INPUT_SHA,'input hash')
+          with zipfile.ZipFile(io.BytesIO(raw)) as inputs:
+              builder=inputs.read('builder.exe')
+          digest=a.retained.sha(builder)
+          a.need(digest==a.retained.BINARIES['candidate'],'builder hash')
+          Path('inputs').mkdir()
+          Path('inputs/builder.exe').write_bytes(builder)
+          Path('evidence/builder.json').write_text(json.dumps(dict(sha256=digest,source='original-input.zip/builder.exe')),encoding='utf-8')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build only the offline reader in Debug and Release with MQB
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory evidence/readers -ErrorAction Stop | Out-Null
+          foreach ($configuration in @('debug','release')) {
+            $name = 'retained_cpu_header_' + $configuration
+            $options = @('cpp/tests/platform/windows/retained_cpu_header_probe.cpp', '--env', 'vs', '--no-discover',
+              '--std','c++23','--runtime','MT','--compiler-arg','/W4','--compiler-arg','/permissive-',
+              '--lib','advapi32.lib','-o',$name)
+            if ($configuration -eq 'release') { $options += '--release' }
+            & ./inputs/builder.exe @options 2>&1 | Tee-Object "evidence/build-$configuration.txt"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Copy-Item ".mqb/bin/$name.exe" "evidence/readers/$configuration.exe"
+            & "./evidence/readers/$configuration.exe" --self-test 2>&1 | Tee-Object "evidence/self-test-$configuration.txt"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          Get-FileHash evidence/readers/*.exe | Select-Object Path,Hash |
+            ConvertTo-Json | Set-Content evidence/readers/identity.json -Encoding utf8
+      - name: Read all original ETLs and compare exact generation CPU snapshots
+        shell: pwsh
+        run: |
+          python -u tests/native/audit_retained_cpu_headers.py --bundle evidence/retained.zip `
+            --reader evidence/readers/release.exe --debug-reader evidence/readers/debug.exe `
+            --output evidence/replay 2>&1 | Tee-Object evidence/replay.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: retained-cpu-headers-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: evidence/**
+          if-no-files-found: warn
+          retention-days: 90
