@@ -89,10 +89,13 @@ jobs:
           New-Item -ItemType Directory evidence/readers -ErrorAction Stop | Out-Null
           foreach ($configuration in @('debug','release')) {
             $name = 'retained_cpu_header_' + $configuration
+            $mode = if ($configuration -eq 'debug') { '--debug' } else { '--release' }
+            $runtime = if ($configuration -eq 'debug') { 'MTd' } else { 'MT' }
             $options = @('cpp/tests/platform/windows/retained_cpu_header_probe.cpp', '--env', 'vs', '--no-discover',
-              '--std','c++23','--runtime','MT','--compiler-arg','/W4','--compiler-arg','/permissive-',
+              '--std','c++23',$mode,'--runtime',$runtime,'--compiler-arg','/W4','--compiler-arg','/permissive-',
               '--lib','advapi32.lib','-o',$name)
-            if ($configuration -eq 'release') { $options += '--release' }
+            @{ configuration=$configuration; mode=$mode; runtime=$runtime; argv=$options } |
+              ConvertTo-Json -Depth 4 | Set-Content "evidence/build-$configuration-arguments.json" -Encoding utf8
             & ./inputs/builder.exe @options 2>&1 | Tee-Object "evidence/build-$configuration.txt"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Copy-Item ".mqb/bin/$name.exe" "evidence/readers/$configuration.exe"
