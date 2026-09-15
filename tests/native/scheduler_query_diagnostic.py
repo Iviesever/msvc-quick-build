@@ -24,6 +24,11 @@ import verify_pdb_observers as obs
 
 BASE = '55f57a84ad938da10d0e28b4578cd1aef6d7f903'
 BASE_TREE = '5f48fe99cd252148f4d6ff46f15878d7a656fb1b'
+TOOL_HEAD = 'caaea69ce17ba689b80f723790b8de73909da083'
+TOOL_TREE = 'df456835b443f464b2869d045905c785c5007660'
+TOOL_RUN = '34965806286'
+TOOL_ARTIFACT_SHA = '376fb6abcef7496a762b3ce9ebeedf76459bf5eef7f9a12952fe378f943dca11'
+BUILD_JOB = 104369841207
 BUNDLE_SHA = '9fabb1745891a8ddf7dbf9f69d4382d40a7a67764b5eb73dbd49bec7c985acb6'
 INPUT_SHA = '71ceb8b6c861f9e2b7ba36aea680b3909cf21b65380e0853bd584fe3c3419220'
 BUILDER_SHA = 'deab6c9dea5342f3a83ca79e2be3f51d483b03a8f045fbfa8411a8e6ad645c8c'
@@ -71,7 +76,7 @@ def source_identity(root: Path) -> dict:
     head = git(root, 'rev-parse', 'HEAD')
     need(os.environ.get('GITHUB_RUN_ATTEMPT') == '1', 'No repeated workflow attempt')
     need(os.environ.get('GITHUB_SHA') == head, 'Workflow/checkout mismatch')
-    need(git(root, 'rev-parse', 'HEAD^') == BASE, 'Wrong parent')
+    need(git(root, 'rev-parse', 'HEAD^') == TOOL_HEAD, 'Wrong correction parent')
     need(git(root, 'rev-parse', BASE + '^{tree}') == BASE_TREE, 'Wrong base tree')
     need(git(root, 'diff', '--name-status', BASE, 'HEAD').splitlines() ==
          ['A\t' + n for n in NEW_FILES], 'Only three diagnostic additions permitted')
@@ -112,6 +117,7 @@ def extract_builder(bundle: Path, destination: Path) -> None:
 
 
 def build(root: Path, bundle: Path, output: Path) -> None:
+    need(False, 'Build budget already consumed; reuse the pinned first-run tools')
     identity = source_identity(root)
     output.mkdir(parents=True, exist_ok=False)
     write(output / 'preflight.json', identity)
@@ -303,20 +309,80 @@ def compare_inputs(left: Path, right: Path) -> dict:
                 conditional_unattempted_commands_not_fabricated=True, **FALSE_AUTH)
 
 
+
+def validate_allocation(old: dict, current: dict, identity: dict, runner_name: str) -> dict:
+    """Use GitHub allocations + standard hosted-Windows contract, not hostnames.
+
+    A computer name is retained as descriptive metadata, not a globally unique
+    VM identity. Native clean-endpoint/outer-cleanup checks remain mandatory.
+    """
+    need(type(old.get('total_count')) is int and old['total_count'] == len(old['jobs']) == 2,
+         'Incomplete original allocation response')
+    builds = [j for j in old['jobs'] if j.get('id') == BUILD_JOB]
+    need(len(builds) == 1, 'Original build job absent/ambiguous')
+    build_job = builds[0]
+    need(str(build_job.get('run_id')) == TOOL_RUN and build_job.get('head_sha') == TOOL_HEAD and
+         build_job.get('run_attempt') == 1 and build_job.get('status') == 'completed' and
+         build_job.get('conclusion') == 'success', 'Original build allocation mismatch')
+    need(type(current.get('total_count')) is int and current['total_count'] == len(current['jobs']) == 1,
+         'Only one current observation job is permitted')
+    job = current['jobs'][0]
+    need(str(job.get('run_id')) == identity['run'] != TOOL_RUN and job.get('head_sha') == identity['head'] and
+         job.get('run_attempt') == 1 and job.get('status') == 'in_progress' and
+         job.get('name') == 'Observe existing tools on a fresh hosted Windows runner', 'Current allocation mismatch')
+    for j in (build_job, job):
+        need(type(j.get('runner_id')) is int and j['runner_id'] > 0 and
+             j.get('runner_group_name') == 'GitHub Actions' and j.get('labels') == ['windows-latest'],
+             'Not the required standard hosted Windows allocation')
+    need(job.get('runner_name') == runner_name and type(runner_name) is str and runner_name and
+         job['runner_id'] != build_job['runner_id'] and job['id'] != build_job['id'],
+         'Build and observation allocations are not distinct')
+    return dict(build_job=build_job, observation_job=job, distinct_allocations=True,
+                isolation_basis='GitHub standard hosted Windows: fresh VM for each job',
+                hostname_not_an_isolation_identifier=True, **FALSE_AUTH)
+
+
+def reuse(root: Path, archive: Path, output: Path) -> None:
+    source_identity(root)
+    raw = archive.read_bytes()
+    need(sha(raw) == TOOL_ARTIFACT_SHA, 'Original tool artifact digest mismatch')
+    output.mkdir(parents=True, exist_ok=False)
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        names = z.namelist()
+        need(len(names) == len(set(names)) == 29 and z.testzip() is None, 'Original tool ZIP inventory/CRC')
+        for name in names:
+            need(not Path(name).is_absolute() and '..' not in Path(name).parts, 'Unsafe archive path')
+        z.extractall(output)
+    built = load(output / 'identity.json')
+    need((built['head'],built['tree'],built['run']) == (TOOL_HEAD,TOOL_TREE,TOOL_RUN), 'Original tool provenance')
+    for name, digest in built['binaries'].items():
+        need(sha((output / name).read_bytes()) == digest, 'Original tool bytes changed')
+
+
 def observe(root: Path, inputs: Path, output: Path) -> bool:
+    output.mkdir(parents=True, exist_ok=False)
+    write(output / 'startup.json', dict(host=platform.node(), runner_name=os.environ.get('RUNNER_NAME'),
+          run=os.environ.get('GITHUB_RUN_ID'), head=os.environ.get('GITHUB_SHA'), job=os.environ.get('GITHUB_JOB')))
     identity = source_identity(root)
+    write(output / 'controller.json', identity)
+    subprocess.run(['git','archive','--format=zip','--output='+str(output/'controller-source.zip'),'HEAD'],cwd=root,check=True)
     need(os.name == 'nt' and os.environ.get('GITHUB_ACTIONS') == 'true' and
          os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted' and
          os.environ.get('MQB_OWNERSHIP_DISPOSABLE_HOST') == '1' and
          '_MSPDBSRV_ENDPOINT_' not in os.environ, 'Not a disposable default-endpoint host')
     built = load(inputs / 'identity.json')
-    need(built['head'] == identity['head'] and built['tree'] == identity['tree'] and
-         built['run'] == identity['run'] and built['host'] != identity['host'], 'Separate build/observe identity required')
+    write(output / 'compared-identities.json', dict(built=built, observing=identity))
+    need((built['head'],built['tree'],built['run']) == (TOOL_HEAD,TOOL_TREE,TOOL_RUN), 'Wrong original tools')
+    need(os.environ.get('GITHUB_REPOSITORY') == 'Iviesever/msvc-quick-build' and
+         os.environ.get('GITHUB_JOB') == 'observe', 'Unexpected observation workflow context')
+    old, current = load(root/'allocation/original-jobs.json'), load(root/'allocation/current-jobs.json')
+    write(output/'allocation-raw.json', dict(original=old,current=current))
+    allocation = validate_allocation(old,current,identity,os.environ.get('RUNNER_NAME'))
+    write(output/'allocation.json',allocation)
     need(set(built['binaries']) == {'builder.exe','scheduler_query_debug.exe','scheduler_query_release.exe','scheduler_query_recorder.exe'}, 'Binary inventory')
     for name, digest in built['binaries'].items():
         need(sha((inputs / name).read_bytes()) == digest, 'Binary bytes changed: ' + name)
-    output.mkdir(parents=True, exist_ok=False)
-    write(output / 'preflight.json', dict(identity, built=built))
+    write(output / 'preflight.json', dict(identity, built=built, allocation=allocation))
     rows = []
     slots = []
     for index, mode in enumerate(('rm-on', 'rm-off'), 1):
@@ -445,6 +511,31 @@ def self_test(root: Path) -> dict:
             rows.append(dict(name='changed-flags-refused',passed=True))
         else:
             raise ValueError('Changed flags accepted')
+    allocation_identity=dict(run='999',head='correction')
+    bj=dict(id=BUILD_JOB,run_id=int(TOOL_RUN),head_sha=TOOL_HEAD,run_attempt=1,status='completed',conclusion='success',
+            runner_id=101,runner_name='build',runner_group_name='GitHub Actions',labels=['windows-latest'])
+    cj=dict(id=2,run_id=999,head_sha='correction',run_attempt=1,status='in_progress',
+            name='Observe existing tools on a fresh hosted Windows runner',runner_id=102,runner_name='observe',
+            runner_group_name='GitHub Actions',labels=['windows-latest'])
+    for name,expected,mutate in [
+        ('distinct-allocations-not-hostnames',True,lambda a,b:None),
+        ('same-allocation-refused',False,lambda a,b:b.update(runner_id=101)),
+        ('wrong-original-head',False,lambda a,b:a.update(head_sha='other')),
+        ('failed-build-refused',False,lambda a,b:a.update(conclusion='failure')),
+        ('wrong-current-head',False,lambda a,b:b.update(head_sha='other')),
+        ('same-run-refused',False,lambda a,b:b.update(run_id=int(TOOL_RUN))),
+        ('rerun-refused',False,lambda a,b:b.update(run_attempt=2)),
+        ('self-hosted-refused',False,lambda a,b:b.update(labels=['self-hosted'])),
+        ('wrong-runner-binding',False,lambda a,b:b.update(runner_name='other')),
+        ('boolean-runner-id-refused',False,lambda a,b:b.update(runner_id=True)),
+        ('wrong-runner-group',False,lambda a,b:b.update(runner_group_name='custom'))]:
+        aa,bb=copy.deepcopy((bj,cj));mutate(aa,bb)
+        try:
+            validate_allocation(dict(total_count=2,jobs=[aa,dict(id=999)]),
+                                dict(total_count=1,jobs=[bb]),allocation_identity,'observe');actual=True
+        except (ValueError,KeyError,TypeError):actual=False
+        rows.append(dict(name=name,passed=actual==expected))
+    need(all(r['passed'] for r in rows),'Allocation contract test failed')
     originals = [trace.self_test(), inv.self_test(), obs.self_test()]
     need(all(r['passed'] for r in originals), 'Original pure contract tests failed')
     return dict(new_tests=rows, originals=originals, synthetic_only=True, diagnostic_cases_executed=0, **FALSE_AUTH)
@@ -452,7 +543,7 @@ def self_test(root: Path) -> dict:
 
 def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('self-test','build','observe','audit'))
+    parser.add_argument('mode', choices=('self-test','build','reuse','observe','audit'))
     parser.add_argument('--root',type=Path,default=Path(__file__).resolve().parents[2])
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--input',type=Path)
@@ -464,6 +555,8 @@ def main() -> int:
             write(output,self_test(root))
         elif args.mode=='build':
             need(args.input is not None,'Bundle required'); build(root,args.input.resolve(),output)
+        elif args.mode=='reuse':
+            need(args.input is not None,'Original tool archive required'); reuse(root,args.input.resolve(),output)
         elif args.mode=='observe':
             need(args.input is not None,'Input binaries required')
             return 0 if observe(root,args.input.resolve(),output) else 1

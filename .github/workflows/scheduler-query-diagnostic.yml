@@ -13,84 +13,52 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Fixed-source diagnostic tools only
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 2
-          persist-credentials: false
-      - name: Portable contracts and exact patch replay
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw 'No repeated attempt.' }
-          New-Item -ItemType Directory scheduler-query-preflight -ErrorAction Stop | Out-Null
-          python tests/native/scheduler_query_diagnostic.py self-test --output scheduler-query-preflight/contracts.json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Obtain existing fixed MQB builder archive
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Invoke-WebRequest -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/artifacts/10339320139/zip" `
-            -Headers @{Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json'} `
-            -OutFile scheduler-query-preflight/retained.zip
-      - name: One Debug probe, one Release probe, one original recorder build
-        shell: pwsh
-        run: |
-          python tests/native/scheduler_query_diagnostic.py build --input scheduler-query-preflight/retained.zip --output scheduler-query-input
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Preserve exact tools, derived source and every build result
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: scheduler-query-input
-          path: scheduler-query-input/**
-          include-hidden-files: true
-          if-no-files-found: warn
-          retention-days: 30
-      - name: Preserve preflight contracts on every outcome
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: scheduler-query-preflight
-          path: |
-            scheduler-query-preflight/contracts.json
-          if-no-files-found: warn
-          retention-days: 30
   observe:
-    name: Exactly two ordered scheduler cases on a separate disposable host
-    needs: build
+    name: Observe existing tools on a fresh hosted Windows runner
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
-      - uses: actions/download-artifact@v8
-        with:
-          name: scheduler-query-input
-          path: native-input
-      - name: RM-on then RM-off once each, stop on unproven cleanup or collection
+      - name: Pure contracts; original binaries only, no compiler build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory allocation -ErrorAction Stop | Out-Null
+          python tests/native/scheduler_query_diagnostic.py self-test --output allocation/contracts.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve GitHub allocation evidence and fetch original exact tools
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json'}
+          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
+          Invoke-WebRequest "$api/actions/runs/34965806286/jobs?per_page=100" -Headers $headers -OutFile allocation/original-jobs.json
+          Invoke-WebRequest "$api/actions/runs/$env:GITHUB_RUN_ID/jobs?per_page=100" -Headers $headers -OutFile allocation/current-jobs.json
+          Invoke-WebRequest "$api/actions/artifacts/10395591731/zip" -Headers $headers -OutFile native-input.zip
+          python tests/native/scheduler_query_diagnostic.py reuse --input native-input.zip --output native-input
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Remaining original two-arm budget, no rerun of any case
         shell: pwsh
         env:
           MQB_OWNERSHIP_DISPOSABLE_HOST: '1'
         run: |
           python tests/native/scheduler_query_diagnostic.py observe --input native-input --output scheduler-query-evidence
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Preserve raw ETLs, binaries, native diagnostics and failures
+      - name: Preserve raw evidence and preflight failures
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: scheduler-query-evidence
-          path: scheduler-query-evidence/**
+          name: scheduler-query-corrected-evidence
+          path: |
+            allocation/**
+            scheduler-query-evidence/**
+            native-input.zip
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
