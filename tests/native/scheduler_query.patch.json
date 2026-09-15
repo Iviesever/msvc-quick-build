@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "base_commit": "55f57a84ad938da10d0e28b4578cd1aef6d7f903",
+  "source_path": "cpp/tests/platform/windows/msvc_service_ownership_probe.cpp",
+  "input_blob": "1ad20d942a7f2131591b573904675284bb9a0770",
+  "output_sha256": "7a3a4d5555d6c11b28b6fcae1d7c6ce5e0621836a9796e97b1c1efa211ea2c1f",
+  "replacements": [
+    [
+      "bool query_study = false) {",
+      "bool query_study = false, bool scheduler_study = false) {"
+    ],
+    [
+      "require(!use_scheduler || (!pdb_study && !failure_study && !query_study),",
+      "require(!use_scheduler || scheduler_study || (!pdb_study && !failure_study && !query_study),"
+    ],
+    [
+      "    if (failure_study) {\n        const bool original_study",
+      "    if (scheduler_study) require(default_endpoint && !pdb_study && failure_study && query_study\n        && use_scheduler && profile == \"modules-release\" && origin == \"A-started\",\n        \"scheduler contrast only supports modules-release A-started scheduler-drain\");\n    if (failure_study) {\n        const bool original_study"
+    ],
+    [
+      "(original_study || preexisting_study),",
+      "(original_study || preexisting_study || scheduler_study),"
+    ],
+    [
+      "require(failure_study && origin == \"preexisting\" && profile == \"zi-debug\" && drain,",
+      "require(failure_study && drain && (scheduler_study || (origin == \"preexisting\" && profile == \"zi-debug\")),"
+    ],
+    [
+      "if (query_study) write(dir / \"query-policy.json\", \"{\\\"schema\\\":1,\\\"profile\\\":\\\"zi-debug\\\",\\\"origin\\\":\\\"preexisting\\\"\"",
+      "if (query_study) write(dir / \"query-policy.json\", \"{\\\"schema\\\":1,\\\"profile\\\":\" + (quoted)(profile)\n        + \",\\\"origin\\\":\" + (quoted)(origin) +"
+    ],
+    [
+      "a.arguments = {failure_study ? \"--invocation-drain-root\"",
+      "a.arguments = {scheduler_study ? \"--invocation-scheduler-root\" : failure_study ? \"--invocation-drain-root\""
+    ],
+    [
+      "        if (mode == L\"--invocation-drain-root\") {",
+      "        if (mode == L\"--invocation-scheduler-root\") {\n            record_invocation_spans = true;\n            return root(argc, argv, true, true);\n        }\n        if (mode == L\"--measure-scheduler-query\") return measure(argc, argv, true, false, true, true, true);\n        if (mode == L\"--invocation-drain-root\") {"
+    ],
+    [
+      "        const bool query_study = mode == L\"--query-contrast-case\";",
+      "        const bool scheduler_study = mode == L\"--scheduler-query-case\";\n        const bool query_study = mode == L\"--query-contrast-case\" || scheduler_study;"
+    ],
+    [
+      "spec.arguments = {fault_calibration ? \"--measure-pdb-fault\"",
+      "spec.arguments = {scheduler_study ? \"--measure-scheduler-query\" : fault_calibration ? \"--measure-pdb-fault\""
+    ]
+  ]
+}
