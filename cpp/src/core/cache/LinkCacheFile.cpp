@@ -416,11 +416,17 @@ LinkCacheFile::load(const fs::path& file) {
 
 std::expected<void, LinkCacheFileError>
 LinkCacheFile::save(const fs::path& file, const LinkCacheEntry& entry) {
+    using mqb::performance::ScopedWork;
+    using mqb::performance::WorkKind;
     mqb::performance::ScopedCacheWrite evidence{
         mqb::performance::CacheKind::link};
-    auto bytes = serialize(file, entry);
+    auto bytes = [&] {
+        ScopedWork serialize_evidence{WorkKind::link_cache_serialize};
+        return serialize(file, entry);
+    }();
     if (!bytes) return std::unexpected(bytes.error());
 
+    ScopedWork prepare_evidence{WorkKind::link_cache_prepare};
     std::error_code error_code;
     if (!file.parent_path().empty()) {
         fs::create_directories(file.parent_path(), error_code);
@@ -431,7 +437,11 @@ LinkCacheFile::save(const fs::path& file, const LinkCacheEntry& entry) {
     }
 
     const fs::path temporary = temporary_path_for(file);
+    prepare_evidence.finish();
     {
+        // Declare before stream so this interval includes its implicit close.
+        // Payload and flush below are nested, not additional elapsed time.
+        ScopedWork stream_evidence{WorkKind::link_cache_stream};
         std::ofstream stream{temporary, std::ios::binary | std::ios::trunc};
         if (!stream) {
             return std::unexpected(make_error(
@@ -441,12 +451,19 @@ LinkCacheFile::save(const fs::path& file, const LinkCacheEntry& entry) {
                 "failed to open temporary link cache file"));
         }
         evidence.opened(static_cast<std::uint64_t>(bytes->size()));
-        if (!bytes->empty()) {
-            stream.write(
-                reinterpret_cast<const char*>(bytes->data()),
-                static_cast<std::streamsize>(bytes->size()));
+        {
+            ScopedWork payload_evidence{WorkKind::link_cache_write_payload};
+            if (!bytes->empty()) {
+                stream.write(
+                    reinterpret_cast<const char*>(bytes->data()),
+                    static_cast<std::streamsize>(bytes->size()));
+            }
         }
-        stream.flush();
+        {
+            // C++ stream flush is not a durable-storage or lease certificate.
+            ScopedWork flush_evidence{WorkKind::link_cache_flush};
+            stream.flush();
+        }
         if (!stream) {
             stream.close();
             fs::remove(temporary, error_code);
@@ -458,6 +475,8 @@ LinkCacheFile::save(const fs::path& file, const LinkCacheEntry& entry) {
         }
     }
 
+    // Includes the unchanged exists/remove/rename and failure cleanup paths.
+    ScopedWork install_evidence{WorkKind::link_cache_install};
     if (fs::exists(file, error_code) && !error_code) {
         fs::remove(file, error_code);
         if (error_code) {
