@@ -1,0 +1,64 @@
+name: Bounded scheduler query contrast
+on:
+  push:
+    branches: [codex/c1041-scheduler-query-budget2-20260915]
+    paths:
+      - '.github/workflows/scheduler-query-contrast.yml'
+      - 'tests/native/scheduler-query-plan.json'
+      - 'tests/native/scheduler_query_contrast.py'
+      - 'tests/native/collect_scheduler_query_contrast.ps1'
+permissions:
+  contents: read
+concurrency:
+  group: scheduler-query-budget2-20260915
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.run_attempt == 1
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Build pinned diagnostic inputs; no measured case
+        shell: pwsh
+        run: |
+          & ./tests/native/collect_scheduler_query_contrast.ps1 -Mode Build -OutputRoot native-scheduler-build
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scheduler-query-build-original
+          path: native-scheduler-build/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+  observe:
+    needs: build
+    if: github.run_attempt == 1
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      MQB_OWNERSHIP_DISPOSABLE_HOST: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          name: scheduler-query-build-original
+          path: native-input
+      - name: Exactly rm-on then rm-off; never rerun an arm
+        shell: pwsh
+        run: |
+          & ./tests/native/collect_scheduler_query_contrast.ps1 -Mode Observe -InputRoot native-input -OutputRoot native-scheduler-evidence
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scheduler-query-two-cases-original
+          path: native-scheduler-evidence/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
