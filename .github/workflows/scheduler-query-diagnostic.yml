@@ -14,6 +14,8 @@ concurrency:
 
 jobs:
   observe:
+    # This experiment consumed its two cases in run 34968263876. Keep its evidence; never resample.
+    if: ${{ false }}
     name: Observe existing tools on a fresh hosted Windows runner
     runs-on: windows-latest
     timeout-minutes: 20
