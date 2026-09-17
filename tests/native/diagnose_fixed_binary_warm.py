@@ -274,75 +274,76 @@ def run(archive, output, harness_sha):
                             python_calibrations=4), schedule=schedule())
     dump(output / 'plan.json', plan)
     (output / 'subprocess-source.py').write_bytes(Path(subprocess.__file__).read_bytes())
-    recorder = h.Recorder(output / 'mqb')
-    result = dict(status='running', release_authorized=False, historical_cause_resolved=False,
-                  historical_risks_cleared=False, rows=[], audits=[], tools={})
-    save = lambda: dump(output / 'result.json', result)
-    save()
-    try:
-        calibrate(output, resources)
-        for name, case in cases.items():
-            for side in bins:
-                recorder.run(bins[side], case, f'prime-{name}-{side}')
-        before = {name: h.state(case) for name, case in cases.items()}
-        dump(output / 'state-before.json', before)
-        for phase in ('pre', 'post'):
-            if phase == 'post':
-                for slot in plan['schedule']:
-                    observed = []
-                    try:
-                        with observation(slot['observe'], resources, observed):
-                            call = recorder.run(bins[slot['side']], cases[slot['case']], slot['label'], jobs=slot['jobs'])
-                    except Exception:
-                        dump(output / 'failed-observation.json', dict(slot=slot, resources=observed))
-                        raise
-                    row = dict(**slot, call=call, resource=observed[0] if len(observed) == 1 else None)
-                    result['rows'].append(row)
-                    save()
-                    h.require(len(observed) == int(slot['observe']), 'OFF queried or ON coverage missing')
-                    if observed:
-                        valid_resource(observed[0], call['exit_code'])
-                    human = recorder.human(call, 'stdout')
-                    h.require(all(v == 0 for v in cumulative.counts(recorder, call).values()), 'Warm call rebuilt')
-                    h.require(f"[up-to-date] {cases[slot['case']].units} translation units".encode() in human,
-                              'Warm default report missing')
-                    h.require(call['human_stderr_sha256'] == h.digest(b''), 'Unexpected warm stderr')
-            for name, jobs in GROUPS:
-                pair = {}
+    with h.Recorder(output / 'mqb') as recorder:
+        result = dict(status='running', release_authorized=False, historical_cause_resolved=False,
+                      historical_risks_cleared=False, rows=[], audits=[], tools={})
+        save = lambda: dump(output / 'result.json', result)
+        save()
+        try:
+            calibrate(output, resources)
+            for name, case in cases.items():
                 for side in bins:
-                    row = recorder.run(bins[side], cases[name], f'{phase}-{name}-j{jobs}-{side}',
-                                       jobs=jobs, timings=True, verbose=True)
-                    cumulative.audit_warm(row, cases[name])
-                    pair[side] = row
-                    result['audits'].append(dict(phase=phase, case=name, jobs=jobs, side=side, call=row))
-                    # The verbose original CLI identifies the actual selected tool paths.
-                    paths = re.findall(r'^  (?:cl|link):\s+(.+)$', recorder.human(row, 'stdout').decode('utf-8'), re.M)
-                    h.require(len(paths) == 2, 'Selected compiler/linker identity unavailable')
-                    for path in paths:
-                        if path not in result['tools']:
-                            result['tools'][path] = h.digest(Path(path).read_bytes())
-                    save()
-                h.require(vector(pair['baseline']) == vector(pair['candidate']), 'Cross-version warm vectors differ')
+                    recorder.run(bins[side], case, f'prime-{name}-{side}')
+            before = {name: h.state(case) for name, case in cases.items()}
+            dump(output / 'state-before.json', before)
+            for phase in ('pre', 'post'):
                 if phase == 'post':
+                    for slot in plan['schedule']:
+                        observed = []
+                        try:
+                            with observation(slot['observe'], resources, observed):
+                                call = recorder.run(bins[slot['side']], cases[slot['case']], slot['label'], jobs=slot['jobs'])
+                        except Exception:
+                            dump(output / 'failed-observation.json', dict(slot=slot, resources=observed))
+                            raise
+                        row = dict(**slot, call=call, resource=observed[0] if len(observed) == 1 else None)
+                        result['rows'].append(row)
+                        save()
+                        h.require(len(observed) == int(slot['observe']), 'OFF queried or ON coverage missing')
+                        if observed:
+                            valid_resource(observed[0], call['exit_code'])
+                        human = recorder.human(call, 'stdout')
+                        h.require(all(v == 0 for v in cumulative.counts(recorder, call).values()), 'Warm call rebuilt')
+                        h.require(f"[up-to-date] {cases[slot['case']].units} translation units".encode() in human,
+                                  'Warm default report missing')
+                        h.require(call['human_stderr_sha256'] == h.digest(b''), 'Unexpected warm stderr')
+                for name, jobs in GROUPS:
+                    pair = {}
                     for side in bins:
-                        pre = next(a['call'] for a in result['audits'] if a['phase'] == 'pre'
-                                   and a['case'] == name and a['jobs'] == jobs and a['side'] == side)
-                        h.require(vector(pre) == vector(pair[side]), 'Pre/post warm vectors differ')
-        after = {name: h.state(case) for name, case in cases.items()}
-        dump(output / 'state-after.json', after)
-        h.require(before == after, 'Warm sequence changed build-state metadata')
-        h.require(len(recorder.calls) == 318 and len(result['rows']) == 288
-                  and sum(r['resource'] is not None for r in result['rows']) == 144, 'Incomplete fixed budget')
-        h.require({s: h.digest(p.read_bytes()) for s, p in bins.items()} == BINARY_HASHES, 'Binaries changed')
-        h.require(all(h.digest(Path(p).read_bytes()) == digest for p, digest in result['tools'].items()),
-                  'Selected tool changed during study')
-        result.update(status='completed', summaries=summaries(result['rows']), mqb_calls=len(recorder.calls))
-        save()
-        print('Fixed diagnosis complete: 288 calls / 144 root resources / 318 MQB calls. Historical HOLD unchanged.')
-    except Exception as error:
-        result.update(status='failed', error=repr(error), mqb_calls=len(recorder.calls))
-        save()
-        raise
+                        row = recorder.run(bins[side], cases[name], f'{phase}-{name}-j{jobs}-{side}',
+                                           jobs=jobs, timings=True, verbose=True)
+                        cumulative.audit_warm(row, cases[name])
+                        pair[side] = row
+                        result['audits'].append(dict(phase=phase, case=name, jobs=jobs, side=side, call=row))
+                        # The verbose original CLI identifies the actual selected tool paths.
+                        paths = re.findall(r'^  (?:cl|link):\s+(.+)$', recorder.human(row, 'stdout').decode('utf-8'), re.M)
+                        h.require(len(paths) == 2, 'Selected compiler/linker identity unavailable')
+                        for path in paths:
+                            if path not in result['tools']:
+                                result['tools'][path] = h.digest(Path(path).read_bytes())
+                        save()
+                    h.require(vector(pair['baseline']) == vector(pair['candidate']), 'Cross-version warm vectors differ')
+                    if phase == 'post':
+                        for side in bins:
+                            pre = next(a['call'] for a in result['audits'] if a['phase'] == 'pre'
+                                       and a['case'] == name and a['jobs'] == jobs and a['side'] == side)
+                            h.require(vector(pre) == vector(pair[side]), 'Pre/post warm vectors differ')
+            after = {name: h.state(case) for name, case in cases.items()}
+            dump(output / 'state-after.json', after)
+            h.require(before == after, 'Warm sequence changed build-state metadata')
+            h.require(len(recorder.calls) == 318 and len(result['rows']) == 288
+                      and sum(r['resource'] is not None for r in result['rows']) == 144, 'Incomplete fixed budget')
+            h.require({s: h.digest(p.read_bytes()) for s, p in bins.items()} == BINARY_HASHES, 'Binaries changed')
+            h.require(all(h.digest(Path(p).read_bytes()) == digest for p, digest in result['tools'].items()),
+                      'Selected tool changed during study')
+            recorder.finalize()
+            result.update(status='completed', summaries=summaries(result['rows']), mqb_calls=len(recorder.calls))
+            save()
+            print('Fixed diagnosis complete: 288 calls / 144 root resources / 318 MQB calls. Historical HOLD unchanged.')
+        except Exception as error:
+            result.update(status='failed', error=repr(error), mqb_calls=len(recorder.calls))
+            save()
+            raise
 
 
 if __name__ == '__main__':
