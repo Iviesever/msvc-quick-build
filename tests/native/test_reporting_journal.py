@@ -293,7 +293,8 @@ class JournalTests(unittest.TestCase):
             stream=original(path,mode,*args,**kwargs)
             return Short(stream) if path.name=='calls.json.partial' and mode=='x' else stream
         with patch.object(Path,'open',short),self.assertRaisesRegex(RuntimeError,'short calls'):r.finalize()
-        self.assertEqual((r.root/'calls.json.partial').stat().st_size,4)
+        expected=json.dumps(r.calls,indent=2)[:4].replace('\n',os.linesep).encode('utf-8')
+        self.assertEqual((r.root/'calls.json.partial').read_bytes(),expected)
         self.assertFalse((r.root/'calls.json').exists())
 
     def test_nonzero_and_finalize_failure_retains_both(self):
