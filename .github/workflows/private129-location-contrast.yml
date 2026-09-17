@@ -1,0 +1,45 @@
+name: Private129 location contrast once
+on:
+  push:
+    branches: ['codex/private129-location-once-20260917']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: private129-location-once-20260917
+  cancel-in-progress: false
+jobs:
+  contrast:
+    if: github.run_number == 1 && github.run_attempt == 1 && github.ref == 'refs/heads/codex/private129-location-once-20260917'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Pure checks and original retained tools
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory location-output -ErrorAction Stop | Out-Null
+          python tests/native/private129_location_contrast.py --self-test 1>location-output/self-test.stdout 2>location-output/self-test.stderr
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $headers = @{Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json'}
+          Invoke-WebRequest 'https://api.github.com/repos/Iviesever/msvc-quick-build/actions/artifacts/10483674322/zip' -Headers $headers -OutFile location-output/prior-original.zip
+      - name: Fixed sixty calls; equal C/D suffixes, metadata-only seals
+        shell: pwsh
+        run: |
+          python tests/native/private129_location_contrast.py --input location-output/prior-original.zip --output location-output/evidence
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain original inputs and partial failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: private129-location-contrast-original
+          path: location-output/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
