@@ -25,6 +25,7 @@ import traceback
 import zipfile
 
 BASE = '55f57a84ad938da10d0e28b4578cd1aef6d7f903'
+CONTROLLER_PARENT = '62ccd3448a2b8b9c4bffe4a0a85892792fb27f2b'
 BRANCH = 'codex/private129-jobs-contrast-once-20260917'
 ARCHIVE_HASH = 'd70a0478c8b060e1da1b64e1361ec9ee69978277eed3d2c671149cff372c4530'
 EXE_HASHES = {
@@ -51,7 +52,7 @@ def write_json(path, value):
 def allowed_environment(env):
     return (env.get('GITHUB_REPOSITORY') == 'Iviesever/msvc-quick-build'
             and env.get('GITHUB_REF') == 'refs/heads/' + BRANCH
-            and env.get('GITHUB_RUN_NUMBER') == '1' and env.get('GITHUB_RUN_ATTEMPT') == '1'
+            and env.get('GITHUB_RUN_NUMBER') == '2' and env.get('GITHUB_RUN_ATTEMPT') == '1'
             and env.get('GITHUB_ACTIONS') == 'true'
             and env.get('RUNNER_ENVIRONMENT') == 'github-hosted')
 
@@ -147,6 +148,7 @@ class NativeMetrics:
         require(os.name == 'nt' and C.sizeof(C.c_void_p) == 8, '64-bit Windows required')
         require(C.sizeof(FileTime) == 8 and C.sizeof(IOCounts) == 48, 'Win32 ABI sizes')
         self.k = C.WinDLL('kernel32', use_last_error=True)
+        require(C.sizeof(FileTime) == 8 and C.sizeof(IOCounts) == 48, 'Win32 ABI sizes')
         self.k.GetProcessTimes.argtypes = [C.c_void_p] + [C.POINTER(FileTime)] * 4
         self.k.GetProcessTimes.restype = C.c_int
         self.k.QueryProcessCycleTime.argtypes = [C.c_void_p, C.POINTER(C.c_uint64)]
@@ -308,21 +310,25 @@ def self_test():
             selected = [i for i in items if i['phase'] == 'score' and i['block'] == block and i['jobs'] == jobs]
             require([i['side'] for i in selected] == (['baseline','candidate'] if block % 2 else ['candidate','baseline']), 'pairing')
     valid = dict(GITHUB_REPOSITORY='Iviesever/msvc-quick-build', GITHUB_REF='refs/heads/' + BRANCH,
-                 GITHUB_RUN_NUMBER='1', GITHUB_RUN_ATTEMPT='1', GITHUB_ACTIONS='true', RUNNER_ENVIRONMENT='github-hosted')
+                 GITHUB_RUN_NUMBER='2', GITHUB_RUN_ATTEMPT='1', GITHUB_ACTIONS='true', RUNNER_ENVIRONMENT='github-hosted')
     require(allowed_environment(valid), 'valid allocation')
     for key in valid:
         require(not allowed_environment({**valid, key: ''}), 'missing allocation accepted')
-    for run in ('2', '0', '01', ''):
-        require(not allowed_environment({**valid, 'GITHUB_RUN_NUMBER': run}), 'new run accepted')
-        require(not allowed_environment({**valid, 'GITHUB_RUN_ATTEMPT': run}), 'retry accepted')
+    for key, invalid in {'GITHUB_RUN_NUMBER': ('1', '3', '0', '02', ''),
+                         'GITHUB_RUN_ATTEMPT': ('2', '0', '01', '')}.items():
+        for value in invalid:
+            require(not allowed_environment({**valid, key: value}), 'unallocated run/retry accepted')
     require(ft(FileTime(0xffffffff, 0xffffffff)) == 2**64-1 and C.sizeof(IOCounts) == 48, 'unsigned ABI')
     for bad in ('../evil', '/evil', 'c:/evil', 'a\\evil'):
-        stream = io.BytesIO()
-        with zipfile.ZipFile(stream, 'w') as z:
-            z.writestr(bad, b'')
+        # ZipInfo normalizes separators on Windows. Test the literal invalid
+        # member name, not a round-trip which has already made it legitimate.
+        entry = zipfile.ZipInfo('safe')
+        entry.filename = bad
+        class LiteralMembers:
+            def infolist(self):
+                return [entry]
         try:
-            with zipfile.ZipFile(io.BytesIO(stream.getvalue())) as z:
-                safe_members(z)
+            safe_members(LiteralMembers())
         except RuntimeError:
             pass
         else:
@@ -352,16 +358,16 @@ def main():
     try:
         write_json(output / 'self-tests.json', self_test())
         head = git('rev-parse', 'HEAD')
-        require(head == os.environ['GITHUB_SHA'] and git('rev-parse', 'HEAD^') == BASE, 'exact source parent mismatch')
+        require(head == os.environ['GITHUB_SHA'] and git('rev-parse', 'HEAD^') == CONTROLLER_PARENT, 'exact source parent mismatch')
         require(set(git('diff', '--name-only', BASE, head).splitlines()) == ALLOWED, 'unexpected source changes')
         require(git('status', '--porcelain', '--untracked-files=no') == '', 'tracked source dirty')
         require(Path('VERSION').read_text().strip() == '5.5.0', 'version changed')
         subprocess.run(['git', 'archive', '-o', str(output / 'controller-source.zip'), head], check=True)
         write_json(output / 'identity.json', {'head': head, 'base': BASE, 'tree': git('rev-parse','HEAD^{tree}'),
-                    'version': '5.5.0', 'run_id': os.environ.get('GITHUB_RUN_ID'), 'run_number': 1, 'attempt': 1,
+                    'version': '5.5.0', 'run_id': os.environ.get('GITHUB_RUN_ID'), 'run_number': 2, 'attempt': 1,
                     'os': platform.platform(), 'python': sys.version, 'cpu_count': os.cpu_count(),
                     'image': os.environ.get('ImageOS'), 'image_version': os.environ.get('ImageVersion'),
-                    'preregistration': 5710129636, 'no_product_change': True})
+                    'preregistration': 5710129636, 'preflight_correction': 5710273155, 'no_product_change': True})
         write_json(output / 'environment.json', {k: os.environ.get(k) for k in
                    ('PATH','INCLUDE','LIB','LIBPATH','CL','_CL_','LINK','_LINK_','PROCESSOR_IDENTIFIER','NUMBER_OF_PROCESSORS')})
         h, helper_hash = extract_pinned(args.input.resolve(), output / 'original')

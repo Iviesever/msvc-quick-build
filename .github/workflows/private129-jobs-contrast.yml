@@ -14,14 +14,14 @@ concurrency:
 
 jobs:
   contrast:
-    # A new push is a new run, not another allocation of this fixed experiment.
-    if: github.run_number == 1 && github.run_attempt == 1 && github.ref == 'refs/heads/codex/private129-jobs-contrast-once-20260917'
+    # Run1 failed before MQB. Only this registered correction may spend the remaining budget.
+    if: github.run_number == 2 && github.run_attempt == 1 && github.ref == 'refs/heads/codex/private129-jobs-contrast-once-20260917'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - name: Pure controller checks and unchanged original archive
         shell: pwsh
