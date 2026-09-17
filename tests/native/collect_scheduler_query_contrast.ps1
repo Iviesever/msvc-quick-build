@@ -4,7 +4,10 @@ param([Parameter(Mandatory)][ValidateSet('Build','Observe')][string]$Mode,
 $ErrorActionPreference='Stop'
 $PSNativeCommandUseErrorActionPreference=$false
 Set-StrictMode -Version 2.0
-if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw 'Budget is first-attempt only; do not rerun.' }
+# Historical run 34937022520 consumed both cases; later pushes are not new authorization.
+if ($env:GITHUB_RUN_ID -ne '34937022520' -or $env:GITHUB_RUN_NUMBER -ne '1' -or $env:GITHUB_RUN_ATTEMPT -ne '1') {
+    throw 'This two-case experiment is spent. Do not trigger additional builds or captures.'
+}
 $repo=[IO.Path]::GetFullPath($PWD.Path)
 $OutputRoot=[IO.Path]::GetFullPath($OutputRoot)
 if (Test-Path -LiteralPath $OutputRoot) { throw 'Never overwrite an earlier experiment.' }
