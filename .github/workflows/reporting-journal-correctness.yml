@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   correctness:
-    if: github.run_number == 2 && github.run_attempt == 1 && github.ref == 'refs/heads/codex/recorder-append-journal-20260917'
+    if: github.run_number == 4 && github.run_attempt == 1 && github.ref == 'refs/heads/codex/recorder-append-journal-20260917'
     strategy:
       fail-fast: false
       matrix:
@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: false
       - name: Exact source and original rows; no MQB execution
         shell: python {0}
@@ -34,7 +34,7 @@ jobs:
           def git(*args):
               return subprocess.check_output(['git', *args], text=True).strip()
           base = '55f57a84ad938da10d0e28b4578cd1aef6d7f903'
-          assert git('rev-parse', 'HEAD^') == '66af7ec74f84fdd864e3e8ba83c7b939e11aa817'
+          assert git('rev-parse', 'HEAD^') == 'd4b8c4bf0762c66be93da99bd1e06ec97f6321ca'
           assert git('rev-parse', 'HEAD') == os.environ['GITHUB_SHA']
           expected = {'.github/workflows/reporting-journal-correctness.yml',
               'tests/native/compare_reporting.py', 'tests/native/compare_archive.py',
