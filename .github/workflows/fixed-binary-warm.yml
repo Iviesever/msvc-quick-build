@@ -1,0 +1,78 @@
+name: Fixed Binary Warm Diagnosis
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'tests/native/diagnose_fixed_binary_warm.py'
+      - 'tests/native/test_fixed_binary_warm.py'
+      - '.github/workflows/fixed-binary-warm.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: fixed-binary-warm-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    # Keep the existing frozen-base contract before allocating a runner.
+    if: github.event.pull_request.base.sha == '1c565ca9f364b0bcb380565c4684ea543b449e04' && github.run_attempt == 1
+    name: Original cumulative executables, fixed warm factorial
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      MQB_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      MQB_EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - name: Checkout exact diagnostic harness
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MQB_EXPECTED_HEAD }}
+          persist-credentials: false
+      - name: Preserve preflight and verify portable harness contracts
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw 'Do not replace first evidence with a repeated attempt.' }
+          if ($env:MQB_EXPECTED_BASE -ne '1c565ca9f364b0bcb380565c4684ea543b449e04') { throw 'Frozen base changed.' }
+          if ((git rev-parse HEAD).Trim() -ne $env:MQB_EXPECTED_HEAD) { throw 'Wrong head.' }
+          New-Item -ItemType Directory -Path warm-out -ErrorAction Stop | Out-Null
+          @{ head=$env:MQB_EXPECTED_HEAD; base=$env:MQB_EXPECTED_BASE; run=$env:GITHUB_RUN_ID;
+             attempt=$env:GITHUB_RUN_ATTEMPT; image=$env:ImageVersion;
+             sourceRun='34756138330'; sourceArtifact='10317617795';
+             blocks=12; groups=6; diagnosticCalls=288; resourceRecords=144; mqbCalls=318 } |
+            ConvertTo-Json | Set-Content warm-out/preflight.json -Encoding utf8
+          Get-CimInstance Win32_Processor | Select-Object Name,Manufacturer,NumberOfCores,NumberOfLogicalProcessors |
+            ConvertTo-Json | Set-Content warm-out/cpu.json -Encoding utf8
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber |
+            ConvertTo-Json | Set-Content warm-out/os.json -Encoding utf8
+          python tests/native/test_fixed_binary_warm.py 2>&1 | Tee-Object warm-out/portable-tests.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Download only the immutable original artifact; never rebuild replacements
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/artifacts/10317617795/zip"
+          Invoke-WebRequest -Uri $uri -Headers @{ Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json' } -OutFile warm-out/original.zip
+          $hash = (Get-FileHash warm-out/original.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne 'd70a0478c8b060e1da1b64e1361ec9ee69978277eed3d2c671149cff372c4530') { throw 'Original artifact digest mismatch.' }
+      - name: Run the preregistered diagnostic without replacing historical gates
+        shell: pwsh
+        run: |
+          python tests/native/diagnose_fixed_binary_warm.py --archive warm-out/original.zip `
+            --output warm-out/study --harness-sha $env:MQB_EXPECTED_HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain all first results and failures, but no generated PDB or IDB
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fixed-binary-warm-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            warm-out/**
+            !warm-out/study/fixtures/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 90

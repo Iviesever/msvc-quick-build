@@ -1,0 +1,87 @@
+name: Retained ProcessStop Supplement
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'tests/native/audit_retained_process_stop.py'
+      - 'tests/native/test_retained_process_stop.py'
+      - '.github/workflows/retained-process-stop.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: retained-process-stop-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    name: Read original bytes only; no new Windows diagnosis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.EXPECTED_HEAD }}
+          persist-credentials: false
+      - name: Preserve exact source and first-attempt identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$EXPECTED_BASE" = f359f519af0f9e6ea43e8b7bf474f64d6b09dca9
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(cat VERSION)" = 5.5.0
+          git diff --exit-code
+          mkdir evidence
+          git archive --format=zip --output=evidence/source.zip HEAD
+          python3 - <<'PY'
+          import json, os, platform, subprocess, sys
+          from pathlib import Path
+          assert sys.version_info >= (3, 11)
+          value = dict(head=os.environ['EXPECTED_HEAD'], base=os.environ['EXPECTED_BASE'],
+                       tree=subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+                       run=os.environ['GITHUB_RUN_ID'], attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+                       python=sys.version, platform=platform.platform(),
+                       diagnostic_mqb_calls=0, new_etw_captures=0, original_run=34765281714)
+          Path('evidence/preflight.json').write_text(json.dumps(value, indent=2), encoding='utf-8')
+          PY
+      - name: Portable parser rejection and unchanged trace health contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/native/test_retained_process_stop.py 2>&1 | tee evidence/portable.txt
+          python3 tests/native/verify_pdb_file_trace.py --self-test --output evidence/trace-contracts.json
+      - name: Retrieve pinned original archives, not rebuilt programs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/10320014327/zip" \
+            --output evidence/original-cold.zip
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/10320680860/zip" \
+            --output evidence/original-input.zip
+      - name: Replay all original positive captures and calibration without executing tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u tests/native/audit_retained_process_stop.py \
+            --archive evidence/original-cold.zip --input evidence/original-input.zip \
+            --output evidence/supplement 2>&1 | tee evidence/replay.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: retained-process-stop-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: evidence/**
+          if-no-files-found: warn
+          retention-days: 90

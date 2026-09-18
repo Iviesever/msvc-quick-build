@@ -93,3 +93,13 @@ cpp/
 - 自举或发布链变化同步更新 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
 
 CI 的 stable release 约束比日常开发更严格，详见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
+
+## 性能证据记录与历史实验
+
+`tests/native/compare_reporting.py` 的 `Recorder` 每次将完整调用追加到带连续序号的 `calls.jsonl`。使用上下文管理器，或在正常和异常出口显式调用 `finalize()`；它会校验日志并生成兼容格式的 `calls.json`。运行中查看增量应读 journal，而不是期待每次调用后都有完整 JSON。非零退出、超时和写入失败必须保留原始诊断；合法日志前缀不能证明实验完成。此机制是单写者记录，不承诺断电耐久性。
+
+Reporting journal correctness 在相关 PR 中运行两平台 Python 契约与历史记录的纯数据回放，不启动旧记录里的 MQB 命令。原生、自举、打包及独立 ABBA 仍是独立门槛。新 ABBA 产物同时保留当次实际 A/B 程序、种子、源码归档及前后哈希；不可拿新产物补称旧实验缺失的身份。
+
+Cumulative Entry Validation 分别固定 released v5.5.0 源码、当前冻结的完整候选及 harness 三个身份。相关 PR 只执行 Windows/Linux 预检：实际源码树与保留的父提交、源码归档及继承的发布 HOLD。`preflight-completed.json` 明确表示新增 MQB 调用为零、累计测量尚未完成。本次迁移的累计采样预算为零，手动请求 `measure` 会在构建前失败。原完整矩阵的 584 对／1,446 调用政策不变，但须另行审阅实验才能再次执行。预检成功或后来的新绿灯都不能清除旧不利证据、补造历史程序身份。
+
+旧 v5.4.0 和原 v5.5.0 实验保留在各自不可变的源码与证据历史中，不改名为当前测量。Fixed Binary Warm/Cold 仍在分配运行器前检查冻结 base；无关身份不重启旧诊断或 ETW。原生、自举、实际包与安装器及每 PR 独立 ABBA 门槛不由预检代替。路线和逐项风险处置继续以 issue #164 为准，不另建平行发布路线。

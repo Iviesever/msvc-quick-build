@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -98,17 +99,104 @@ def fixture(parent: Path, name: str, units: int, *, static: bool = False,
     return Fixture(name, root, arguments, units, pch, static)
 
 
+def read_call_journal(path: Path, *, expected_count: int) -> list[dict[str, Any]]:
+    """Read a complete single-writer journal; never silently repair a torn tail.
+
+    The caller must know the expected count. A surviving valid prefix alone
+    cannot prove that the process finished or that the last whole line survived.
+    """
+    require(type(expected_count) is int and expected_count >= 0, "invalid expected call count")
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, "duplicate journal JSON key")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise ValueError(f"non-finite journal value: {value}")
+
+    rows = []
+    with path.open("rb") as stream:
+        for index, line in enumerate(stream):
+            require(line.endswith(b"\n"), "incomplete journal line; keep original bytes")
+            item = json.loads(line.decode("utf-8"), object_pairs_hook=unique_object, parse_constant=invalid_constant)
+            require(isinstance(item, dict) and set(item) == {"sequence", "call"},
+                    "invalid journal envelope")
+            require(type(item["sequence"]) is int and item["sequence"] == index,
+                    "missing, duplicate or out-of-order journal sequence")
+            require(isinstance(item["call"], dict), "invalid journal call")
+            rows.append(item["call"])
+    require(len(rows) == expected_count, "journal call count differs from expected count")
+    return rows
+
+
 class Recorder:
     def __init__(self, root: Path):
         self.root = root
+        for name in ("calls.json", "calls.jsonl", "calls.json.partial", "failed-attempt.json"):
+            require(not (root / name).exists(), f"existing evidence: {name}")
         (root / "raw").mkdir(parents=True)
         self.calls: list[dict[str, Any]] = []
+        self._written = 0
+        self._closed = False
+        self._journal_error: BaseException | None = None
+        self._finalize_error: BaseException | None = None
+        self._pending: dict[str, Any] = {}
+        with (root / "calls.jsonl").open("xb"):
+            pass
+
+    def __enter__(self) -> Recorder:
+        require(not self._closed, "recorder already closed")
+        return self
+
+    def __exit__(self, kind, error, traceback) -> bool:
+        try:
+            self.finalize()
+        except BaseException as closing:
+            if error is None:
+                raise
+            if closing is not error and closing is not error.__cause__:
+                raise error.with_traceback(traceback) from closing
+        return False
 
     def run(self, executable: Path, case: Fixture, label: str, *, verbose: bool = False,
             timings: bool = False, inherited: bool = False, jobs: str = "auto",
             extra: tuple[str, ...] = (), success: bool = True) -> dict[str, Any]:
+        require(not self._closed and self._journal_error is None and self._written == len(self.calls),
+                "recorder closed or incomplete; no further tool execution")
+        self._pending = {"index": len(self.calls), "label": label}
+        try:
+            return self._run(executable, case, label, verbose=verbose, timings=timings,
+                             inherited=inherited, jobs=jobs, extra=extra, success=success)
+        except BaseException as error:
+            secondary = None
+            # This is a failed attempt, NOT an extra successful/scored call. Keep
+            # available bytes even if a raw stream or its timing parser failed.
+            try:
+                failure = {**self._pending, "error_type": type(error).__name__, "error": str(error),
+                           "traceback": "".join(traceback.format_exception(type(error), error, error.__traceback__))}
+                with (self.root / "failed-attempt.json").open("x", encoding="utf-8") as stream:
+                    json.dump(failure, stream, indent=2)
+            except BaseException as recording:
+                secondary = recording
+            try:
+                self.finalize()
+            except BaseException as closing:
+                if secondary is not None and hasattr(closing, "add_note"):
+                    closing.add_note(f"Failure sidecar also failed: {secondary!r}")
+                secondary = closing
+            if secondary is not None and secondary is not error:
+                raise error from secondary
+            raise
+
+    def _run(self, executable: Path, case: Fixture, label: str, *, verbose: bool = False,
+            timings: bool = False, inherited: bool = False, jobs: str = "auto",
+            extra: tuple[str, ...] = (), success: bool = True) -> dict[str, Any]:
         argv = [str(executable), case.arguments[0], *(["--verbose"] if verbose else []), *case.arguments[1:],
                 "-j", jobs, *(["--timings=json"] if timings else []), *extra]
+        self._pending.update(argv=argv, cwd=str(case.root))
         # Redirect both pipes and communicate concurrently to avoid deadlock on
         # large diagnostics. Timeout failure keeps available raw output and kills
         # the child; it is never silently removed from the evidence.
@@ -118,14 +206,21 @@ class Recorder:
                                        stdout=None if inherited else subprocess.PIPE,
                                        stderr=None if inherited else subprocess.PIPE)
         except subprocess.TimeoutExpired as error:
-            self.save_failure(label, error.stdout or b"", error.stderr or b"")
+            self._pending.update(timeout_seconds=error.timeout,
+                                 stdout_hex=(error.stdout or b"").hex(),
+                                 stderr_hex=(error.stderr or b"").hex())
+            try:
+                self.save_failure(label, error.stdout or b"", error.stderr or b"")
+            except BaseException as recording:
+                raise RuntimeError(f"{label}: MQB timed out; partial output save failed: {recording!r}") from error
             raise RuntimeError(f"{label}: MQB timed out") from error
         elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
         output = completed.stdout or b""
         errors = completed.stderr or b""
+        self._pending.update(exit_code=completed.returncode, external_ms=elapsed_ms,
+                             stdout_hex=output.hex(), stderr_hex=errors.hex())
         key = f"raw/{len(self.calls):04d}-{label}"
-        (self.root / (key + ".stdout")).write_bytes(output)
-        (self.root / (key + ".stderr")).write_bytes(errors)
+        self._save_streams(key, output, errors)
         human_out, out_records = split_timings(output)
         human_err, err_records = split_timings(errors)
         records = out_records + err_records
@@ -141,7 +236,7 @@ class Recorder:
                "human_stderr_sha256": None if inherited else digest(normalized(human_err)),
                "timing": records[0] if len(records) == 1 else None}
         self.calls.append(row)
-        # A partial evidence file is also useful when a contract fails later.
+        # Append the complete row before validating its exit or reporting contract.
         self.checkpoint()
         if success:
             require(completed.returncode == 0,
@@ -151,12 +246,72 @@ class Recorder:
             require(len(records) == int(timings), f"{label}: unexpected timing record count")
         return row
 
+    def _save_streams(self, key: str, out: bytes, err: bytes) -> None:
+        failures = []
+        for suffix, data in ((".stdout", out), (".stderr", err)):
+            try:
+                written = (self.root / (key + suffix)).write_bytes(data)
+                require(written == len(data), f"short raw write: {key}{suffix}")
+            except BaseException as error:
+                failures.append(error)
+        if failures:
+            if len(failures) > 1:
+                raise failures[0] from failures[1]
+            raise failures[0]
+
     def save_failure(self, label: str, out: bytes, err: bytes) -> None:
-        (self.root / f"raw/timeout-{label}.stdout").write_bytes(out)
-        (self.root / f"raw/timeout-{label}.stderr").write_bytes(err)
+        self._save_streams(f"raw/timeout-{label}", out, err)
 
     def checkpoint(self) -> None:
-        (self.root / "calls.json").write_text(json.dumps(self.calls, indent=2), encoding="utf-8")
+        """Append exactly one immutable row, not the entire growing history.
+
+        Single writer only. Close is not fsync; this is not a durable transaction.
+        A failed/short append poisons this recorder. No retry or tail truncation.
+        """
+        require(not self._closed and self._journal_error is None, "journal closed or failed")
+        if len(self.calls) == self._written:
+            return
+        require(len(self.calls) == self._written + 1, "checkpoint requires one new call")
+        try:
+            data = (json.dumps({"sequence": self._written, "call": self.calls[-1]},
+                               separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
+            with (self.root / "calls.jsonl").open("ab") as stream:
+                require(stream.write(data) == len(data), "short journal write")
+            self._written += 1
+        except BaseException as error:
+            self._journal_error = error
+            raise
+
+    def finalize(self) -> None:
+        """Materialize legacy calls.json once, on success or exceptional exit.
+
+        Validate the journal before touching the destination. Keep a failed
+        temporary file and journal as evidence; never heal or overwrite inputs.
+        Process termination/power loss still requires explicit forensic recovery.
+        """
+        if self._closed:
+            if self._finalize_error is not None:
+                raise self._finalize_error
+            return
+        self._closed = True
+        try:
+            if self._journal_error is not None:
+                raise self._journal_error
+            require(self._written == len(self.calls), "unjournaled call; refusing materialization")
+            rows = read_call_journal(self.root / "calls.jsonl", expected_count=self._written)
+            require(json.dumps(rows, allow_nan=False) == json.dumps(self.calls, allow_nan=False),
+                    "call mutated after journal append")
+            target = self.root / "calls.json"
+            require(not target.exists(), "refusing to overwrite existing calls.json")
+            temporary = self.root / "calls.json.partial"
+            with temporary.open("x", encoding="utf-8") as stream:
+                # Same indent, escaping, trailing-newline and platform newline as before.
+                text = json.dumps(rows, indent=2, allow_nan=False)
+                require(stream.write(text) == len(text), "short calls.json write")
+            os.replace(temporary, target)
+        except BaseException as error:
+            self._finalize_error = error
+            raise
 
     def human(self, row: dict[str, Any], stream: str) -> bytes:
         path = row[f"{stream}_file"]
@@ -284,76 +439,77 @@ def main() -> None:
     baseline, candidate, output = args.baseline.resolve(), args.candidate.resolve(), args.output.resolve()
     require(baseline.is_file() and candidate.is_file(), "exact binaries missing")
     require(not output.exists(), "use a fresh output directory; previous evidence must not be overwritten")
-    recorder = Recorder(output)
-    metadata = {"schema_version": 1, "generated_utc": datetime.now(timezone.utc).isoformat(),
-                "base_sha": args.base_sha, "head_sha": args.head_sha,
-                "baseline_binary_sha256": digest(baseline.read_bytes()),
-                "candidate_binary_sha256": digest(candidate.read_bytes()),
-                "os": platform.platform(), "python": sys.version,
-                "runner_image": os.environ.get("ImageOS"), "runner_image_version": os.environ.get("ImageVersion"),
-                "measurement": "external perf_counter_ns from subprocess start through completion/drain",
-                "terminal_limit": "Captured pipes and inherited CI handles; NOT an interactive-terminal measurement",
-                "missing_field_policy": "null/unavailable, never fabricated zero; target_reporting absent in base",
-                "pairing": "alternating AB/BA, common fixture and cache pathname, no discarded samples"}
-    (output / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    all_pairs: list[dict[str, Any]] = []
-    summaries = []
-    with tempfile.TemporaryDirectory(prefix="mqb-reporting-") as temporary:
-        root = Path(temporary)
-        cases = [fixture(root, "small", 2), fixture(root, "scale", 129),
-                 fixture(root, "static", 129, static=True), fixture(root, "modules", 2, modules=True),
-                 fixture(root, "pch", 2, pch=True)]
-        for case in cases:
-            recorder.run(baseline, case, f"prime-{case.name}-base")
-            recorder.run(candidate, case, f"prime-{case.name}-candidate")
-            default_contract(recorder, candidate, case)
-            before = state(case)
-            # Each tuple defines a separate scenario. Do not pool verbosity,
-            # instrumentation, job policy or sink modes into a single median.
-            modes = [(verbose, timings, False, "auto") for verbose in (False, True) for timings in (False, True)]
-            if case.name in ("small", "scale"):
-                modes += [(verbose, False, True, "auto") for verbose in (False, True)]
-            if case.name == "scale":
-                modes += [(verbose, False, False, "1") for verbose in (False, True)]
-            for verbose, timings, inherited, jobs in modes:
-                scenario = f"{case.name}-{'verbose' if verbose else 'default'}-{'timed' if timings else 'off'}-{'inherited' if inherited else 'pipe'}-j{jobs}"
-                print(f"Reporting ABBA: {scenario}", flush=True)
-                pairs = []
-                for number in range(1, args.pairs + 1):
-                    order = ("baseline", "candidate") if number % 2 else ("candidate", "baseline")
-                    pair: dict[str, Any] = {"scenario": scenario, "pair": number, "orientation": "AB" if number % 2 else "BA"}
-                    for side in order:
-                        row = recorder.run(baseline if side == "baseline" else candidate, case,
-                                           f"{scenario}-{number}-{side}", verbose=verbose, timings=timings,
-                                           inherited=inherited, jobs=jobs)
+    with Recorder(output) as recorder:
+        metadata = {"schema_version": 1, "generated_utc": datetime.now(timezone.utc).isoformat(),
+                    "base_sha": args.base_sha, "head_sha": args.head_sha,
+                    "baseline_binary_sha256": digest(baseline.read_bytes()),
+                    "candidate_binary_sha256": digest(candidate.read_bytes()),
+                    "os": platform.platform(), "python": sys.version,
+                    "runner_image": os.environ.get("ImageOS"), "runner_image_version": os.environ.get("ImageVersion"),
+                    "measurement": "external perf_counter_ns from subprocess start through completion/drain",
+                    "terminal_limit": "Captured pipes and inherited CI handles; NOT an interactive-terminal measurement",
+                    "missing_field_policy": "null/unavailable, never fabricated zero; target_reporting absent in base",
+                    "pairing": "alternating AB/BA, common fixture and cache pathname, no discarded samples"}
+        (output / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        all_pairs: list[dict[str, Any]] = []
+        summaries = []
+        with tempfile.TemporaryDirectory(prefix="mqb-reporting-") as temporary:
+            root = Path(temporary)
+            cases = [fixture(root, "small", 2), fixture(root, "scale", 129),
+                     fixture(root, "static", 129, static=True), fixture(root, "modules", 2, modules=True),
+                     fixture(root, "pch", 2, pch=True)]
+            for case in cases:
+                recorder.run(baseline, case, f"prime-{case.name}-base")
+                recorder.run(candidate, case, f"prime-{case.name}-candidate")
+                default_contract(recorder, candidate, case)
+                before = state(case)
+                # Each tuple defines a separate scenario. Do not pool verbosity,
+                # instrumentation, job policy or sink modes into a single median.
+                modes = [(verbose, timings, False, "auto") for verbose in (False, True) for timings in (False, True)]
+                if case.name in ("small", "scale"):
+                    modes += [(verbose, False, True, "auto") for verbose in (False, True)]
+                if case.name == "scale":
+                    modes += [(verbose, False, False, "1") for verbose in (False, True)]
+                for verbose, timings, inherited, jobs in modes:
+                    scenario = f"{case.name}-{'verbose' if verbose else 'default'}-{'timed' if timings else 'off'}-{'inherited' if inherited else 'pipe'}-j{jobs}"
+                    print(f"Reporting ABBA: {scenario}", flush=True)
+                    pairs = []
+                    for number in range(1, args.pairs + 1):
+                        order = ("baseline", "candidate") if number % 2 else ("candidate", "baseline")
+                        pair: dict[str, Any] = {"scenario": scenario, "pair": number, "orientation": "AB" if number % 2 else "BA"}
+                        for side in order:
+                            row = recorder.run(baseline if side == "baseline" else candidate, case,
+                                               f"{scenario}-{number}-{side}", verbose=verbose, timings=timings,
+                                               inherited=inherited, jobs=jobs)
+                            if timings:
+                                assert_warm(row, case, candidate=side == "candidate")
+                            pair[side] = row
                         if timings:
-                            assert_warm(row, case, candidate=side == "candidate")
-                        pair[side] = row
-                    if timings:
-                        require(semantic_counters(pair["baseline"]) == semantic_counters(pair["candidate"]),
-                                f"{scenario}: non-output counter or freshness work counts changed")
-                    if not inherited:
-                        require(pair["baseline"]["human_stderr_sha256"] == pair["candidate"]["human_stderr_sha256"],
-                                f"{scenario}: stderr changed on a no-op")
-                        if verbose:
-                            require(pair["baseline"]["human_stdout_sha256"] == pair["candidate"]["human_stdout_sha256"],
-                                    f"{scenario}: verbose no-op bytes changed")
-                    pairs.append(pair)
-                    all_pairs.append(pair)
-                summaries.append({"scenario": scenario, **summarize(pairs)})
-                (output / "comparison.json").write_text(
-                    json.dumps({"metadata": metadata, "comparison": summaries, "paired_samples": all_pairs}, indent=2),
-                    encoding="utf-8")
-            after = state(case)
-            require(before == after, f"{case.name}: warm matrix modified project cache/artifact metadata")
-            (output / f"{case.name}-warm-state.json").write_text(json.dumps(before, indent=2), encoding="utf-8")
-            # Untimed instrumented postcondition also guards the inherited/off runs.
-            post = recorder.run(candidate, case, f"post-{case.name}", timings=True)
-            assert_warm(post, case, candidate=True)
-        mutation_contract(recorder, candidate, cases[0])
-    (output / "contract-passed.txt").write_text("Default/verbose, mixed build, repair, run, compiler failure and warm matrix passed.\n", encoding="utf-8")
-    print(json.dumps(summaries, indent=2))
-    print(f"Reporting evidence: {output}")
+                            require(semantic_counters(pair["baseline"]) == semantic_counters(pair["candidate"]),
+                                    f"{scenario}: non-output counter or freshness work counts changed")
+                        if not inherited:
+                            require(pair["baseline"]["human_stderr_sha256"] == pair["candidate"]["human_stderr_sha256"],
+                                    f"{scenario}: stderr changed on a no-op")
+                            if verbose:
+                                require(pair["baseline"]["human_stdout_sha256"] == pair["candidate"]["human_stdout_sha256"],
+                                        f"{scenario}: verbose no-op bytes changed")
+                        pairs.append(pair)
+                        all_pairs.append(pair)
+                    summaries.append({"scenario": scenario, **summarize(pairs)})
+                    (output / "comparison.json").write_text(
+                        json.dumps({"metadata": metadata, "comparison": summaries, "paired_samples": all_pairs}, indent=2),
+                        encoding="utf-8")
+                after = state(case)
+                require(before == after, f"{case.name}: warm matrix modified project cache/artifact metadata")
+                (output / f"{case.name}-warm-state.json").write_text(json.dumps(before, indent=2), encoding="utf-8")
+                # Untimed instrumented postcondition also guards the inherited/off runs.
+                post = recorder.run(candidate, case, f"post-{case.name}", timings=True)
+                assert_warm(post, case, candidate=True)
+            mutation_contract(recorder, candidate, cases[0])
+        recorder.finalize()
+        (output / "contract-passed.txt").write_text("Default/verbose, mixed build, repair, run, compiler failure and warm matrix passed.\n", encoding="utf-8")
+        print(json.dumps(summaries, indent=2))
+        print(f"Reporting evidence: {output}")
 
 
 if __name__ == "__main__":

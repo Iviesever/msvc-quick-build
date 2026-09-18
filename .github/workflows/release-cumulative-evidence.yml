@@ -1,17 +1,27 @@
-name: Release Cumulative Evidence
+name: Cumulative Entry Validation
 
 on:
   pull_request:
     paths:
       - 'tests/native/compare_release_cumulative.py'
       - 'tests/native/compare_reporting.py'
+      - 'tests/native/test_release_entry.py'
       - '.github/workflows/release-cumulative-evidence.yml'
   workflow_dispatch:
     inputs:
+      mode:
+        description: Preflight only; measurement is blocked until a new reviewed budget
+        type: choice
+        options: [preflight, measure]
+        default: preflight
+        required: true
       candidate_ref:
         description: Frozen complete candidate SHA; changing it requires a separately reviewed experiment
         required: true
-        default: '1c565ca9f364b0bcb380565c4684ea543b449e04'
+        default: '43cadecfb1ac26d88829c319f0adff95fff9b59a'
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
 
 permissions:
   contents: read
@@ -22,14 +32,92 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Current identity migration; no cumulative samples (${{ matrix.os }})
+    if: github.event_name == 'pull_request' || inputs.mode == 'preflight'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      MQB_EXPECTED_HARNESS: ${{ github.event.pull_request.head.sha || github.sha }}
+      MQB_CANDIDATE_REF: ${{ inputs.candidate_ref || '43cadecfb1ac26d88829c319f0adff95fff9b59a' }}
+    steps:
+      - name: Keep request and reject repeated attempts or wrong current candidate
+        shell: python {0}
+        run: |
+          import json, os, pathlib
+          root = pathlib.Path('cumulative-out')
+          root.mkdir()
+          request = {k: os.environ[k] for k in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
+                     'MQB_EXPECTED_HARNESS', 'MQB_CANDIDATE_REF')}
+          (root/'request.json').write_text(json.dumps(request, indent=2), encoding='utf-8')
+          if request['GITHUB_RUN_ATTEMPT'] != '1':
+              raise RuntimeError('Repeated attempts do not replace first evidence')
+          if request['MQB_CANDIDATE_REF'] != '43cadecfb1ac26d88829c319f0adff95fff9b59a':
+              raise RuntimeError('Unreviewed candidate override')
+      - name: Checkout exact harness with preserved parents
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MQB_EXPECTED_HARNESS }}
+          path: harness
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout immutable released source
+        uses: actions/checkout@v7
+        with:
+          ref: 08cdc20a9f9380e18132d21a619288224fd07fd4
+          path: baseline
+          persist-credentials: false
+      - name: Checkout current complete product candidate, not the harness
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MQB_CANDIDATE_REF }}
+          path: candidate
+          persist-credentials: false
+      - name: Preserve three actual source archives and inherited HOLDs
+        shell: python {0}
+        run: |
+          import os, pathlib, subprocess, sys
+          root = pathlib.Path('cumulative-out')
+          command = [sys.executable, 'harness/tests/native/compare_release_cumulative.py',
+                     '--preflight', '--workspace', '.', '--output', str(root/'provenance'),
+                     '--harness-sha', os.environ['MQB_EXPECTED_HARNESS']]
+          with (root/'preflight.stdout').open('wb') as out, (root/'preflight.stderr').open('wb') as err:
+              result = subprocess.run(command, stdout=out, stderr=err, check=False)
+          raise SystemExit(result.returncode)
+      - name: Entry and failure contracts without MQB execution
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          root = pathlib.Path('cumulative-out')
+          command = [sys.executable, '-m', 'unittest', 'discover', '-s', 'harness/tests/native',
+                     '-p', 'test_release_entry.py', '-v']
+          with (root/'tests.stdout').open('wb') as out, (root/'tests.stderr').open('wb') as err:
+              result = subprocess.run(command, stdout=out, stderr=err, check=False)
+          raise SystemExit(result.returncode)
+      - name: Retain preflight-only evidence, including first failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cumulative-entry-${{ runner.os }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: cumulative-out/
+          include-hidden-files: true
+          retention-days: 90
+          if-no-files-found: error
+
   compare:
+    # Explicit requests reach the budget guard and fail, rather than silently collecting.
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'measure'
     name: Released v5.5.0 source versus frozen complete candidate
     runs-on: windows-latest
     timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
       MQB_EXPECTED_HARNESS: ${{ github.event.pull_request.head.sha || github.sha }}
-      MQB_CANDIDATE_REF: ${{ inputs.candidate_ref || '1c565ca9f364b0bcb380565c4684ea543b449e04' }}
+      MQB_CANDIDATE_REF: ${{ inputs.candidate_ref || '43cadecfb1ac26d88829c319f0adff95fff9b59a' }}
     steps:
       - name: Reject repeated attempts and unreviewed candidate overrides before building
         shell: pwsh
@@ -39,7 +127,7 @@ jobs:
              expected_harness=$env:MQB_EXPECTED_HARNESS; candidate=$env:MQB_CANDIDATE_REF } |
             ConvertTo-Json | Set-Content cumulative-out/request.json -Encoding utf8
           if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw 'Repeated attempts do not replace first evidence.' }
-          if ($env:MQB_CANDIDATE_REF -ne '1c565ca9f364b0bcb380565c4684ea543b449e04') {
+          if ($env:MQB_CANDIDATE_REF -ne '43cadecfb1ac26d88829c319f0adff95fff9b59a') {
             throw 'Candidate differs from the frozen complete candidate in #164.'
           }
       - name: Checkout exact evidence harness
@@ -47,6 +135,7 @@ jobs:
         with:
           ref: ${{ env.MQB_EXPECTED_HARNESS }}
           path: harness
+          fetch-depth: 0
           persist-credentials: false
       - name: Checkout immutable released v5.5.0 source
         uses: actions/checkout@v7
@@ -65,6 +154,11 @@ jobs:
         run: |
           python harness/tests/native/compare_release_cumulative.py --preflight --workspace . `
             --harness-sha $env:MQB_EXPECTED_HARNESS --output cumulative-out/provenance
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Reject measurements without the separately reviewed cumulative budget
+        shell: pwsh
+        run: |
+          python -c "import sys; sys.path.insert(0, 'harness/tests/native'); import compare_release_cumulative as c; c.require_sampling_budget()"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build both unmodified Release trees with the same pinned seed
         shell: pwsh

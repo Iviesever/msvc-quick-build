@@ -88,6 +88,40 @@ jobs:
             throw "Candidate Release MQB missing: $mqb"
           }
 
+      - name: Preserve exact measured inputs before instrumentation
+        shell: python {0}
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          SEED_PATH: ${{ steps.seed.outputs.path }}
+        run: |
+          import hashlib, json, os, pathlib, shutil, subprocess
+          root = pathlib.Path('performance-out')
+          evidence = root / 'provenance'
+          evidence.mkdir()
+          def git(side, *args):
+              return subprocess.check_output(['git', '-C', side, *args], text=True).strip()
+          def digest(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+          inputs = {}
+          for side, expected in [('baseline', os.environ['EXPECTED_BASE']), ('candidate', os.environ['EXPECTED_HEAD'])]:
+              sha = git(side, 'rev-parse', 'HEAD')
+              if expected:
+                  assert sha == expected, (side, sha, expected)
+              assert git(side, 'status', '--porcelain', '--untracked-files=no') == ''
+              archive = evidence / (side + '-source.zip')
+              subprocess.run(['git', '-C', side, 'archive', '-o', str(archive.resolve()), 'HEAD'], check=True)
+              binary = root / side / 'mqb.exe'
+              inputs[side] = dict(sha=sha, tree=git(side, 'rev-parse', 'HEAD^{tree}'),
+                  version=(pathlib.Path(side)/'VERSION').read_text().strip(),
+                  binary_sha256=digest(binary), source_zip_sha256=digest(archive))
+          seed = evidence / 'seed.exe'
+          shutil.copyfile(os.environ['SEED_PATH'], seed)
+          value = dict(run_id=os.environ['GITHUB_RUN_ID'], attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+              inputs=inputs, seed_sha256=digest(seed),
+              image=os.environ.get('ImageVersion'), phase='before-instrumentation')
+          (evidence/'identity-before.json').write_text(json.dumps(value, indent=2), encoding='utf-8')
+
       - name: Verify candidate performance instrumentation contract
         shell: pwsh
         run: |
@@ -145,10 +179,28 @@ jobs:
           }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 
+      - name: Verify measured binary identities after comparison
+        if: always()
+        shell: python {0}
+        run: |
+          import hashlib, json, pathlib
+          root = pathlib.Path('performance-out')
+          evidence = root / 'provenance'
+          before = json.loads((evidence/'identity-before.json').read_text(encoding='utf-8'))
+          hashes = {side: hashlib.sha256((root/side/'mqb.exe').read_bytes()).hexdigest()
+                    for side in ('baseline', 'candidate')}
+          (evidence/'identity-after.json').write_text(json.dumps(hashes, indent=2), encoding='utf-8')
+          assert all(hashes[side] == before['inputs'][side]['binary_sha256'] for side in hashes)
+
       - name: Upload benchmark evidence
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: mqb-performance-evidence
-          path: performance-out/benchmark-comparison.json
+          path: |
+            performance-out/benchmark-comparison.json
+            performance-out/baseline/mqb.exe
+            performance-out/candidate/mqb.exe
+            performance-out/provenance/
           if-no-files-found: error
           retention-days: 30

@@ -1,0 +1,142 @@
+name: Fixed Binary Cold Diagnosis
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'tests/native/diagnose_fixed_binary_cold.py'
+      - 'tests/native/audit_cold_process_trace.py'
+      - 'tests/native/test_fixed_binary_cold.py'
+      - '.github/workflows/fixed-binary-cold.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: fixed-binary-cold-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  MQB_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+  MQB_EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+
+jobs:
+  build-recorder:
+    # Keep the existing frozen-base contract before allocating a runner.
+    if: github.event.pull_request.base.sha == '752668650dfbf8e32a3a5d66d9d0808e10daf2ec' && github.run_attempt == 1
+    name: Build unchanged ETW recorder, not replacement measured binaries
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MQB_EXPECTED_HEAD }}
+          persist-credentials: false
+      - name: First-attempt identity and portable contracts before any study
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw 'First results only; do not rerun.' }
+          if ($env:MQB_EXPECTED_BASE -ne '752668650dfbf8e32a3a5d66d9d0808e10daf2ec') { throw 'Wrong frozen base.' }
+          if ((git rev-parse HEAD).Trim() -ne $env:MQB_EXPECTED_HEAD) { throw 'Wrong head.' }
+          New-Item -ItemType Directory -Path cold-input -ErrorAction Stop | Out-Null
+          git archive --format=zip --output=cold-input/source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @{ head=$env:MQB_EXPECTED_HEAD; base=$env:MQB_EXPECTED_BASE; run=$env:GITHUB_RUN_ID;
+             attempt=$env:GITHUB_RUN_ATTEMPT; image=$env:ImageVersion; studyMqbCalls=78;
+             coldScores=32; scoredOn=16; scoredOff=16; traceEntries=20; programChecks=34 } |
+            ConvertTo-Json | Set-Content cold-input/preflight.json -Encoding utf8
+          python tests/native/test_fixed_binary_cold.py 2>&1 | Tee-Object cold-input/cold-contracts.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/native/test_fixed_binary_warm.py 2>&1 | Tee-Object cold-input/observer-contracts.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/native/verify_pdb_file_trace.py --self-test --output cold-input/trace-contracts.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Download original immutable cumulative artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Invoke-WebRequest -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/artifacts/10317617795/zip" `
+            -Headers @{Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json'} -OutFile cold-input/original.zip
+          @'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'tests/native')
+          import diagnose_fixed_binary_warm as w
+          binaries, _ = w.verify_archive(Path('cold-input/original.zip'))
+          Path('cold-input/builder.exe').write_bytes(binaries['candidate'])
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile only the existing diagnostic recorder on this VM
+        shell: pwsh
+        run: |
+          & ./cold-input/builder.exe cpp/tests/platform/windows/pdb_file_event_probe.cpp cpp/src/platform/windows/CommandLine.cpp `
+            --env vs --no-discover --std c++23 --release --runtime MT -I cpp/include `
+            --compiler-arg /W4 --compiler-arg /permissive- --lib advapi32.lib --lib tdh.lib -o cold_trace_recorder `
+            2>&1 | Tee-Object cold-input/recorder-build.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item .mqb/bin/cold_trace_recorder.exe cold-input/recorder.exe
+          @'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          digest=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          paths=['cpp/tests/platform/windows/pdb_file_event_probe.cpp','cpp/src/platform/windows/CommandLine.cpp',
+                 'cpp/include/mqb/platform/windows/CommandLine.hpp']
+          value=dict(head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+                     run=os.environ['GITHUB_RUN_ID'],attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+                     tracer_sha256=digest('cold-input/recorder.exe'),builder_sha256=digest('cold-input/builder.exe'),
+                     sources={p:digest(p) for p in paths})
+          Path('cold-input/trace.identity.json').write_text(json.dumps(value,indent=2),encoding='utf-8')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cold-input-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: cold-input/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  diagnose:
+    # Keep the existing frozen-base contract before allocating a runner.
+    if: github.event.pull_request.base.sha == '752668650dfbf8e32a3a5d66d9d0808e10daf2ec' && github.run_attempt == 1
+    name: Fixed cold factorial with original MQB and calibrated trace controls
+    needs: build-recorder
+    # A new VM: the recorder and MQB are not built on the measurement host.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      MQB_OWNERSHIP_DISPOSABLE_HOST: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MQB_EXPECTED_HEAD }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: cold-input-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: cold-input
+      - name: Preserve observation host identity and execute once
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw 'No repeated attempt.' }
+          New-Item -ItemType Directory -Path cold-out -ErrorAction Stop | Out-Null
+          Get-CimInstance Win32_Processor | Select-Object Name,Manufacturer,NumberOfCores,NumberOfLogicalProcessors |
+            ConvertTo-Json | Set-Content cold-out/cpu.json -Encoding utf8
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber |
+            ConvertTo-Json | Set-Content cold-out/os.json -Encoding utf8
+          python tests/native/diagnose_fixed_binary_cold.py --archive cold-input/original.zip `
+            --tracer cold-input/recorder.exe --trace-identity cold-input/trace.identity.json --output cold-out/study
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain complete first traces and all failures; no live build-state copying
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fixed-binary-cold-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            cold-out/**
+            !cold-out/study/fixtures/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 90

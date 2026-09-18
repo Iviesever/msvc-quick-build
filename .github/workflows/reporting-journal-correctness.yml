@@ -1,0 +1,100 @@
+name: Reporting journal correctness
+on:
+  pull_request:
+    paths:
+      - 'tests/native/compare_*.py'
+      - 'tests/native/diagnose_fixed_binary_*.py'
+      - 'tests/native/test_*.py'
+      - '.github/workflows/reporting-journal-correctness.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/native/compare_*.py'
+      - 'tests/native/diagnose_fixed_binary_*.py'
+      - 'tests/native/test_*.py'
+      - '.github/workflows/reporting-journal-correctness.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: reporting-journal-correctness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  correctness:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Exact source and original rows; no MQB execution
+        shell: python {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          import hashlib, json, os, pathlib, subprocess, urllib.request
+          from urllib.parse import urlsplit
+          root = pathlib.Path('journal-checks')
+          root.mkdir()
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          base = os.environ['EXPECTED_BASE']
+          assert git('rev-parse', 'HEAD') == os.environ['EXPECTED_HEAD']
+          assert git('status', '--porcelain', '--untracked-files=no') == ''
+          if base and set(base) != {'0'}:
+              subprocess.run(['git', 'merge-base', '--is-ancestor', base, 'HEAD'], check=True)
+          version = pathlib.Path('VERSION').read_text().strip()
+          subprocess.run(['git', 'archive', '-o', str(root/'source.zip'), 'HEAD'], check=True)
+          (root/'identity.json').write_text(json.dumps(dict(base=base, head=git('rev-parse','HEAD'),
+              tree=git('rev-parse','HEAD^{tree}'), run=os.environ['GITHUB_RUN_ID'],
+              attempt=os.environ['GITHUB_RUN_ATTEMPT'], os=os.environ['RUNNER_OS'],
+              image=os.environ.get('ImageVersion'), version=version, integration_scope=5724759276,
+              new_mqb_calls=0, new_msvc_builds=0, new_etw=0), indent=2), encoding='utf-8')
+          class Redirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  result = super().redirect_request(req, fp, code, msg, headers, newurl)
+                  if result is not None and urlsplit(req.full_url).netloc != urlsplit(newurl).netloc:
+                      result.remove_header('Authorization')
+                  return result
+          request = urllib.request.Request('https://api.github.com/repos/Iviesever/msvc-quick-build/actions/artifacts/10317617795/zip',
+              headers={'Authorization': 'Bearer '+os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+          with urllib.request.build_opener(Redirect()).open(request, timeout=60) as response:
+              data = response.read()
+          (root/'original-cumulative.zip').write_bytes(data)
+          assert hashlib.sha256(data).hexdigest() == 'd70a0478c8b060e1da1b64e1361ec9ee69978277eed3d2c671149cff372c4530'
+      - name: Python lifecycle, injected failures and byte-compatible 1446-row replay
+        shell: python {0}
+        run: |
+          import json, os, pathlib, subprocess, sys
+          root = pathlib.Path('journal-checks')
+          env = dict(os.environ, MQB_JOURNAL_ORIGINAL_ZIP=str((root/'original-cumulative.zip').resolve()))
+          commands = [[sys.executable, 'tests/native/'+name, '--self-test'] for name in
+              ('compare_reporting.py','compare_archive.py','compare_release_cumulative.py')]
+          commands.append([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/native', '-p', 'test_*.py', '-v'])
+          results = []
+          for i, command in enumerate(commands):
+              with (root/f'{i}.stdout').open('wb') as out, (root/f'{i}.stderr').open('wb') as err:
+                  result = subprocess.run(command, stdout=out, stderr=err, env=env, check=False, timeout=120)
+              results.append(dict(argv=command, exit_code=result.returncode))
+              (root/'results.json').write_text(json.dumps(results, indent=2), encoding='utf-8')
+              if result.returncode:
+                  raise SystemExit(result.returncode)
+          (root/'completed.json').write_text(json.dumps(dict(completed=True, new_mqb_calls=0,
+              new_msvc_builds=0, new_etw=0, native_product_acceptance=False, release_authorized=False)), encoding='utf-8')
+      - name: Keep original inputs, failures and output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reporting-journal-${{ runner.os }}-original
+          path: journal-checks/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30

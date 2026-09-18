@@ -93,3 +93,13 @@ For C++ product changes, verify at least that:
 - self-hosting or release-pipeline changes update [`SELF_HOSTING_EN.md`](SELF_HOSTING_EN.md).
 
 Stable release CI has stricter requirements than day-to-day development; see [`SELF_HOSTING_EN.md`](SELF_HOSTING_EN.md).
+
+## Performance evidence records and historical experiments
+
+`Recorder` in `tests/native/compare_reporting.py` appends each complete call to `calls.jsonl` with consecutive sequence numbers. Use its context manager, or explicitly call `finalize()` on normal and exceptional exits; it validates the journal and creates the compatible `calls.json`. Read the journal for live progress instead of expecting a full JSON snapshot after every call. Preserve original diagnostics for nonzero exits, timeouts and write failures; a valid journal prefix does not prove experiment completion. This is a single-writer recorder, not a power-loss durability guarantee.
+
+Reporting journal correctness runs Python contracts on both platforms and replays historical rows as data on relevant PRs. It never executes MQB commands from those rows. Native tests, self-hosting, packaging and independent ABBA remain separate gates. New ABBA artifacts retain the actual A/B executables, seed, source archives and before/after hashes; these must not be used to pretend missing identities from older experiments were retained.
+
+Cumulative Entry Validation now preserves three distinct identities: released v5.5.0 source, the current frozen complete candidate, and the harness. Relevant PRs run Windows/Linux preflight only: exact source trees and preserved parents, source archives, and inherited release HOLDs. `preflight-completed.json` explicitly means zero new MQB invocations and no completed cumulative measurement. The migration protocol has zero cumulative sampling budget; a manual `measure` request fails before building. The unchanged full-matrix policy (584 pairs / 1,446 calls) needs a separately reviewed experiment before it can run again. Preflight or later green samples never clear earlier adverse evidence or missing historical executable identities.
+
+The old v5.4.0 and original v5.5.0 experiments remain in their immutable source/evidence history, not relabelled as current measurements. Fixed Binary Warm/Cold retain their frozen-base checks before runner allocation; unrelated identities do not restart old diagnostics or ETW. Native tests, self-hosting, actual packaging/installer checks and independent per-PR ABBA remain required independently of preflight. The roadmap and detailed risk disposition stay in issue #164, not in a parallel release roadmap.
