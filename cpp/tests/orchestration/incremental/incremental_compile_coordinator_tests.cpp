@@ -15,6 +15,7 @@
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/msvc/MsvcCompileExecutor.hpp"
+#include "mqb/msvc/MsvcIncludeSearchFreshness.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
 #include "mqb/process/Process.hpp"
@@ -164,6 +165,93 @@ public:
         });
 }
 
+// Exercise the real persisted-cache -> inspect() seam, not a second path
+// comparator in the test. Environment roots are outside BuildSignature's argv
+// domain: root identity/order must still invalidate an otherwise warm entry.
+void check_include_root_identity(
+    const mqb::orchestration::IncrementalCompileRequest& original_request,
+    const mqb::msvc::MsvcToolchain& original_toolchain,
+    CompilerLikeRunner& runner) {
+    const auto loaded = mqb::CompileCacheFile::load(original_request.cache_file);
+    expect(loaded && loaded->has_value(), "root tests need the actual warm compile cache");
+    if (!loaded || !*loaded) return;
+
+    auto request = original_request;
+    request.cache_file = original_request.cache_file.parent_path() / "root-identity.mqbcache";
+    auto toolchain = original_toolchain;
+    const fs::path parent = original_request.working_directory.value();
+    const fs::path first = parent / "Root-A";
+    const fs::path second = parent / "Root-B";
+    const fs::path unicode = parent / fs::path{u8"\u00c4-root"};
+    toolchain.environment.push_back({"INCLUDE",
+        path_to_utf8(first) + ";" + path_to_utf8(second) + ";" + path_to_utf8(unicode)});
+    mqb::msvc::MsvcCompileExecutor executor{toolchain, runner};
+    mqb::orchestration::MsvcIncrementalCompileCoordinator coordinator{toolchain, executor};
+    const auto roots = mqb::msvc::include_search_roots(
+        request.options, toolchain.environment, request.working_directory);
+    expect(roots.size() == 4, "one typed and three ordered environment roots are retained");
+    if (roots.size() != 4) return;
+
+    const auto probe = [&](const std::vector<fs::path>& stored, bool reusable,
+                           const std::string_view label) {
+        auto cache = **loaded;
+        cache.include_search_roots = stored;
+        const auto saved = mqb::CompileCacheFile::save(request.cache_file, cache);
+        expect(saved.has_value(), "persist root variant through the real cache serializer");
+        if (!saved) return;
+        const auto time = fs::last_write_time(request.cache_file);
+        const auto size = fs::file_size(request.cache_file);
+        const int calls = runner.calls;
+        const auto inspected = coordinator.inspect(request);
+        expect(inspected.has_value(), label);
+        if (inspected) {
+            expect(inspected->validation.reusable() == reusable, label);
+            expect(inspected->plan.actions.empty() == reusable, label);
+            expect(has_reason(inspected->validation, mqb::BuildReason::dependency_changed) == !reusable,
+                   label);
+            expect(inspected->warnings.empty(), "root identity checks preserve clean diagnostics");
+        }
+        expect(runner.calls == calls, "root inspection must not execute the compiler");
+        expect(fs::last_write_time(request.cache_file) == time && fs::file_size(request.cache_file) == size,
+               "root inspection must not rewrite cache metadata");
+    };
+    probe(roots, true, "exact normalized roots stay reusable");
+    const auto exact = mqb::CompileCacheFile::load(request.cache_file);
+    expect(exact && exact->has_value(), "read back exact persisted roots");
+    if (exact && *exact) {
+        const auto& restored = (**exact).include_search_roots;
+        expect(restored.size() == roots.size(), "persisted root count unchanged");
+        for (std::size_t i = 0; i < std::min(restored.size(), roots.size()); ++i)
+            expect(restored[i].native() == roots[i].native(), "exact-spelling fast path is reachable");
+    }
+    auto variant = roots;
+    variant[1] = parent / "root-a";
+    probe(variant, true, "ASCII case alias retains Windows fallback");
+    variant = roots;
+    variant[3] = parent / fs::path{u8"\u00e4-root"};
+    probe(variant, true, "Unicode case alias retains Windows fallback");
+    variant = roots;
+    variant[1] /= "";
+    probe(variant, true, "non-root trailing separator retains Windows fallback");
+    variant = roots;
+    std::swap(variant[1], variant[2]);
+    probe(variant, false, "root reordering must invalidate even after an equal first root");
+    variant = roots;
+    variant[3] = parent / "different-last-root";
+    probe(variant, false, "last-root replacement must not be hidden by exact earlier roots");
+    variant = roots;
+    variant.pop_back();
+    probe(variant, false, "root removal remains freshness");
+    variant = roots;
+    variant.push_back(roots.back());
+    probe(variant, false, "duplicate root insertion is not set equivalence");
+    variant = roots;
+    variant[2] = roots[1];
+    probe(variant, false, "same-length duplicate substitution must invalidate");
+    probe(roots, true, "restoring the exact roots restores only the original warm decision");
+    std::cout << "include_root_identity_cases 10 variants checked; no compiler launch\n";
+}
+
 } // namespace
 
 int main() {
@@ -275,6 +363,8 @@ int main() {
     }
     expect(runner.calls == 1,
            "warm cache hit should not invoke the compiler again");
+
+    check_include_root_identity(request, toolchain, runner);
 
     const auto modeled_on_warm_state = executor.build_recipe(execution_request);
     expect(modeled_on_warm_state.has_value(),
