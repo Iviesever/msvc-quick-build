@@ -83,6 +83,83 @@ seconds. Windows Native Debug/Release and the unchanged independent ABBA workflo
 must run on the PR's exact source identity. Default-path compatibility measurements
 are not cancellation-throughput measurements, and this is not a speedup claim.
 
+## Shared compiler-PDB research and product regression gates
+
+The 5.6 staging boundary is **not** the entire M1b research roadmap. The public
+CLI still routes config/profile/CLI compiler options through
+`ProjectSetup::normalize_native_parameters` and `MsvcParameterEngine`.
+`CompilerArgumentBuilder` selects `/Z7` in both configurations; `/Zi` and `/ZI`
+are unsupported, and `/Fd` is reserved by the parameter registry. `CL` and `_CL_`
+are removed from compiler invocations. This is existing behavior, not a flag
+change made to avoid a failed experiment. External objects, libraries, PCH/IFC
+inputs and low-level API callers are **not** all covered by this input boundary.
+Linker `/DEBUG` may still create a final PDB; it is not the fixture's shared
+compiler `compiler.pdb`. See Microsoft's [debug-format contract](https://learn.microsoft.com/en-us/cpp/build/reference/z7-zi-zi-debug-information-format?view=msvc-170).
+
+In contrast, `cpp/tests/platform/windows/msvc_service_ownership_probe.cpp`
+constructs `/Zi` or `/ZI`, `/FS` and an explicit `/Fd.../compiler.pdb` itself.
+Its `compile()` calls `invoke()` and then `WindowsProcessRunner::run(cl.exe)`;
+it does not pass through public parameter admission or incremental cache
+inspection. The scheduler-drain variant also explicitly opts into
+`BoundedWorkScheduler::run_with_admission_stop`. Core process/scheduler tests
+remain required; direct invocation of those primitives is not proof that the
+public CLI supports shared compiler-PDB cancellation or safe lease transfer.
+Microsoft explicitly states that [/FS does not prevent every parallel PDB error](https://learn.microsoft.com/en-us/cpp/build/reference/fs-force-synchronous-pdb-writes?view=msvc-170).
+
+### Retained failures, not a successful experiment
+
+[Default Endpoint #37](https://github.com/Iviesever/msvc-quick-build/actions/runs/35311336307)
+completed 70 cases with three real failures at `A/work0`: `pch-debug-A-started-drain`,
+`pch-release-A-started-drain` and `modules-release-A-started-scheduler-drain`.
+Each retained C1041, exit 2, `cancelled=false`, and original `/FS /Zi /Fd` arguments.
+Artifact `10534120991` has SHA256
+`ded51533c9dd889f2bdbdc08840a621157428bfa3816f92b38ecb9cd52c1d6b1`.
+B's success and outer cleanup do not repair A's compile failure. The older
+[Default Endpoint #35](https://github.com/Iviesever/msvc-quick-build/issues/164#issuecomment-5709658468)
+B-side failure and all subsequent observations remain separate evidence.
+The extra 70 default / 42 private cases caused by #194's broad `cpp/**` triggers
+remain an [acknowledged allocation error](https://github.com/Iviesever/msvc-quick-build/issues/164#issuecomment-5725666783), not part of its 86-call product budget.
+
+For the exact include-root change in [#194](https://github.com/Iviesever/msvc-quick-build/pull/194),
+the probe and direct failing invocation path are unchanged and do not execute
+the changed comparison. This supports classifying these observations as an
+**unresolved M1b research dependency**, not evidence that this comparison changed
+PDB behavior. It is not a root-cause diagnosis, a general exclusion of all C1041,
+or retrospective success. #194 still requires its explicit current review and
+all applicable product/performance gates; this scope decision alone does not
+approve that PR or the 5.6 release. #172, historical private129 and ABBA flags,
+and cold tails are not cleared.
+
+### Future execution allocation
+
+`msvc-default-endpoint.yml` and `msvc-service-ownership.yml` retain their original
+real-tool build/collector/diagnostic/upload job bodies, but those jobs have an
+unconditional job-level false guard: **current real-tool allocation is zero**.
+Neither a PR event nor manual dispatch grants another 70/42-case run. Both
+workflows continue automatic scope checks, and Default Endpoint continues its
+original synthetic collector fault-injection contract. Each run has its own
+non-cancelling concurrency group. `scope.json` distinguishes successful scope
+validation from `research_executed=false`, `research_passed=null` and
+`historical_failures_cleared=false`; a skipped matrix is not a passed matrix.
+
+A future study needs a separately reviewed #164 registration and source change:
+exact source/tool identities, a discriminating hypothesis, one-shot run/attempt
+admission, bounded cases/builds/captures, no replacement of failed samples, and
+retained original diagnostics. Prefer a minimal discriminating case, not an
+automatic full-matrix replay. The scope tests pin the archived payloads and
+reject relaxed guards or validators; they must be reviewed together with any
+new allocation. This is workflow control, not a security boundary against a
+maintainer rewriting code or manually running a collector.
+
+Native Debug/Release, public parameter and freshness checks, process lifecycle,
+inspection without writes, self-host/package/installer and independent ABBA
+are unchanged. Any extension to public compiler-PDB support, managed MSVC
+cancellation or write-lease transfer must revisit this boundary and resolve the
+M1b evidence before claiming that capability. Do not silently substitute `/Z7`,
+remove `/FS`, kill shared services, lower failure checks, or count a later green
+run as resolution. Final cumulative validation and a separate VERSION/release
+PR remain necessary.
+
 ## Platform sources
 
 [Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
