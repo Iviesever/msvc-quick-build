@@ -18,6 +18,8 @@ concurrency:
 
 jobs:
   diagnose:
+    # Keep the existing frozen-base contract before allocating a runner.
+    if: github.event.pull_request.base.sha == '1c565ca9f364b0bcb380565c4684ea543b449e04' && github.run_attempt == 1
     name: Original cumulative executables, fixed warm factorial
     runs-on: windows-latest
     timeout-minutes: 20

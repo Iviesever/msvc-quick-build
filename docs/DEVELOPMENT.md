@@ -93,3 +93,11 @@ cpp/
 - 自举或发布链变化同步更新 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
 
 CI 的 stable release 约束比日常开发更严格，详见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
+
+## 性能证据记录与历史实验
+
+`tests/native/compare_reporting.py` 的 `Recorder` 每次将完整调用追加到带连续序号的 `calls.jsonl`。使用上下文管理器，或在正常和异常出口显式调用 `finalize()`；它会校验日志并生成兼容格式的 `calls.json`。运行中查看增量应读 journal，而不是期待每次调用后都有完整 JSON。非零退出、超时和写入失败必须保留原始诊断；合法日志前缀不能证明实验完成。此机制是单写者记录，不承诺断电耐久性。
+
+Reporting journal correctness 在相关 PR 中运行两平台 Python 契约与历史记录的纯数据回放，不启动旧记录里的 MQB 命令。原生、自举、打包及独立 ABBA 仍是独立门槛。新 ABBA 产物同时保留当次实际 A/B 程序、种子、源码归档及前后哈希；不可拿新产物补称旧实验缺失的身份。
+
+Release Cumulative Evidence 中固定 v5.4.0 的历史比较只保留显式手动入口，不因当前记录器改动自动重跑。Fixed Binary Warm/Cold 的冻结 base 限制在分配运行器前判断，原检查仍保留；不符合其历史身份的 PR 不启动旧诊断或 ETW。跳过这些历史实验不等于累计性能通过；5.6 的原累计数据、失败样本和发布门槛须单独处置。
