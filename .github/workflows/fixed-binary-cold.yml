@@ -23,6 +23,8 @@ env:
 
 jobs:
   build-recorder:
+    # Keep the existing frozen-base contract before allocating a runner.
+    if: github.event.pull_request.base.sha == '752668650dfbf8e32a3a5d66d9d0808e10daf2ec' && github.run_attempt == 1
     name: Build unchanged ETW recorder, not replacement measured binaries
     runs-on: windows-latest
     timeout-minutes: 10
@@ -97,6 +99,8 @@ jobs:
           retention-days: 90
 
   diagnose:
+    # Keep the existing frozen-base contract before allocating a runner.
+    if: github.event.pull_request.base.sha == '752668650dfbf8e32a3a5d66d9d0808e10daf2ec' && github.run_attempt == 1
     name: Fixed cold factorial with original MQB and calibrated trace controls
     needs: build-recorder
     # A new VM: the recorder and MQB are not built on the measurement host.

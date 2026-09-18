@@ -1,16 +1,26 @@
-name: Reporting journal correctness once
+name: Reporting journal correctness
 on:
+  pull_request:
+    paths:
+      - 'tests/native/compare_*.py'
+      - 'tests/native/diagnose_fixed_binary_*.py'
+      - 'tests/native/test_*.py'
+      - '.github/workflows/reporting-journal-correctness.yml'
   push:
-    branches: ['codex/recorder-append-journal-20260917']
+    branches: [main]
+    paths:
+      - 'tests/native/compare_*.py'
+      - 'tests/native/diagnose_fixed_binary_*.py'
+      - 'tests/native/test_*.py'
+      - '.github/workflows/reporting-journal-correctness.yml'
 permissions:
   contents: read
   actions: read
 concurrency:
-  group: reporting-journal-correctness-20260917
+  group: reporting-journal-correctness-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 jobs:
   correctness:
-    if: github.run_number == 4 && github.run_attempt == 1 && github.ref == 'refs/heads/codex/recorder-append-journal-20260917'
     strategy:
       fail-fast: false
       matrix:
@@ -20,12 +30,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 4
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Exact source and original rows; no MQB execution
         shell: python {0}
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           import hashlib, json, os, pathlib, subprocess, urllib.request
           from urllib.parse import urlsplit
@@ -33,20 +46,17 @@ jobs:
           root.mkdir()
           def git(*args):
               return subprocess.check_output(['git', *args], text=True).strip()
-          base = '55f57a84ad938da10d0e28b4578cd1aef6d7f903'
-          assert git('rev-parse', 'HEAD^') == 'd4b8c4bf0762c66be93da99bd1e06ec97f6321ca'
-          assert git('rev-parse', 'HEAD') == os.environ['GITHUB_SHA']
-          expected = {'.github/workflows/reporting-journal-correctness.yml',
-              'tests/native/compare_reporting.py', 'tests/native/compare_archive.py',
-              'tests/native/compare_release_cumulative.py', 'tests/native/diagnose_fixed_binary_warm.py',
-              'tests/native/diagnose_fixed_binary_cold.py', 'tests/native/test_reporting_journal.py'}
-          assert set(git('diff', '--name-only', base, 'HEAD').splitlines()) == expected
-          assert pathlib.Path('VERSION').read_text().strip() == '5.5.0'
+          base = os.environ['EXPECTED_BASE']
+          assert git('rev-parse', 'HEAD') == os.environ['EXPECTED_HEAD']
+          assert git('status', '--porcelain', '--untracked-files=no') == ''
+          if base and set(base) != {'0'}:
+              subprocess.run(['git', 'merge-base', '--is-ancestor', base, 'HEAD'], check=True)
+          version = pathlib.Path('VERSION').read_text().strip()
           subprocess.run(['git', 'archive', '-o', str(root/'source.zip'), 'HEAD'], check=True)
           (root/'identity.json').write_text(json.dumps(dict(base=base, head=git('rev-parse','HEAD'),
               tree=git('rev-parse','HEAD^{tree}'), run=os.environ['GITHUB_RUN_ID'],
               attempt=os.environ['GITHUB_RUN_ATTEMPT'], os=os.environ['RUNNER_OS'],
-              image=os.environ.get('ImageVersion'), preregistration=5711547555,
+              image=os.environ.get('ImageVersion'), version=version, integration_scope=5724759276,
               new_mqb_calls=0, new_msvc_builds=0, new_etw=0), indent=2), encoding='utf-8')
           class Redirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self, req, fp, code, msg, headers, newurl):

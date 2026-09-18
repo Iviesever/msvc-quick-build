@@ -22,6 +22,8 @@ concurrency:
 
 jobs:
   compare:
+    # Historical v5.4 comparison is explicit-only, not a current PR gate.
+    if: github.event_name == 'workflow_dispatch'
     name: Released v5.4.0 versus accepted candidate
     runs-on: windows-latest
     timeout-minutes: 45

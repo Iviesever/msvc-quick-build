@@ -93,3 +93,11 @@ For C++ product changes, verify at least that:
 - self-hosting or release-pipeline changes update [`SELF_HOSTING_EN.md`](SELF_HOSTING_EN.md).
 
 Stable release CI has stricter requirements than day-to-day development; see [`SELF_HOSTING_EN.md`](SELF_HOSTING_EN.md).
+
+## Performance evidence records and historical experiments
+
+`Recorder` in `tests/native/compare_reporting.py` appends each complete call to `calls.jsonl` with consecutive sequence numbers. Use its context manager, or explicitly call `finalize()` on normal and exceptional exits; it validates the journal and creates the compatible `calls.json`. Read the journal for live progress instead of expecting a full JSON snapshot after every call. Preserve original diagnostics for nonzero exits, timeouts and write failures; a valid journal prefix does not prove experiment completion. This is a single-writer recorder, not a power-loss durability guarantee.
+
+Reporting journal correctness runs Python contracts on both platforms and replays historical rows as data on relevant PRs. It never executes MQB commands from those rows. Native tests, self-hosting, packaging and independent ABBA remain separate gates. New ABBA artifacts retain the actual A/B executables, seed, source archives and before/after hashes; these must not be used to pretend missing identities from older experiments were retained.
+
+The historical v5.4.0 comparison in Release Cumulative Evidence is explicit manual execution only, not an automatic response to current recorder changes. Fixed Binary Warm/Cold check their frozen base before allocating runners, while retaining their original checks; unrelated source identities do not start those old diagnostics or ETW captures. Skipped historical experiments are not cumulative performance passes. Original 5.6 cumulative evidence, adverse samples and release gates require separate disposition.
