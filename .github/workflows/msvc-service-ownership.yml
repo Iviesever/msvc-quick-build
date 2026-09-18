@@ -6,14 +6,41 @@ on:
       - 'cpp/**'
       - 'tests/native/collect_msvc_service_ownership.ps1'
       - '.github/workflows/msvc-service-ownership.yml'
+      - '.github/workflows/msvc-default-endpoint.yml'
+      - 'tests/native/test_ownership_research_scope.py'
   workflow_dispatch:
 
 concurrency:
-  group: msvc-service-ownership-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  group: msvc-service-ownership-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
+  scope:
+    name: Research allocation contract (no real tools)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify research allocation boundary without running tools
+        run: python tests/native/test_ownership_research_scope.py
+      - name: Retain scope decision, including failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ownership-research-scope
+          path: .mqb/ownership-scope/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
   observe:
+    # Frozen M1b research: no real-tool allocation; see docs/PROCESS_LIFETIME.md.
+    if: ${{ false }}
     name: Real MSVC ownership matrix
     runs-on: windows-latest
     timeout-minutes: 45
