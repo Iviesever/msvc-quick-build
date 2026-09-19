@@ -1,0 +1,47 @@
+name: Materialize reviewed storage candidate
+on:
+  push:
+    branches: [codex/storage-inventory-staging-20260919]
+permissions:
+  contents: write
+jobs:
+  apply-reviewed-patch:
+    if: github.repository == 'Iviesever/msvc-quick-build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: handoff
+      - uses: actions/checkout@v7
+        with:
+          ref: 3ea932d3f5a322aed500439bb3f688c6e52c1111
+          path: candidate
+      - name: Verify immutable patch and exact candidate tree; create new branch only
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 3ea932d3f5a322aed500439bb3f688c6e52c1111
+          python - <<'PYCODE'
+          import base64,gzip,hashlib,pathlib,subprocess
+          packed=''.join(pathlib.Path(f'../handoff/automation/storage-inventory.patch.b64.{i}').read_text().strip() for i in range(6))
+          assert len(packed)==30608
+          patch=gzip.decompress(base64.b64decode(packed,validate=True))
+          assert len(patch)==77882
+          assert hashlib.sha256(patch).hexdigest()=='863352e66065823a726e6580cce8c29ff5357ae6088a97c55141b9f5c0772e54'
+          subprocess.run(['git','apply','--index','--whitespace=error','-'],input=patch,check=True)
+          assert subprocess.check_output(['git','write-tree'],text=True).strip()=='b918b28facd1cfa30bb6f0daca0e25b2f7737462'
+          assert pathlib.Path('VERSION').read_text().strip()=='5.6.0'
+          PYCODE
+          git diff --cached --check
+          git diff --cached --stat
+          test -z "$(git ls-remote --heads origin codex/v5.7-storage-inventory-20260919)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: add read-only storage inventory and bounded lifecycle evidence' -m 'First slice of #198. Legacy cache references are not ownership; no deletion or VERSION change. Windows acceptance pending.'
+          test "$(git rev-parse HEAD^)" = 3ea932d3f5a322aed500439bb3f688c6e52c1111
+          test "$(git rev-parse HEAD^{tree})" = b918b28facd1cfa30bb6f0daca0e25b2f7737462
+          git push origin HEAD:refs/heads/codex/v5.7-storage-inventory-20260919
+          git show --no-patch --format=fuller HEAD
+          git rev-parse HEAD HEAD^ HEAD^{tree}
