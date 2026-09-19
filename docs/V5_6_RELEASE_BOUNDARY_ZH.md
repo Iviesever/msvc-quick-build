@@ -4,7 +4,7 @@
 
 ## 状态与范围
 
-本文是 **2026-09-19 已接受的 5.6 候选评估**，不是 v5.6.0 已发布的公告。`VERSION` 仍为 `5.5.0`，根目录文件继续是唯一构建版本来源。GitHub Release 正文由发布工作流生成，不从本文生成。实时决定仍记录在 [issue #164](https://github.com/Iviesever/msvc-quick-build/issues/164)，不替代其中的 v6.0 长期路线。
+本文是 **2026-09-19 已接受的 5.6 候选评估**，不是 v5.6.0 已发布的公告。该次评估时 `VERSION` 为 `5.5.0`；当前根目录文件继续是唯一构建版本来源。发布工作流现在从本文和英文版渲染变更、兼容性、风险表／限制及停止／回退章节，再追加 GitHub 自动生成的历史。正文及其来源哈希在发布前校验；本文带日期的状态和剩余接手章节不会作为当前发布状态输出。实时决定仍记录在 [issue #164](https://github.com/Iviesever/msvc-quick-build/issues/164)，不替代其中的 v6.0 长期路线。
 
 [#188](https://github.com/Iviesever/msvc-quick-build/pull/188) 已通过 [review 5255036151](https://github.com/Iviesever/msvc-quick-build/pull/188#pullrequestreview-5255036151) 收口完整候选评估。以下身份不能混用：
 
