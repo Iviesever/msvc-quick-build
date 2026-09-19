@@ -4,6 +4,8 @@
 
 MQB 的性能工作以现有 `--timings=json` instrumentation 为测量基础。Hosted runner 的 wall-clock time 有意**不作为** correctness gate，但以性能为主要诉求的 PR 仍必须提供可复现的 before/after evidence。
 
+> **已登记的 5.6 评估：**[#164](https://github.com/Iviesever/msvc-quick-build/issues/164) 中明确的预算与数值审阅门槛优先于下文的一般指引。冻结的 #188 累计预算已经消耗，采集成功不等于批准发布。已接受身份、未改阈值、保留失败和剩余风险条件见[候选发布边界](V5_6_RELEASE_BOUNDARY_ZH.md)。工作流按钮可用不意味着获得新的测量预算。
+
 ## 必需的 review evidence
 
 对于主要声称“降低 build latency”或“提高 throughput”的 PR：
@@ -60,7 +62,7 @@ MQB 的性能工作以现有 `--timings=json` instrumentation 为测量基础。
 
 Base 有意使用不可变的 PR base SHA，而不是会移动的 branch name。这样即使 `main` 之后继续前进，该 PR head 的记录性能比较仍可复现。
 
-先跑 base、后跑 candidate 仍可能引入一些 operating-system cache/order bias。因此这些 measurement 是 review evidence，而不是 numerical merge threshold。对于差距很小或结果异常的 case，reviewer 应重新运行 workflow，或在本地复现并检查 phase-level timing，而不是把一个百分比当成绝对事实。
+交替配对顺序可以减少、但不能消除顺序／缓存影响。这些结果是 review evidence，不是独立的因果解释；明确登记的数值发布门槛仍然适用。对于差距很小或结果异常的 case，应保留首批证据并检查 phase-level timing。新实验必须单独审阅假设、源码／程序身份、固定预算和停止规则；不得重跑至绿或用新结果覆盖首批结果。
 
 ## 什么被 gate，什么不被 gate
 

@@ -39,6 +39,7 @@ This is the authoritative index for MQB's maintained documentation.
 | Performance governance | [`PERFORMANCE_GOVERNANCE.md`](PERFORMANCE_GOVERNANCE.md) | [`PERFORMANCE_GOVERNANCE_ZH.md`](PERFORMANCE_GOVERNANCE_ZH.md) |
 | Build-system comparison methodology | [`BUILD_SYSTEM_BENCHMARK.md`](BUILD_SYSTEM_BENCHMARK.md) | [`BUILD_SYSTEM_BENCHMARK_ZH.md`](BUILD_SYSTEM_BENCHMARK_ZH.md) |
 | v5.5.0 cumulative evidence / release boundary | [`V5_5_CUMULATIVE_EVIDENCE.md`](V5_5_CUMULATIVE_EVIDENCE.md) | [`V5_5_CUMULATIVE_EVIDENCE_ZH.md`](V5_5_CUMULATIVE_EVIDENCE_ZH.md) |
+| v5.6 candidate changes / compatibility / residual risk | [`V5_6_RELEASE_BOUNDARY.md`](V5_6_RELEASE_BOUNDARY.md) | [`V5_6_RELEASE_BOUNDARY_ZH.md`](V5_6_RELEASE_BOUNDARY_ZH.md) |
 | Contributing | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | [`../CONTRIBUTING_ZH.md`](../CONTRIBUTING_ZH.md) |
 
 ## Language parity rule

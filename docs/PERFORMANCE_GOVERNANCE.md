@@ -4,6 +4,8 @@
 
 Performance work in MQB is measured against the existing `--timings=json` instrumentation. Hosted-runner wall-clock time is deliberately **not** a correctness gate, but a performance PR must still provide reproducible before/after evidence.
 
+> **Registered 5.6 assessments:** The explicit budgets and numerical review gates in [#164](https://github.com/Iviesever/msvc-quick-build/issues/164) override the generic guidance below. The frozen #188 cumulative budget has been consumed; collection success is not publication approval. See the [candidate release boundary](V5_6_RELEASE_BOUNDARY.md) for accepted identities, unchanged thresholds, retained failures and residual-risk conditions. Do not infer a fresh measurement allocation from an available workflow button.
+
 ## Required review evidence
 
 For a PR whose primary claim is lower build latency or higher throughput:
@@ -60,7 +62,7 @@ The workflow:
 
 The base is deliberately the immutable PR base SHA rather than the moving branch name. This makes the recorded performance comparison reproducible for that PR head even if `main` advances later.
 
-Running base first and candidate second may still introduce some operating-system cache/order bias. The measurements therefore remain review evidence rather than a numerical merge threshold. For a close or surprising result, reviewers should rerun the workflow or reproduce locally and examine phase-level timings instead of treating one percentage as absolute truth.
+Alternating pair order reduces, but does not eliminate, order/cache effects. Results are review evidence, not a standalone causal explanation; explicitly registered numerical release gates still apply. For a close or surprising result, preserve the first evidence and examine phase-level timings. A new experiment requires a separately reviewed hypothesis, source/program identities, fixed budget and stop rules; do not rerun until green or use it to overwrite the first result.
 
 ## What is and is not gated
 
