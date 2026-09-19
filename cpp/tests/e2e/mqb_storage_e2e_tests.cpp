@@ -14,6 +14,7 @@
 
 #ifdef _WIN32
 #include "mqb/core/LinkCacheFile.hpp"
+#include "mqb/platform/windows/CommandLine.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
 #include "mqb/platform/windows/StorageInventory.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
@@ -298,11 +299,31 @@ void cli_lifecycle(const fs::path& executable, const fs::path& root, const fs::p
     // A real junction, without requiring symbolic-link privilege.
     const auto external = evidence / "external";
     write(external / "sentinel.txt", "outside must not be enumerated");
+    // generic_u8string is the report spelling, not a cmd.exe path argument.
+    // Use the existing Windows UTF-16 encoder with native separators, matching
+    // the established write-domain junction fixtures. Keep spaces and Unicode.
+    const auto native_argument = [](fs::path path) {
+        path.make_preferred();
+        auto encoded = mqb::platform::windows::utf16_to_utf8(path.native());
+        require(encoded.has_value(), "native junction argument encoding");
+        return *encoded;
+    };
+    wchar_t system[32768]{};
+    const auto system_length = ::GetSystemDirectoryW(system, 32768);
+    require(system_length > 0 && system_length < 32768, "resolve system command processor");
     mqb::process::ProcessSpec junction;
-    junction.executable = L"C:/Windows/System32/cmd.exe";
-    junction.arguments = {"/d", "/c", "mklink", "/J", text(root / ".mqb/junction"), text(external)};
+    junction.executable = fs::path{system} / L"cmd.exe";
+    junction.arguments = {"/d", "/c", "mklink", "/J",
+        native_argument(root / ".mqb/junction"), native_argument(external)};
     junction.working_directory = root;
     junction.capture_stdout = junction.capture_stderr = true;
+    std::ostringstream junction_command;
+    junction_command << "executable=" << native_argument(junction.executable)
+                     << "\nworking_directory=" << native_argument(root) << '\n';
+    for (const auto& argument : junction.arguments) junction_command << argument << '\n';
+    write(evidence / "junction.argv.txt", junction_command.str());
+    require(junction.arguments[4].find('/') == std::string::npos &&
+        junction.arguments[5].find('/') == std::string::npos, "cmd junction paths use native separators");
     auto created = runner.run(junction);
     if (!created) write(evidence / "junction.launch-error.txt", created.error().message);
     else {
@@ -311,6 +332,13 @@ void cli_lifecycle(const fs::path& executable, const fs::path& root, const fs::p
         write(evidence / "junction.exit.txt", std::to_string(created->exit_code));
     }
     require(created && created->exit_code == 0, "create junction fixture");
+    const auto junction_attributes = ::GetFileAttributesW((root / ".mqb/junction").c_str());
+    require(junction_attributes != INVALID_FILE_ATTRIBUTES &&
+        (junction_attributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+        (junction_attributes & FILE_ATTRIBUTE_DIRECTORY), "created fixture is a directory reparse point");
+    std::error_code junction_error;
+    const bool same_target = fs::equivalent(root / ".mqb/junction", external, junction_error);
+    require(!junction_error && same_target, "junction fixture resolves to the intended external directory");
     auto refused = call({"storage", "--format", "json"}, "junction-refusal", 1);
     auto json = mqb::json::parse(refused.stdout_text);
     require(json && !json->object.at("complete").boolean, "junction produces valid partial report");
