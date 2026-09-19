@@ -17,6 +17,7 @@ This is the authoritative index for MQB's maintained documentation.
 | Compilation database export | [`COMPILATION_DATABASE_EN.md`](COMPILATION_DATABASE_EN.md) | [`COMPILATION_DATABASE.md`](COMPILATION_DATABASE.md) |
 | First-class PCH | [`PRECOMPILED_HEADERS_EN.md`](PRECOMPILED_HEADERS_EN.md) | [`PRECOMPILED_HEADERS.md`](PRECOMPILED_HEADERS.md) |
 | Parallelism and P1689 warm scan reuse | [`PARALLELISM_EN.md`](PARALLELISM_EN.md) | [`PARALLELISM.md`](PARALLELISM.md) |
+| Read-only storage inventory (development) | [`STORAGE_INVENTORY.md`](STORAGE_INVENTORY.md) | [`STORAGE_INVENTORY_ZH.md`](STORAGE_INVENTORY_ZH.md) |
 
 ## Architecture and implementation contracts
 

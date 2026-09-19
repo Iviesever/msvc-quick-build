@@ -198,6 +198,21 @@ jobs:
             -ShardCount 8
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+
+      - name: Preserve storage inventory lifecycle evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: storage-inventory-release-${{ matrix.shard }}
+          path: |
+            native-test-work/**/storage-evidence/**
+            native-test-work/**/storage-fixtures/**/*.cpp
+            native-test-work/**/storage-fixtures/**/.mqb/cache/link/*.linkcache
+            native-test-work/**/storage-fixtures/**/.mqb/bin/*
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 30
+
   build-test-package:
     name: Self-host and package release
     needs:

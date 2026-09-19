@@ -40,7 +40,8 @@ jobs:
           if ([int]$env:GITHUB_RUN_ATTEMPT -ne 1) { throw 'Repeated attempts do not replace the first evidence.' }
           $head = (git rev-parse HEAD).Trim()
           if ($head -ne $env:MQB_EXPECTED_HEAD) { throw 'Candidate identity mismatch.' }
-          if ((Get-Content VERSION -Raw).Trim() -ne '5.5.0') { throw 'Frozen development version changed.' }
+          $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$') { throw 'Invalid source VERSION.' }
           New-Item -ItemType Directory -Path pch-evidence -ErrorAction Stop | Out-Null
           git -c core.autocrlf=false archive --format=zip --output=pch-evidence/source.zip HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

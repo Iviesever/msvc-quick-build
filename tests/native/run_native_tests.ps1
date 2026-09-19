@@ -84,8 +84,8 @@ if ($includeDirs.Count -eq 0) { throw 'Native test config has no include_dirs.' 
 $allTestFiles = @(Get-ChildItem -LiteralPath $cppRoot -Recurse -File -Filter '*_tests.cpp' |
     Where-Object { $_.FullName -notmatch '[\\/]\.mqb[\\/]' } |
     Sort-Object FullName)
-if ($allTestFiles.Count -ne 79) {
-    throw "Native test manifest drift: expected 79 *_tests.cpp files, found $($allTestFiles.Count)."
+if ($allTestFiles.Count -ne 80) {
+    throw "Native test manifest drift: expected 80 *_tests.cpp files, found $($allTestFiles.Count)."
 }
 
 function Get-TestRelativePath {
@@ -109,6 +109,7 @@ $testWeightOverrides = [ordered]@{
     'tests/e2e/mqb_static_library_e2e_tests.cpp' = 7
     'tests/e2e/mqb_default_library_e2e_tests.cpp' = 7
     'tests/e2e/mqb_cli_e2e_tests.cpp' = 4
+    'tests/e2e/mqb_storage_e2e_tests.cpp' = 4
     'tests/e2e/mqb_runtime_subsystem_config_e2e_tests.cpp' = 4
     'tests/e2e/mqb_dll_target_e2e_tests.cpp' = 3
     'tests/e2e/mqb_manifest_input_e2e_tests.cpp' = 3
@@ -124,7 +125,7 @@ $testWeightOverrides = [ordered]@{
 $relativeTestPaths = @($allTestFiles | ForEach-Object { Get-TestRelativePath -File $_ })
 foreach ($weightedPath in $testWeightOverrides.Keys) {
     if ($weightedPath -notin $relativeTestPaths) {
-        throw "Native test weight override is stale or missing from the 79-test manifest: $weightedPath"
+        throw "Native test weight override is stale or missing from the 80-test manifest: $weightedPath"
     }
 }
 

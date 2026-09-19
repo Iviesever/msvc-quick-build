@@ -691,7 +691,10 @@ R"(Usage:
   mqb <entry.cpp> [options] [MSVC-compiler-options] [/link linker-options...] [-- program-args...]
   mqb <source.cpp> <more-sources...|module.ixx...> [options] [MSVC-compiler-options] [/link linker-options...] [-- program-args...]
 
+  mqb storage [--project <directory>] [--format text|json]
+
 Commands:
+  storage                   Read-only .mqb inventory; cache references are not deletion authority
   build                     Build without running; source may be omitted when a default entry resolves
   run                       Build an executable and run it; source may be omitted when a default entry resolves
 
