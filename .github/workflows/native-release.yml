@@ -8,6 +8,7 @@ on:
       - 'LICENSE'
       - 'tests/native/**'
       - 'tests/selfhost/**'
+      - 'tests/release/**'
       - '.github/workflows/native-release.yml'
   push:
     branches:
@@ -20,6 +21,9 @@ on:
 concurrency:
   group: native-release-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
 
 jobs:
   prepare-release:
@@ -61,6 +65,34 @@ jobs:
           "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
           Write-Host "Release version: $version"
           Write-Host "Package: $packageName"
+
+      - name: Test and render bilingual Release body before builds
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory release-note-evidence -ErrorAction Stop | Out-Null
+          python -m unittest discover -s tests/release -p 'test_*.py' -v 1>release-note-evidence/tests.stdout 2>release-note-evidence/tests.stderr
+          $code = $LASTEXITCODE
+          Get-Content release-note-evidence/tests.stdout, release-note-evidence/tests.stderr | Write-Host
+          if ($code -ne 0) { exit $code }
+          $head = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:GITHUB_SHA) { throw 'Release note source identity mismatch.' }
+          python tests/release/render_release_notes.py --repository "$env:GITHUB_REPOSITORY" --commit "$head" --output release-note-evidence/context
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/release/render_release_notes.py --repository "$env:GITHUB_REPOSITORY" --commit "$head" --output release-note-evidence/context --verify
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git archive -o release-note-evidence/source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Preserve Release body preview and source
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes-context
+          path: release-note-evidence/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Acquire pinned historical MQB seed
         id: seed
@@ -357,6 +389,18 @@ jobs:
           name: ${{ env.MQB_PACKAGE_NAME }}
           path: dist-publish
 
+      - name: Download and verify the reviewed Release body
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes-context
+          path: release-note-evidence
+
+      - name: Verify exact Release body before publication
+        shell: pwsh
+        run: |
+          python tests/release/render_release_notes.py --repository "$env:GITHUB_REPOSITORY" --commit "$env:GITHUB_SHA" --output release-note-evidence/context --verify
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify publication inputs and immutable identity
         id: preflight
         shell: pwsh
@@ -379,17 +423,21 @@ jobs:
             throw "Downloaded artifact checksum mismatch. Expected '$expected', got '$actual'"
           }
 
-          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag already exists; immutable publication is already complete."
+          $ErrorActionPreference = 'Stop'
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
+          $existing = Invoke-WebRequest "$api/releases/tags/$tag" -Headers $headers -SkipHttpErrorCheck
+          if ($existing.StatusCode -eq 200) {
+            Write-Host "Release $tag already exists; preserving it without republication."
             'publish=false' >> $env:GITHUB_OUTPUT
             exit 0
           }
-
-          & gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" *> $null
-          if ($LASTEXITCODE -eq 0) {
+          if ($existing.StatusCode -ne 404) { throw "Release lookup failed: HTTP $($existing.StatusCode)" }
+          $existingTag = Invoke-WebRequest "$api/git/ref/tags/$tag" -Headers $headers -SkipHttpErrorCheck
+          if ($existingTag.StatusCode -eq 200) {
             throw "Tag $tag already exists without a release. Refusing ambiguous publication."
           }
+          if ($existingTag.StatusCode -ne 404) { throw "Tag lookup failed: HTTP $($existingTag.StatusCode)" }
 
           'publish=true' >> $env:GITHUB_OUTPUT
           exit 0
@@ -412,7 +460,8 @@ jobs:
             '--repo', $env:GITHUB_REPOSITORY,
             '--target', $env:GITHUB_SHA,
             '--title', $title,
-            '--generate-notes'
+            '--generate-notes',
+            '--notes-file', (Join-Path $PWD 'release-note-evidence/context/body.md')
           )
           if ($env:MQB_PRERELEASE -eq 'true') {
             $arguments += '--prerelease'
@@ -421,8 +470,20 @@ jobs:
           & gh @arguments
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          $release = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,isDraft,isPrerelease,url | ConvertFrom-Json
-          if ($release.tagName -ne $tag -or $release.isDraft) {
+          $release = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,isDraft,isPrerelease,url,body | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read published Release.' }
+          if ($release.tagName -ne $tag -or $release.isDraft -or
+              $release.isPrerelease -ne ($env:MQB_PRERELEASE -eq 'true')) {
             throw "Published release identity validation failed for $tag"
+          }
+          $expectedBody = [IO.File]::ReadAllText((Join-Path $PWD 'release-note-evidence/context/body.md')).Replace("`r`n", "`n").TrimEnd()
+          $actualBody = ([string]$release.body).Replace("`r`n", "`n")
+          if (-not $actualBody.StartsWith($expectedBody, [StringComparison]::Ordinal)) {
+            throw 'Published Release body is missing the reviewed bilingual scope or risks.'
+          }
+          $tagObject = & gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $tagObject.object.type -ne 'commit' -or
+              $tagObject.object.sha -cne $env:GITHUB_SHA) {
+            throw 'Published tag does not point to the exact validated main commit.'
           }
           Write-Host "Published release: $($release.url)"

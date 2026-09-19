@@ -96,7 +96,7 @@ README、架构、配置、安装说明、自举说明和 release notes 等用�
 1. `VERSION` 变更随候选提交合入 `main`；
 2. `Native Release` 在该 exact `main` commit 上重新执行完整 build/test/self-host/package gate；
 3. gate 全绿后，workflow 使用已经验证的 ZIP 与 checksum 创建 `vX.Y.Z` tag 和 GitHub Release；
-4. Release notes 由 GitHub 根据自上一个 tag 以来的 PR/commit 历史生成，不再保存在源码树中；
+4. 工作流在构建前从已审阅的系列边界文档生成并校验双语 Release 正文预览，发布前重新核对该正文，再将其置于 GitHub 自动生成的 PR/commit 历史之前；生成的发布说明不提交到源码树；
 5. publication 阶段不 rebuild binary。
 
 ### v5.3.0 溯源例外

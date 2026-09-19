@@ -96,7 +96,7 @@ Normal stable publication is driven by a change to the root `VERSION` file:
 1. the candidate commit containing the new `VERSION` is merged into `main`;
 2. `Native Release` reruns the complete build/test/self-host/package gate on that exact `main` commit;
 3. after all gates pass, the workflow creates the `vX.Y.Z` tag and GitHub Release from the already-validated ZIP and checksum;
-4. GitHub generates release notes from PR/commit history since the previous tag, so release notes no longer live in the source tree;
+4. the workflow validates a bilingual Release-body preview from the reviewed series boundary document before building, revalidates that exact body before publication, and prepends it to GitHub-generated PR/commit history; generated release notes are not checked into the source tree;
 5. publication does not rebuild the binary.
 
 ### v5.3.0 provenance exception
