@@ -52,7 +52,9 @@ jobs:
           if (@($errors).Count) { throw "$errors" }
           $seed=& ./tests/native/acquire_seed.ps1 -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'native-seed')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $mqb=& ./tests/native/build_mqb.ps1 -BuilderMqbPath $seed -RepoRoot $PWD -Version '5.5.0' `
+          $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$') { throw 'Invalid source VERSION.' }
+          $mqb=& ./tests/native/build_mqb.ps1 -BuilderMqbPath $seed -RepoRoot $PWD -Version $version `
             -Configuration Release -Clean -OutputPath (Join-Path $PWD 'native-out/target-admission/mqb.exe')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./tests/native/collect_msvc_target_admission.ps1 -MqbPath $mqb -RepoRoot $PWD -BuildOnly `

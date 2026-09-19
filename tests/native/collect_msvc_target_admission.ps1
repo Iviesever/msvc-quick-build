@@ -22,10 +22,14 @@ try {
     $head = (& git rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Cannot read source HEAD.' }
     if (@(& git status --porcelain --untracked-files=no).Count -ne 0 -or $LASTEXITCODE -ne 0) { throw 'Tracked source must be clean.' }
-    if ((Get-Content VERSION -Raw).Trim() -cne '5.5.0') { throw 'VERSION must remain 5.5.0.' }
+    $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+    if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$') { throw 'Invalid source VERSION.' }
     if ($BuildOnly) {
         if ([string]::IsNullOrWhiteSpace($MqbPath) -or -not [string]::IsNullOrWhiteSpace($PrebuiltProbePath)) { throw 'Invalid build-only input.' }
         $MqbPath = [IO.Path]::GetFullPath($MqbPath)
+        $help = @(& $MqbPath --help 2>&1 | ForEach-Object { $_.ToString() })
+        if ($LASTEXITCODE -ne 0 -or $help.Count -eq 0 -or
+            $help[0] -cne "MQB $version - MSVC Quick Build (C++ refactor)") { throw 'Candidate binary/source VERSION mismatch.' }
         & ./tests/native/assert_cpp_layout.ps1 -CppRoot (Join-Path $RepoRoot 'cpp')
         $config = Get-Content cpp/mqb.json -Raw | ConvertFrom-Json
         $sources = @($config.discovery.extra_sources | ForEach-Object { $_.Replace('\','/') } | Sort-Object -Unique)
@@ -46,7 +50,7 @@ try {
         if ($code -ne 0) { throw "Probe build failed: $code" }
         $probe = Join-Path $RepoRoot '.mqb/bin/msvc_target_admission_probe.exe'
         Write-Json (Join-Path $OutputRoot 'probe.identity.json') @{
-            schema=1; source_head=$head; version='5.5.0'; configuration='Release'
+            schema=1; source_head=$head; version=$version; configuration='Release'
             probe_sha256=(Get-FileHash -LiteralPath $probe).Hash
             candidate_sha256=(Get-FileHash -LiteralPath $MqbPath).Hash
             build_run_id=$env:GITHUB_RUN_ID; build_run_attempt=$env:GITHUB_RUN_ATTEMPT
@@ -58,7 +62,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($PrebuiltProbePath) -or [string]::IsNullOrWhiteSpace($ProbeIdentityPath)) { throw 'Prebuilt probe and identity required.' }
     $probe = [IO.Path]::GetFullPath($PrebuiltProbePath)
     $origin = Get-Content -LiteralPath $ProbeIdentityPath -Raw | ConvertFrom-Json
-    if ($origin.source_head -cne $head -or $origin.version -cne '5.5.0' -or $origin.configuration -cne 'Release' -or
+    if ($origin.source_head -cne $head -or $origin.version -cne $version -or $origin.configuration -cne 'Release' -or
         $origin.probe_sha256 -cne (Get-FileHash -LiteralPath $probe).Hash) { throw 'Exact prebuilt source/binary identity mismatch.' }
     Write-Json (Join-Path $OutputRoot 'identity.json') @{
         source_head=$head; probe=$origin; image=$env:ImageVersion; run=$env:GITHUB_RUN_ID; attempt=$env:GITHUB_RUN_ATTEMPT

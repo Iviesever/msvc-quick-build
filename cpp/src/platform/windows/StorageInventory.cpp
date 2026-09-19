@@ -33,7 +33,11 @@ std::wstring native_path(const fs::path& path) {
 }
 Handle pin(const fs::path& path) {
     const auto name = native_path(path);
-    return Handle{::CreateFileW(name.c_str(), FILE_READ_ATTRIBUTES,
+    // Attribute-only access does not participate in read/write/delete share
+    // checking. Request data access (FILE_LIST_DIRECTORY on directories) too,
+    // so FILE_SHARE_READ actually excludes a concurrent writer or renamer.
+    // Do not fall back to an attribute-only handle on permission failure.
+    return Handle{::CreateFileW(name.c_str(), FILE_READ_DATA | FILE_READ_ATTRIBUTES,
         FILE_SHARE_READ,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr)};
 }

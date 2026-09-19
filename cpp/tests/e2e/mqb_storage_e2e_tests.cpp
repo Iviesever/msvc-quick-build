@@ -119,8 +119,14 @@ std::map<std::string, FileState> snapshot(const fs::path& root) {
     }
     return result;
 }
-void windows_contracts(const fs::path& root) {
+void windows_contracts(const fs::path& root, const fs::path& evidence) {
     fs::create_directories(root);
+    fs::create_directories(evidence);
+    auto record = [&](const char* label, bool succeeded, DWORD code) {
+        std::ostringstream result;
+        result << "succeeded=" << succeeded << "\nnative_code=" << code << '\n';
+        write(evidence / (std::string{label} + ".txt"), result.str());
+    };
     const fs::path artifacts = root / ".mqb";
     const auto missing = mqb::platform::windows::scan_storage(artifacts, mqb::observe_storage_cache);
     require(!missing.root_exists && missing.issues.empty() && !fs::exists(artifacts), "missing root is not created");
@@ -147,16 +153,51 @@ void windows_contracts(const fs::path& root) {
             mqb::observe_storage_cache(path, entry, value);
             if (entry.relative_path == fs::path{L"obj/shared.obj"}) {
                 attempted = true;
-                require(!::MoveFileExW(path.c_str(), (path.parent_path() / "moved.obj").c_str(), 0), "pinned file resists rename");
-                require(!::MoveFileExW(path.parent_path().c_str(), (artifacts / "moved-obj").c_str(), 0), "pinned ancestor resists rename");
-                const auto handle = ::CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-                if (handle != INVALID_HANDLE_VALUE) ::CloseHandle(handle);
-                require(handle == INVALID_HANDLE_VALUE, "pinned observation refuses writer");
+                const bool renamed = ::MoveFileExW(path.c_str(), (path.parent_path() / "moved.obj").c_str(), 0) != FALSE;
+                const DWORD rename_code = renamed ? ERROR_SUCCESS : ::GetLastError();
+                record("pinned-file-rename", renamed, rename_code);
+                require(!renamed && rename_code == ERROR_SHARING_VIOLATION, "pinned file resists rename by sharing policy");
+                const bool parent_renamed = ::MoveFileExW(path.parent_path().c_str(), (artifacts / "moved-obj").c_str(), 0) != FALSE;
+                const DWORD parent_code = parent_renamed ? ERROR_SUCCESS : ::GetLastError();
+                record("pinned-parent-rename", parent_renamed, parent_code);
+                require(!parent_renamed, "pinned ancestor resists rename");
+                // Include DELETE explicitly: attribute-only pins mistakenly
+                // allow these accesses even when their share mask omits them.
+                for (const DWORD access : {DWORD{GENERIC_WRITE}, DWORD{DELETE}}) {
+                    const auto handle = ::CreateFileW(path.c_str(), access,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        nullptr, OPEN_EXISTING, 0, nullptr);
+                    const DWORD code = handle == INVALID_HANDLE_VALUE ? ::GetLastError() : ERROR_SUCCESS;
+                    if (handle != INVALID_HANDLE_VALUE) ::CloseHandle(handle);
+                    record(access == DELETE ? "pinned-delete-access" : "pinned-write-access", handle != INVALID_HANDLE_VALUE, code);
+                    require(handle == INVALID_HANDLE_VALUE && code == ERROR_SHARING_VIOLATION,
+                        "pinned observation excludes write/delete access by sharing policy");
+                }
             }
         });
     require(attempted && inventory.issues.empty() && inventory.references.size() == 2, "native pinned cache observation");
     mqb::associate_storage_references(inventory, mqb::platform::windows::path_identity_key);
     require(before == snapshot(artifacts), "inventory does not change file bytes/mtime/names");
+    // Positive controls after the observer returns prove the fixture permits
+    // the operations and the walker released both file and ancestor handles.
+    const auto object = artifacts / "obj/shared.obj";
+    const auto writable = ::CreateFileW(object.c_str(), GENERIC_WRITE | DELETE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    const DWORD open_code = writable == INVALID_HANDLE_VALUE ? ::GetLastError() : ERROR_SUCCESS;
+    if (writable != INVALID_HANDLE_VALUE) ::CloseHandle(writable);
+    record("released-write-delete-access", writable != INVALID_HANDLE_VALUE, open_code);
+    require(writable != INVALID_HANDLE_VALUE, "released observation permits write/delete access");
+    const bool moved = ::MoveFileExW(object.c_str(), (artifacts / "obj/moved.obj").c_str(), 0) != FALSE;
+    const DWORD move_code = moved ? ERROR_SUCCESS : ::GetLastError();
+    record("released-file-rename", moved, move_code);
+    require(moved, "released file can be renamed");
+    require(::MoveFileExW((artifacts / "obj/moved.obj").c_str(), object.c_str(), 0), "restore file control");
+    const bool parent_moved = ::MoveFileExW((artifacts / "obj").c_str(), (artifacts / "moved-obj").c_str(), 0) != FALSE;
+    const DWORD parent_move_code = parent_moved ? ERROR_SUCCESS : ::GetLastError();
+    record("released-parent-rename", parent_moved, parent_move_code);
+    require(parent_moved, "released ancestor can be renamed");
+    require(::MoveFileExW((artifacts / "moved-obj").c_str(), (artifacts / "obj").c_str(), 0), "restore ancestor control");
+    require(before == snapshot(artifacts), "positive controls restore fixture bytes/mtime/names");
     const auto parsed = report(inventory);
     require(parsed.object.at("unique_file_allocated_bytes").kind == mqb::json::Kind::number, "native allocated size available");
     bool shared = false;
@@ -286,7 +327,7 @@ int main(int argc, char* argv[]) {
         require(argc == 2, "provide candidate MQB executable");
         const auto work = fs::current_path();
         require(!fs::exists(work / "storage-fixtures"), "fresh fixture directory required; do not overwrite evidence");
-        windows_contracts(work / "storage-fixtures" / "native");
+        windows_contracts(work / "storage-fixtures" / "native", work / "storage-evidence" / "pinning");
         cli_lifecycle(fs::absolute(argv[1]), work / "storage-fixtures" / fs::path{L"lifecycle space \u65e5"}, work / "storage-evidence");
         std::cout << "storage fixture and command evidence retained under " << text(work) << '\n';
 #else
