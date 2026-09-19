@@ -1,101 +1,236 @@
-name: Release Cumulative Evidence
+name: Cumulative Entry Validation
 
 on:
   pull_request:
     paths:
       - 'tests/native/compare_release_cumulative.py'
       - 'tests/native/compare_reporting.py'
+      - 'tests/native/test_release_entry.py'
       - '.github/workflows/release-cumulative-evidence.yml'
   workflow_dispatch:
     inputs:
-      candidate_ref:
-        description: Candidate ref resolved and recorded before building
+      mode:
+        description: Manual requests are preflight only; the registered PR synchronization owns the single measurement budget
+        type: choice
+        options: [preflight]
+        default: preflight
         required: true
-        default: '6f24bb4d2f5e323eb7b3823c3acf367dcccf9446'
+      candidate_ref:
+        description: Frozen complete candidate SHA; changing it requires a separately reviewed experiment
+        required: true
+        default: 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1'
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
 
 permissions:
   contents: read
 
+# Each run retains its own first evidence; neither active nor queued runs compete.
 concurrency:
-  group: release-cumulative-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: release-cumulative-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Current identity migration; no cumulative samples (${{ matrix.os }})
+    if: github.event_name == 'pull_request' || inputs.mode == 'preflight'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      MQB_EXPECTED_HARNESS: ${{ github.event.pull_request.head.sha || github.sha }}
+      MQB_CANDIDATE_REF: ${{ inputs.candidate_ref || 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1' }}
+    steps:
+      - name: Keep request and reject repeated attempts or wrong current candidate
+        shell: python {0}
+        run: |
+          import json, os, pathlib
+          root = pathlib.Path('cumulative-out')
+          root.mkdir()
+          request = {k: os.environ[k] for k in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
+                     'MQB_EXPECTED_HARNESS', 'MQB_CANDIDATE_REF')}
+          (root/'request.json').write_text(json.dumps(request, indent=2), encoding='utf-8')
+          if request['GITHUB_RUN_ATTEMPT'] != '1':
+              raise RuntimeError('Repeated attempts do not replace first evidence')
+          if request['MQB_CANDIDATE_REF'] != 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1':
+              raise RuntimeError('Unreviewed candidate override')
+      - name: Checkout exact harness with preserved parents
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MQB_EXPECTED_HARNESS }}
+          path: harness
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout immutable released source
+        uses: actions/checkout@v7
+        with:
+          ref: 08cdc20a9f9380e18132d21a619288224fd07fd4
+          path: baseline
+          persist-credentials: false
+      - name: Checkout current complete product candidate, not the harness
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MQB_CANDIDATE_REF }}
+          path: candidate
+          persist-credentials: false
+      - name: Preserve three actual source archives and inherited HOLDs
+        shell: python {0}
+        run: |
+          import os, pathlib, subprocess, sys
+          root = pathlib.Path('cumulative-out')
+          command = [sys.executable, 'harness/tests/native/compare_release_cumulative.py',
+                     '--preflight', '--workspace', '.', '--output', str(root/'provenance'),
+                     '--harness-sha', os.environ['MQB_EXPECTED_HARNESS']]
+          with (root/'preflight.stdout').open('wb') as out, (root/'preflight.stderr').open('wb') as err:
+              result = subprocess.run(command, stdout=out, stderr=err, check=False)
+          raise SystemExit(result.returncode)
+      - name: Entry and failure contracts without MQB execution
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          root = pathlib.Path('cumulative-out')
+          command = [sys.executable, '-m', 'unittest', 'discover', '-s', 'harness/tests/native',
+                     '-p', 'test_release_entry.py', '-v']
+          with (root/'tests.stdout').open('wb') as out, (root/'tests.stderr').open('wb') as err:
+              result = subprocess.run(command, stdout=out, stderr=err, check=False)
+          raise SystemExit(result.returncode)
+      - name: Retain preflight-only evidence, including first failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cumulative-entry-${{ runner.os }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: cumulative-out/
+          include-hidden-files: true
+          retention-days: 90
+          if-no-files-found: error
+
   compare:
-    # Historical v5.4 comparison is explicit-only, not a current PR gate.
-    if: github.event_name == 'workflow_dispatch'
-    name: Released v5.4.0 versus accepted candidate
+    # Exactly the registered transition; duplicate runs, reruns and later pushes have no allocation.
+    needs: preflight
+    if: >-
+      github.event_name == 'pull_request' && github.event.action == 'synchronize' &&
+      github.event.number == 188 && github.event.before == '3196245ad36e1af7965e7d521cc414186cdae940' &&
+      github.event.pull_request.base.sha == 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1' &&
+      github.event.pull_request.head.ref == 'codex/v5.6-cumulative-evidence-entry' &&
+      github.run_number == 5 && github.run_attempt == 1
+    name: Released v5.5.0 source versus frozen complete candidate
     runs-on: windows-latest
     timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
+      MQB_EXPECTED_HARNESS: ${{ github.event.pull_request.head.sha || github.sha }}
+      MQB_CANDIDATE_REF: ${{ inputs.candidate_ref || 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1' }}
     steps:
+      - name: Reject repeated attempts and unreviewed candidate overrides before building
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path cumulative-out -ErrorAction Stop | Out-Null
+          @{ run=$env:GITHUB_RUN_ID; attempt=$env:GITHUB_RUN_ATTEMPT;
+             expected_harness=$env:MQB_EXPECTED_HARNESS; candidate=$env:MQB_CANDIDATE_REF } |
+            ConvertTo-Json | Set-Content cumulative-out/request.json -Encoding utf8
+          if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw 'Repeated attempts do not replace first evidence.' }
+          if ($env:MQB_CANDIDATE_REF -ne 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1') {
+            throw 'Candidate differs from the frozen complete candidate in #164.'
+          }
       - name: Checkout exact evidence harness
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ env.MQB_EXPECTED_HARNESS }}
           path: harness
+          fetch-depth: 0
           persist-credentials: false
-      - name: Checkout immutable released v5.4.0 source
+      - name: Checkout immutable released v5.5.0 source
         uses: actions/checkout@v7
         with:
-          ref: d041668de836b9eb9a36e2d6b96ff2114c5c358a
+          ref: 08cdc20a9f9380e18132d21a619288224fd07fd4
           path: baseline
           persist-credentials: false
-      - name: Checkout accepted candidate, separate from harness
+      - name: Checkout frozen candidate, separate from harness
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.candidate_ref || '6f24bb4d2f5e323eb7b3823c3acf367dcccf9446' }}
+          ref: ${{ env.MQB_CANDIDATE_REF }}
           path: candidate
           persist-credentials: false
-      - name: Verify schema handling and build both exact Release trees
+      - name: Verify exact source identities and preserve all three trees before building
         shell: pwsh
         run: |
-          python harness/tests/native/compare_release_cumulative.py --self-test
+          python harness/tests/native/compare_release_cumulative.py --preflight --workspace . `
+            --harness-sha $env:MQB_EXPECTED_HARNESS --output cumulative-out/provenance
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $candidate = Join-Path $PWD 'candidate'
-          $seed = & (Join-Path $candidate 'tests/native/acquire_seed.ps1') -RepoRoot $candidate -OutputRoot (Join-Path $PWD 'cumulative-seed')
+      - name: Reject measurements without the separately reviewed cumulative budget
+        shell: pwsh
+        run: |
+          python -c "import sys; sys.path.insert(0, 'harness/tests/native'); import compare_release_cumulative as c; c.require_sampling_budget()"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($side in @('baseline', 'candidate')) {
-            $root = Join-Path $PWD $side
-            $version = (Get-Content (Join-Path $root 'VERSION') -Raw).Trim()
-            $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') -BuilderMqbPath $seed -RepoRoot $root -Version $version -Configuration Release -Clean -OutputPath (Join-Path $PWD "cumulative-out/$side/mqb.exe")
+      - name: Preserve the exact triggering request
+        shell: python {0}
+        run: |
+          import os, pathlib
+          pathlib.Path("cumulative-out/event.json").write_bytes(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
+      - name: Build both unmodified Release trees with the same pinned seed
+        shell: pwsh
+        run: |
+          Start-Transcript -Path cumulative-out/build-transcript.txt
+          try {
+            $candidate = Join-Path $PWD 'candidate'
+            $seed = & (Join-Path $candidate 'tests/native/acquire_seed.ps1') -RepoRoot $candidate -OutputRoot (Join-Path $PWD 'cumulative-seed')
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) { throw "Missing $side MQB" }
-          }
+            Get-FileHash -Algorithm SHA256 -LiteralPath $seed | Select-Object Path, Hash |
+              ConvertTo-Json | Set-Content cumulative-out/provenance/seed-hash.json -Encoding utf8
+            Copy-Item -LiteralPath $seed -Destination cumulative-out/provenance/seed.exe
+            foreach ($side in @('baseline', 'candidate')) {
+              $root = Join-Path $PWD $side
+              $version = (Get-Content (Join-Path $root 'VERSION') -Raw).Trim()
+              $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') -BuilderMqbPath $seed -RepoRoot $root -Version $version -Configuration Release -Clean -OutputPath (Join-Path $PWD "cumulative-out/$side/mqb.exe")
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) { throw "Missing $side MQB" }
+            }
+          } finally { Stop-Transcript }
+      - name: Preserve actual binary identities before measurement
+        shell: python {0}
+        run: |
+          import hashlib, json, pathlib
+          root = pathlib.Path('cumulative-out')
+          values = {s: hashlib.sha256((root/s/'mqb.exe').read_bytes()).hexdigest()
+                    for s in ('baseline', 'candidate')}
+          (root/'provenance/binary-before.json').write_text(json.dumps(dict(binary_sha256=values), indent=2), encoding='utf-8')
       - name: Fixed timings-OFF cumulative ABBA and separate correctness audits
         shell: pwsh
         run: |
-          $baseSha = git -C baseline rev-parse HEAD
+          $plan = Get-Content cumulative-out/provenance/source-plan.json -Raw | ConvertFrom-Json
+          python harness/tests/native/compare_release_cumulative.py --workspace . `
+            --baseline cumulative-out/baseline/mqb.exe --candidate cumulative-out/candidate/mqb.exe `
+            --base-sha $plan.sources.baseline.sha --head-sha $plan.sources.candidate.sha `
+            --base-tree $plan.sources.baseline.tree --head-tree $plan.sources.candidate.tree `
+            --harness-sha $env:MQB_EXPECTED_HARNESS --output cumulative-out/evidence
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $headSha = git -C candidate rev-parse HEAD
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $baseTree = git -C baseline rev-parse 'HEAD^{tree}'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $headTree = git -C candidate rev-parse 'HEAD^{tree}'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $harnessSha = git -C harness rev-parse HEAD
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python harness/tests/native/compare_release_cumulative.py --baseline cumulative-out/baseline/mqb.exe --candidate cumulative-out/candidate/mqb.exe --base-sha $baseSha --head-sha $headSha --base-tree $baseTree --head-tree $headTree --harness-sha $harnessSha --output cumulative-out/evidence
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Retain exact harness, source identity and all observations
+      - name: Retain exact binaries and partial failures without replacing preflight provenance
         if: always()
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force cumulative-out/provenance | Out-Null
-          git -C harness rev-parse HEAD | Set-Content cumulative-out/provenance/harness-sha.txt
-          git -C baseline rev-parse HEAD | Set-Content cumulative-out/provenance/baseline-sha.txt
-          git -C candidate rev-parse HEAD | Set-Content cumulative-out/provenance/candidate-sha.txt
-          Copy-Item harness/tests/native/compare_release_cumulative.py cumulative-out/provenance/
-          Copy-Item harness/tests/native/compare_reporting.py cumulative-out/provenance/
-          Get-FileHash cumulative-out/baseline/mqb.exe, cumulative-out/candidate/mqb.exe -Algorithm SHA256 -ErrorAction Continue | ConvertTo-Json | Set-Content cumulative-out/provenance/binary-hashes.json
+          New-Item -ItemType Directory -Force cumulative-out | Out-Null
+          $identities = @{}
+          foreach ($side in @('harness', 'baseline', 'candidate')) {
+            if (Test-Path "$side/.git") {
+              $identities[$side] = @{ sha=(git -C $side rev-parse HEAD); tree=(git -C $side rev-parse 'HEAD^{tree}') }
+            }
+          }
+          $identities | ConvertTo-Json -Depth 4 | Set-Content cumulative-out/final-source-identities.json -Encoding utf8
+          $binaries = @(Get-ChildItem cumulative-out -Recurse -Filter mqb.exe -File)
+          if ($binaries.Count -gt 0) {
+            $binaries | Get-FileHash -Algorithm SHA256 | Select-Object Path, Hash |
+              ConvertTo-Json | Set-Content cumulative-out/binary-hashes.json -Encoding utf8
+          }
       - name: Upload raw evidence, including failures and adverse samples
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: mqb-release-cumulative-evidence
-          path: |
-            cumulative-out/evidence/
-            cumulative-out/provenance/
+          name: mqb-release-cumulative-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: cumulative-out/
+          include-hidden-files: true
           retention-days: 90
           if-no-files-found: warn
