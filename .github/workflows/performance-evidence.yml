@@ -179,6 +179,15 @@ jobs:
           }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 
+      - name: One registered private129 product contrast, after independent ABBA
+        if: github.event_name == 'pull_request' && github.event.action == 'opened' && github.event.pull_request.head.ref == 'codex/private129-root-identity-20260918' && github.run_attempt == 1
+        shell: pwsh
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python candidate/tests/native/compare_private_root_identity.py --workspace $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify measured binary identities after comparison
         if: always()
         shell: python {0}
@@ -202,5 +211,6 @@ jobs:
             performance-out/baseline/mqb.exe
             performance-out/candidate/mqb.exe
             performance-out/provenance/
+            performance-out/private-root-identity/
           if-no-files-found: error
           retention-days: 30

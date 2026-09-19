@@ -90,7 +90,7 @@ cpp/
 - `cpp/mqb.json` 与 production source set 一致；
 - 新代码遵守 `cpp/README.md` 的职责边界；
 - 用户可见行为变化同步更新 README / 配置文档；
-- 自举或发布链变化同步更新 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
+- 自举或发布链变化时同步更新 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
 
 CI 的 stable release 约束比日常开发更严格，详见 [`SELF_HOSTING.md`](SELF_HOSTING.md)。
 
@@ -100,6 +100,8 @@ CI 的 stable release 约束比日常开发更严格，详见 [`SELF_HOSTING.md`
 
 Reporting journal correctness 在相关 PR 中运行两平台 Python 契约与历史记录的纯数据回放，不启动旧记录里的 MQB 命令。原生、自举、打包及独立 ABBA 仍是独立门槛。新 ABBA 产物同时保留当次实际 A/B 程序、种子、源码归档及前后哈希；不可拿新产物补称旧实验缺失的身份。
 
-Cumulative Entry Validation 分别固定 released v5.5.0 源码、当前冻结的完整候选及 harness 三个身份。相关 PR 只执行 Windows/Linux 预检：实际源码树与保留的父提交、源码归档及继承的发布 HOLD。`preflight-completed.json` 明确表示新增 MQB 调用为零、累计测量尚未完成。本次迁移的累计采样预算为零，手动请求 `measure` 会在构建前失败。原完整矩阵的 584 对／1,446 调用政策不变，但须另行审阅实验才能再次执行。预检成功或后来的新绿灯都不能清除旧不利证据、补造历史程序身份。
+Cumulative Entry Validation 分别固定 released v5.5.0 源码、完整候选 `cfb77425` 和独立 harness。Windows/Linux 预检保留三份源码、父提交关系和继承的 HOLD；`preflight-completed.json` 不表示性能通过。#164 comment5740142076 单独授权 #188 从 `3196245` 前进后的第5号工作流、attempt1，同步事件与实际 head/base 必须匹配，两平台预检成功后才执行一次完整 584 对／1,446 次调用。其他事件、重复运行及手动入口没有测量预算；失败保留，不补样本。产品候选与旧候选的源码和采集器有真实变化，但新绿灯不能清除旧风险或证明旧根因。
+
+计数／统计、timings-OFF 评分、正确性审计与首错规则不变。构建前归档，保留实际种子及 A/B 程序和前后身份；既有12次产物运行另存原始输出和退出码。MQB调用与产物运行都有前置数量上限。正常或异常收尾保留追加日志及兼容 JSON，不改变已接受的记录器。正式发布仍须逐项风险处置和独立 VERSION/release 验收。
 
 旧 v5.4.0 和原 v5.5.0 实验保留在各自不可变的源码与证据历史中，不改名为当前测量。Fixed Binary Warm/Cold 仍在分配运行器前检查冻结 base；无关身份不重启旧诊断或 ETW。原生、自举、实际包与安装器及每 PR 独立 ABBA 门槛不由预检代替。路线和逐项风险处置继续以 issue #164 为准，不另建平行发布路线。

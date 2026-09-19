@@ -33,28 +33,33 @@ import compare_reporting as h
 
 RELEASE = '08cdc20a9f9380e18132d21a619288224fd07fd4'
 RELEASE_TREE = 'f6ecbed37e6c6caf135d18ec734955a266f491d3'
-CANDIDATE = '43cadecfb1ac26d88829c319f0adff95fff9b59a'
-CANDIDATE_TREE = 'c71c7223f6aa78825a430a220a38606b0d70f062'
+CANDIDATE = 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1'
+CANDIDATE_TREE = 'b29fdf922d14942744a2d1f432661c945aff2230'
 # Changing a measured tree is a new reviewed experiment, not a retry override.
 PINNED = {'baseline': (RELEASE, RELEASE_TREE), 'candidate': (CANDIDATE, CANDIDATE_TREE)}
-PROTOCOL = 'pr188-current-entry-20260918'
-PREREGISTRATION = 5725143214
-# Source migration only. No new cumulative timing budget was granted.
-CUMULATIVE_PAIR_BUDGET = 0
+PROTOCOL = 'pr188-complete-candidate-20260919'
+PREREGISTRATION = 5740142076
+# One new complete-candidate allocation, not a retry of the historical data.
+CUMULATIVE_PAIR_BUDGET = 584
+MAX_INVOCATIONS = 1446
+MAX_PROGRAM_CHECKS = 12
+PREVIOUS_HARNESS = '3196245ad36e1af7965e7d521cc414186cdae940'
+BRANCH = 'codex/v5.6-cumulative-evidence-entry'
+EXPECTED_RUN_NUMBER = '5'
 LEGACY_CANDIDATE = '1c565ca9f364b0bcb380565c4684ea543b449e04'
 LEGACY_HARNESS = '8e9c2882014c84feb8021bcba5151d383b1d39db'
-PRODUCT_CPP_TREE = 'fbe5667b2e2cdc5cba3a80f7c7486f3ce7935e74'
+PRODUCT_CPP_TREE = '0dd3b2100ac896de915ebf0c142e0221583d663a'
 LEGACY_RISKS = (
     {'id': 'private129', 'status': 'HOLD', 'run': 34756138330,
      'artifact': 10317617795, 'paired_median_ms': 3.4128,
-     'reason': 'Original cumulative flag; no product change in this migration.'},
+     'reason': 'Original cumulative flag; new product and recorder changes do not prove its historical cause.'},
     {'id': 'pr188-abba630', 'status': 'HOLD', 'run': 34756138336,
      'artifact': 10317871192, 'paired_median_ms': 1.5423,
      'reason': 'Original conjunctive gate failed; actual measured binaries were not retained.'},
     {'id': 'pr192-abba641', 'status': 'HOLD',
      'reason': 'Original gate failure and missing actual measured binary identities remain.'},
     {'id': 'msvc-c1041', 'status': 'HOLD',
-     'reason': 'PR172/176 ownership and C1041 evidence require separate disposition.'},
+     'reason': 'Unresolved M1b compiler-PDB research dependency under merged PR195; no cancellation/lease claim.'},
     {'id': 'cold-tails', 'status': 'HOLD',
      'reason': 'Historical common129 +5.354s/+6.480s and later cold tails remain unexplained.'},
     {'id': 'earlier-abba-flags', 'status': 'HOLD',
@@ -70,10 +75,81 @@ def release_disposition(scenarios=None):
             'decision': 'HOLD'}
 
 
-def require_sampling_budget():
-    h.require(CUMULATIVE_PAIR_BUDGET == 584,
-              'This identity migration has zero cumulative sampling budget; '
-              'a separately reviewed risk-disposition experiment is required')
+def permitted_sampling(event, env):
+    pr = event.get('pull_request', {})
+    head = pr.get('head', {})
+    return (env.get('GITHUB_EVENT_NAME') == 'pull_request'
+            and env.get('GITHUB_REPOSITORY') == 'Iviesever/msvc-quick-build'
+            and env.get('GITHUB_RUN_ATTEMPT') == '1'
+            and env.get('GITHUB_RUN_NUMBER') == EXPECTED_RUN_NUMBER
+            and event.get('action') == 'synchronize' and event.get('number') == 188
+            and event.get('before') == PREVIOUS_HARNESS
+            and pr.get('base', {}).get('sha') == CANDIDATE
+            and head.get('ref') == BRANCH
+            and head.get('repo', {}).get('full_name') == 'Iviesever/msvc-quick-build'
+            and re.fullmatch(r'[0-9a-f]{40}', head.get('sha', '')) is not None
+            and head.get('sha') not in (CANDIDATE, PREVIOUS_HARNESS, LEGACY_HARNESS)
+            and event.get('after') == head.get('sha')
+            and env.get('MQB_EXPECTED_HARNESS') == head.get('sha'))
+
+
+def require_sampling_budget(event=None, env=None):
+    env = os.environ if env is None else env
+    if event is None:
+        path = env.get('GITHUB_EVENT_PATH')
+        h.require(bool(path), 'No reviewed cumulative sampling event')
+        event = json.loads(Path(path).read_text(encoding='utf-8'))
+    h.require(CUMULATIVE_PAIR_BUDGET == 584 and permitted_sampling(event, env),
+              'No reviewed cumulative sampling budget for this event/run/attempt')
+
+
+def consume_call(result):
+    # Consume before process creation; a failed launch does not create a refill.
+    count = result.get('attempted_invocations', 0)
+    h.require(count < MAX_INVOCATIONS, 'Cumulative invocation budget exhausted')
+    result['attempted_invocations'] = count + 1
+    result['not_run'] = MAX_INVOCATIONS - count - 1
+
+
+def retain_program_check(output, case, side, result):
+    checks = result.setdefault('program_checks', [])
+    h.require(len(checks) < MAX_PROGRAM_CHECKS, 'Program-check budget exhausted')
+    root = output / 'program-checks'
+    root.mkdir(exist_ok=True)
+    stem = f'{len(checks):02d}-{side}-{case.name}'
+    row = dict(index=len(checks), side=side, fixture=case.name,
+               argv=[str(case.output)], cwd=str(case.root), exit_code=None,
+               stdout_file=f'program-checks/{stem}.stdout',
+               stderr_file=f'program-checks/{stem}.stderr')
+    checks.append(row)
+    out, err = b'', b''
+    try:
+        completed = subprocess.run(row['argv'], cwd=case.root, capture_output=True,
+                                   timeout=30, check=False)
+        out, err = completed.stdout, completed.stderr
+        row['exit_code'] = completed.returncode
+        h.require(completed.returncode == 0, f'{case.name}: built program returned failure')
+    except subprocess.TimeoutExpired as error:
+        out, err = error.stdout or b'', error.stderr or b''
+        row['timeout'] = True
+        raise
+    finally:
+        # Preserve both available streams even if one evidence write fails.
+        active = sys.exception()
+        failures = []
+        for field, data in (('stdout_file', out), ('stderr_file', err)):
+            try:
+                (output / row[field]).write_bytes(data)
+                row[field + '_sha256'] = h.digest(data)
+            except OSError as error:
+                failures.append(error)
+        if failures:
+            row['evidence_errors'] = [str(e) for e in failures]
+            if active is not None:
+                for error in failures:
+                    active.add_note(f'Program evidence write failed: {error}')
+            else:
+                raise failures[0]
 
 
 WARM_PAIRS = 40
@@ -122,13 +198,16 @@ def source_provenance(workspace: Path, harness_sha: str):
                          'cpp_tree': git(root, 'rev-parse', 'HEAD:cpp')}
     validate_sources(sources, harness_sha)
     for side in ('candidate', 'harness'):
-        h.require(sources[side]['cpp_tree'] == PRODUCT_CPP_TREE, f'{side}: product changed during entry migration')
+        h.require(sources[side]['cpp_tree'] == PRODUCT_CPP_TREE, f'{side}: product changed outside frozen complete candidate')
+    h.require(git(workspace / 'harness', 'show', '-s', '--format=%P', 'HEAD').split()
+              == [PREVIOUS_HARNESS, CANDIDATE], 'Unexpected exact harness parents')
     for parent in (CANDIDATE, LEGACY_HARNESS):
         subprocess.run(['git', '-C', str(workspace / 'harness'), 'merge-base', '--is-ancestor',
                         parent, harness_sha], check=True)
     return {'protocol': PROTOCOL, 'preregistration': PREREGISTRATION,
             'new_cumulative_pair_budget': CUMULATIVE_PAIR_BUDGET,
-            'source_equivalence': {'legacy_candidate': LEGACY_CANDIDATE,
+            'source_lineage': {'legacy_candidate': LEGACY_CANDIDATE,
+                                   'previous_harness': PREVIOUS_HARNESS,
                                    'current_candidate': CANDIDATE, 'cpp_tree': PRODUCT_CPP_TREE,
                                    'binary_or_timing_equivalence_proven': False},
             **release_disposition(), 'sources': sources, 'run_id': os.environ.get('GITHUB_RUN_ID'),
@@ -357,6 +436,9 @@ def main():
               and plan['run_attempt'] == provenance['run_attempt'], 'Source/run identity changed since preflight')
     binaries = {'baseline': args.baseline.resolve(), 'candidate': args.candidate.resolve()}
     h.require(all(p.is_file() for p in binaries.values()), 'Missing binary')
+    before = json.loads((args.output.resolve().parent / 'provenance/binary-before.json').read_text(encoding='utf-8'))
+    h.require(before['binary_sha256'] == {s: h.digest(p.read_bytes()) for s, p in binaries.items()},
+              'Built input differs from pre-measurement identity')
     output = args.output.resolve()
     h.require(not output.exists(), 'Refusing to overwrite existing evidence')
     with h.Recorder(output) as recorder:
@@ -371,10 +453,12 @@ def main():
                   'cold_pairs': COLD_PAIRS, 'bootstrap': '5000 paired-median resamples, seed 5500, percentile interval',
                   'flag': 'paired median > max(0.5ms warm / 5ms rebuild, 3% base median) AND interval lower bound > 0',
                   'scope': 'Rebuilt release source, not the historical packaged executable. Pipes, not a terminal.'},
-                  'scenarios': [], 'audits': [], 'behavior_contracts': []}
+                  'scenarios': [], 'audits': [], 'behavior_contracts': [],
+                  'attempted_invocations': 0, 'not_run': MAX_INVOCATIONS, 'program_checks': []}
         def save():
             dump(output / 'cumulative.json', result)
         def run(side, case, label, **kwargs):
+            consume_call(result)
             return recorder.run(binaries[side], case, label + '-' + side, **kwargs)
         def audit(side, case, label, **kwargs):
             row = run(side, case, label, timings=True, **kwargs)
@@ -483,13 +567,15 @@ def main():
                 run(side, case, 'compiler-recovery')
                 audit(side, case, 'compiler-recovered')
                 for key in ('small', 'common', 'private', 'modules', 'pch', 'discovery'):
-                    check = subprocess.run([str(cases[key].output)], cwd=cases[key].root,
-                                           capture_output=True, timeout=30, check=False)
-                    h.require(check.returncode == 0, f'{key}: built program returned failure')
+                    retain_program_check(output, cases[key], side, result)
                 result['behavior_contracts'].append({'side': side, 'compiler_failure_exit': 4,
                                                     'recovery_and_program_runs': True})
             save()
-        h.require(len(recorder.calls) == 1446, 'Missing or extra original invocation records')
+        h.require(len(recorder.calls) == result['attempted_invocations'] == MAX_INVOCATIONS,
+                  'Missing or extra original invocation records')
+        h.require(len(result['program_checks']) == MAX_PROGRAM_CHECKS, 'Missing program controls')
+        h.require(result['binary_sha256'] == {s: h.digest(p.read_bytes()) for s, p in binaries.items()},
+                  'Measured binary changed during comparison')
         recorder.finalize()
         result.update(status='completed', recorded_invocations=len(recorder.calls),
                       performance_flags=[s['name'] for s in result['scenarios']

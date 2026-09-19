@@ -1,4 +1,4 @@
-"""Current cumulative entry migration: no MQB/MSVC executions or timing samples."""
+"""Frozen complete-candidate cumulative entry: no MQB/MSVC executions or timing samples."""
 from __future__ import annotations
 
 import copy
@@ -39,7 +39,7 @@ class EntryTests(unittest.TestCase):
 
     def test_current_and_historical_identities_are_separate(self):
         self.assertEqual(c.RELEASE, '08cdc20a9f9380e18132d21a619288224fd07fd4')
-        self.assertEqual(c.CANDIDATE, '43cadecfb1ac26d88829c319f0adff95fff9b59a')
+        self.assertEqual(c.CANDIDATE, 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1')
         self.assertNotEqual(c.CANDIDATE, c.LEGACY_CANDIDATE)
         self.assertNotEqual(c.CANDIDATE, c.LEGACY_HARNESS)
         c.validate_sources(self.valid, 'a' * 40)
@@ -74,12 +74,90 @@ class EntryTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(RuntimeError):
                 c.first_attempt(value)
 
-    def test_measurement_requires_new_reviewed_budget(self):
-        self.assertEqual(c.CUMULATIVE_PAIR_BUDGET, 0)
-        with self.assertRaisesRegex(RuntimeError, 'zero cumulative sampling budget'):
-            c.require_sampling_budget()
+    def allocated_request(self):
+        env = dict(GITHUB_EVENT_NAME='pull_request', GITHUB_REPOSITORY='Iviesever/msvc-quick-build',
+                   GITHUB_RUN_ATTEMPT='1', GITHUB_RUN_NUMBER='5', MQB_EXPECTED_HARNESS='a' * 40)
+        event = dict(action='synchronize', number=188, before=c.PREVIOUS_HARNESS, after='a' * 40,
+                     pull_request=dict(base=dict(sha=c.CANDIDATE),
+                     head=dict(ref=c.BRANCH, sha='a' * 40, repo=dict(full_name='Iviesever/msvc-quick-build'))))
+        return event, env
+
+    def test_measurement_requires_exact_new_reviewed_budget(self):
+        self.assertEqual(c.CUMULATIVE_PAIR_BUDGET, 584)
+        event, env = self.allocated_request()
+        c.require_sampling_budget(event, env)
+        with self.assertRaisesRegex(RuntimeError, 'No reviewed'):
+            c.require_sampling_budget({}, env)
         self.assertEqual((c.WARM_PAIRS, c.REBUILD_PAIRS, c.COLD_PAIRS), (40, 20, 6))
         self.assertEqual(12 * c.WARM_PAIRS + 4 * c.REBUILD_PAIRS + 4 * c.COLD_PAIRS, 584)
+
+    def test_other_event_attempt_or_run_never_reuses_budget(self):
+        event, env = self.allocated_request()
+        for key in env:
+            for value in ('', '0', '2', '6', '01', 'workflow_dispatch'):
+                with self.subTest(key=key, value=value), self.assertRaises(RuntimeError):
+                    c.require_sampling_budget(event, {**env, key: value})
+        for key, value in [('action', 'opened'), ('action', 'reopened'), ('action', 'edited'),
+                           ('number', 194), ('before', c.CANDIDATE), ('after', 'b' * 40)]:
+            with self.subTest(key=key, value=value), self.assertRaises(RuntimeError):
+                c.require_sampling_budget({**event, key: value}, env)
+        for field, value in [('ref', 'other'), ('sha', 'bad'), ('sha', c.CANDIDATE),
+                             ('repo', {'full_name': 'another/repo'})]:
+            changed = copy.deepcopy(event)
+            changed['pull_request']['head'][field] = value
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                c.require_sampling_budget(changed, env)
+        changed = copy.deepcopy(event)
+        changed['pull_request']['base']['sha'] = c.PREVIOUS_HARNESS
+        with self.assertRaises(RuntimeError):
+            c.require_sampling_budget(changed, env)
+
+    def test_real_event_file_is_required_outside_explicit_models(self):
+        event, env = self.allocated_request()
+        with self.assertRaises(RuntimeError):
+            c.require_sampling_budget(env=env)
+        path = self.root / 'event.json'
+        path.write_text(json.dumps(event), encoding='utf-8')
+        c.require_sampling_budget(env={**env, 'GITHUB_EVENT_PATH': str(path)})
+
+    def test_call_budget_consumed_before_dispatch_and_never_refilled(self):
+        result = {}
+        for count in range(c.MAX_INVOCATIONS):
+            c.consume_call(result)
+            self.assertEqual(result['attempted_invocations'], count + 1)
+        self.assertEqual(result['not_run'], 0)
+        with self.assertRaisesRegex(RuntimeError, 'budget exhausted'):
+            c.consume_call(result)
+        self.assertEqual(result['attempted_invocations'], 1446)
+
+    def test_program_controls_preserve_both_streams_and_nonzero(self):
+        case = h.Fixture('small', self.root, [], 2)
+        result = {}
+        with patch.object(c.subprocess, 'run', return_value=subprocess.CompletedProcess([], 7, b'out', b'err')):
+            with self.assertRaisesRegex(RuntimeError, 'program returned failure'):
+                c.retain_program_check(self.root, case, 'baseline', result)
+        row = result['program_checks'][0]
+        self.assertEqual(row['exit_code'], 7)
+        self.assertEqual((self.root / row['stdout_file']).read_bytes(), b'out')
+        self.assertEqual((self.root / row['stderr_file']).read_bytes(), b'err')
+
+    def test_program_timeout_preserves_available_diagnostics(self):
+        case = h.Fixture('small', self.root, [], 2)
+        result = {}
+        with patch.object(c.subprocess, 'run', side_effect=subprocess.TimeoutExpired('program', 30, b'partial', b'error')):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                c.retain_program_check(self.root, case, 'baseline', result)
+        row = result['program_checks'][0]
+        self.assertTrue(row['timeout'])
+        self.assertIsNone(row['exit_code'])
+        self.assertEqual((self.root / row['stdout_file']).read_bytes(), b'partial')
+
+    def test_no_thirteenth_program_execution(self):
+        case = h.Fixture('small', self.root, [], 2)
+        with patch.object(c.subprocess, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'budget exhausted'):
+                c.retain_program_check(self.root, case, 'baseline', {'program_checks': [{}] * 12})
+            run.assert_not_called()
 
     def test_preflight_has_no_current_performance_result(self):
         state = c.release_disposition()
@@ -122,7 +200,8 @@ class EntryTests(unittest.TestCase):
             return {('rev-parse', 'HEAD'): source['sha'],
                     ('rev-parse', 'HEAD^{tree}'): source['tree'],
                     ('rev-parse', 'HEAD:cpp'): source['cpp_tree'],
-                    ('status', '--porcelain', '--untracked-files=all'): source['dirty']}[arguments]
+                    ('status', '--porcelain', '--untracked-files=all'): source['dirty'],
+                    ('show', '-s', '--format=%P', 'HEAD'): c.PREVIOUS_HARNESS + ' ' + c.CANDIDATE}[arguments]
         with patch.object(c, '__file__', str(script)), patch.object(c, 'git', side_effect=read_git), \
              patch.object(c.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'git')
                           if ancestry_error else None) as run, \
@@ -135,9 +214,9 @@ class EntryTests(unittest.TestCase):
 
     def test_provenance_keeps_holds_and_source_only_equivalence(self):
         value = self.observed_sources()
-        self.assertEqual(value['new_cumulative_pair_budget'], 0)
-        self.assertEqual(value['source_equivalence']['legacy_candidate'], c.LEGACY_CANDIDATE)
-        self.assertFalse(value['source_equivalence']['binary_or_timing_equivalence_proven'])
+        self.assertEqual(value['new_cumulative_pair_budget'], 584)
+        self.assertEqual(value['source_lineage']['legacy_candidate'], c.LEGACY_CANDIDATE)
+        self.assertFalse(value['source_lineage']['binary_or_timing_equivalence_proven'])
         self.assertFalse(value['release_authorized'])
 
     def test_missing_preserved_parent_fails_closed(self):

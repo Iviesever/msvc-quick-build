@@ -10,15 +10,15 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Preflight only; measurement is blocked until a new reviewed budget
+        description: Manual requests are preflight only; the registered PR synchronization owns the single measurement budget
         type: choice
-        options: [preflight, measure]
+        options: [preflight]
         default: preflight
         required: true
       candidate_ref:
         description: Frozen complete candidate SHA; changing it requires a separately reviewed experiment
         required: true
-        default: '43cadecfb1ac26d88829c319f0adff95fff9b59a'
+        default: 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1'
 
 env:
   PYTHONDONTWRITEBYTECODE: '1'
@@ -43,7 +43,7 @@ jobs:
     timeout-minutes: 10
     env:
       MQB_EXPECTED_HARNESS: ${{ github.event.pull_request.head.sha || github.sha }}
-      MQB_CANDIDATE_REF: ${{ inputs.candidate_ref || '43cadecfb1ac26d88829c319f0adff95fff9b59a' }}
+      MQB_CANDIDATE_REF: ${{ inputs.candidate_ref || 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1' }}
     steps:
       - name: Keep request and reject repeated attempts or wrong current candidate
         shell: python {0}
@@ -56,7 +56,7 @@ jobs:
           (root/'request.json').write_text(json.dumps(request, indent=2), encoding='utf-8')
           if request['GITHUB_RUN_ATTEMPT'] != '1':
               raise RuntimeError('Repeated attempts do not replace first evidence')
-          if request['MQB_CANDIDATE_REF'] != '43cadecfb1ac26d88829c319f0adff95fff9b59a':
+          if request['MQB_CANDIDATE_REF'] != 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1':
               raise RuntimeError('Unreviewed candidate override')
       - name: Checkout exact harness with preserved parents
         uses: actions/checkout@v7
@@ -109,15 +109,21 @@ jobs:
           if-no-files-found: error
 
   compare:
-    # Explicit requests reach the budget guard and fail, rather than silently collecting.
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'measure'
+    # Exactly the registered transition; duplicate runs, reruns and later pushes have no allocation.
+    needs: preflight
+    if: >-
+      github.event_name == 'pull_request' && github.event.action == 'synchronize' &&
+      github.event.number == 188 && github.event.before == '3196245ad36e1af7965e7d521cc414186cdae940' &&
+      github.event.pull_request.base.sha == 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1' &&
+      github.event.pull_request.head.ref == 'codex/v5.6-cumulative-evidence-entry' &&
+      github.run_number == 5 && github.run_attempt == 1
     name: Released v5.5.0 source versus frozen complete candidate
     runs-on: windows-latest
     timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
       MQB_EXPECTED_HARNESS: ${{ github.event.pull_request.head.sha || github.sha }}
-      MQB_CANDIDATE_REF: ${{ inputs.candidate_ref || '43cadecfb1ac26d88829c319f0adff95fff9b59a' }}
+      MQB_CANDIDATE_REF: ${{ inputs.candidate_ref || 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1' }}
     steps:
       - name: Reject repeated attempts and unreviewed candidate overrides before building
         shell: pwsh
@@ -127,7 +133,7 @@ jobs:
              expected_harness=$env:MQB_EXPECTED_HARNESS; candidate=$env:MQB_CANDIDATE_REF } |
             ConvertTo-Json | Set-Content cumulative-out/request.json -Encoding utf8
           if ($env:GITHUB_RUN_ATTEMPT -ne '1') { throw 'Repeated attempts do not replace first evidence.' }
-          if ($env:MQB_CANDIDATE_REF -ne '43cadecfb1ac26d88829c319f0adff95fff9b59a') {
+          if ($env:MQB_CANDIDATE_REF -ne 'cfb774258c9f3256defac38e1bbf8713ab2a1fc1') {
             throw 'Candidate differs from the frozen complete candidate in #164.'
           }
       - name: Checkout exact evidence harness
@@ -160,6 +166,11 @@ jobs:
         run: |
           python -c "import sys; sys.path.insert(0, 'harness/tests/native'); import compare_release_cumulative as c; c.require_sampling_budget()"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve the exact triggering request
+        shell: python {0}
+        run: |
+          import os, pathlib
+          pathlib.Path("cumulative-out/event.json").write_bytes(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
       - name: Build both unmodified Release trees with the same pinned seed
         shell: pwsh
         run: |
@@ -170,6 +181,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Get-FileHash -Algorithm SHA256 -LiteralPath $seed | Select-Object Path, Hash |
               ConvertTo-Json | Set-Content cumulative-out/provenance/seed-hash.json -Encoding utf8
+            Copy-Item -LiteralPath $seed -Destination cumulative-out/provenance/seed.exe
             foreach ($side in @('baseline', 'candidate')) {
               $root = Join-Path $PWD $side
               $version = (Get-Content (Join-Path $root 'VERSION') -Raw).Trim()
@@ -178,6 +190,14 @@ jobs:
               if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) { throw "Missing $side MQB" }
             }
           } finally { Stop-Transcript }
+      - name: Preserve actual binary identities before measurement
+        shell: python {0}
+        run: |
+          import hashlib, json, pathlib
+          root = pathlib.Path('cumulative-out')
+          values = {s: hashlib.sha256((root/s/'mqb.exe').read_bytes()).hexdigest()
+                    for s in ('baseline', 'candidate')}
+          (root/'provenance/binary-before.json').write_text(json.dumps(dict(binary_sha256=values), indent=2), encoding='utf-8')
       - name: Fixed timings-OFF cumulative ABBA and separate correctness audits
         shell: pwsh
         run: |

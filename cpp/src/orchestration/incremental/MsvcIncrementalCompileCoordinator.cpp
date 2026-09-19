@@ -78,7 +78,12 @@ void add_reason_once(
     const std::span<const std::filesystem::path> right) {
     if (left.size() != right.size()) return false;
     for (std::size_t index = 0; index < left.size(); ++index) {
-        if (!same_path(left[index], right[index])) return false;
+        // Persisted roots and current roots normally have identical native
+        // spelling. That already proves identity; do not normalize/encode both
+        // again for every TU. Non-identical spellings retain the full Windows
+        // identity fallback (case, separators and trailing components).
+        if (left[index].native() != right[index].native()
+            && !same_path(left[index], right[index])) return false;
     }
     return true;
 }
