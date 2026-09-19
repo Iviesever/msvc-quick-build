@@ -119,7 +119,7 @@ Assert-DirectDirectories -Root $appRoot -Allowed @('cli', 'diagnostics', 'projec
 Assert-ExactFiles -Root $appRoot -Expected @('Application.cpp', 'Application.hpp', 'main.cpp')
 $appLeafFiles = [ordered]@{
     'cli' = @('Cli.cpp', 'Cli.hpp', 'Invocation.cpp', 'Invocation.hpp')
-    'diagnostics' = @('Diagnostics.cpp', 'Diagnostics.hpp', 'PerformanceTimings.cpp', 'PerformanceTimings.hpp', 'ReportBuffer.hpp')
+    'diagnostics' = @('StorageReport.cpp', 'StorageReport.hpp', 'Diagnostics.cpp', 'Diagnostics.hpp', 'PerformanceTimings.cpp', 'PerformanceTimings.hpp', 'ReportBuffer.hpp')
     'project' = @('ProjectSetup.cpp', 'ProjectSetup.hpp')
     'targets' = @(
         'BuildIntrospectionSetup.cpp', 'BuildIntrospectionSetup.hpp',
@@ -129,7 +129,7 @@ $appLeafFiles = [ordered]@{
         'ModulePlanCommand.cpp', 'ModulePlanCommand.hpp',
         'PlanCommand.cpp', 'PlanCommand.hpp',
         'PlanOutput.cpp', 'PlanOutput.hpp', 'PlanSupport.hpp',
-        'StaticCliTarget.cpp', 'StaticCliTarget.hpp'
+        'StaticCliTarget.cpp', 'StaticCliTarget.hpp', 'StorageCommand.cpp', 'StorageCommand.hpp'
     )
 }
 foreach ($leaf in $appLeafFiles.Keys) {
@@ -185,7 +185,7 @@ $coreLeafFiles = [ordered]@{
     'cache' = @(
         'ArchiveCache.cpp', 'ArchiveCacheFile.cpp',
         'CompileCache.cpp', 'CompileCacheFile.cpp',
-        'LinkCache.cpp', 'LinkCacheFile.cpp'
+        'LinkCache.cpp', 'LinkCacheFile.cpp', 'StorageInventory.cpp'
     )
     'model' = @('BuildSignature.cpp', 'BuildTypes.cpp', 'TranslationUnitClassifier.cpp')
     'planning' = @('BuildPlanner.cpp', 'DependencyGraph.cpp', 'ProjectArtifactLayout.cpp')

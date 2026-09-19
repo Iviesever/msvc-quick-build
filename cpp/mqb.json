@@ -27,6 +27,10 @@
     ],
     "extra_sources": [
       "src/app/Application.cpp",
+      "src/app/targets/StorageCommand.cpp",
+      "src/app/diagnostics/StorageReport.cpp",
+      "src/core/cache/StorageInventory.cpp",
+      "src/platform/windows/StorageInventory.cpp",
       "src/app/cli/Cli.cpp",
       "src/app/diagnostics/Diagnostics.cpp",
       "src/app/diagnostics/PerformanceTimings.cpp",
