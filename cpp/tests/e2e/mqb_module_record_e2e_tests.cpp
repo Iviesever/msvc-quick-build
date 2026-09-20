@@ -29,6 +29,57 @@ using namespace mqb::orchestration;
 void require(bool value, std::string_view message) {
     if (!value) throw std::runtime_error(std::string{message});
 }
+std::string text(const fs::path& path) {
+    const auto b=path.generic_u8string();
+    return {reinterpret_cast<const char*>(b.data()),b.size()};
+}
+fs::path path_from_utf8(std::string_view value) {
+    return fs::path{std::u8string{reinterpret_cast<const char8_t*>(value.data()),value.size()}};
+}
+// Only the mock's known single-input recipes are recognized here. The fixture
+// puts its header in cwd; this is not an implementation of MSVC include search.
+fs::path mock_compile_source(const process::ProcessSpec& spec) {
+    require(!spec.arguments.empty(),"mock compile arguments must not be empty");
+    const bool exports_header=std::find(spec.arguments.begin(),spec.arguments.end(),
+        "/exportHeader")!=spec.arguments.end();
+    if (!exports_header) return path_from_utf8(spec.arguments.back());
+    const auto header=std::find_if(spec.arguments.begin(),spec.arguments.end(),
+        [](const std::string& value) { return value=="/headerName:quote" || value=="/headerName:angle"; });
+    require(header!=spec.arguments.end() && std::next(header)!=spec.arguments.end(),
+        "mock header recipe requires a headerName operand");
+    const auto source=path_from_utf8(*std::next(header));
+    require(!source.empty() && source.is_relative() && source==fs::path{"extra.hpp"},
+        "mock header input must be the declared local extra.hpp fixture");
+    require(spec.working_directory && !spec.working_directory->empty(),
+        "mock relative header input requires the fixture working directory");
+    return (*spec.working_directory/source).lexically_normal();
+}
+void mock_input_contracts() {
+    const auto root=fs::absolute("mock input space");
+    process::ProcessSpec spec;
+    spec.working_directory=root;
+    spec.arguments={"/interface","/sourceDependencies",text(root/"A.json"),text(root/"A.ixx")};
+    require(mock_compile_source(spec)==root/"A.ixx","ordinary module input remains the source operand");
+    // Mirror the original failing argv: the dependency output is last, while
+    // the relative header operand precedes both output switches.
+    for (const auto* lookup:{"/headerName:quote","/headerName:angle"}) {
+        spec.arguments={"/exportHeader",lookup,"extra.hpp","/ifcOutput",text(root/"extra.ifc"),
+            "/sourceDependencies",text(root/"extra.json")};
+        require(mock_compile_source(spec)==root/"extra.hpp" &&
+            mock_compile_source(spec)!=path_from_utf8(spec.arguments.back()),
+            "header input is not the trailing dependency report path");
+    }
+    auto rejects=[&](const process::ProcessSpec& invalid) {
+        bool refused=false;
+        try { (void)mock_compile_source(invalid); } catch (const std::runtime_error&) { refused=true; }
+        require(refused,"malformed mock source identity must not be guessed");
+    };
+    auto no_cwd=spec; no_cwd.working_directory.reset(); rejects(no_cwd);
+    spec.arguments={"/exportHeader","/headerName:quote"}; rejects(spec);
+    spec.arguments={"/exportHeader","/sourceDependencies","extra.json"}; rejects(spec);
+    spec.arguments={"/exportHeader","/headerName:quote","other.hpp"}; rejects(spec);
+    spec.arguments.clear(); rejects(spec);
+}
 void model_contracts() {
     static_assert(!ModuleCompileArtifactRecord::exact_cache_entry_captured);
     static_assert(!ModuleCompileArtifactRecord::physical_identity_verified);
@@ -56,13 +107,6 @@ void model_contracts() {
         first.caller_label->generation=="old", "module wave record owns its values");
 }
 #ifdef _WIN32
-std::string text(const fs::path& path) {
-    const auto b=path.generic_u8string();
-    return {reinterpret_cast<const char*>(b.data()),b.size()};
-}
-fs::path path_from_utf8(std::string_view value) {
-    return fs::path{std::u8string{reinterpret_cast<const char8_t*>(value.data()),value.size()}};
-}
 void write(const fs::path& path, std::string_view value) {
     fs::create_directories(path.parent_path());
     std::ofstream out{path,std::ios::binary};
@@ -240,7 +284,8 @@ void deterministic_cases(const fs::path& root,const fs::path& evidence) {
             const auto n=++calls; require(n<=16,"mock process budget");
             const auto prefix=evidence/(std::to_string(n)+"-"+phase); log_process(prefix,spec);
             fs::path object,ifc,deps;
-            const auto source=path_from_utf8(spec.arguments.back());
+            const auto source=mock_compile_source(spec);
+            write(prefix.string()+".source.txt",text(source));
             for (std::size_t i=0;i<spec.arguments.size();++i) {
                 const auto& a=spec.arguments[i];
                 if (a.starts_with("/Fo")) object=path_from_utf8(a.substr(3));
@@ -253,6 +298,7 @@ void deterministic_cases(const fs::path& root,const fs::path& evidence) {
                 if (!object.empty()) write(object,"mock object "+text(source));
                 if (!ifc.empty() && source!=omit_ifc_source) write(ifc,"mock IFC "+text(source));
                 write(deps,"{\"Version\":\"1.2\",\"Data\":{\"Source\":"+fixture_json_string(text(source))+",\"Includes\":[]}}");
+                write(prefix.string()+".sourceDependencies.json",bytes(deps));
             }
             std::expected<process::ProcessResult,process::ProcessError> r=process::ProcessResult{
                 .exit_code=failed?2:0,.stdout_text="mock compiler only",.stderr_text=failed?"MODULE_MOCK_FAILURE":""};
@@ -420,6 +466,7 @@ void native_cases(const fs::path& root,const fs::path& evidence) {
 int main() {
     try {
         model_contracts();
+        mock_input_contracts();
 #ifdef _WIN32
         const auto work=fs::current_path();
         require(!fs::exists(work/"storage-fixtures") && !fs::exists(work/"storage-evidence"),"fresh fixture/evidence paths required");
@@ -427,7 +474,7 @@ int main() {
         native_cases(work/"storage-fixtures/module-native",work/"storage-evidence/module-records/native");
         std::cout<<"module recorded-wave mock and native evidence retained separately\n";
 #else
-        std::cout<<"portable module record value model only; coordination/MSVC NOT executed\n";
+        std::cout<<"portable module record and mock-input contracts only; coordination/MSVC NOT executed\n";
 #endif
         return 0;
     } catch (const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; return 1; }
