@@ -55,6 +55,11 @@ struct IncrementalStaticTargetResult {
     bool any_compiled{false};
 };
 
+struct RecordedStaticTargetResult {
+    IncrementalStaticTargetResult result;
+    StaticTargetArtifactRecord record;
+};
+
 class MsvcIncrementalStaticTargetCoordinator {
 public:
     MsvcIncrementalStaticTargetCoordinator(
@@ -65,7 +70,17 @@ public:
     [[nodiscard]] std::expected<IncrementalStaticTargetResult, IncrementalStaticTargetError>
     run(const IncrementalStaticTargetRequest& request) const;
 
+    // Successful ordinary static-target invocation, not a physical snapshot.
+    // Labels do not identify a unique generation; default CLI does not opt in.
+    [[nodiscard]] std::expected<RecordedStaticTargetResult, IncrementalStaticTargetError>
+    run_recorded(const IncrementalStaticTargetRequest& request,
+                 std::optional<ArtifactGenerationLabel> caller_label = std::nullopt) const;
+
 private:
+    [[nodiscard]] std::expected<IncrementalStaticTargetResult, IncrementalStaticTargetError>
+    run_impl(const IncrementalStaticTargetRequest& request,
+             std::optional<ArchiveArtifactRecord>* record) const;
+
     MsvcIncrementalCompileCoordinator& compile_coordinator_;
     MsvcIncrementalArchiveCoordinator& archive_coordinator_;
 };

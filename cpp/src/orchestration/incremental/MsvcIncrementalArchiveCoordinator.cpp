@@ -62,7 +62,8 @@ void snapshot_inputs(
 [[nodiscard]] std::expected<ArchiveInspectionState, IncrementalArchiveError>
 inspect_archive(
     const IncrementalArchiveRequest& request,
-    const msvc::MsvcToolchain& toolchain) {
+    const msvc::MsvcToolchain& toolchain,
+    std::optional<ArchiveArtifactRecord>* reused_record = nullptr) {
     mqb::performance::ScopedWork evidence{
         mqb::performance::WorkKind::archive_inspection};
     mqb::performance::ScopedFilesystemDomain filesystem_domain{
@@ -139,6 +140,16 @@ inspect_archive(
     // A reusable archive validation already proves that there is no archive
     // action to schedule. Keep the generic planner on miss/rebuild paths only.
     if (state.inspection.validation.reusable()) {
+        if (reused_record && cached_entry) reused_record->emplace(ArchiveArtifactRecord{
+            .completion = ArtifactCompletion::reused,
+            .cache_state = ArtifactCacheState::reused,
+            .association = std::move(*cached_entry),
+            .architecture = request.architecture,
+            .link_time_code_generation = effective_ltcg,
+            .additional_arguments = librarian_routing->passthrough,
+            .cache_file = request.cache_file,
+            .working_directory = request.working_directory,
+        });
         return state;
     }
 
@@ -192,7 +203,25 @@ MsvcIncrementalArchiveCoordinator::inspect(const IncrementalArchiveRequest& requ
 
 std::expected<IncrementalArchiveResult, IncrementalArchiveError>
 MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request) const {
-    auto inspected = inspect_archive(request, toolchain_);
+    return run_impl(request, nullptr);
+}
+
+std::expected<RecordedArchiveResult, IncrementalArchiveError>
+MsvcIncrementalArchiveCoordinator::run_recorded(const IncrementalArchiveRequest& request) const {
+    std::optional<ArchiveArtifactRecord> record;
+    auto result = run_impl(request, &record);
+    if (!result) return std::unexpected(std::move(result.error()));
+    if (!record) return std::unexpected(IncrementalArchiveError{
+        .code = IncrementalArchiveErrorCode::planning_failed,
+        .message = "successful archive completion record unavailable",
+    });
+    return RecordedArchiveResult{std::move(*result), std::move(*record)};
+}
+
+std::expected<IncrementalArchiveResult, IncrementalArchiveError>
+MsvcIncrementalArchiveCoordinator::run_impl(
+    const IncrementalArchiveRequest& request, std::optional<ArchiveArtifactRecord>* record) const {
+    auto inspected = inspect_archive(request, toolchain_, record);
     if (!inspected) return std::unexpected(inspected.error());
 
     IncrementalArchiveResult result;
@@ -237,6 +266,16 @@ MsvcIncrementalArchiveCoordinator::run(const IncrementalArchiveRequest& request)
             .message = saved.error().message,
         });
     }
+    if (record) record->emplace(ArchiveArtifactRecord{
+        .completion = ArtifactCompletion::executed,
+        .cache_state = saved ? ArtifactCacheState::saved : ArtifactCacheState::save_failed,
+        .association = entry,
+        .architecture = invocation.architecture,
+        .link_time_code_generation = invocation.link_time_code_generation,
+        .additional_arguments = invocation.additional_arguments,
+        .cache_file = request.cache_file,
+        .working_directory = invocation.working_directory,
+    });
     return result;
 }
 
