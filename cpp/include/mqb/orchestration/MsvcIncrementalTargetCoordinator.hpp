@@ -95,6 +95,11 @@ struct IncrementalTargetResult {
     bool any_compiled{false};
 };
 
+struct RecordedTargetResult {
+    IncrementalTargetResult result;
+    TargetArtifactRecord record;
+};
+
 struct TargetWriteCollection {
     WriteInventory inventory;
     // Source-order slots, including failures. Missing upstream/provider details
@@ -131,10 +136,18 @@ public:
     run_with_compile_admission_stop(
         const IncrementalTargetRequest& request, std::stop_token admission_stop) const;
 
+    // Ordinary EXE/DLL pipeline only. Same run, validation, freshness barrier,
+    // diagnostics and cache behavior; records are owned in-memory results.
+    // No CLI/default caller opts in. Labels are optional caller annotations.
+    [[nodiscard]] std::expected<RecordedTargetResult, IncrementalTargetError>
+    run_recorded(const IncrementalTargetRequest& request,
+                 std::optional<ArtifactGenerationLabel> caller_label = std::nullopt) const;
+
 private:
     template<bool WithAdmissionStop>
     [[nodiscard]] std::expected<IncrementalTargetResult, IncrementalTargetError>
-    run_impl(const IncrementalTargetRequest& request, std::stop_token admission_stop) const;
+    run_impl(const IncrementalTargetRequest& request, std::stop_token admission_stop,
+             std::optional<LinkArtifactRecord>* record = nullptr) const;
 
     MsvcIncrementalCompileCoordinator& compile_coordinator_;
     MsvcIncrementalLinkCoordinator& link_coordinator_;

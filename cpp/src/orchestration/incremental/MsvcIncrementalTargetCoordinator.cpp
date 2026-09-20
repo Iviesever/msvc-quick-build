@@ -119,10 +119,44 @@ MsvcIncrementalTargetCoordinator::run_with_compile_admission_stop(
     return run_impl<true>(request, admission_stop);
 }
 
+std::expected<RecordedTargetResult, IncrementalTargetError>
+MsvcIncrementalTargetCoordinator::run_recorded(
+    const IncrementalTargetRequest& request,
+    std::optional<ArtifactGenerationLabel> caller_label) const {
+    std::optional<LinkArtifactRecord> link_record;
+    auto result = run_impl<false>(request, {}, &link_record);
+    if (!result) return std::unexpected(std::move(result.error()));
+    if (!link_record) return std::unexpected(failure(
+        IncrementalTargetErrorCode::link_failed, "successful target link record unavailable"));
+    std::vector<SourceArtifactAssociation> sources;
+    sources.reserve(request.sources.size());
+    for (std::size_t i = 0; i < request.sources.size(); ++i) {
+        const auto& source = request.sources[i];
+        const auto& compiled = result->compiles[i].result;
+        sources.push_back({
+            .source = result->compiles[i].source,
+            .object = source.artifacts.object,
+            .dependencies = source.artifacts.dependencies,
+            .compile_cache = source.artifacts.compile_cache,
+            .completion = compiled.compiled ? ArtifactCompletion::executed : ArtifactCompletion::reused,
+            .has_warnings = !compiled.warnings.empty(),
+        });
+    }
+    TargetArtifactRecord record{
+        .caller_label = std::move(caller_label),
+        .compiler_options = request.compiler_options,
+        .sources = std::move(sources),
+        .additional_object_inputs = request.additional_objects,
+        .link = std::move(*link_record),
+    };
+    return RecordedTargetResult{std::move(*result), std::move(record)};
+}
+
 template<bool WithAdmissionStop>
 std::expected<IncrementalTargetResult, IncrementalTargetError>
 MsvcIncrementalTargetCoordinator::run_impl(
-    const IncrementalTargetRequest& request, std::stop_token admission_stop) const {
+    const IncrementalTargetRequest& request, std::stop_token admission_stop,
+    std::optional<LinkArtifactRecord>* record) const {
     mqb::performance::ScopedWall validation_evidence{
         mqb::performance::WallKind::target_validation};
     if (request.sources.empty()) {
@@ -318,7 +352,13 @@ MsvcIncrementalTargetCoordinator::run_impl(
 
     auto link_request = make_link_request(request, std::move(objects), result.any_compiled);
     const auto link_started = Clock::now();
-    auto linked = link_coordinator_.run(link_request);
+    auto linked = [&]() -> std::expected<IncrementalLinkResult, IncrementalLinkError> {
+        if (!record) return link_coordinator_.run(link_request);
+        auto completed = link_coordinator_.run_recorded(link_request);
+        if (!completed) return std::unexpected(std::move(completed.error()));
+        record->emplace(std::move(completed->record));
+        return std::move(completed->result);
+    }();
     timings.link = std::chrono::duration_cast<std::chrono::nanoseconds>(
         Clock::now() - link_started);
     if (!linked) {
