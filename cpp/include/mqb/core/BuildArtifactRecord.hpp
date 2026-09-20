@@ -9,6 +9,7 @@
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/LinkCache.hpp"
 #include "mqb/core/LinkOptions.hpp"
+#include "mqb/core/TranslationUnit.hpp"
 
 namespace mqb {
 
@@ -87,6 +88,28 @@ struct StaticTargetArtifactRecord {
 
     static constexpr bool deletion_authorized = false;
     static constexpr bool complete_producer_inventory = false;
+};
+
+// Same-call PCH creator projection plus its successful compile outcome. The
+// lower compile API does not expose its accepted/sealed CompileCacheEntry;
+// these fields deliberately do not fabricate that entry or its signature.
+struct PchArtifactRecord {
+    std::optional<ArtifactGenerationLabel> caller_label;
+    ArtifactCompletion completion;
+    ArtifactCacheState cache_state;
+    std::filesystem::path input_header;
+    TranslationUnit creator;
+    CompilerOptions compiler_options;
+    std::filesystem::path dependencies;
+    std::filesystem::path compile_cache;
+    std::optional<std::filesystem::path> working_directory;
+    // Initial same-call inspection requirement, not proof of a protected write.
+    bool creator_source_materialization_required{false};
+
+    static constexpr bool exact_cache_entry_captured = false;
+    static constexpr bool physical_identity_verified = false;
+    static constexpr bool complete_producer_inventory = false;
+    static constexpr bool deletion_authorized = false;
 };
 
 } // namespace mqb

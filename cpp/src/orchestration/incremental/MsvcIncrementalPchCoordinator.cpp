@@ -247,15 +247,57 @@ MsvcIncrementalPchCoordinator::inspect(const IncrementalPchRequest& request) con
 
 std::expected<IncrementalPchResult, IncrementalPchError>
 MsvcIncrementalPchCoordinator::run(const IncrementalPchRequest& request) const {
+    return run_impl(request, nullptr);
+}
+
+std::expected<RecordedPchResult, IncrementalPchError>
+MsvcIncrementalPchCoordinator::run_recorded(
+    const IncrementalPchRequest& request,
+    std::optional<ArtifactGenerationLabel> caller_label) const {
+    std::optional<PchArtifactRecord> record;
+    auto result = run_impl(request, &record);
+    if (!result) return std::unexpected(std::move(result.error()));
+    if (!record) return std::unexpected(failure(
+        IncrementalPchErrorCode::compile_failed, "successful PCH completion record unavailable"));
+    record->caller_label = std::move(caller_label);
+    return RecordedPchResult{std::move(*result), std::move(*record)};
+}
+
+std::expected<IncrementalPchResult, IncrementalPchError>
+MsvcIncrementalPchCoordinator::run_impl(
+    const IncrementalPchRequest& request, std::optional<PchArtifactRecord>* record) const {
     auto inspected = inspect_pch(request, compile_coordinator_);
     if (!inspected) return std::unexpected(inspected.error());
+
+    auto complete = [&](IncrementalCompileResult compile) {
+        if (record) {
+            // Cache save status is part of the lower layer's typed result. Do
+            // not inspect text or reread the file to invent a stronger result.
+            const bool save_failed = std::any_of(compile.warnings.begin(), compile.warnings.end(),
+                [](const auto& warning) { return warning.code == IncrementalCompileWarningCode::cache_save_failed; });
+            const auto& creator = inspected->compile_request;
+            record->emplace(PchArtifactRecord{
+                .caller_label = std::nullopt,
+                .completion = compile.compiled ? ArtifactCompletion::executed : ArtifactCompletion::reused,
+                .cache_state = !compile.compiled ? ArtifactCacheState::reused :
+                    save_failed ? ArtifactCacheState::save_failed : ArtifactCacheState::saved,
+                .input_header = creator.options.precompiled_header->header,
+                .creator = creator.unit,
+                .compiler_options = creator.options,
+                .dependencies = creator.source_dependencies_file,
+                .compile_cache = creator.cache_file,
+                .working_directory = creator.working_directory,
+                .creator_source_materialization_required =
+                    inspected->inspection.creator_source_materialization_required,
+            });
+        }
+        return IncrementalPchResult{.compile = std::move(compile)};
+    };
 
     // A warm PCH hit is now truly read-only at this layer: do not recreate
     // directories or reopen the MQB-owned synthetic source for writing.
     if (inspected->inspection.compile.plan.empty()) {
-        return IncrementalPchResult{
-            .compile = result_from_inspection(inspected->inspection.compile),
-        };
+        return complete(result_from_inspection(inspected->inspection.compile));
     }
 
     for (const fs::path* artifact : {
@@ -299,7 +341,7 @@ MsvcIncrementalPchCoordinator::run(const IncrementalPchRequest& request) const {
             IncrementalPchErrorCode::compile_failed,
             "PCH creator completed without producing the owned .pch artifact"));
     }
-    return IncrementalPchResult{.compile = std::move(*compiled)};
+    return complete(std::move(*compiled));
 }
 
 } // namespace mqb::orchestration

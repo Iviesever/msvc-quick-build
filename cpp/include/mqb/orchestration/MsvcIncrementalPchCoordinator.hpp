@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 
+#include "mqb/core/BuildArtifactRecord.hpp"
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp"
@@ -46,6 +47,11 @@ struct IncrementalPchResult {
     IncrementalCompileResult compile;
 };
 
+struct RecordedPchResult {
+    IncrementalPchResult result;
+    PchArtifactRecord record;
+};
+
 class MsvcIncrementalPchCoordinator {
 public:
     explicit MsvcIncrementalPchCoordinator(
@@ -61,7 +67,18 @@ public:
     [[nodiscard]] std::expected<IncrementalPchResult, IncrementalPchError>
     run(const IncrementalPchRequest& request) const;
 
+    // Opt-in owned associations from this invocation's actual creator request.
+    // No extra inspect/run, cache read, signature reconstruction or persistence.
+    // Failure preserves the original error and publishes no successful record.
+    [[nodiscard]] std::expected<RecordedPchResult, IncrementalPchError>
+    run_recorded(const IncrementalPchRequest& request,
+                 std::optional<ArtifactGenerationLabel> caller_label = std::nullopt) const;
+
 private:
+    [[nodiscard]] std::expected<IncrementalPchResult, IncrementalPchError>
+    run_impl(const IncrementalPchRequest& request,
+             std::optional<PchArtifactRecord>* record) const;
+
     MsvcIncrementalCompileCoordinator& compile_coordinator_;
 };
 
