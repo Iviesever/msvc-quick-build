@@ -112,4 +112,25 @@ struct PchArtifactRecord {
     static constexpr bool deletion_authorized = false;
 };
 
+// Same-call module-wave compile request projection, not an accepted/sealed
+// CompileCacheEntry. Inputs/references and declared outputs remain separate;
+// header units may declare only an IFC, never a guessed paired object.
+struct ModuleCompileArtifactRecord {
+    ArtifactCompletion completion;
+    ArtifactCacheState cache_state;
+    TranslationUnit unit;
+    CompilerOptions compiler_options;
+    std::filesystem::path dependencies;
+    std::filesystem::path compile_cache;
+    // Reference to prior scan data, not output produced by this compile call.
+    std::optional<std::filesystem::path> module_scan_output;
+    std::optional<std::filesystem::path> working_directory;
+    bool force_rebuild{false};
+
+    static constexpr bool exact_cache_entry_captured = false;
+    static constexpr bool physical_identity_verified = false;
+    static constexpr bool complete_producer_inventory = false;
+    static constexpr bool deletion_authorized = false;
+};
+
 } // namespace mqb
