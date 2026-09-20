@@ -5,14 +5,17 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
 
-concurrency:
-  group: performance-evidence-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
-
 jobs:
   compare:
     name: Compare base and candidate
     if: github.event_name == 'workflow_dispatch' || (startsWith(github.event.pull_request.title, 'perf:') && (github.event.action != 'edited' || github.event.changes.title.from != null))
+    # Only admitted comparison jobs join this group. A skipped body-edit event
+    # must not cancel or replace a queued/running measurement. Preserve started
+    # evidence even when a later admitted candidate arrives; pending slots still
+    # follow GitHub's default queue policy and are not completion evidence.
+    concurrency:
+      group: performance-evidence-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: false
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
@@ -26,6 +29,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: candidate
+
+      - name: Verify performance workflow admission policy
+        shell: pwsh
+        run: |
+          python candidate/tests/native/verify_performance_workflow.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Checkout exact PR base
         if: github.event_name == 'pull_request'
