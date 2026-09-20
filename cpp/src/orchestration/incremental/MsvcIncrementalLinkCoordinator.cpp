@@ -175,7 +175,8 @@ void collect_existing_side_output(
 [[nodiscard]] std::expected<LinkInspectionState, IncrementalLinkError>
 inspect_link(
     const IncrementalLinkRequest& request,
-    const msvc::MsvcToolchain& toolchain) {
+    const msvc::MsvcToolchain& toolchain,
+    std::optional<LinkCacheEntry>* reused_entry = nullptr) {
     mqb::performance::ScopedWork evidence{
         mqb::performance::WorkKind::link_inspection};
     mqb::performance::ScopedFilesystemDomain filesystem_domain{
@@ -544,6 +545,7 @@ inspect_link(
     // materializing a generic LinkPlanItem/BuildPlan on the hot path; misses
     // still pass through BuildPlanner and keep its structural checks.
     if (state.inspection.validation.reusable()) {
+        if (reused_entry) *reused_entry = std::move(cached_entry);
         return state;
     }
 
@@ -632,7 +634,24 @@ MsvcIncrementalLinkCoordinator::collect_known_writes(
 
 std::expected<IncrementalLinkResult, IncrementalLinkError>
 MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const {
-    auto inspected = inspect_link(request, toolchain_);
+    return run_impl(request, nullptr);
+}
+
+std::expected<RecordedLinkResult, IncrementalLinkError>
+MsvcIncrementalLinkCoordinator::run_recorded(const IncrementalLinkRequest& request) const {
+    std::optional<LinkArtifactRecord> record;
+    auto result = run_impl(request, &record);
+    if (!result) return std::unexpected(std::move(result.error()));
+    if (!record) return std::unexpected(link_failure(
+        IncrementalLinkErrorCode::planning_failed, "successful link completion record unavailable"));
+    return RecordedLinkResult{std::move(*result), std::move(*record)};
+}
+
+std::expected<IncrementalLinkResult, IncrementalLinkError>
+MsvcIncrementalLinkCoordinator::run_impl(
+    const IncrementalLinkRequest& request, std::optional<LinkArtifactRecord>* record) const {
+    std::optional<LinkCacheEntry> reused_entry;
+    auto inspected = inspect_link(request, toolchain_, record ? &reused_entry : nullptr);
     if (!inspected) return std::unexpected(inspected.error());
 
     IncrementalLinkResult result;
@@ -641,6 +660,14 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
     result.warnings = std::move(inspected->inspection.warnings);
 
     if (!inspected->invocation) {
+        if (record && reused_entry) record->emplace(LinkArtifactRecord{
+            .completion = ArtifactCompletion::reused,
+            .cache_state = ArtifactCacheState::reused,
+            .association = std::move(*reused_entry),
+            .options = request.options,
+            .cache_file = request.cache_file,
+            .working_directory = request.working_directory,
+        });
         return result;
     }
 
@@ -733,6 +760,14 @@ MsvcIncrementalLinkCoordinator::run(const IncrementalLinkRequest& request) const
         });
     }
 
+    if (record) record->emplace(LinkArtifactRecord{
+        .completion = ArtifactCompletion::executed,
+        .cache_state = saved ? ArtifactCacheState::saved : ArtifactCacheState::save_failed,
+        .association = new_entry,
+        .options = request.options,
+        .cache_file = request.cache_file,
+        .working_directory = request.working_directory,
+    });
     return result;
 }
 

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "mqb/core/BuildPlan.hpp"
+#include "mqb/core/BuildArtifactRecord.hpp"
 #include "mqb/core/WriteInventory.hpp"
 #include "mqb/core/BuildPlanner.hpp"
 #include "mqb/core/LinkCache.hpp"
@@ -69,6 +70,11 @@ struct IncrementalLinkResult : IncrementalLinkInspection {
     std::optional<process::ProcessResult> process;
 };
 
+struct RecordedLinkResult {
+    IncrementalLinkResult result;
+    LinkArtifactRecord record;
+};
+
 class MsvcIncrementalLinkCoordinator {
 public:
     MsvcIncrementalLinkCoordinator(
@@ -90,7 +96,17 @@ public:
     [[nodiscard]] std::expected<IncrementalLinkResult, IncrementalLinkError>
     run(const IncrementalLinkRequest& request) const;
 
+    // Opt-in completion evidence from this same invocation, not inspect()/plan.
+    // No additional filesystem probes, cache reload, persistence or callback.
+    // Failure returns the original error and no successful record.
+    [[nodiscard]] std::expected<RecordedLinkResult, IncrementalLinkError>
+    run_recorded(const IncrementalLinkRequest& request) const;
+
 private:
+    [[nodiscard]] std::expected<IncrementalLinkResult, IncrementalLinkError>
+    run_impl(const IncrementalLinkRequest& request,
+             std::optional<LinkArtifactRecord>* record) const;
+
     const msvc::MsvcToolchain& toolchain_;
     msvc::MsvcLinker& linker_;
 };
