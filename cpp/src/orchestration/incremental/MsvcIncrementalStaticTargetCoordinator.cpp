@@ -63,6 +63,45 @@ using CompileAttempt = detail::TargetCompileAttempt;
 std::expected<IncrementalStaticTargetResult, IncrementalStaticTargetError>
 MsvcIncrementalStaticTargetCoordinator::run(
     const IncrementalStaticTargetRequest& request) const {
+    return run_impl(request, nullptr);
+}
+
+std::expected<RecordedStaticTargetResult, IncrementalStaticTargetError>
+MsvcIncrementalStaticTargetCoordinator::run_recorded(
+    const IncrementalStaticTargetRequest& request,
+    std::optional<ArtifactGenerationLabel> caller_label) const {
+    std::optional<ArchiveArtifactRecord> archive_record;
+    auto result = run_impl(request, &archive_record);
+    if (!result) return std::unexpected(std::move(result.error()));
+    if (!archive_record) return std::unexpected(failure(
+        IncrementalStaticTargetErrorCode::archive_failed, "successful static target archive record unavailable"));
+    std::vector<SourceArtifactAssociation> sources;
+    sources.reserve(request.sources.size());
+    for (std::size_t i = 0; i < request.sources.size(); ++i) {
+        const auto& source = request.sources[i];
+        const auto& compiled = result->compiles[i].result;
+        sources.push_back({
+            .source = result->compiles[i].source,
+            .object = source.artifacts.object,
+            .dependencies = source.artifacts.dependencies,
+            .compile_cache = source.artifacts.compile_cache,
+            .completion = compiled.compiled ? ArtifactCompletion::executed : ArtifactCompletion::reused,
+            .has_warnings = !compiled.warnings.empty(),
+        });
+    }
+    StaticTargetArtifactRecord record{
+        .caller_label = std::move(caller_label),
+        .compiler_options = request.compiler_options,
+        .sources = std::move(sources),
+        .additional_object_inputs = request.additional_objects,
+        .archive = std::move(*archive_record),
+    };
+    return RecordedStaticTargetResult{std::move(*result), std::move(record)};
+}
+
+std::expected<IncrementalStaticTargetResult, IncrementalStaticTargetError>
+MsvcIncrementalStaticTargetCoordinator::run_impl(
+    const IncrementalStaticTargetRequest& request, std::optional<ArchiveArtifactRecord>* record) const {
     mqb::performance::ScopedWall validation_evidence{
         mqb::performance::WallKind::target_validation};
     if (request.sources.empty()) {
@@ -208,7 +247,7 @@ MsvcIncrementalStaticTargetCoordinator::run(
     }
 
     const auto archive_started = Clock::now();
-    auto archived = archive_coordinator_.run(IncrementalArchiveRequest{
+    const IncrementalArchiveRequest archive_request{
         .objects = std::move(objects),
         .output = request.target.executable,
         .cache_file = request.target.link_cache,
@@ -219,7 +258,14 @@ MsvcIncrementalStaticTargetCoordinator::run(
         .additional_arguments = request.librarian_arguments,
         .force_archive =
             request.force_downstream_rebuild || result.any_compiled,
-    });
+    };
+    auto archived = [&]() -> std::expected<IncrementalArchiveResult, IncrementalArchiveError> {
+        if (!record) return archive_coordinator_.run(archive_request);
+        auto completed = archive_coordinator_.run_recorded(archive_request);
+        if (!completed) return std::unexpected(std::move(completed.error()));
+        record->emplace(std::move(completed->record));
+        return std::move(completed->result);
+    }();
     timings.archive = std::chrono::duration_cast<std::chrono::nanoseconds>(
         Clock::now() - archive_started);
     if (!archived) {

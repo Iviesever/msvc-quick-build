@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "mqb/core/ArchiveCache.hpp"
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/LinkCache.hpp"
 #include "mqb/core/LinkOptions.hpp"
@@ -37,6 +38,22 @@ struct LinkArtifactRecord {
     static constexpr bool physical_identity_verified = false;
 };
 
+// Effective LIB recipe fields come from the existing parameter authority.
+// The recipe signature does NOT encode compiler Debug/Release configuration.
+struct ArchiveArtifactRecord {
+    ArtifactCompletion completion;
+    ArtifactCacheState cache_state;
+    ArchiveCacheEntry association;
+    Architecture architecture;
+    bool link_time_code_generation;
+    std::vector<std::string> additional_arguments;
+    std::filesystem::path cache_file;
+    std::filesystem::path working_directory;
+
+    static constexpr bool deletion_authorized = false;
+    static constexpr bool physical_identity_verified = false;
+};
+
 struct SourceArtifactAssociation {
     std::filesystem::path source;
     std::filesystem::path object;
@@ -55,6 +72,18 @@ struct TargetArtifactRecord {
     // eventually contribute their own records rather than being guessed here.
     std::vector<std::filesystem::path> additional_object_inputs;
     LinkArtifactRecord link;
+
+    static constexpr bool deletion_authorized = false;
+    static constexpr bool complete_producer_inventory = false;
+};
+
+struct StaticTargetArtifactRecord {
+    std::optional<ArtifactGenerationLabel> caller_label;
+    CompilerOptions compiler_options;
+    std::vector<SourceArtifactAssociation> sources;
+    // Additional objects were produced upstream, not by this static target.
+    std::vector<std::filesystem::path> additional_object_inputs;
+    ArchiveArtifactRecord archive;
 
     static constexpr bool deletion_authorized = false;
     static constexpr bool complete_producer_inventory = false;

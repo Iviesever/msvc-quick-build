@@ -8,6 +8,7 @@
 
 #include "mqb/core/ArchiveCache.hpp"
 #include "mqb/core/BuildPlan.hpp"
+#include "mqb/core/BuildArtifactRecord.hpp"
 #include "mqb/msvc/MsvcLibrarian.hpp"
 #include "mqb/msvc/MsvcParameterEngine.hpp"
 #include "mqb/msvc/MsvcToolchainLocator.hpp"
@@ -68,6 +69,11 @@ struct IncrementalArchiveResult : IncrementalArchiveInspection {
     std::optional<process::ProcessResult> process;
 };
 
+struct RecordedArchiveResult {
+    IncrementalArchiveResult result;
+    ArchiveArtifactRecord record;
+};
+
 class MsvcIncrementalArchiveCoordinator {
 public:
     MsvcIncrementalArchiveCoordinator(
@@ -83,7 +89,16 @@ public:
     [[nodiscard]] std::expected<IncrementalArchiveResult, IncrementalArchiveError>
     run(const IncrementalArchiveRequest& request) const;
 
+    // Same successful LIB/install or accepted reuse, with owned associations.
+    // No extra cache read, filesystem scan, persistence or cleanup authority.
+    [[nodiscard]] std::expected<RecordedArchiveResult, IncrementalArchiveError>
+    run_recorded(const IncrementalArchiveRequest& request) const;
+
 private:
+    [[nodiscard]] std::expected<IncrementalArchiveResult, IncrementalArchiveError>
+    run_impl(const IncrementalArchiveRequest& request,
+             std::optional<ArchiveArtifactRecord>* record) const;
+
     const msvc::MsvcToolchain& toolchain_;
     msvc::MsvcLibrarian& librarian_;
 };
