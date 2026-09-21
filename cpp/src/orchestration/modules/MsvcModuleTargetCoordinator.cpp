@@ -117,7 +117,46 @@ MsvcModuleTargetCoordinator::inspect(
 
 std::expected<IncrementalModuleTargetResult, IncrementalModuleTargetError>
 MsvcModuleTargetCoordinator::run(const IncrementalModuleTargetRequest& request) const {
-    auto prepared = detail::prepare_module_target(request, scanner_);
+    return run_impl(request, nullptr);
+}
+
+// Private in-flight data: never manufacture a LinkCacheEntry signature just
+// to default-construct a public successful target record before linking.
+struct MsvcModuleTargetCoordinator::Recording {
+    std::vector<ModuleTargetScanArtifactRecord> scans;
+    std::optional<ModuleCompileWaveArtifactRecord> compiles;
+    std::optional<LinkArtifactRecord> link;
+};
+
+std::expected<RecordedModuleTargetResult, IncrementalModuleTargetError>
+MsvcModuleTargetCoordinator::run_recorded(
+    const IncrementalModuleTargetRequest& request,
+    std::optional<ArtifactGenerationLabel> caller_label) const {
+    Recording record;
+    auto completed = run_impl(request, &record);
+    if (!completed) return std::unexpected(std::move(completed.error()));
+    if (!record.compiles || !record.link) {
+        return std::unexpected(failure(
+            IncrementalModuleTargetErrorCode::link_failed,
+            "module target recording completed without its typed stage records"));
+    }
+    return RecordedModuleTargetResult{
+        .result = std::move(*completed),
+        .record = {
+            .caller_label = std::move(caller_label),
+            .scans = std::move(record.scans),
+            .compiles = std::move(*record.compiles),
+            .link = std::move(*record.link),
+        },
+    };
+}
+
+std::expected<IncrementalModuleTargetResult, IncrementalModuleTargetError>
+MsvcModuleTargetCoordinator::run_impl(
+    const IncrementalModuleTargetRequest& request,
+    Recording* record) const {
+    auto prepared = detail::prepare_module_target(
+        request, scanner_, record ? &record->scans : nullptr);
     if (!prepared) {
         return std::unexpected(std::move(prepared.error()));
     }
@@ -128,7 +167,13 @@ MsvcModuleTargetCoordinator::run(const IncrementalModuleTargetRequest& request) 
     result.plan = std::move(prepared->plan);
 
     const auto compile_started = Clock::now();
-    auto compiled = compile_coordinator_.run(prepared->compile_request);
+    auto compiled = [&]() -> std::expected<ModuleCompileWaveResult, ModuleCompileError> {
+        if (!record) return compile_coordinator_.run(prepared->compile_request);
+        auto completed = compile_coordinator_.run_recorded(prepared->compile_request);
+        if (!completed) return std::unexpected(std::move(completed.error()));
+        record->compiles = std::move(completed->record);
+        return std::move(completed->result);
+    }();
     result.timings.compile = std::chrono::duration_cast<std::chrono::nanoseconds>(
         Clock::now() - compile_started);
     if (!compiled) {
@@ -139,10 +184,17 @@ MsvcModuleTargetCoordinator::run(const IncrementalModuleTargetRequest& request) 
     result.compiles = std::move(*compiled);
 
     const auto link_started = Clock::now();
-    auto linked = link_coordinator_.run(detail::make_module_target_link_request(
+    const auto link_request = detail::make_module_target_link_request(
         request,
         prepared->compile_request,
-        result.compiles.any_compiled));
+        result.compiles.any_compiled);
+    auto linked = [&]() -> std::expected<IncrementalLinkResult, IncrementalLinkError> {
+        if (!record) return link_coordinator_.run(link_request);
+        auto completed = link_coordinator_.run_recorded(link_request);
+        if (!completed) return std::unexpected(std::move(completed.error()));
+        record->link = std::move(completed->record);
+        return std::move(completed->result);
+    }();
     result.timings.link = std::chrono::duration_cast<std::chrono::nanoseconds>(
         Clock::now() - link_started);
     if (!linked) {

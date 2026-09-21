@@ -44,6 +44,8 @@ jobs:
       - name: Acquire pinned MQB seed
         id: seed
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $seed = & (Join-Path $PWD 'tests/native/acquire_seed.ps1') `
             -RepoRoot $PWD `

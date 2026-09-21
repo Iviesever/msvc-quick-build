@@ -99,12 +99,17 @@ scan_module_source(
     const ModuleCompileSourceRequest& source,
     const CompilerOptions& options,
     const fs::path& working_directory,
-    msvc::MsvcModuleDependencyScanner& scanner) {
+    msvc::MsvcModuleDependencyScanner& scanner,
+    ModuleScanArtifactRecord* record) {
     MsvcIncrementalModuleScanCoordinator coordinator{scanner};
-    auto scanned = coordinator.run(make_scan_request(
-        source,
-        options,
-        working_directory));
+    const auto request = make_scan_request(source, options, working_directory);
+    if (record) {
+        auto scanned = coordinator.run_recorded(request);
+        if (!scanned) return std::unexpected(std::move(scanned.error()));
+        *record = std::move(scanned->record);
+        return std::move(scanned->result.result);
+    }
+    auto scanned = coordinator.run(request);
     if (!scanned) return std::unexpected(scanned.error());
     return std::move(scanned->result);
 }
@@ -179,7 +184,11 @@ inspect_requested_module_sources(
 std::expected<ModuleTargetScanBatch, IncrementalModuleTargetError>
 scan_requested_module_sources(
     const IncrementalModuleTargetRequest& request,
-    msvc::MsvcModuleDependencyScanner& scanner) {
+    msvc::MsvcModuleDependencyScanner& scanner,
+    std::vector<ModuleTargetScanArtifactRecord>* records) {
+    // Before scheduling: workers write distinct slots, never append/reallocate.
+    // Injected toolchain scans are appended only after this scheduler joins.
+    if (records) records->resize(request.sources.size());
     using ScanAttempt = std::expected<msvc::ModuleScanResult, msvc::ModuleScanError>;
     std::vector<std::optional<ScanAttempt>> attempts(request.sources.size());
 
@@ -192,7 +201,8 @@ scan_requested_module_sources(
                 request.sources[index],
                 request.compiler_options,
                 request.working_directory,
-                scanner));
+                scanner,
+                records ? &(*records)[index].scan : nullptr));
             return attempts[index]->has_value();
         });
     if (!scheduled) {

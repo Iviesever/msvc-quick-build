@@ -111,6 +111,34 @@ struct IncrementalModuleTargetResult {
     TargetTimings timings;
 };
 
+// Source provenance is assigned by the existing target preparation path, not
+// inferred from filenames. Toolchain-owned SOURCES still produce project-local
+// artifacts; this flag grants no ownership or deletion rights over either.
+struct ModuleTargetScanArtifactRecord {
+    ModuleScanArtifactRecord scan;
+    bool toolchain_owned{false};
+};
+
+// A completed target invocation, not a complete inventory of filesystem effects.
+// The scans include project sources in request order, then actual injected
+// std/std.compat sources. Dynamic header units and external inputs remain in
+// the same-call compile graph/records; header units have no fabricated scan.
+struct ModuleTargetArtifactRecord {
+    std::optional<ArtifactGenerationLabel> caller_label;
+    std::vector<ModuleTargetScanArtifactRecord> scans;
+    ModuleCompileWaveArtifactRecord compiles;
+    LinkArtifactRecord link;
+
+    static constexpr bool physical_identity_verified = false;
+    static constexpr bool complete_producer_inventory = false;
+    static constexpr bool deletion_authorized = false;
+};
+
+struct RecordedModuleTargetResult {
+    IncrementalModuleTargetResult result;
+    ModuleTargetArtifactRecord record;
+};
+
 class MsvcModuleTargetCoordinator {
 public:
     MsvcModuleTargetCoordinator(
@@ -138,7 +166,18 @@ public:
     [[nodiscard]] std::expected<IncrementalModuleTargetResult, IncrementalModuleTargetError>
     run(const IncrementalModuleTargetRequest& request) const;
 
+    // Record the same preparation/compile/link invocation. Failure preserves
+    // the original error, without a public partial success record or rollback.
+    [[nodiscard]] std::expected<RecordedModuleTargetResult, IncrementalModuleTargetError>
+    run_recorded(const IncrementalModuleTargetRequest& request,
+                 std::optional<ArtifactGenerationLabel> caller_label = std::nullopt) const;
+
 private:
+    struct Recording;
+    [[nodiscard]] std::expected<IncrementalModuleTargetResult, IncrementalModuleTargetError>
+    run_impl(const IncrementalModuleTargetRequest& request,
+             Recording* record) const;
+
     msvc::MsvcModuleDependencyScanner& scanner_;
     MsvcModuleCompileCoordinator& compile_coordinator_;
     MsvcIncrementalLinkCoordinator& link_coordinator_;

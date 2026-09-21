@@ -30,6 +30,7 @@ inspect_module_target_preparation(
 [[nodiscard]] std::expected<ModuleTargetPreparation, IncrementalModuleTargetError>
 prepare_module_target(
     const IncrementalModuleTargetRequest& request,
-    msvc::MsvcModuleDependencyScanner& scanner);
+    msvc::MsvcModuleDependencyScanner& scanner,
+    std::vector<ModuleTargetScanArtifactRecord>* records = nullptr);
 
 } // namespace mqb::orchestration::detail

@@ -251,7 +251,8 @@ inject_standard_library_module_providers(
     msvc::MsvcModuleDependencyScanner& scanner,
     ModuleTargetArtifactRegistry& artifacts,
     std::vector<modules::ScannedModuleUnit>& scanned_units,
-    std::vector<ModuleCompileSourceRequest>& compile_sources) {
+    std::vector<ModuleCompileSourceRequest>& compile_sources,
+    std::vector<ModuleTargetScanArtifactRecord>* records) {
     std::unordered_set<std::string> injected_standard_modules;
     while (auto pending = next_standard_library_requirement(
                scanned_units,
@@ -263,11 +264,14 @@ inject_standard_library_module_providers(
             *pending);
         if (!provider) return std::unexpected(std::move(provider.error()));
 
+        std::optional<ModuleScanArtifactRecord> record;
+        if (records) record.emplace();
         auto scan = scan_module_source(
             *provider,
             request.compiler_options,
             request.working_directory,
-            scanner);
+            scanner,
+            record ? &*record : nullptr);
         if (!scan) {
             IncrementalModuleTargetError error = failure(
                 IncrementalModuleTargetErrorCode::scan_failed,
@@ -287,6 +291,12 @@ inject_standard_library_module_providers(
             std::move(*rule),
             scanned_units,
             compile_sources);
+        if (records) {
+            records->push_back(ModuleTargetScanArtifactRecord{
+                .scan = std::move(*record),
+                .toolchain_owned = true,
+            });
+        }
         injected_standard_modules.emplace(std::move(pending->logical_name));
     }
 
