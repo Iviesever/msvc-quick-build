@@ -16,6 +16,7 @@
 #include "mqb/orchestration/MsvcModuleTargetCoordinator.hpp"
 #ifdef _WIN32
 #include "StorageReport.hpp"
+#include "mqb/platform/windows/CommandLine.hpp"
 #include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/platform/windows/PathIdentity.hpp"
@@ -342,13 +343,28 @@ void native_contracts(const fs::path& root,const fs::path& evidence) {
         unavailable|=blocked.observation.entries[row].kind==StorageEntryKind::unavailable;
     require(!blocked.observation.issues.empty() && unavailable,"writer refusal retains unavailable row, not healthy matched file");
     const auto external=evidence/"outside";write(external/"sentinel.txt","outside fixture must not be traversed");
-    auto native_text=[](fs::path p){p.make_preferred();const auto b=p.u8string();return std::string{reinterpret_cast<const char*>(b.data()),b.size()};};
-    process::ProcessSpec junction;junction.executable=L"C:/Windows/System32/cmd.exe";
+    // Match the established storage fixture's complete native launch recipe,
+    // including argv[0], not just the two mklink operands.
+    auto native_text=[](fs::path p){
+        p.make_preferred();auto encoded=platform::windows::utf16_to_utf8(p.wstring());
+        require(encoded.has_value(),"native junction UTF-16 encoding");return *encoded;
+    };
+    wchar_t system[32768]{};
+    const auto system_length=::GetSystemDirectoryW(system,32768);
+    const auto system_error=system_length==0?::GetLastError():0;
+    write(evidence/"junction.system-directory.txt",std::to_string(system_length)+"\n"+std::to_string(system_error)+"\n");
+    require(system_length>0 && system_length<32768,"resolve native system command processor");
+    process::ProcessSpec junction;junction.executable=fs::path{system}/L"cmd.exe";
+    junction.executable.make_preferred();
+    require(junction.executable.native().find('/')==fs::path::string_type::npos,
+        "command processor path uses native separators");
     junction.arguments={"/d","/c","mklink","/J",native_text(root/".mqb/junction"),native_text(external)};
     write(evidence/"junction.operands.txt",junction.arguments[4]+"\n"+junction.arguments[5]+"\n");
     require(junction.arguments[4].find('/')==std::string::npos && junction.arguments[5].find('/')==std::string::npos,
         "cmd junction paths use native separators");
-    junction.working_directory=root;junction.capture_stdout=junction.capture_stderr=true;
+    junction.working_directory=root;junction.working_directory->make_preferred();
+    write(evidence/"junction.launch-paths.txt",native_text(junction.executable)+"\n"+native_text(*junction.working_directory)+"\n");
+    junction.capture_stdout=junction.capture_stderr=true;
     runner.phase="fixture-junction";const auto made_junction=runner.run(junction);
     require(made_junction && made_junction->exit_code==0,"create native junction fixture");
     require(fs::equivalent(root/".mqb/junction",external),"fixture junction points to expected external directory");
