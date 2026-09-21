@@ -1,5 +1,6 @@
 #include "mqb/orchestration/MsvcModuleCompileCoordinator.hpp"
 
+#include <algorithm>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -82,6 +83,27 @@ namespace fs = std::filesystem;
         source_for_node(request, plan, node_index));
     result.compile_error = std::move(error);
     return result;
+}
+
+[[nodiscard]] ModuleCompileArtifactRecord capture_compile(
+    IncrementalCompileRequest request,
+    const IncrementalCompileResult& result) {
+    const bool save_failed = std::any_of(result.warnings.begin(), result.warnings.end(),
+        [](const IncrementalCompileWarning& warning) {
+            return warning.code == IncrementalCompileWarningCode::cache_save_failed;
+        });
+    return ModuleCompileArtifactRecord{
+        .completion = result.compiled ? ArtifactCompletion::executed : ArtifactCompletion::reused,
+        .cache_state = !result.compiled ? ArtifactCacheState::reused :
+            (save_failed ? ArtifactCacheState::save_failed : ArtifactCacheState::saved),
+        .unit = std::move(request.unit),
+        .compiler_options = std::move(request.options),
+        .dependencies = std::move(request.source_dependencies_file),
+        .compile_cache = std::move(request.cache_file),
+        .module_scan_output = std::move(request.module_scan_output),
+        .working_directory = std::move(request.working_directory),
+        .force_rebuild = request.force_rebuild,
+    };
 }
 
 } // namespace
@@ -197,6 +219,24 @@ MsvcModuleCompileCoordinator::inspect(const ModuleCompileWaveRequest& request) c
 
 std::expected<ModuleCompileWaveResult, ModuleCompileError>
 MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const {
+    return run_impl(request, nullptr);
+}
+
+std::expected<RecordedModuleCompileWaveResult, ModuleCompileError>
+MsvcModuleCompileCoordinator::run_recorded(
+    const ModuleCompileWaveRequest& request,
+    std::optional<ArtifactGenerationLabel> caller_label) const {
+    ModuleCompileWaveArtifactRecord record;
+    auto result = run_impl(request, &record);
+    if (!result) return std::unexpected(std::move(result.error()));
+    record.caller_label = std::move(caller_label);
+    return RecordedModuleCompileWaveResult{std::move(*result), std::move(record)};
+}
+
+std::expected<ModuleCompileWaveResult, ModuleCompileError>
+MsvcModuleCompileCoordinator::run_impl(
+    const ModuleCompileWaveRequest& request,
+    ModuleCompileWaveArtifactRecord* record) const {
     if (!request.max_parallel_compiles.valid()) {
         return std::unexpected(failure(
             ModuleCompileErrorCode::invalid_parallelism,
@@ -208,6 +248,13 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
         return std::unexpected(std::move(planned.error()));
     }
     const detail::ModuleCompilePlan& plan = *planned;
+
+    // Allocate only for the explicit recorded path. Each worker writes its own
+    // pre-sized non-bit-packed slot; no vector growth occurs inside the wave.
+    if (record) {
+        record->compiles.resize(plan.source_count);
+        record->header_unit_compiles.resize(plan.header_count);
+    }
 
     using CompileAttempt = std::expected<IncrementalCompileResult, IncrementalCompileError>;
     std::vector<std::optional<CompileAttempt>> attempts(plan.node_count());
@@ -225,6 +272,12 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
                     provider_work_planned(plan, compiled_this_run, node_index));
                 attempts[node_index].emplace(
                     compile_coordinator_.run(compile_request));
+                if (record && attempts[node_index]->has_value()) {
+                    auto& slot = node_index < plan.source_count
+                        ? record->compiles[node_index]
+                        : record->header_unit_compiles[node_index - plan.source_count];
+                    slot = capture_compile(std::move(compile_request), attempts[node_index]->value());
+                }
                 return attempts[node_index]->has_value();
             });
         if (!scheduled) {
@@ -294,6 +347,9 @@ MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const
             .result = std::move(compiled),
         });
     }
+    // Retain provider selection only after the whole wave succeeds. External
+    // providers remain references; no extra owned producer is synthesized.
+    if (record) record->dependencies = request.plan;
     return result;
 }
 

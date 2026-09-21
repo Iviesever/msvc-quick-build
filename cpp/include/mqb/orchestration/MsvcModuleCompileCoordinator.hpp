@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "mqb/core/BuildArtifactRecord.hpp"
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/core/TranslationUnit.hpp"
@@ -112,6 +113,25 @@ struct ModuleCompileWaveResult {
     bool any_compiled{false};
 };
 
+// The caller's typed provider selection, accepted by the existing wave plan
+// validation, and the actual per-node compile projections. This does not add
+// a scan, infer missing provider names, or certify that the graph is current.
+struct ModuleCompileWaveArtifactRecord {
+    std::optional<ArtifactGenerationLabel> caller_label;
+    modules::ModuleDependencyPlan dependencies;
+    // Request order, not dependency-level or worker completion order.
+    std::vector<ModuleCompileArtifactRecord> compiles;
+    std::vector<ModuleCompileArtifactRecord> header_unit_compiles;
+
+    static constexpr bool complete_producer_inventory = false;
+    static constexpr bool deletion_authorized = false;
+};
+
+struct RecordedModuleCompileWaveResult {
+    ModuleCompileWaveResult result;
+    ModuleCompileWaveArtifactRecord record;
+};
+
 class MsvcModuleCompileCoordinator {
 public:
     explicit MsvcModuleCompileCoordinator(
@@ -126,7 +146,17 @@ public:
     [[nodiscard]] std::expected<ModuleCompileWaveResult, ModuleCompileError>
     run(const ModuleCompileWaveRequest& request) const;
 
+    // Same invocation only. A failed wave returns the original error, not a
+    // partial success record; earlier nodes may still have written files.
+    [[nodiscard]] std::expected<RecordedModuleCompileWaveResult, ModuleCompileError>
+    run_recorded(const ModuleCompileWaveRequest& request,
+                 std::optional<ArtifactGenerationLabel> caller_label = std::nullopt) const;
+
 private:
+    [[nodiscard]] std::expected<ModuleCompileWaveResult, ModuleCompileError>
+    run_impl(const ModuleCompileWaveRequest& request,
+             ModuleCompileWaveArtifactRecord* record) const;
+
     MsvcIncrementalCompileCoordinator& compile_coordinator_;
 };
 
