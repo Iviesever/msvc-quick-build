@@ -19,8 +19,12 @@ std::optional<fs::path> resolve(const fs::path& path, const std::optional<fs::pa
     if (path.has_root_path() || !cwd || !cwd->is_absolute() || !lexical_path(*cwd)) return std::nullopt;
     return (*cwd / path).lexically_normal();
 }
-template<class T> bool differs(const std::optional<T>& a, const std::optional<T>& b) {
-    return a && b && *a != *b;
+// Compare all known values, even when the directly matched row has no value.
+// Missing observations stay missing; the accumulator is local to this match.
+template<class T> bool metadata_conflict(std::optional<T>& known, const std::optional<T>& next) {
+    if (!next) return false;
+    if (!known) { known = next; return false; }
+    return *known != *next;
 }
 } // namespace
 
@@ -81,6 +85,9 @@ associate_artifact_storage(std::span<const ArtifactStorageReferences> records,
                             const auto& entry = observation.entries[row];
                             if (entry.kind == StorageEntryKind::file && !entry.physical_id.empty()) {
                                 const auto& aliases = by_id.at(entry.physical_id);
+                                auto logical_bytes = entry.logical_bytes;
+                                auto allocated_bytes = entry.allocated_bytes;
+                                auto hard_links = entry.hard_links;
                                 match.observed_identity_metadata_conflict = entry.hard_links && aliases.size() > *entry.hard_links;
                                 for (const auto alias : aliases) {
                                     if (alias == row) continue;
@@ -88,11 +95,10 @@ associate_artifact_storage(std::span<const ArtifactStorageReferences> records,
                                     --remaining_links;
                                     match.same_observed_file_rows.push_back(alias);
                                     const auto& other = observation.entries[alias];
-                                    match.observed_identity_metadata_conflict |=
-                                        differs(entry.logical_bytes, other.logical_bytes) ||
-                                        differs(entry.allocated_bytes, other.allocated_bytes) ||
-                                        differs(entry.hard_links, other.hard_links) ||
-                                        (other.hard_links && aliases.size() > *other.hard_links);
+                                    match.observed_identity_metadata_conflict |= metadata_conflict(logical_bytes, other.logical_bytes);
+                                    match.observed_identity_metadata_conflict |= metadata_conflict(allocated_bytes, other.allocated_bytes);
+                                    match.observed_identity_metadata_conflict |= metadata_conflict(hard_links, other.hard_links);
+                                    match.observed_identity_metadata_conflict |= other.hard_links && aliases.size() > *other.hard_links;
                                 }
                             }
                         }

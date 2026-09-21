@@ -137,6 +137,41 @@ void association_contracts() {
     require(!associate_artifact_storage(std::array{many},many_rows,key),"multiplicative alias expansion is bounded, never truncated");
     require(!fs::exists(root),"portable join/model did not create its synthetic root");
 }
+void alias_metadata_contracts() {
+    const auto root=fs::absolute("alias-metadata-model/.mqb");
+    auto verify=[&]<class T>(std::optional<T> StorageEntry::* field) {
+        // One unknown row and two known rows: conflict, consistency, all unknown.
+        // Link counts 4/5 exceed the three observed names, isolating disagreement.
+        for (int mode=0;mode<3;++mode) {
+            std::array entries{file("unknown.obj","same:id"),file("known-a.obj","same:id"),file("known-b.obj","same:id")};
+            ArtifactStorageReferences record;
+            ArtifactStorageStage stage{.kind=ArtifactStageKind::compile,.completion=ArtifactCompletion::executed};
+            for (auto& e:entries) {
+                e.logical_bytes.reset();e.allocated_bytes.reset();e.hard_links.reset();
+                stage.paths.push_back({root/e.relative_path,Role::declared_output});
+            }
+            if (mode!=2) {entries[1].*field=T{4};entries[2].*field=static_cast<T>(mode==0?5:4);}
+            record.stages.push_back(stage);
+            std::array<unsigned,3> order{0,1,2};
+            do {
+                StorageInventory inventory{.artifact_root=root,.root_exists=true};
+                for (const auto i:order) inventory.entries.push_back(entries[i]);
+                const auto result=associate_artifact_storage(std::array{record},inventory,key);
+                require(result && result->matches.size()==3,"all same-ID references retained");
+                for (const auto& match:result->matches)
+                    require(match.state==State::observed_path && match.same_observed_file_rows.size()==2 &&
+                        match.observed_identity_metadata_conflict==(mode==0),
+                        "known alias conflicts must not be hidden by missing matched-row metadata or row order");
+                for (std::size_t i=0;i<order.size();++i)
+                    require(result->observation.entries[i].*field==entries[order[i]].*field,
+                        "comparison does not fill unknown observation fields");
+            } while(std::next_permutation(order.begin(),order.end()));
+        }
+    };
+    verify(&StorageEntry::logical_bytes);verify(&StorageEntry::allocated_bytes);verify(&StorageEntry::hard_links);
+    require(!fs::exists(root),"alias metadata contracts perform no filesystem writes");
+    std::cout<<"alias metadata contracts passed: 54 field/state/order cases\n";
+}
 void projection_contracts() {
     const auto root=fs::absolute("projection-model/.mqb");
     auto link=link_record(root);
@@ -307,9 +342,12 @@ void native_contracts(const fs::path& root,const fs::path& evidence) {
         unavailable|=blocked.observation.entries[row].kind==StorageEntryKind::unavailable;
     require(!blocked.observation.issues.empty() && unavailable,"writer refusal retains unavailable row, not healthy matched file");
     const auto external=evidence/"outside";write(external/"sentinel.txt","outside fixture must not be traversed");
-    auto native_text=[](const fs::path& p){const auto b=p.u8string();return std::string{reinterpret_cast<const char*>(b.data()),b.size()};};
+    auto native_text=[](fs::path p){p.make_preferred();const auto b=p.u8string();return std::string{reinterpret_cast<const char*>(b.data()),b.size()};};
     process::ProcessSpec junction;junction.executable=L"C:/Windows/System32/cmd.exe";
     junction.arguments={"/d","/c","mklink","/J",native_text(root/".mqb/junction"),native_text(external)};
+    write(evidence/"junction.operands.txt",junction.arguments[4]+"\n"+junction.arguments[5]+"\n");
+    require(junction.arguments[4].find('/')==std::string::npos && junction.arguments[5].find('/')==std::string::npos,
+        "cmd junction paths use native separators");
     junction.working_directory=root;junction.capture_stdout=junction.capture_stderr=true;
     runner.phase="fixture-junction";const auto made_junction=runner.run(junction);
     require(made_junction && made_junction->exit_code==0,"create native junction fixture");
@@ -330,7 +368,7 @@ void native_contracts(const fs::path& root,const fs::path& evidence) {
 } // namespace
 int main() {
     try {
-        association_contracts();projection_contracts();
+        association_contracts();alias_metadata_contracts();projection_contracts();
 #ifdef _WIN32
         const auto work=fs::current_path();require(!fs::exists(work/"storage-fixtures") && !fs::exists(work/"storage-evidence"),"fresh evidence required");
         native_contracts(work/"storage-fixtures"/fs::path{L"association space \u65e5"},work/"storage-evidence/association");
