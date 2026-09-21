@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "mqb/core/BuildArtifactRecord.hpp"
 #include "mqb/core/CompilerOptions.hpp"
 #include "mqb/core/TranslationUnit.hpp"
 #include "mqb/modules/P1689.hpp"
@@ -58,6 +59,33 @@ struct IncrementalModuleScanResult {
     bool scanned{false};
 };
 
+// The same call's inspected recipe and accepted P1689 document. On reuse,
+// the recipe describes the checked contract, not an executed process. P1689
+// output/provider declarations are metadata, NOT newly built obj/IFC files.
+struct ModuleScanArtifactRecord {
+    std::optional<ArtifactGenerationLabel> caller_label;
+    ArtifactCompletion completion;
+    msvc::MsvcModuleScanRecipe recipe;
+    std::filesystem::path compile_cache_reference;
+    modules::P1689Document dependencies;
+
+    // Scanning never seals or saves compile-cache evidence. A subsequent
+    // successful compile may do so; this record cannot promise that outcome.
+    // This is not a disjoint-path guarantee: aliases/external writes remain
+    // unverified, even when no compile-cache save operation was performed.
+    static constexpr bool compile_cache_save_performed = false;
+    static constexpr bool compile_evidence_sealed_by_scan = false;
+    static constexpr bool exact_cache_entry_captured = false;
+    static constexpr bool physical_identity_verified = false;
+    static constexpr bool complete_producer_inventory = false;
+    static constexpr bool deletion_authorized = false;
+};
+
+struct RecordedModuleScanResult {
+    IncrementalModuleScanResult result;
+    ModuleScanArtifactRecord record;
+};
+
 class MsvcIncrementalModuleScanCoordinator {
 public:
     explicit MsvcIncrementalModuleScanCoordinator(
@@ -74,6 +102,12 @@ public:
     // compile, preserving the existing scan/compile freshness contract.
     [[nodiscard]] std::expected<IncrementalModuleScanResult, msvc::ModuleScanError>
     run(const IncrementalModuleScanRequest& request) const;
+
+    // One existing run, original errors, no additional inspection or cache
+    // read. Success is only a scan association, never target completion.
+    [[nodiscard]] std::expected<RecordedModuleScanResult, msvc::ModuleScanError>
+    run_recorded(const IncrementalModuleScanRequest& request,
+                 std::optional<ArtifactGenerationLabel> caller_label = std::nullopt) const;
 
 private:
     msvc::MsvcModuleDependencyScanner& scanner_;

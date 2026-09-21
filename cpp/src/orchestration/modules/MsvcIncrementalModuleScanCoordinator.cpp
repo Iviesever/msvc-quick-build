@@ -277,4 +277,24 @@ MsvcIncrementalModuleScanCoordinator::run(
     };
 }
 
+std::expected<RecordedModuleScanResult, msvc::ModuleScanError>
+MsvcIncrementalModuleScanCoordinator::run_recorded(
+    const IncrementalModuleScanRequest& request,
+    std::optional<ArtifactGenerationLabel> caller_label) const {
+    auto completed = run(request);
+    if (!completed) return std::unexpected(std::move(completed.error()));
+
+    ModuleScanArtifactRecord record{
+        .caller_label = std::move(caller_label),
+        .completion = completed->scanned ? ArtifactCompletion::executed : ArtifactCompletion::reused,
+        .recipe = completed->inspection.recipe,
+        .compile_cache_reference = request.compile_cache_file,
+        .dependencies = completed->result.dependencies,
+    };
+    return RecordedModuleScanResult{
+        .result = std::move(*completed),
+        .record = std::move(record),
+    };
+}
+
 } // namespace mqb::orchestration
