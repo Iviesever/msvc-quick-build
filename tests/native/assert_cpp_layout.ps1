@@ -183,7 +183,7 @@ Assert-ExactFiles -Root $discoveryTestsRoot -Expected @(
 
 $coreLeafFiles = [ordered]@{
     'cache' = @(
-        'ArchiveCache.cpp', 'ArchiveCacheFile.cpp',
+        'ArchiveCache.cpp', 'ArchiveCacheFile.cpp', 'ArtifactStorageAssociation.cpp',
         'CompileCache.cpp', 'CompileCacheFile.cpp',
         'LinkCache.cpp', 'LinkCacheFile.cpp', 'StorageInventory.cpp'
     )
@@ -255,7 +255,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'msvc') -LeafFiles ([ordered]@{
 
 $orchestrationLeafFiles = [ordered]@{
     'incremental' = @(
-        'IncrementalFileSnapshot.hpp',
+        'ArtifactStorageProjection.cpp', 'IncrementalFileSnapshot.hpp',
         'TargetCompileWave.hpp',
         'MsvcIncrementalArchiveCoordinator.cpp',
         'MsvcIncrementalCompileCoordinator.cpp',
