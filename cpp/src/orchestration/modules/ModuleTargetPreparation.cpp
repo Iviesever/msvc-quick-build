@@ -206,7 +206,8 @@ inspect_module_target_preparation(
 std::expected<ModuleTargetPreparation, IncrementalModuleTargetError>
 prepare_module_target(
     const IncrementalModuleTargetRequest& request,
-    msvc::MsvcModuleDependencyScanner& scanner) {
+    msvc::MsvcModuleDependencyScanner& scanner,
+    std::vector<ModuleTargetScanArtifactRecord>* records) {
     if (auto validated = validate_request(request); !validated) {
         return std::unexpected(std::move(validated.error()));
     }
@@ -217,7 +218,7 @@ prepare_module_target(
     if (!artifacts) return std::unexpected(std::move(artifacts.error()));
 
     const auto scan_started = Clock::now();
-    auto scanned = scan_requested_module_sources(request, scanner);
+    auto scanned = scan_requested_module_sources(request, scanner, records);
     if (!scanned) return std::unexpected(std::move(scanned.error()));
 
     std::vector<ModuleTargetScanResult> scans = std::move(scanned->scans);
@@ -231,7 +232,8 @@ prepare_module_target(
             scanner,
             *artifacts,
             scanned_units,
-            compile_sources); !injected) {
+            compile_sources,
+            records); !injected) {
         return std::unexpected(std::move(injected.error()));
     }
     const auto dependency_scan = std::chrono::duration_cast<std::chrono::nanoseconds>(

@@ -26,6 +26,7 @@ inject_standard_library_module_providers(
     msvc::MsvcModuleDependencyScanner& scanner,
     ModuleTargetArtifactRegistry& artifacts,
     std::vector<modules::ScannedModuleUnit>& scanned_units,
-    std::vector<ModuleCompileSourceRequest>& compile_sources);
+    std::vector<ModuleCompileSourceRequest>& compile_sources,
+    std::vector<ModuleTargetScanArtifactRecord>* records = nullptr);
 
 } // namespace mqb::orchestration::detail

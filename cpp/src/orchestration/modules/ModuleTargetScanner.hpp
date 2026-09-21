@@ -33,7 +33,8 @@ scan_module_source(
     const ModuleCompileSourceRequest& source,
     const CompilerOptions& options,
     const std::filesystem::path& working_directory,
-    msvc::MsvcModuleDependencyScanner& scanner);
+    msvc::MsvcModuleDependencyScanner& scanner,
+    ModuleScanArtifactRecord* record = nullptr);
 
 [[nodiscard]] std::expected<ModuleTargetScanInspectionBatch, IncrementalModuleTargetError>
 inspect_requested_module_sources(
@@ -43,6 +44,7 @@ inspect_requested_module_sources(
 [[nodiscard]] std::expected<ModuleTargetScanBatch, IncrementalModuleTargetError>
 scan_requested_module_sources(
     const IncrementalModuleTargetRequest& request,
-    msvc::MsvcModuleDependencyScanner& scanner);
+    msvc::MsvcModuleDependencyScanner& scanner,
+    std::vector<ModuleTargetScanArtifactRecord>* records = nullptr);
 
 } // namespace mqb::orchestration::detail
