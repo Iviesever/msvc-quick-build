@@ -68,7 +68,7 @@ Alternating pair order reduces, but does not eliminate, order/cache effects. Res
 
 Correctness CI continues to gate cache freshness, missing-output repair, scheduling bounds, dependency behavior, self-hosting, packaging, and native tests.
 
-Performance evidence is a **review gate**, not a hosted-runner timing threshold. CI machine load, VM placement, antivirus activity, and unrelated system noise make fixed millisecond or percentage thresholds brittle. A reviewer should evaluate repeated medians and the relevant phase/cache evidence instead.
+Performance evidence normally requires **review**, including phase/cache evidence and every adverse sample. The explicitly registered external no-op rule is a hard exception: both the median paired candidate-minus-baseline time must exceed **1 ms** and the median of the individual paired percentage changes must exceed **10%**. Environment variability is a possible hypothesis, not a waiver or an established cause. A passing threshold is not overall performance or release approval.
 
 Structural performance tests remain useful when they prove deterministic properties such as “warm module builds launch zero dependency-scan processes” or “one logical worker creates no background thread.” They complement, but do not replace, before/after benchmark evidence for a `perf:` change.
 
@@ -86,3 +86,44 @@ When a new optimization targets a scenario not represented by the standard harne
 The record also appends deterministic counters and per-domain breakdowns for cache opens/bytes, filesystem snapshot requests/unique paths/reuses, background-thread creation, MSVC process launches, and emitted output. The final timing record is emitted only after the output observer is detached, so it does not count itself as reporting output.
 
 Performance comparison now uses alternating paired execution (`baseline -> candidate`, then `candidate -> baseline`, repeated) and reports the median paired delta, paired MAD, and nearest-rank paired P95. Standard scenarios remain append-only; the contract additionally includes 129-TU common-header warm builds, automatic versus `-j 1`, and timings-enabled versus timings-disabled no-op builds.
+
+## Executable external no-op acceptance
+
+`tests/native/check_external_noop_gate.py` enforces the current schema-v3,
+19-scenario/four-pair CI profile without executing MQB. It validates the complete
+pair grid and the four `external_stopwatch` raw samples, their order, timing
+consistency and missing internal vectors. It recomputes from raw timings using
+exact rational arithmetic, not rounded summaries, a ratio of separate medians,
+outlier removal or observer-cost subtraction. Profile evolution requires an
+explicit matching contract change; the general collector's other iteration
+counts are not this registered CI acceptance profile.
+
+```powershell
+python tests/native/check_external_noop_gate.py benchmark-comparison.json `
+  --output noop-acceptance.json
+# Exit 0: threshold not crossed; 1: HOLD; 2: INVALID/incomplete evidence.
+```
+
+Output must be new. Missing, malformed, duplicate or contradictory input fails
+closed with a decision JSON where it can be written. Existing output is never
+overwritten. Exit 0 does not establish complete source/binary provenance or
+acceptance of other scenarios; those reviews remain required.
+
+The Performance Evidence workflow keeps its original admission, four iterations,
+collector, summary and identity checks. Its gate runs after identity checks and
+before the `always()` artifact upload, propagating nonzero exit status. Both the
+original inputs and `noop-acceptance.json` are uploaded even on a threshold
+failure. This is failure-safe step wiring, not a guarantee of upload service
+availability. No `continue-on-error` is used. The separate Performance Gate
+Contracts workflow runs numeric, CLI and workflow-structure tests on Linux and
+Windows, with no benchmark execution.
+
+For an already retained ZIP, add `--artifact-sha256 <expected-digest>`; the gate
+reads the unique comparison member without extracting or executing binaries.
+The committed `fixtures/pr207-external-noop.json` contains only four historical
+external rows and provenance, **not a full report**. Tests treat other generated
+reports as synthetic. The unmodified #701 artifact
+`940472d871e47aa01be0347f7bf86ac3d158c0247d929cfeda4fcc6c3b4f6ca3`
+returns HOLD (+3.0963 ms, +26.70024178525%); implementing this gate does not fix
+that performance failure or change PR #207's HOLD. Pre-integration green runs
+are not retroactively changed to automated gate failures.
