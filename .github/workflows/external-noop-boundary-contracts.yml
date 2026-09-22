@@ -1,0 +1,61 @@
+name: External no-op boundary contracts
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'tests/native/*external_noop_boundary*'
+      - '.github/workflows/external-noop-boundary-contracts.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/native/*external_noop_boundary*'
+      - '.github/workflows/external-noop-boundary-contracts.yml'
+permissions:
+  contents: read
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  contracts:
+    name: Diagnostic contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fixed plan and synthetic evidence contracts (zero MQB)
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          out = pathlib.Path('boundary-contract-out')
+          out.mkdir()
+          with (out/'python.log').open('x', encoding='utf-8') as log:
+              p = subprocess.run([sys.executable, 'tests/native/test_external_noop_boundary.py'],
+                                 stdout=log, stderr=subprocess.STDOUT)
+          print((out/'python.log').read_text(encoding='utf-8'))
+          sys.exit(p.returncode)
+      - name: Windows parser and isolated helper contracts (zero MQB)
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force boundary-contract-out | Out-Null
+          try {
+            & ./tests/native/verify_external_noop_boundary.ps1 *> boundary-contract-out/powershell.log
+          } catch {
+            $_ | Out-String | Add-Content boundary-contract-out/powershell.log
+            throw
+          } finally {
+            Get-Content boundary-contract-out/powershell.log
+          }
+      - name: Preserve contract evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: boundary-contracts-${{ matrix.os }}
+          path: boundary-contract-out/
+          if-no-files-found: error
+          retention-days: 30
+# No workflow_dispatch, benchmark, MQB download, study execution or hidden launch
+# on Ready. The 40-call study needs a separate exact-source execution review.
