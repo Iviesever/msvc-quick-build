@@ -152,6 +152,7 @@ def validate_call(row, record, before, after, output_lines):
     require(record['error'] is None and type(record['exit_code']) is int and record['exit_code'] == 0,
             'original call failed or observation incomplete')
     require(record['dispatch_attempted'] is True and record['clears_hold'] is False, 'invalid dispatch/proof')
+    require(record['cleanup'] is None, 'successful call contains failure cleanup')
     q = record['clock']; freq = q['frequency']
     require(type(freq) is int and freq > 0, 'invalid QPC frequency')
     keys = ('outer_start', 'native_start', 'native_end', 'outer_end')
@@ -210,6 +211,32 @@ def audit_call(root, row):
                          load(Path(str(prefix)+'.after.json')), lines)
 
 
+
+def validate_call_inventory(root, rows):
+    """A completed study must account for every dispatch and its evidence.
+
+    A dangling started marker is evidence of an unfinished attempt, not a file
+    that can be ignored merely because the expected result count was reached.
+    This checks retained journal names, not the existence of unlogged processes.
+    """
+    expected = set()
+    for row in rows:
+        prefix = f"{row['sequence']:02d}"
+        suffixes = ['.started.json', '.before.json', '.result.json',
+                    '.after.json', '.validated.json']
+        if row['mode'] == 'process':
+            suffixes += ['.stdout.bin', '.stderr.bin']
+        expected.update(prefix + suffix for suffix in suffixes)
+    actual = set()
+    for entry in (root/'calls').iterdir():
+        require(not entry.is_symlink() and entry.is_file(), 'non-file call evidence')
+        require(entry.name in expected, 'unplanned call evidence: ' + entry.name)
+        actual.add(entry.name)
+    missing = expected - actual
+    if missing:
+        raise FileNotFoundError('missing call evidence: ' + ', '.join(sorted(missing)))
+
+
 def audit(root):
     plan = load(root/'plan.json'); validate_plan(plan)
     require(load(root/'host.json')['original_plan_sha256'] == digest((root/'plan.json').read_bytes()), 'plan changed')
@@ -219,12 +246,16 @@ def audit(root):
     for n in COLLECTORS:
         require(digest((root/'collector-source'/n).read_bytes()) == plan['collector_hashes'][n], 'collector snapshot changed')
     completion = load(root/'completion.json')
-    require(completion == dict(status='completed', attempted=40, validated=40, error=None, clears_hold=False),
+    require(same(completion, dict(status='completed', attempted=40, validated=40, error=None, clears_hold=False)),
             'study stopped/incomplete; retain first failure and unused slots')
+    rows = schedule()
+    validate_call_inventory(root, rows)
     samples = []
-    for row in schedule():
-        samples.append(audit_call(root, row))
-    require(len(list((root/'calls').glob('*.result.json'))) == MAX_CALLS, 'extra invocation record')
+    for row in rows:
+        sample = audit_call(root, row)
+        verdict = root/'calls'/f"{row['sequence']:02d}.validated.json"
+        require(same(load(verdict), sample), 'per-call validation does not match raw evidence')
+        samples.append(sample)
     pairs = []
     for mode in ('legacy', 'process'):
         for number in range(1, 5):

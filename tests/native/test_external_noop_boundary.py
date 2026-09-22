@@ -22,7 +22,7 @@ def case(mode='legacy', phase='noop'):
     root = None if mode == 'legacy' else dict(pid=42, created_100ns=100, exited_100ns=200,
                                              kernel_100ns=0, user_100ns=1000)
     record = dict(row=row, argv=h.ARGV.copy(), executable_sha256=h.BINARIES[row['side']],
-                  error=None, exit_code=0, dispatch_attempted=True, clears_hold=False,
+                  error=None, exit_code=0, dispatch_attempted=True, clears_hold=False, cleanup=None,
                   output_format='powershell_merged_lines' if mode == 'legacy' else 'separate_bytes',
                   root_times=root, clock=dict(frequency=1000, outer_start=1, native_start=2,
                                              start_return=3, wait_return=4, native_end=5, outer_end=6))
@@ -173,12 +173,75 @@ class Contracts(unittest.TestCase):
                 if row['mode'] == 'process':
                     Path(str(prefix)+'.stdout.bin').write_bytes(('\n'.join(lines)+'\n').encode())
                     Path(str(prefix)+'.stderr.bin').write_bytes(b'')
+                h.write_new(Path(str(prefix)+'.validated.json'), h.audit_call(root, row))
             value = h.audit(root)
             self.assertEqual(40, len(value['samples'])); self.assertEqual(8, len(value['pairs']))
             self.assertFalse(value['clears_hold']); self.assertIsNone(value['cause'])
+            # Synthetic mutations are isolated; no historical or CI evidence is edited.
+            extra = root/'calls/41.started.json'
+            h.write_new(extra, {'sequence': 41, 'synthetic': True})
+            with self.assertRaises(ValueError): h.audit(root)
+            extra.unlink()
+            verdict = root/'calls/01.validated.json'; original = verdict.read_bytes()
+            altered = h.load(verdict); altered['outer_ms'] += 1
+            verdict.write_text(json.dumps(altered))
+            with self.assertRaises(ValueError): h.audit(root)
+            verdict.write_bytes(original)
+            completion_path = root/'completion.json'; original = completion_path.read_bytes()
+            for field, value in [('attempted', 40.0), ('validated', 40.0), ('clears_hold', 0)]:
+                altered = json.loads(original); altered[field] = value
+                completion_path.write_text(json.dumps(altered))
+                with self.assertRaises(ValueError): h.audit(root)
+            completion_path.write_bytes(original)
             (root/'calls/40.result.json').unlink()
             with self.assertRaises(OSError): h.audit(root)
             self.assertEqual(39, len(list((root/'calls').glob('*.result.json'))))
+
+    def test_success_cannot_carry_cleanup_evidence(self):
+        for mode in ('legacy', 'process'):
+            for cleanup in ({'root_exited': False, 'descendants_verified': False},
+                            {'root_exited': True, 'descendants_verified': False},
+                            {}, False, 'cleanup failed'):
+                args = list(case(mode)); args[1]['cleanup'] = cleanup
+                with self.assertRaises(ValueError): h.validate_call(*args)
+            args = list(case(mode)); del args[1]['cleanup']
+            with self.assertRaises(KeyError): h.validate_call(*args)
+
+    def test_exact_journal_inventory_accepts_only_complete_plan(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); calls = root/'calls'; calls.mkdir()
+            rows = [h.schedule()[0], next(r for r in h.schedule() if r['mode'] == 'process')]
+            expected = set()
+            for row in rows:
+                suffixes = ['.started.json', '.before.json', '.result.json', '.after.json', '.validated.json']
+                if row['mode'] == 'process': suffixes += ['.stdout.bin', '.stderr.bin']
+                for suffix in suffixes:
+                    name = f"{row['sequence']:02d}" + suffix
+                    (calls/name).write_bytes(b'synthetic inventory placeholder')
+                    expected.add(name)
+            h.validate_call_inventory(root, rows)
+            for name in sorted(expected):
+                p = calls/name; data = p.read_bytes(); p.unlink()
+                with self.assertRaises(FileNotFoundError): h.validate_call_inventory(root, rows)
+                self.assertFalse(p.exists())  # Refusal must not fill evidence slots.
+                p.write_bytes(data)
+
+    def test_inventory_rejects_dangling_markers_and_wrong_mode_streams(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); calls = root/'calls'; calls.mkdir()
+            rows = [h.schedule()[0]]
+            for suffix in ('.started.json', '.before.json', '.result.json', '.after.json', '.validated.json'):
+                (calls/('01'+suffix)).write_bytes(b'synthetic')
+            for name in ('41.started.json', '41.before.json', '41.result.json', '41.after.json',
+                         '41.validated.json', '01.stdout.bin', '01.stderr.bin', '01.result.json.tmp',
+                         'unexpected.txt'):
+                p = calls/name; p.write_bytes(b'preserve unexpected evidence')
+                with self.assertRaises(ValueError): h.validate_call_inventory(root, rows)
+                self.assertEqual(b'preserve unexpected evidence', p.read_bytes())
+                p.unlink()
+            p = calls/'nested'; p.mkdir()
+            with self.assertRaises(ValueError): h.validate_call_inventory(root, rows)
+            self.assertTrue(p.is_dir())
 
     def test_cli_incomplete_study_fails_without_filling_slots(self):
         with tempfile.TemporaryDirectory() as d:
