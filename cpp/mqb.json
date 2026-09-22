@@ -32,6 +32,7 @@
       "src/core/cache/StorageInventory.cpp",
       "src/core/cache/ArtifactStorageAssociation.cpp",
       "src/orchestration/incremental/ArtifactStorageProjection.cpp",
+      "src/orchestration/incremental/ObservedLinkCompletion.cpp",
       "src/platform/windows/StorageInventory.cpp",
       "src/app/cli/Cli.cpp",
       "src/app/diagnostics/Diagnostics.cpp",

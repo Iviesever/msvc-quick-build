@@ -8,6 +8,7 @@
 
 #include "mqb/core/BuildPlan.hpp"
 #include "mqb/core/BuildArtifactRecord.hpp"
+#include "mqb/core/StorageFileObservation.hpp"
 #include "mqb/core/WriteInventory.hpp"
 #include "mqb/core/BuildPlanner.hpp"
 #include "mqb/core/LinkCache.hpp"
@@ -75,6 +76,12 @@ struct RecordedLinkResult {
     LinkArtifactRecord record;
 };
 
+struct ObservedLinkResult {
+    RecordedLinkResult build;
+    StorageFileObservation observation;
+    bool observer_invoked{false};
+};
+
 class MsvcIncrementalLinkCoordinator {
 public:
     MsvcIncrementalLinkCoordinator(
@@ -101,6 +108,14 @@ public:
     // Failure returns the original error and no successful record.
     [[nodiscard]] std::expected<RecordedLinkResult, IncrementalLinkError>
     run_recorded(const IncrementalLinkRequest& request) const;
+
+    // Explicit single-main-output post-success observation. Runs LINK/validation
+    // once via run_recorded; its failure never invokes the observer. Observation
+    // refusal/exception is separate from successful build/cache state. No default
+    // caller opts in. Observers must echo the exact supplied requested_path.
+    // Allocator failure is not recoverable; it still propagates.
+    [[nodiscard]] std::expected<ObservedLinkResult, IncrementalLinkError>
+    run_observed(const IncrementalLinkRequest& request, const StoragePathObserver& observer) const;
 
 private:
     [[nodiscard]] std::expected<IncrementalLinkResult, IncrementalLinkError>
