@@ -1,0 +1,71 @@
+name: Retained no-op executor contracts
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'tests/native/*retained_noop*'
+      - '.github/workflows/retained-noop-*'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/native/*retained_noop*'
+      - '.github/workflows/retained-noop-*'
+permissions:
+  contents: read
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Synthetic executor contracts (zero study MQB)
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          out = pathlib.Path('executor-contract-out'); out.mkdir()
+          with (out/'python.log').open('x', encoding='utf-8') as log:
+              p = subprocess.run([sys.executable, '-B', 'tests/native/test_retained_noop_executor.py'],
+                                 stdout=log, stderr=subprocess.STDOUT)
+          print((out/'python.log').read_text(encoding='utf-8'))
+          sys.exit(p.returncode)
+      - name: Windows parse and inherited interpreter binding (no native launches)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile(
+                (Join-Path $PWD 'tests/native/run_retained_noop_study.ps1'), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+            $expected = @('ArtifactPath', 'OutputRoot', 'ReviewedCommit', 'ManifestSha256', 'Allocation')
+            $actual = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+            if (@(Compare-Object $expected $actual).Count -ne 0) { throw 'Unexpected executor parameters.' }
+            $pythonCommand = Get-Command python -CommandType Application | Select-Object -First 1
+            $chosen = [IO.Path]::GetFullPath($pythonCommand.Source)
+            & {
+              Set-Alias -Name python -Value $chosen -Scope Local -Force
+              $inherited = & { (Get-Command python -CommandType Alias).Definition }
+              if ($inherited -ne $chosen) { throw 'Interpreter alias not inherited by child scope.' }
+            }
+            'PASS: executor parsed; five parameters; single interpreter alias inherited. No executor/native child invoked.' |
+              Set-Content executor-contract-out/powershell.log
+          } catch {
+            $_ | Out-String | Add-Content executor-contract-out/powershell.log
+            throw
+          } finally { Get-Content executor-contract-out/powershell.log }
+      - name: Preserve contract evidence including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: executor-contracts-${{ matrix.os }}
+          path: executor-contract-out/
+          if-no-files-found: error
+          retention-days: 30
+# No study dispatch, artifact download, MQB/helper child, or timeout experiment.

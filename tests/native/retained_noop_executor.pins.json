@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "canonical_lf_sha256": {
+    ".github/workflows/retained-noop-study.yml": "e65396458d54b9aff82427ecaddbac0ee8b7e66f13d20fcaeba835719c83fd92",
+    "tests/native/run_retained_noop_study.ps1": "fbe8562acb7da97c5064941926845b35dd397dce881b85090878a0d308ff7c16",
+    "tests/native/retained_noop_executor.py": "f89363a134113873b8b798522139b44bca65dcd8c263c15d2a7e4ead33a47fe0",
+    "tests/native/collect_external_noop_boundary.ps1": "4b99ee4b1ad4de3608d3079175ff47bbd1de74e8f80dad715ac6b303698f9ebf",
+    "tests/native/external_noop_boundary.py": "6cbc55a72924b12e73308954330bb2504925149020a81905db11cdadd0b99a52"
+  }
+}
