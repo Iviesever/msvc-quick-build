@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$ArtifactPath,
+    [Parameter(Mandatory)][string]$PreviousArtifactPath,
     [Parameter(Mandatory)][string]$OutputRoot,
     [Parameter(Mandatory)][string]$ReviewedCommit,
     [Parameter(Mandatory)][string]$ManifestSha256,
@@ -28,7 +29,8 @@ try {
     $pins.Add([IO.File]::Open($pythonExe, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read))
     & $pythonExe -B $checker prepare ([IO.Path]::GetFullPath($ArtifactPath)) `
         --source-root $sourceRoot --output $root --approved-commit $ReviewedCommit `
-        --checkout-commit $checkout[0] --manifest-sha $ManifestSha256 --allocation $Allocation
+        --checkout-commit $checkout[0] --manifest-sha $ManifestSha256 --allocation $Allocation `
+        --previous-archive ([IO.Path]::GetFullPath($PreviousArtifactPath))
     if ($LASTEXITCODE -ne 0) { throw 'Admission/input/source validation refused; no study dispatched.' }
     $prepared = $true
     $snapshot = Join-Path $root 'source'
@@ -36,6 +38,8 @@ try {
         $pins.Add([IO.File]::Open($f.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read))
     }
     $pins.Add([IO.File]::Open((Join-Path $root 'original-701.zip'), [IO.FileMode]::Open,
+        [IO.FileAccess]::Read, [IO.FileShare]::Read))
+    $pins.Add([IO.File]::Open((Join-Path $root 'previous-001.zip'), [IO.FileMode]::Open,
         [IO.FileAccess]::Read, [IO.FileShare]::Read))
     # The unchanged collector's `python` checks inherit this local alias, with no fallback.
     Set-Alias -Name python -Value $pythonExe -Scope Local -Force

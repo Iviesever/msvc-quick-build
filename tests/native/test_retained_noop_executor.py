@@ -17,7 +17,7 @@ def context():
     return {'GITHUB_REPOSITORY': e.REPOSITORY, 'GITHUB_EVENT_NAME': 'workflow_dispatch',
             'GITHUB_REF': 'refs/heads/main', 'GITHUB_SHA': COMMIT, 'GITHUB_WORKFLOW_SHA': COMMIT,
             'GITHUB_WORKFLOW_REF': e.REPOSITORY + '/' + e.WORKFLOW + '@refs/heads/main',
-            'GITHUB_RUN_ID': '123', 'GITHUB_RUN_NUMBER': '1', 'GITHUB_RUN_ATTEMPT': '1'}
+            'GITHUB_RUN_ID': '123', 'GITHUB_RUN_NUMBER': '2', 'GITHUB_RUN_ATTEMPT': '1'}
 
 
 def pin_hash():
@@ -30,8 +30,125 @@ def synthetic_tree(root):
         p.write_bytes((ROOT / name).read_bytes())
 
 
+def synthetic_previous_members():
+    """Structural history examples, NOT actual historical evidence."""
+    prior = e.PREVIOUS_STUDY
+    request = dict(context(), GITHUB_SHA=prior['commit'], GITHUB_WORKFLOW_SHA=prior['commit'],
+                   GITHUB_RUN_ID=prior['run_id'], GITHUB_RUN_NUMBER='1',
+                   REVIEWED_COMMIT=prior['commit'], MANIFEST_SHA256=prior['manifest_sha256'],
+                   ALLOCATION='701-boundary-001')
+    error = 'Call 2 invalid; first failure retained, no refill.'
+    members = {'requested-allocation.json': request,
+               'evidence/execution-completion.json': dict(schema=1, status='stopped',
+                   collector_invoked=True, error=error, clears_hold=False, cause=None),
+               'evidence/study/completion.json': dict(status='stopped', attempted=2, validated=1,
+                   error=error, clears_hold=False)}
+    for n in ('01', '02'):
+        for suffix in ('started', 'before', 'result', 'after'):
+            members[f'evidence/study/calls/{n}.{suffix}.json'] = {'SYNTHETIC': True}
+    members['evidence/study/calls/01.validated.json'] = {'SYNTHETIC': True}
+    return members
+
+
+def write_synthetic_previous(path, members):
+    from zipfile import ZipFile, ZIP_DEFLATED
+    with ZipFile(path, 'w', compression=ZIP_DEFLATED) as z:
+        for name, value in members.items():
+            z.writestr(name, json.dumps(value, allow_nan=False))
+    data = path.read_bytes()
+    return {'size': len(data), 'sha256': e.sha(data)}
+
+
 class Contracts(unittest.TestCase):
-    def test_first_reviewed_manual_allocation_only(self):
+    def test_only_002_exact_pair_is_live(self):
+        for allocation in ('701-boundary-001', '701-boundary-002', '701-boundary-003', '', 'other'):
+            for number in ('1', '2', '3', '02', '2.0'):
+                for attempt in ('1', '2', '01'):
+                    c = context(); c.update(GITHUB_RUN_NUMBER=number, GITHUB_RUN_ATTEMPT=attempt)
+                    with self.subTest(allocation=allocation, number=number, attempt=attempt):
+                        if (allocation, number, attempt) == ('701-boundary-002', '2', '1'):
+                            e.admission(c, COMMIT, COMMIT, allocation)
+                        else:
+                            with self.assertRaises(ValueError): e.admission(c, COMMIT, COMMIT, allocation)
+        c = context(); c['GITHUB_RUN_ID'] = e.PREVIOUS_STUDY['run_id']
+        with self.assertRaises(ValueError): e.admission(c, COMMIT, COMMIT, e.ALLOCATION)
+
+    def test_historical_pins_are_exact_not_current_source(self):
+        self.assertEqual('701-boundary-001', e.PREVIOUS_STUDY['allocation'])
+        self.assertEqual('35725316959', e.PREVIOUS_STUDY['run_id'])
+        self.assertEqual(10693057419, e.PREVIOUS_STUDY['artifact_id'])
+        self.assertEqual(16641257, e.PREVIOUS_STUDY['size'])
+        self.assertEqual('d75b31e472439426f5cff42abf4f0213b86f140b310ea3e3ae7723a1906da0a7',
+                         e.PREVIOUS_STUDY['sha256'])
+        self.assertEqual((2, 1), (e.PREVIOUS_STUDY['recorded_calls'], e.PREVIOUS_STUDY['validated_calls']))
+
+    def test_previous_archive_is_pinned_before_parsing(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/'SYNTHETIC.zip'; write_synthetic_previous(path, synthetic_previous_members())
+            with self.assertRaisesRegex(ValueError, 'retained stopped 001 ZIP'): e.verify_previous_study(path)
+            with self.assertRaises(ValueError): e.verify_previous_study(Path(d)/'absent.zip')
+
+    def test_synthetic_history_is_retained_not_revalidated(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/'SYNTHETIC.zip'; pins = write_synthetic_previous(path, synthetic_previous_members())
+            before = path.read_bytes()
+            with patch.dict(e.PREVIOUS_STUDY, pins):
+                result = e.verify_previous_study(path)
+            self.assertEqual('consumed_stopped', result['status'])
+            self.assertEqual((2, 1), (result['recorded_calls'], result['validated_calls']))
+            self.assertEqual(before, path.read_bytes())
+            self.assertEqual([path], list(Path(d).iterdir()))
+
+    def test_synthetic_history_identity_stop_and_journal_corruption_refused(self):
+        invalid = []
+        for key in synthetic_previous_members()['requested-allocation.json']:
+            m = synthetic_previous_members(); m['requested-allocation.json'][key] = 'wrong'; invalid.append(m)
+        for field, value in [('attempted', 2.0), ('validated', 2), ('status', 'completed'), ('clears_hold', True)]:
+            m = synthetic_previous_members(); m['evidence/study/completion.json'][field] = value; invalid.append(m)
+        for field, value in [('schema', True), ('collector_invoked', 1), ('error', None), ('status', 'completed_diagnostic_only')]:
+            m = synthetic_previous_members(); m['evidence/execution-completion.json'][field] = value; invalid.append(m)
+        for extra in ('02.validated', '03.started', '41.started'):
+            m = synthetic_previous_members(); m['evidence/study/calls/'+extra+'.json'] = {}; invalid.append(m)
+        m = synthetic_previous_members(); del m['evidence/study/calls/01.result.json']; invalid.append(m)
+        for index, members in enumerate(invalid):
+            with self.subTest(case=index), tempfile.TemporaryDirectory() as d:
+                path = Path(d)/'SYNTHETIC.zip'; pins = write_synthetic_previous(path, members)
+                with patch.dict(e.PREVIOUS_STUDY, pins), self.assertRaises(ValueError): e.verify_previous_study(path)
+
+    def test_history_failure_prevents_preparation_and_closure(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d)/'evidence'
+            with patch.object(e, 'verify_archive', return_value={}), \
+                 patch.object(e, 'verify_previous_study', side_effect=ValueError('SYNTHETIC lost history')):
+                with self.assertRaisesRegex(ValueError, 'lost history'):
+                    e.prepare(Path('unused'), ROOT, output, COMMIT, COMMIT, pin_hash(), e.ALLOCATION,
+                              context(), previous_archive=Path('absent'))
+            self.assertFalse(output.exists())
+            output.mkdir()
+            receipt = dict(schema=2, allocation=e.ALLOCATION, context=context(), clears_hold=False,
+                           cause=None, max_study_calls=40, step_timeout_minutes=15,
+                           job_timeout_minutes=20, cumulative_max_study_calls=42)
+            e.boundary.write_new(output/'execution-before.json', receipt)
+            with patch.object(e, 'verify_previous_study', side_effect=ValueError('SYNTHETIC lost history')):
+                with self.assertRaisesRegex(ValueError, 'lost history'): e.finish(output)
+            self.assertFalse((output/'execution-audit.json').exists())
+
+    def test_same_workflow_downloads_both_pinned_archives_before_execution(self):
+        text = (ROOT/e.WORKFLOW).read_text()
+        self.assertTrue(text.startswith('name: Retained no-op study (one allocation)\n'))
+        self.assertIn('group: retained-noop-701-boundary-001', text)
+        self.assertEqual(2, text.count('skip-decompress: true'))
+        self.assertIn("artifact-ids: '10693057419'", text)
+        self.assertIn("run-id: '35725316959'", text)
+        self.assertLess(text.index('Download immutable stopped 001'), text.index('Invoke frozen collector'))
+        self.assertIn('-PreviousArtifactPath $history[0].FullName', text)
+        self.assertIn('name: retained-noop-701-boundary-002-${{ github.run_id }}', text)
+        wrapper = (ROOT/'tests/native/run_retained_noop_study.ps1').read_text()
+        self.assertIn('--previous-archive ([IO.Path]::GetFullPath($PreviousArtifactPath))', wrapper)
+        self.assertLess(wrapper.index("'previous-001.zip'"), wrapper.index('& $collector -ArtifactPath'))
+
+
+    def test_exact_reviewed_second_allocation_only(self):
         result = e.admission(context(), COMMIT, COMMIT, e.ALLOCATION)
         self.assertEqual('123', result['GITHUB_RUN_ID'])
 
@@ -43,9 +160,10 @@ class Contracts(unittest.TestCase):
                 del c[key]
                 with self.assertRaises(ValueError): e.admission(c, COMMIT, COMMIT, e.ALLOCATION)
 
-    def test_rerun_and_second_dispatch_refused(self):
+    def test_rerun_and_wrong_dispatch_refused(self):
         for key in ('GITHUB_RUN_NUMBER', 'GITHUB_RUN_ATTEMPT'):
-            for value in ('2', '01', 1, True, '1.0', ''):
+            wrong = '1' if key == 'GITHUB_RUN_NUMBER' else '2'
+            for value in (wrong, '3', '01', '02', 1, 2, True, '2.0', ''):
                 c = context(); c[key] = value
                 with self.assertRaises(ValueError): e.admission(c, COMMIT, COMMIT, e.ALLOCATION)
 
@@ -111,15 +229,16 @@ class Contracts(unittest.TestCase):
             output = Path(d) / 'never-created'
             c = context(); c['GITHUB_RUN_ATTEMPT'] = '2'
             with self.assertRaises(ValueError):
-                e.prepare(Path('absent.zip'), ROOT, output, COMMIT, COMMIT, pin_hash(), e.ALLOCATION, c)
+                e.prepare(Path('absent.zip'), ROOT, output, COMMIT, COMMIT, pin_hash(), e.ALLOCATION, c, previous_archive=Path('absent-001.zip'))
             self.assertFalse(output.exists())
 
     def test_existing_output_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d); marker = root/'retained'; marker.write_text('failure')
-            with patch.object(e, 'verify_archive', return_value={'synthetic': True}):
+            root = Path(d); marker = root/'retained'; marker.write_text('failure'); archive = Path('SYNTHETIC')
+            with patch.object(e, 'verify_archive', return_value={'synthetic': True}), \
+                 patch.object(e, 'verify_previous_study', side_effect=lambda _: dict(e.PREVIOUS_STUDY)):
                 with self.assertRaises(ValueError):
-                    e.prepare(Path('synthetic'), ROOT, root, COMMIT, COMMIT, pin_hash(), e.ALLOCATION, context())
+                    e.prepare(Path('synthetic'), ROOT, root, COMMIT, COMMIT, pin_hash(), e.ALLOCATION, context(), previous_archive=archive)
             self.assertEqual('failure', marker.read_text())
 
     def test_workflow_has_no_automatic_study_trigger_or_retry(self):
@@ -134,7 +253,7 @@ class Contracts(unittest.TestCase):
         for expected in ('timeout-minutes: 20', 'timeout-minutes: 15', 'if: always()',
                          "artifact-ids: '10675079360'", "run-id: '35681224762'",
                          'skip-decompress: true', 'digest-mismatch: error', 'persist-credentials: false',
-                         "context['GITHUB_RUN_NUMBER'] == context['GITHUB_RUN_ATTEMPT'] == '1'"):
+                         "context['GITHUB_RUN_NUMBER'] == '2'", "context['GITHUB_RUN_ATTEMPT'] == '1'"):
             self.assertIn(expected, active)
         self.assertLess(active.index('Record and enforce'), active.index('uses: actions/checkout@'))
         self.assertLess(active.index('Download only'), active.index('Invoke frozen collector'))
@@ -161,9 +280,13 @@ class Contracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); archive = root/'SYNTHETIC.zip'; archive.write_bytes(b'SYNTHETIC input, not an executable')
             output = root/'evidence'
-            with patch.object(e, 'verify_archive', return_value={'synthetic': True}):
-                receipt = e.prepare(archive, ROOT, output, COMMIT, COMMIT, pin_hash(), e.ALLOCATION, context())
+            with patch.object(e, 'verify_archive', return_value={'synthetic': True}), \
+                 patch.object(e, 'verify_previous_study', side_effect=lambda _: dict(e.PREVIOUS_STUDY)):
+                receipt = e.prepare(archive, ROOT, output, COMMIT, COMMIT, pin_hash(), e.ALLOCATION, context(), previous_archive=archive)
             self.assertEqual(40, receipt['max_study_calls'])
+            self.assertEqual(42, receipt['cumulative_max_study_calls'])
+            self.assertEqual(dict(e.PREVIOUS_STUDY), receipt['previous_study'])
+            self.assertEqual(archive.read_bytes(), (output/'previous-001.zip').read_bytes())
             self.assertFalse(receipt['clears_hold'])
             self.assertIsNone(receipt['cause'])
             self.assertFalse((output/'study').exists())
@@ -175,8 +298,9 @@ class Contracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); archive = root/'SYNTHETIC.zip'; archive.write_bytes(b'SYNTHETIC input')
             output = root/'evidence'
-            with patch.object(e, 'verify_archive', return_value={'synthetic': True}):
-                receipt = e.prepare(archive, ROOT, output, COMMIT, COMMIT, pin_hash(), e.ALLOCATION, context())
+            with patch.object(e, 'verify_archive', return_value={'synthetic': True}), \
+                 patch.object(e, 'verify_previous_study', side_effect=lambda _: dict(e.PREVIOUS_STUDY)):
+                receipt = e.prepare(archive, ROOT, output, COMMIT, COMMIT, pin_hash(), e.ALLOCATION, context(), previous_archive=archive)
                 e.boundary.write_new(output/'execution-interpreter-after.json', receipt['interpreter'])
                 study = output/'study'; (study/'collector-source').mkdir(parents=True)
                 for name in e.boundary.COLLECTORS:
@@ -186,6 +310,16 @@ class Contracts(unittest.TestCase):
                 with patch.object(e.boundary, 'audit', return_value=inner):
                     result = e.finish(output, live_interpreter=True)
                     self.assertEqual(40, result['calls']); self.assertFalse(result['clears_hold'])
+                    self.assertEqual('701-boundary-002', result['allocation'])
+                    self.assertEqual(42, result['recorded_calls_including_previous'])
+                    self.assertEqual(dict(e.PREVIOUS_STUDY), result['previous_study'])
+                    for field, value in [('cumulative_max_study_calls', 42.0),
+                                         ('previous_study', dict(e.PREVIOUS_STUDY, validated_calls=2)),
+                                         ('allocation', '701-boundary-001')]:
+                        bad = copy.deepcopy(receipt); bad[field] = value
+                        (output/'execution-before.json').write_text(json.dumps(bad))
+                        with self.assertRaises(ValueError): e.finish(output)
+                    (output/'execution-before.json').write_text(json.dumps(receipt))
                     e.boundary.write_new(output/'execution-audit.json', result)
                     completion = dict(schema=1, status='completed_diagnostic_only', collector_invoked=True,
                                       error=None, clears_hold=False, cause=None)
@@ -208,7 +342,10 @@ class Contracts(unittest.TestCase):
         block = text.split('        run: |\n', 1)[1].split('      - uses:', 1)[0]
         code = compile(textwrap.dedent(block), 'SYNTHETIC workflow guard', 'exec')
         base = dict(context(), REVIEWED_COMMIT=COMMIT, MANIFEST_SHA256=pin_hash(), ALLOCATION=e.ALLOCATION)
-        cases = [(None, None), ('GITHUB_RUN_NUMBER', '2'), ('GITHUB_RUN_ATTEMPT', '2'),
+        cases = [(None, None), ('GITHUB_RUN_NUMBER', '1'), ('GITHUB_RUN_NUMBER', '3'),
+                 ('GITHUB_RUN_NUMBER', '02'), ('GITHUB_RUN_ID', e.PREVIOUS_STUDY['run_id']),
+                 ('GITHUB_RUN_ID', ''), ('GITHUB_WORKFLOW_REF', 'other/workflow@refs/heads/main'),
+                 ('ALLOCATION', '701-boundary-001'), ('GITHUB_RUN_ATTEMPT', '2'),
                  ('GITHUB_EVENT_NAME', 'pull_request'), ('GITHUB_REF', 'refs/heads/other'),
                  ('GITHUB_SHA', 'b'*40), ('MANIFEST_SHA256', 'bad'), ('ALLOCATION', 'other')]
         old = Path.cwd()
@@ -229,13 +366,15 @@ class Contracts(unittest.TestCase):
     def test_failure_in_inner_audit_is_not_replaced_with_success(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            receipt = {'schema': 1, 'allocation': e.ALLOCATION, 'context': context(), 'manifest_sha256': pin_hash(),
+            receipt = {'schema': 2, 'previous_study': dict(e.PREVIOUS_STUDY), 'cumulative_max_study_calls': 42,
+                       'allocation': e.ALLOCATION, 'context': context(), 'manifest_sha256': pin_hash(),
                        'sources': {}, 'artifact': {}, 'max_study_calls': 40, 'step_timeout_minutes': 15,
                        'job_timeout_minutes': 20, 'clears_hold': False, 'cause': None,
                        'interpreter': {'path': 'SYNTHETIC', 'size': 1, 'sha256': 'f'*64}}
             e.boundary.write_new(root/'execution-before.json', receipt)
             e.boundary.write_new(root/'execution-interpreter-after.json', receipt['interpreter'])
             with patch.object(e, 'verify_sources', return_value={}), patch.object(e, 'verify_archive', return_value={}), \
+                 patch.object(e, 'verify_previous_study', side_effect=lambda _: dict(e.PREVIOUS_STUDY)), \
                  patch.object(e.boundary, 'audit', side_effect=ValueError('SYNTHETIC stopped study')):
                 with self.assertRaisesRegex(ValueError, 'stopped study'): e.finish(root)
             self.assertFalse((root/'execution-audit.json').exists())
