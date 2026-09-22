@@ -12,7 +12,19 @@ from zipfile import ZipFile
 
 import external_noop_boundary as boundary
 
-ALLOCATION = '701-boundary-001'
+# Only this new allocation is executable; 001 is immutable historical evidence.
+ALLOCATION = '701-boundary-002'
+RUN_NUMBER = '2'
+PREVIOUS_STUDY = {
+    'allocation': '701-boundary-001', 'run_id': '35725316959',
+    'run_number': '1', 'attempt': '1',
+    'commit': 'ac95a9f4efac785af0e3ac225f8e6db16cbf5f7b',
+    'manifest_sha256': '907c49a21e9ea7f7d8d9855aa11f997c8b42717c4982b4153276355be6aba3a8',
+    'artifact_id': 10693057419, 'size': 16641257,
+    'sha256': 'd75b31e472439426f5cff42abf4f0213b86f140b310ea3e3ae7723a1906da0a7',
+    'status': 'consumed_stopped', 'recorded_calls': 2, 'validated_calls': 1,
+}
+
 REPOSITORY = 'Iviesever/msvc-quick-build'
 WORKFLOW = '.github/workflows/retained-noop-study.yml'
 PIN_FILE = 'tests/native/retained_noop_executor.pins.json'
@@ -57,14 +69,15 @@ def admission(context, approved_commit, checkout_commit, allocation):
         'GITHUB_SHA': approved_commit,
         'GITHUB_WORKFLOW_SHA': approved_commit,
         'GITHUB_WORKFLOW_REF': REPOSITORY + '/' + WORKFLOW + '@refs/heads/main',
-        'GITHUB_RUN_NUMBER': '1',
+        'GITHUB_RUN_NUMBER': RUN_NUMBER,
         'GITHUB_RUN_ATTEMPT': '1',
     }
-    require(all(context.get(k) == v for k, v in expected.items()), 'dispatch identity/first-run admission refused')
+    require(all(context.get(k) == v for k, v in expected.items()), 'dispatch identity/exact allocation run refused')
     require(checkout_commit == approved_commit, 'checkout differs from reviewed commit')
     require(all(isinstance(context.get(k), str) and re.fullmatch('[1-9][0-9]*', context[k])
                 for k in ('GITHUB_RUN_ID',)), 'missing run identity')
-    require(allocation == ALLOCATION, 'wrong allocation')
+    require(allocation == ALLOCATION, 'wrong allocation; 001 is consumed')
+    require(context['GITHUB_RUN_ID'] != PREVIOUS_STUDY['run_id'], 'historical run cannot be reused')
     return {**expected, 'GITHUB_RUN_ID': context['GITHUB_RUN_ID']}
 
 
@@ -105,16 +118,55 @@ def verify_archive(archive):
             'size': len(data), 'sha256': sha(data), 'binaries': dict(boundary.BINARIES)}
 
 
+def verify_previous_study(archive):
+    """Read, never extract/rejudge, the exact stopped 001 ZIP required by 002."""
+    data = file_bytes(archive, 128 * 1024 * 1024)
+    require(len(data) == PREVIOUS_STUDY['size'] and sha(data) == PREVIOUS_STUDY['sha256'],
+            'not the retained stopped 001 ZIP')
+    import io
+    with ZipFile(io.BytesIO(data)) as z:
+        names = z.namelist()
+        require(len(names) == len(set(names)) and z.testzip() is None, 'invalid stopped 001 ZIP')
+        def read(name):
+            return json.loads(z.read(name).decode('utf-8-sig'), object_pairs_hook=boundary.unique)
+        requested = read('requested-allocation.json')
+        expected = {
+            'GITHUB_REPOSITORY': REPOSITORY, 'GITHUB_EVENT_NAME': 'workflow_dispatch',
+            'GITHUB_REF': 'refs/heads/main', 'GITHUB_SHA': PREVIOUS_STUDY['commit'],
+            'GITHUB_WORKFLOW_SHA': PREVIOUS_STUDY['commit'],
+            'GITHUB_WORKFLOW_REF': REPOSITORY + '/' + WORKFLOW + '@refs/heads/main',
+            'GITHUB_RUN_ID': PREVIOUS_STUDY['run_id'], 'GITHUB_RUN_NUMBER': '1',
+            'GITHUB_RUN_ATTEMPT': '1', 'REVIEWED_COMMIT': PREVIOUS_STUDY['commit'],
+            'MANIFEST_SHA256': PREVIOUS_STUDY['manifest_sha256'], 'ALLOCATION': '701-boundary-001',
+        }
+        require(boundary.same(requested, expected), 'historical allocation identity changed')
+        error = 'Call 2 invalid; first failure retained, no refill.'
+        require(boundary.same(read('evidence/execution-completion.json'), {
+            'schema': 1, 'status': 'stopped', 'collector_invoked': True,
+            'error': error, 'clears_hold': False, 'cause': None}), 'historical outer stop changed')
+        require(boundary.same(read('evidence/study/completion.json'), {
+            'status': 'stopped', 'attempted': 2, 'validated': 1,
+            'error': error, 'clears_hold': False}), 'historical call accounting changed')
+        prefix = 'evidence/study/calls/'
+        expected_calls = {prefix + n + '.' + suffix + '.json'
+                          for n in ('01', '02') for suffix in ('started', 'before', 'result', 'after')}
+        expected_calls.add(prefix + '01.validated.json')
+        require({n for n in names if n.startswith(prefix)} == expected_calls,
+                'historical journal changed; no refill or revalidation')
+    return dict(PREVIOUS_STUDY)
+
+
 def interpreter():
     path = Path(sys.executable).resolve(strict=True)
     data = file_bytes(path, 128 * 1024 * 1024)
     return {'path': str(path), 'size': len(data), 'sha256': sha(data)}
 
 
-def prepare(archive, source_root, output, approved_commit, checkout_commit, manifest_sha, allocation, context):
+def prepare(archive, source_root, output, approved_commit, checkout_commit, manifest_sha, allocation, context, *, previous_archive):
     admitted = admission(context, approved_commit, checkout_commit, allocation)
     sources = verify_sources(source_root, manifest_sha)
     identity = verify_archive(archive)
+    previous = verify_previous_study(previous_archive)
     require(not output.exists(), 'new output root required; no resume')
     output.mkdir()
     # No workload begins in this helper. On partial write failure, keep the prefix.
@@ -127,8 +179,12 @@ def prepare(archive, source_root, output, approved_commit, checkout_commit, mani
     with (output / 'original-701.zip').open('xb') as f:
         f.write(file_bytes(archive, 128 * 1024 * 1024))
     require(verify_archive(output / 'original-701.zip') == identity, 'copied artifact mismatch')
-    receipt = {'schema': 1, 'allocation': allocation, 'context': admitted, 'manifest_sha256': manifest_sha,
+    with (output / 'previous-001.zip').open('xb') as f:
+        f.write(file_bytes(previous_archive, 128 * 1024 * 1024))
+    require(verify_previous_study(output / 'previous-001.zip') == previous, 'copied 001 changed')
+    receipt = {'schema': 2, 'allocation': allocation, 'context': admitted, 'manifest_sha256': manifest_sha,
                'sources': sources, 'artifact': identity, 'interpreter': interpreter(),
+               'previous_study': previous, 'cumulative_max_study_calls': 42,
                'max_study_calls': 40, 'step_timeout_minutes': 15, 'job_timeout_minutes': 20,
                'clears_hold': False, 'cause': None}
     boundary.write_new(output / 'execution-before.json', receipt)
@@ -138,11 +194,14 @@ def prepare(archive, source_root, output, approved_commit, checkout_commit, mani
 def finish(root, *, live_interpreter=False, final=False):
     receipt = boundary.load(root / 'execution-before.json')
     admission(receipt['context'], receipt['context']['GITHUB_SHA'], receipt['context']['GITHUB_SHA'], receipt['allocation'])
-    require(type(receipt['schema']) is int and receipt['schema'] == 1 and receipt['clears_hold'] is False
+    require(type(receipt['schema']) is int and receipt['schema'] == 2 and receipt['clears_hold'] is False
             and receipt['cause'] is None and type(receipt['max_study_calls']) is int
             and receipt['max_study_calls'] == 40 and type(receipt['step_timeout_minutes']) is int
             and receipt['step_timeout_minutes'] == 15 and type(receipt['job_timeout_minutes']) is int
-            and receipt['job_timeout_minutes'] == 20, 'invalid execution receipt')
+            and receipt['job_timeout_minutes'] == 20 and type(receipt['cumulative_max_study_calls']) is int
+            and receipt['cumulative_max_study_calls'] == 42, 'invalid execution receipt')
+    previous = verify_previous_study(root / 'previous-001.zip')
+    require(boundary.same(previous, receipt['previous_study']), 'historical receipt changed')
     require(verify_sources(root / 'source', receipt['manifest_sha256']) == receipt['sources'], 'snapshot changed')
     require(verify_archive(root / 'original-701.zip') == receipt['artifact'], 'original input changed')
     observed_after = boundary.load(root / 'execution-interpreter-after.json')
@@ -157,7 +216,9 @@ def finish(root, *, live_interpreter=False, final=False):
     for name in boundary.COLLECTORS:
         require(file_bytes(root / 'study' / 'collector-source' / name) ==
                 file_bytes(root / 'source' / 'tests' / 'native' / name), 'study used another collector')
-    result = {'schema': 1, 'status': 'complete_diagnostic_only', 'allocation': ALLOCATION,
+    result = {'schema': 2, 'status': 'complete_diagnostic_only', 'allocation': receipt['allocation'],
+            'previous_study': previous, 'cumulative_max_study_calls': 42,
+            'recorded_calls_including_previous': previous['recorded_calls'] + len(actual['samples']),
             'run_id': receipt['context']['GITHUB_RUN_ID'], 'calls': len(actual['samples']),
             'manifest_sha256': receipt['manifest_sha256'], 'clears_hold': False, 'cause': None,
             'limits': 'Journal consistency, not atomic provenance, absent unlogged processes, causal attribution or performance clearance.'}
@@ -177,11 +238,13 @@ def main():
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--approved-commit'); p.add_argument('--checkout-commit')
     p.add_argument('--manifest-sha'); p.add_argument('--allocation')
+    p.add_argument('--previous-archive', type=Path)
     a = p.parse_args()
     try:
         if a.command == 'prepare':
-            require(all((a.source_root, a.approved_commit, a.checkout_commit, a.manifest_sha, a.allocation)), 'missing admission arguments')
-            prepare(a.path, a.source_root, a.output, a.approved_commit, a.checkout_commit, a.manifest_sha, a.allocation, os.environ)
+            require(all((a.source_root, a.approved_commit, a.checkout_commit, a.manifest_sha, a.allocation, a.previous_archive)), 'missing admission arguments')
+            prepare(a.path, a.source_root, a.output, a.approved_commit, a.checkout_commit, a.manifest_sha, a.allocation, os.environ,
+                    previous_archive=a.previous_archive)
         elif a.command == 'finish':
             boundary.write_new(a.path / 'execution-interpreter-after.json', interpreter())
             boundary.write_new(a.output, finish(a.path, live_interpreter=True))

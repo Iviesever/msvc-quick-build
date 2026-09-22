@@ -44,7 +44,7 @@ jobs:
             $ast = [Management.Automation.Language.Parser]::ParseFile(
                 (Join-Path $PWD 'tests/native/run_retained_noop_study.ps1'), [ref]$tokens, [ref]$errors)
             if ($errors.Count -ne 0) { throw ($errors | Out-String) }
-            $expected = @('ArtifactPath', 'OutputRoot', 'ReviewedCommit', 'ManifestSha256', 'Allocation')
+            $expected = @('ArtifactPath', 'PreviousArtifactPath', 'OutputRoot', 'ReviewedCommit', 'ManifestSha256', 'Allocation')
             $actual = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
             if (@(Compare-Object $expected $actual).Count -ne 0) { throw 'Unexpected executor parameters.' }
             $pythonCommand = Get-Command python -CommandType Application | Select-Object -First 1
@@ -54,7 +54,7 @@ jobs:
               $inherited = & { (Get-Command python -CommandType Alias).Definition }
               if ($inherited -ne $chosen) { throw 'Interpreter alias not inherited by child scope.' }
             }
-            'PASS: executor parsed; five parameters; single interpreter alias inherited. No executor/native child invoked.' |
+            'PASS: executor parsed; six parameters; single interpreter alias inherited. No executor/native child invoked.' |
               Set-Content executor-contract-out/powershell.log
           } catch {
             $_ | Out-String | Add-Content executor-contract-out/powershell.log
