@@ -1,0 +1,75 @@
+name: External no-op helper preflight
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'tests/native/*external_noop_preflight*'
+      - 'tests/native/*external_noop_boundary*'
+      - '.github/workflows/external-noop-preflight.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/native/*external_noop_preflight*'
+      - 'tests/native/*external_noop_boundary*'
+      - '.github/workflows/external-noop-preflight.yml'
+permissions:
+  contents: read
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Synthetic preflight contracts (no child launches)
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          out = pathlib.Path('preflight-contract-out'); out.mkdir()
+          with (out/'python.log').open('x', encoding='utf-8') as log:
+              p = subprocess.run([sys.executable, '-B', 'tests/native/test_external_noop_preflight.py'],
+                                 stdout=log, stderr=subprocess.STDOUT)
+          print((out/'python.log').read_text(encoding='utf-8'))
+          sys.exit(p.returncode)
+      - name: Preserve contract evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preflight-contracts-${{ matrix.os }}
+          path: preflight-contract-out/
+          if-no-files-found: error
+          retention-days: 30
+  helper-preflight:
+    needs: contracts
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fixed nine-attempt helper preflight (zero study MQB)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $PWD 'preflight-out'
+          New-Item -ItemType Directory -Path $out | Out-Null
+          try {
+            & ./tests/native/preflight_external_noop_boundary.ps1 -OutputRoot (Join-Path $out 'evidence') *> (Join-Path $out 'runner.log')
+          } catch {
+            $_ | Out-String | Add-Content (Join-Path $out 'runner.log')
+            throw
+          } finally {
+            Get-Content (Join-Path $out 'runner.log')
+          }
+      - name: Preserve raw preflight evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: external-noop-helper-preflight
+          path: preflight-out/
+          if-no-files-found: error
+          retention-days: 30
+# No dispatch, A/B artifact download, MQB study, retry, or continue-on-error.
