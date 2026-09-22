@@ -68,7 +68,7 @@ Base 有意使用不可变的 PR base SHA，而不是会移动的 branch name。
 
 Correctness CI 继续 gate cache freshness、missing-output repair、scheduling bounds、dependency behavior、self-hosting、packaging 与 native tests。
 
-Performance evidence 是 **review gate**，不是 hosted-runner timing threshold。CI machine load、VM placement、antivirus activity 与无关 system noise 会让固定毫秒或固定百分比 threshold 很脆弱。Reviewer 应评估重复测量的 median，以及相关 phase/cache evidence。
+Performance evidence 通常仍需**人工审阅**相关阶段、缓存及全部不利样本。明确预登记的外部 no-op 规则是硬性例外：候选减基线的配对耗时差中位数必须大于 **1 毫秒**，且各配对百分比变化的中位数必须大于 **10%**，同时满足即 HOLD。环境波动可以是假设，不能充当豁免或已证实原因。未越过这条门槛也不等于整体性能或发布批准。
 
 Structural performance test 仍然有价值，例如它们可以证明“warm module build 启动零个 dependency-scan process”或“一个 logical worker 不创建 background thread”这类 deterministic property。它们可以补充、但不能替代 `perf:` change 的 before/after benchmark evidence。
 
@@ -86,3 +86,35 @@ Structural performance test 仍然有价值，例如它们可以证明“warm mo
 记录同时增加确定性总计数器和按域 breakdown：cache 打开次数/读取字节、filesystem snapshot 请求/唯一路径/证据复用、后台线程创建、MSVC 进程启动及输出行数/字节数。最终 timing 记录会在输出 observer 脱离后再写出，因此不会把自身计入 reporting 和 output counters。
 
 性能比较改为交替配对执行（`baseline -> candidate`、`candidate -> baseline`，循环重复），报告 paired delta 中位数、paired MAD 和 nearest-rank paired P95。标准场景保持 append-only，并新增 129-TU 公共头 warm build、automatic 与 `-j 1`、timings enabled/disabled no-op 场景。
+
+## 可执行的外部 no-op 验收
+
+`tests/native/check_external_noop_gate.py` 不启动 MQB，执行当前 schema-v3、
+19 场景／四配对的 CI 固定配置。它检查完整配对网格及四份 `external_stopwatch`
+原始样本的顺序、时间一致性和内部向量缺失标记。使用精确有理数从原始时间重算，
+不用四舍五入的摘要、两个独立中位数的比值、删除离群值或扣除观察开销。
+固定配置演进需要显式修改相应契约；通用采集器支持的其他迭代数不属于本项 CI 验收配置。
+
+```powershell
+python tests/native/check_external_noop_gate.py benchmark-comparison.json `
+  --output noop-acceptance.json
+# 退出 0：未越过门槛；1：HOLD；2：证据非法或不完整。
+```
+
+输出必须是新文件。缺失、损坏、重复或自相矛盾的输入拒绝通过，并在能写入时保留
+判定 JSON；不会覆盖旧输出。退出 0 不证明完整源码／程序来源或其他场景已经放行，
+这些审阅要求仍然保留。
+
+Performance Evidence 工作流保留原准入条件、四次迭代、采集器、摘要和身份检查。
+门槛步骤位于身份核对之后、`always()` 附件上传之前，原样传递非零退出状态。
+越界时仍上传原始输入和 `noop-acceptance.json`。这是失败保留接线，不保证上传服务
+永远可用；没有使用 `continue-on-error`。独立的 Performance Gate Contracts 工作流
+在 Linux 和 Windows 上执行数值、命令行与工作流结构测试，不运行 benchmark。
+
+对已保留的 ZIP，加上 `--artifact-sha256 <expected-digest>`，程序只读取唯一的
+comparison 成员，不解包或执行其中的程序。提交的 `fixtures/pr207-external-noop.json`
+只含四份历史外部行和来源，**不是完整报告**；测试里其他生成报告明确属于合成数据。
+未改写的 #701 原附件
+`940472d871e47aa01be0347f7bf86ac3d158c0247d929cfeda4fcc6c3b4f6ca3`
+返回 HOLD（+3.0963 毫秒、+26.70024178525%）。接入门槛不修复该性能失败，也不改变
+#207 的 HOLD；接入前历史工作流的绿色状态不会被追改为已自动执行的门槛失败。

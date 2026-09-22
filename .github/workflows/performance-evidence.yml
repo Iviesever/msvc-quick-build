@@ -210,6 +210,15 @@ jobs:
           (evidence/'identity-after.json').write_text(json.dumps(hashes, indent=2), encoding='utf-8')
           assert all(hashes[side] == before['inputs'][side]['binary_sha256'] for side in hashes)
 
+      - name: Enforce registered external no-op acceptance
+        if: always()
+        shell: pwsh
+        run: |
+          python candidate/tests/native/check_external_noop_gate.py `
+            performance-out/benchmark-comparison.json `
+            --output performance-out/noop-acceptance.json
+          exit $LASTEXITCODE
+
       - name: Upload benchmark evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -217,6 +226,7 @@ jobs:
           name: mqb-performance-evidence
           path: |
             performance-out/benchmark-comparison.json
+            performance-out/noop-acceptance.json
             performance-out/baseline/mqb.exe
             performance-out/candidate/mqb.exe
             performance-out/provenance/

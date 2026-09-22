@@ -1,0 +1,72 @@
+name: Performance Gate Contracts
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'tests/native/check_external_noop_gate.py'
+      - 'tests/native/test_external_noop_gate.py'
+      - 'tests/native/verify_performance_workflow.py'
+      - 'tests/native/fixtures/pr207-external-noop.json'
+      - 'tests/native/compare_mqb_benchmarks.ps1'
+      - '.github/workflows/performance-evidence.yml'
+      - '.github/workflows/performance-gate-contracts.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/native/check_external_noop_gate.py'
+      - 'tests/native/test_external_noop_gate.py'
+      - 'tests/native/verify_performance_workflow.py'
+      - 'tests/native/fixtures/pr207-external-noop.json'
+      - 'tests/native/compare_mqb_benchmarks.ps1'
+      - '.github/workflows/performance-evidence.yml'
+      - '.github/workflows/performance-gate-contracts.yml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  contracts:
+    name: Offline gate contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Numeric, retained-row and CLI contracts (no MQB)
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          root = pathlib.Path('gate-contract-out')
+          root.mkdir(exist_ok=True)
+          with (root/'contracts.log').open('x', encoding='utf-8') as log:
+              result = subprocess.run([sys.executable, 'tests/native/test_external_noop_gate.py'],
+                                      stdout=log, stderr=subprocess.STDOUT)
+          print((root/'contracts.log').read_text(encoding='utf-8'))
+          sys.exit(result.returncode)
+      - name: Workflow admission and failure-preservation contract
+        if: always()
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          root = pathlib.Path('gate-contract-out')
+          root.mkdir(exist_ok=True)
+          with (root/'workflow.log').open('x', encoding='utf-8') as log:
+              result = subprocess.run([sys.executable, 'tests/native/verify_performance_workflow.py'],
+                                      stdout=log, stderr=subprocess.STDOUT)
+          print((root/'workflow.log').read_text(encoding='utf-8'))
+          sys.exit(result.returncode)
+      - name: Preserve contract results including failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gate-contracts-${{ matrix.os }}
+          path: gate-contract-out/
+          if-no-files-found: error
+          retention-days: 30

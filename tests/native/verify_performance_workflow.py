@@ -36,6 +36,36 @@ def concurrency_policy(source: str) -> tuple[str, str]:
     return group, cancel
 
 
+def acceptance_policy(source: str) -> None:
+    """Check fixed step wiring, not a simulation of GitHub's scheduler."""
+    marker = '      - name: Enforce registered external no-op acceptance\n'
+    if source.count(marker) != 1:
+        raise ValueError('one acceptance step required')
+    block = source.split(marker, 1)[1].split('      - name:', 1)[0]
+    required = [
+        '        if: always()\n', '        shell: pwsh\n',
+        'python candidate/tests/native/check_external_noop_gate.py',
+        'performance-out/benchmark-comparison.json',
+        '--output performance-out/noop-acceptance.json', '          exit $LASTEXITCODE\n',
+    ]
+    if any(piece not in block for piece in required):
+        raise ValueError('acceptance must execute and propagate nonzero status')
+    if 'continue-on-error' in source or re.search(r'(?:exit 0|\|\| true|\|\| exit 0)', block):
+        raise ValueError('acceptance failure must not be swallowed')
+    compare = source.index('Compare paired ABBA samples on the same runner')
+    identity = source.index('Verify measured binary identities after comparison')
+    gate = source.index(marker)
+    upload = source.index('      - name: Upload benchmark evidence\n')
+    if not compare < identity < gate < upload:
+        raise ValueError('preserve comparison/identity/gate/upload ordering')
+    upload_block = source[upload:]
+    for piece in ('        if: always()\n', 'performance-out/noop-acceptance.json',
+                  'performance-out/benchmark-comparison.json', 'performance-out/provenance/',
+                  '          if-no-files-found: error\n'):
+        if piece not in upload_block:
+            raise ValueError('failure-safe original evidence and decision upload required')
+
+
 class WorkflowPolicyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -70,6 +100,27 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn('Upload benchmark evidence\n        if: always()', self.source)
         self.assertIn('          if-no-files-found: error\n', self.source)
         self.assertIn('          retention-days: 30\n', self.source)
+
+    def test_registered_acceptance_wiring(self):
+        acceptance_policy(self.source)
+
+    def test_gate_bypass_or_missing_evidence_is_rejected(self):
+        marker = '      - name: Enforce registered external no-op acceptance\n'
+        start = self.source.index(marker)
+        end = self.source.index('      - name: Upload benchmark evidence\n')
+        block = self.source[start:end]
+        mutations = [
+            self.source.replace(block, ''),
+            self.source.replace(block, block.replace('if: always()', 'if: success()')),
+            self.source.replace(block, block.replace('exit $LASTEXITCODE', 'exit 0')),
+            self.source.replace(block, block.replace('        shell:', '        continue-on-error: true\n        shell:')),
+            self.source.replace('            performance-out/noop-acceptance.json\n', ''),
+            self.source.replace('Upload benchmark evidence\n        if: always()',
+                                'Upload benchmark evidence\n        if: success()'),
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation[start:start+100]), self.assertRaises(ValueError):
+                acceptance_policy(mutation)
 
     def test_regression_to_workflow_scope_is_rejected(self):
         mutated = 'concurrency:\n  group: unsafe\n  cancel-in-progress: true\n' + self.source
