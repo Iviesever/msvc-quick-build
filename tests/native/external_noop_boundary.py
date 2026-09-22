@@ -177,8 +177,12 @@ def validate_call(row, record, before, after, output_lines):
     b, a = manifest(before), manifest(after)
     require('.mqb/bin/timing_bench.exe' in a, 'missing fixture output')
     if row['phase'] == 'noop':
-        require(compiles == links == 0 and sum(x.startswith('[up-to-date] ') for x in output_lines) == 3,
-                'not the registered no-op')
+        # Fixed ARGV is non-verbose: Diagnostics.cpp aggregates reused TUs.
+        # Check their count and the target, not an arbitrary number of lines.
+        progress = [x for x in output_lines if x.startswith('[up-to-date] ')]
+        require(compiles == links == 0 and progress == [
+                    '[up-to-date] 2 translation units', '[up-to-date] timing_bench.exe'],
+                'not the registered compact two-source no-op')
         require(b == a, 'no-op changed observed file bytes/metadata')
     else:
         require(set(b) == set(SOURCES) and compiles == 2 and links == 1, 'not a fresh two-source priming')

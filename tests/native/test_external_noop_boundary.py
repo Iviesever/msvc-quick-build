@@ -26,7 +26,7 @@ def case(mode='legacy', phase='noop'):
                   output_format='powershell_merged_lines' if mode == 'legacy' else 'separate_bytes',
                   root_times=root, clock=dict(frequency=1000, outer_start=1, native_start=2,
                                              start_return=3, wait_return=4, native_end=5, outer_end=6))
-    lines = ['[up-to-date] main.cpp', '[up-to-date] helper.cpp', '[up-to-date] timing_bench.exe'] if phase == 'noop' else [
+    lines = ['[up-to-date] 2 translation units', '[up-to-date] timing_bench.exe'] if phase == 'noop' else [
         '[compile] main.cpp', '[compile] helper.cpp', '[link] timing_bench.exe']
     return row, record, before, after, lines
 
@@ -99,6 +99,41 @@ class Contracts(unittest.TestCase):
             with self.assertRaises(ValueError): h.validate_call(*args)
         args = list(case()); args[-1].pop()
         with self.assertRaises(ValueError): h.validate_call(*args)
+
+    def test_retained_call02_compact_progress(self):
+        # Exact text from 701-boundary-001/run35725316959/call02; the surrounding
+        # case's clock, PID and file manifests are SYNTHETIC, not new study data.
+        lines = [
+            '[up-to-date] 2 translation units',
+            '[up-to-date] timing_bench.exe',
+            'output: D:/a/msvc-quick-build/msvc-quick-build/execution-out/evidence/'
+            'study/fixtures/AB-1-legacy-0-baseline/.mqb/bin/timing_bench.exe',
+        ]
+        for mode in ('legacy', 'process'):
+            args = list(case(mode)); args[-1] = lines.copy()
+            self.assertEqual(5, h.validate_call(*args)['outer_ms'])
+
+    def test_compact_progress_checks_meaning_not_line_count(self):
+        invalid = [
+            ['[up-to-date] 1 translation unit', '[up-to-date] timing_bench.exe'],
+            ['[up-to-date] 3 translation units', '[up-to-date] timing_bench.exe'],
+            ['[up-to-date] 2 translation units', '[up-to-date] other.exe'],
+            ['[up-to-date] main.cpp', '[up-to-date] helper.cpp'],
+            ['[up-to-date] main.cpp', '[up-to-date] helper.cpp',
+             '[up-to-date] timing_bench.exe'],  # --verbose is not in fixed ARGV.
+            ['[up-to-date] 2 translation units', '[up-to-date] 2 translation units'],
+            ['[up-to-date] timing_bench.exe', '[up-to-date] 2 translation units'],
+            ['[up-to-date] 2 translation units', '[up-to-date] timing_bench.exe',
+             '[up-to-date] main.cpp'],
+            ['[up-to-date] 2 translation units', '[up-to-date] timing_bench.exe extra'],
+            ['[up-to-date] 2 translation units'],
+            [],
+        ]
+        for mode in ('legacy', 'process'):
+            for lines in invalid:
+                with self.subTest(mode=mode, lines=lines):
+                    args = list(case(mode)); args[-1] = lines
+                    with self.assertRaises(ValueError): h.validate_call(*args)
 
     def test_same_path_replacement_or_mtime_change_refused(self):
         for key, value in [('sha256', 'b'*64), ('size', 2), ('mtime_ticks', 120)]:
