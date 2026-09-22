@@ -197,6 +197,9 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(p.COLLECTOR_SHA256, h.digest(data))
         self.assertIn(b'WaitForExit(180000)', data); self.assertIn(b'WaitForExit(5000)', data)
         runner = (HERE/'preflight_external_noop_boundary.ps1').read_text(encoding='utf-8-sig')
+        self.assertIn('Get-Command python -CommandType Application | Select-Object -First 1', runner)
+        self.assertIn('[IO.Path]::GetFullPath($pythonCommand.Source)', runner)
+        self.assertNotIn('[IO.Path]::GetFullPath((Get-Command python -CommandType Application).Source)', runner)
         allowed = runner.split('$allowed = @(', 1)[1].split(')', 1)[0]
         self.assertNotIn('Invoke-RegisteredStudy', allowed)
         self.assertIn('Invoke-LegacyBoundary $launchExe $fixture $argv $prefix', runner)

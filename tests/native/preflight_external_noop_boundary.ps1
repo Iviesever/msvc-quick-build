@@ -19,7 +19,9 @@ foreach ($n in $names) {
     $s = [IO.File]::Open((Join-Path $root "source/$n"), [IO.FileMode]::CreateNew)
     try { $s.Write($bytes, 0, $bytes.Length) } finally { $s.Dispose() }
 }
-$exe = [IO.Path]::GetFullPath((Get-Command python -CommandType Application).Source)
+# Resolve one Application in lookup order; never join multiple Source paths.
+$pythonCommand = Get-Command python -CommandType Application | Select-Object -First 1
+$exe = [IO.Path]::GetFullPath($pythonCommand.Source)
 $checker = Join-Path $root 'source/external_noop_preflight.py'
 & $exe -B $checker plan $root --executable $exe --output (Join-Path $root 'plan.json')
 if ($LASTEXITCODE -ne 0) { throw 'Preflight identity/plan refused; no helper dispatched.' }
