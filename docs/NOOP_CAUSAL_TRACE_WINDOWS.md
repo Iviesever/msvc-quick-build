@@ -13,8 +13,9 @@ slots. Its original source, profile, journal checks and dispatch file remain unc
 It imports the **exact original** four legacy helpers and owned WPR function from
 verified source snapshots; it never dot-sources either old entry. The new
 `noop_causal_windows.py` uses the original archive verifier, cell plan and call
-checks. No product or benchmark rule changes, new automatic capture, dispatch
-workflow, admission reset or execution allocation are included.
+checks. That collector implementation included no product or benchmark rule
+changes, automatic capture, dispatch workflow or execution allocation. The
+separate manual wrapper below does not reset any consumed opportunity.
 
 For each of the same 12 cells, the order is now:
 
@@ -41,7 +42,7 @@ At least **4 GiB free** is checked before each prime/start and after each stop.
 These are admission/acceptance checkpoints, **not a hard filesystem quota**:
 WPR merging and other processes may consume space between checks. Oversized or
 failed traces are retained, not truncated/deleted to satisfy the limit. The final
-execution wrapper still needs its external **15-minute step / 20-minute job** on
+manual execution wrapper retains external **15-minute step / 20-minute job** on
 a fresh, dedicated hosted Windows x64 / PowerShell 7 machine, never a user desktop.
 
 The proposed call plan remains **32 = 12 primes + 8 middles + 12 finals** with four
@@ -68,3 +69,51 @@ and parses the entry without running it. Python checks complete and corrupted
 and the consumed manual workflow stay intact. Native regression and a separate
 exact-main execution review/allocation must precede any new capture; #207 HOLD
 and the original adverse evidence remain. No release or clean/prune authority.
+
+## Isolated manual wrapper / 隔离手动入口
+
+After main #825 acceptance, `.github/workflows/noop-causal-windows-study.yml`
+adds only the missing outer host/request/download/time-limit boundary. It invokes
+this unchanged window entry exactly once. It does **not** rename or modify the
+consumed `noop-causal-study.yml` or allocate another experiment. The distinct
+protocol label `701-causal-windows-001` is a reserved admission value, not evidence
+of registration, dispatch or execution. Do not run it until this wrapper's exact
+PR and resulting main have been accepted and #198 separately records the final
+main SHA, profile, input, budget and one execution opportunity.
+
+The guard requires this repository, main, manual event, matching reviewed commit /
+workflow SHA and workflow path, known profile digest, GitHub-hosted Windows x64,
+and this workflow's run number 1 / attempt 1. It saves allowlisted request fields
+before checkout/download; no token or environment dump. Inputs enter scripts only
+through environment variables. A consumed/uncertain first request must not be
+retried, renamed or replaced by another run. A changed main needs review, not a
+casual edit to the commit input. Registration remains a maintainer review boundary;
+the workflow does not automatically verify the text of an issue comment.
+
+The sole download is original #701 artifact 10675079360 / run 35681224762 as a raw
+ZIP; its 4,880,704 bytes and SHA256 are checked before the collector verifies A/B.
+No replacement build is made. Checkout credentials are not persisted. Only the
+download action receives the token. The 20-minute job / 15-minute entry step and
+4 GiB free check bound admission, not every native operation. Per-cell 256 MiB /
+aggregate 512 MiB checks and exact owned stop remain solely in the existing entry.
+There is no wrapper-level WPR cancel, stop, retry, continuation or cleanup delete.
+
+An `always()` upload retains only `causal-windows-execution-out/`: allowlisted
+request, exact workflow copy, original ZIP, entry/error logs and the recorder's
+own evidence. Runner loss, hard timeout or disk failure can still defeat upload
+or cleanup. System-wide ETW metadata on this disposable VM requires privacy review
+before redistribution; neither the checkout tree nor the full workspace is dumped.
+The token is used before trace startup, but that alone is not a secrecy certificate.
+
+Successful control flow requires the existing full journal audit plus exact
+32 calls / 12 windows / 20 traced calls, 12 listed trace files and the strict
+`window_journal_complete_trace_unreviewed` verdict. Health remains false, cause
+null, and HOLD clearance false. No green workflow or synthetic test substitutes
+for native review of loss, markers, timebases, process/thread/I-O events and privacy
+in every segment. History stays 72; proposed 32 / cumulative 104 is not allocation.
+
+Automatic CI executes the exact inline Python admission with synthetic contexts,
+checks wrapper structure and uses PowerShell only to parse the wrapper or exercise
+its extracted verdict function against synthetic journals. It never invokes the
+manual workflow or either real trace entry. Local environments without PowerShell
+explicitly skip that verdict-function test; both hosted platforms must execute it.

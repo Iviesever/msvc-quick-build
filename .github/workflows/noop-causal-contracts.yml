@@ -6,6 +6,7 @@ on:
       - 'tests/native/*noop_causal*'
       - '.github/workflows/noop-causal-contracts.yml'
       - '.github/workflows/noop-causal-study.yml'
+      - '.github/workflows/noop-causal-windows-study.yml'
       - 'docs/NOOP_CAUSAL_TRACE*'
   push:
     branches: [main]
@@ -13,6 +14,7 @@ on:
       - 'tests/native/*noop_causal*'
       - '.github/workflows/noop-causal-contracts.yml'
       - '.github/workflows/noop-causal-study.yml'
+      - '.github/workflows/noop-causal-windows-study.yml'
 permissions:
   contents: read
 env:
@@ -49,6 +51,19 @@ jobs:
               p = subprocess.run([sys.executable, '-B', 'tests/native/test_noop_causal_dispatch.py'], stdout=f, stderr=subprocess.STDOUT)
           print((out/'dispatch.log').read_text(encoding='utf-8'))
           sys.exit(p.returncode)
+      - name: Post-prime manual wrapper contracts; no capture
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          sys.path.insert(0, 'tests/native')
+          from test_noop_causal_dispatch import inline_blocks
+          out = pathlib.Path('causal-contract-out')
+          workflow = pathlib.Path('.github/workflows/noop-causal-windows-study.yml').read_text(encoding='utf-8')
+          (out/'windows-dispatch-inline.ps1').write_text(inline_blocks(workflow)[1], encoding='utf-8')
+          with (out/'windows-dispatch.log').open('x', encoding='utf-8') as f:
+              p = subprocess.run([sys.executable, '-B', 'tests/native/test_noop_causal_windows_dispatch.py'], stdout=f, stderr=subprocess.STDOUT)
+          print((out/'windows-dispatch.log').read_text(encoding='utf-8'))
+          sys.exit(p.returncode)
       - name: Post-prime window journal contracts; no capture
         shell: python {0}
         run: |
@@ -84,6 +99,12 @@ jobs:
             if ($dispatchErrors.Count) { throw ($dispatchErrors | Out-String) }
             @{inline_script_parsed=$true; entry_invocations=0; etw_sessions_started=0} |
               ConvertTo-Json | Set-Content causal-contract-out/dispatch-parse.json -Encoding utf8
+            $windowDispatchTokens=$null; $windowDispatchErrors=$null
+            $null=[Management.Automation.Language.Parser]::ParseFile(
+              (Join-Path $PWD 'causal-contract-out/windows-dispatch-inline.ps1'),[ref]$windowDispatchTokens,[ref]$windowDispatchErrors)
+            if ($windowDispatchErrors.Count) { throw ($windowDispatchErrors | Out-String) }
+            @{inline_script_parsed=$true; entry_invocations=0; etw_sessions_started=0} |
+              ConvertTo-Json | Set-Content causal-contract-out/windows-dispatch-parse.json -Encoding utf8
             $wpr=(Get-Command wpr.exe -CommandType Application | Select-Object -First 1).Source
             $profile=Join-Path $PWD 'tests/native/noop_causal_trace.wprp'
             & $wpr -profiles $profile 2>&1 | Tee-Object causal-contract-out/wpr-profile.log
