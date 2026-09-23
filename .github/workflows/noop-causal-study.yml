@@ -1,0 +1,137 @@
+name: No-op causal trace (single reviewed run)
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_commit:
+        description: 'Exact reviewed main commit; freeze separately before dispatch'
+        required: true
+        type: string
+      profile_sha256:
+        description: 'Reviewed canonical-LF WPR profile SHA256'
+        required: true
+        type: string
+      allocation:
+        description: 'Separately registered 701-causal-001; not a retry of boundary001/002'
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: mqb-noop-causal-701-first-trace
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  trace:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Save request and refuse anything except the reviewed first dispatch
+        id: admission
+        shell: python {0}
+        env:
+          REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
+          PROFILE_SHA256: ${{ inputs.profile_sha256 }}
+          ALLOCATION: ${{ inputs.allocation }}
+        run: |
+          import json, os, pathlib, re
+          out = pathlib.Path('causal-execution-out'); out.mkdir()
+          keys = ('GITHUB_REPOSITORY', 'GITHUB_EVENT_NAME', 'GITHUB_REF', 'GITHUB_SHA',
+                  'GITHUB_WORKFLOW_SHA', 'GITHUB_WORKFLOW_REF', 'GITHUB_RUN_ID',
+                  'GITHUB_RUN_NUMBER', 'GITHUB_RUN_ATTEMPT', 'RUNNER_ENVIRONMENT',
+                  'RUNNER_OS', 'RUNNER_ARCH', 'REVIEWED_COMMIT', 'PROFILE_SHA256', 'ALLOCATION')
+          context = {k: os.environ.get(k) for k in keys}
+          with (out/'request.json').open('x', encoding='utf-8') as f:
+              json.dump(context, f, indent=2)
+          if not (context['GITHUB_REPOSITORY'] == 'Iviesever/msvc-quick-build'
+                  and context['GITHUB_EVENT_NAME'] == 'workflow_dispatch'
+                  and context['GITHUB_REF'] == 'refs/heads/main'
+                  and context['GITHUB_WORKFLOW_REF'] == 'Iviesever/msvc-quick-build/.github/workflows/noop-causal-study.yml@refs/heads/main'
+                  and context['GITHUB_RUN_NUMBER'] == context['GITHUB_RUN_ATTEMPT'] == '1'
+                  and re.fullmatch('[1-9][0-9]*', context['GITHUB_RUN_ID'] or '')
+                  and context['RUNNER_ENVIRONMENT'] == 'github-hosted'
+                  and context['RUNNER_OS'] == 'Windows' and context['RUNNER_ARCH'] == 'X64'
+                  and context['ALLOCATION'] == '701-causal-001'
+                  and re.fullmatch('[0-9a-f]{40}', context['REVIEWED_COMMIT'] or '')
+                  and context['GITHUB_SHA'] == context['GITHUB_WORKFLOW_SHA'] == context['REVIEWED_COMMIT']
+                  and context['PROFILE_SHA256'] == '7ef59ac788bfc554273d4a3ad028288e79fec428889be395765fd176c79406ec'):
+              raise SystemExit('REFUSED: wrong source/host/allocation or repeated run; retain this attempt, do not retry.')
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: checkout
+          persist-credentials: false
+      - name: Download only the original 701 archive, without decompression
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: '10675079360'
+          repository: Iviesever/msvc-quick-build
+          run-id: '35681224762'
+          github-token: ${{ github.token }}
+          path: causal-execution-out/download
+          skip-decompress: true
+          digest-mismatch: error
+      - name: Invoke the existing reviewed trace exactly once
+        id: capture
+        shell: pwsh
+        timeout-minutes: 15
+        env:
+          REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
+          PROFILE_SHA256: ${{ inputs.profile_sha256 }}
+          MQB_CAUSAL_DISPOSABLE_HOST: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version 2.0
+          $out = Join-Path $PWD 'causal-execution-out'
+          $log = Join-Path $out 'trace-invocation.log'
+          try {
+            if (-not $IsWindows -or $PSVersionTable.PSVersion.Major -lt 7 -or
+                $env:RUNNER_ENVIRONMENT -cne 'github-hosted') { throw 'Disposable hosted Windows / PS7 required.' }
+            $free = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($out)).AvailableFreeSpace
+            if ($free -lt 4GB) { throw 'At least 4 GiB free required; no trace started.' }
+            $files = @(Get-ChildItem (Join-Path $out 'download') -File -Recurse -Force)
+            if ($files.Count -ne 1 -or $files[0].Extension -cne '.zip' -or
+                ($files[0].Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Expected one original ZIP.' }
+            if ($files[0].Length -ne 4880704 -or
+                (Get-FileHash $files[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+                '940472d871e47aa01be0347f7bf86ac3d158c0247d929cfeda4fcc6c3b4f6ca3') { throw 'Original 701 ZIP identity mismatch.' }
+            Copy-Item -LiteralPath ./checkout/.github/workflows/noop-causal-study.yml -Destination (Join-Path $out 'execution-workflow.yml')
+            $runtime = @{reviewed_commit=$env:REVIEWED_COMMIT; profile_sha256=$env:PROFILE_SHA256
+              powershell=$PSVersionTable.PSVersion.ToString(); image_version=$env:ImageVersion
+              runner_environment=$env:RUNNER_ENVIRONMENT; available_bytes=$free
+              allocation='701-causal-001'; maximum_new_mqb_calls=32; previous_recorded_calls=42
+              attempted_entry=$true; clears_hold=$false}
+            [IO.File]::WriteAllText((Join-Path $out 'entry-started.json'), ($runtime | ConvertTo-Json -Depth 4))
+            & ./checkout/tests/native/trace_noop_causal.ps1 -ArtifactPath $files[0].FullName `
+              -OutputRoot (Join-Path $out 'evidence') -ReviewedCommit $env:REVIEWED_COMMIT `
+              -ProfileSha256 $env:PROFILE_SHA256 -ExecuteReviewedTrace *> $log
+            if ($LASTEXITCODE -ne 0) { throw "Trace entry failed with exit code $LASTEXITCODE." }
+            # The existing entry owns all session cleanup and journal validation.
+            # Nonempty ETL / exit zero is NOT an event-health or performance verdict.
+            $audit = Get-Content (Join-Path $out 'evidence/journal-audit.json') -Raw | ConvertFrom-Json
+            if ($audit.status -cne 'journal_complete_trace_unreviewed' -or $audit.calls -ne 32 -or
+                $audit.trace_health_verified -isnot [bool] -or $audit.trace_health_verified -or
+                $audit.clears_hold -isnot [bool] -or $audit.clears_hold -or $null -ne $audit.cause) {
+              throw 'Missing or inconsistent diagnostic-only journal verdict.'
+            }
+          } catch {
+            $original = $_
+            try { [IO.File]::WriteAllText((Join-Path $out 'execution-error.log'), ($original | Out-String)) }
+            catch { Write-Warning 'Could not save the original execution error; retain partial evidence.' }
+            throw $original
+          }
+      - name: Preserve only this execution directory, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: noop-causal-701-causal-001-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: causal-execution-out/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
+# No push/PR/schedule trigger; no new allocation is granted by installing this file.
+# First-run failure also consumes the opportunity. Do not rerun or add warmups.
+# Owned WPR cleanup is in the existing entry; no global cancel or foreign-session stop.
+# always() cannot guarantee upload/cleanup after hard job timeout, runner loss or disk failure.

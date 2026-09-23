@@ -70,8 +70,8 @@ exact reviewed checkout, an external15-minute step /20-minute job limit and at
 least4GiB free workspace (`MQB_CAUSAL_DISPOSABLE_HOST=1`). The synchronous legacy launcher cannot interrupt an
 individual hung call. Freeze final commit, profile hash, original input and one
 execution opportunity in #198 **before** arranging execution. A switch is a guard,
-not an approval service. No dispatch workflow is added in this PR; do not rename
-or reset001/002's consumed workflow, or run this from its old JSON.
+not an approval service. The separate manual wrapper below does not allocate execution;
+do not rename or reset001/002's consumed workflow, or run this from its old JSON.
 
 Each capture owns a unique WPR instance. All WPR control commands use that instance;
 start refusal never authorizes stopping someone else's session. No cancel/restart,
@@ -138,3 +138,59 @@ If inconclusive, report that; no automatic next experiment is authorized.
 - [Provider definitions and switch stacks](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/2-system-and-event-provider-definitions)
 - [Sequential MaximumFileSize](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/maximumfilesize)
 - [Lost events and recording privacy](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/wpr-how-to-topics)
+
+## Manual execution wrapper / 手动隔离执行包装
+
+`.github/workflows/noop-causal-study.yml` adds only the missing outer execution
+boundary. It is **workflow_dispatch-only** on a fresh GitHub-hosted Windows VM;
+PR/push/Ready/merge and the existing contract CI never start a trace. It invokes
+`trace_noop_causal.ps1` once, with a15-minute step and20-minute job limit and a
+4GiB free-space check. No new collector, WPR cleanup implementation or experiment
+framework is added. The original32-call O/U/T plan and001/002 workflows are unchanged.
+
+Before any checkout/download, a restricted `request.json` records the exact
+repository/main/event/workflow commit, profile digest, run identity and named
+allocation. Only the first run/first attempt of this new workflow and the
+separately registered `701-causal-001` are accepted. Wrong source, non-hosted
+runner, different workflow, repeated attempts or subsequent runs fail closed.
+`701-causal-001` is a new causal-trace label, **not** a retry or continuation of
+`701-boundary-001` or002, and installing this wrapper does not grant its allocation.
+Do not rename the workflow to reset its run counter. After a failed or uncertain
+request, inspect that record; never automatically dispatch again.
+
+Final `reviewed_commit` and `profile_sha256` must be frozen in #198 after code and
+platform review. The event and workflow SHA must both equal that commit; the
+existing entry also verifies the clean checkout. The profile is still
+`7ef59ac788bfc554273d4a3ad028288e79fec428889be395765fd176c79406ec`.
+No ready-to-send dispatch JSON or execution grant is supplied by this implementation.
+
+The only downloaded input is original#701 artifact10675079360/run35681224762,
+4,880,704bytes, SHA256
+`940472d871e47aa01be0347f7bf86ac3d158c0247d929cfeda4fcc6c3b4f6ca3`.
+Keep the exact raw ZIP; verify it before the existing verifier checks A/B and
+source identity. A missing/expired/different archive stops execution, never rebuilds
+or substitutes binaries. Download credentials are confined to the action;
+checkout credentials are not persisted. No full environment, secret or workspace
+dump is created. Upload is limited to `causal-execution-out/`, including the
+request, raw input, exact workflow copy, entry/error logs and the existing entry's
+source/fixture/WPR evidence. ETW still includes **system-wide** process/path data
+on this dedicated disposable VM; review the raw recording's privacy before
+redistribution. Never change this job to use a user's desktop or a self-hosted machine.
+
+Failure remains failure, including input preparation, native commands, record
+writes or an inconsistent journal verdict. `always()` preserves available evidence
+when possible, not after every hard kill, job timeout, disk failure or host loss.
+The wrapper never issues a global WPR cancel/stop. Only the existing owned-session
+logic attempts its own stop; no retry or replacement capture is authorized.
+All budget accounting remains32 new proposed calls/74 cumulative with history,
+not a claim that unlogged child processes cannot exist.
+
+The wrapper tests run its actual Python guard with synthetic environment values
+and inspect its fixed structure; Windows CI **parses**, but never executes, its
+inline PowerShell. Existing15 Python and14 fake-control cases remain. These checks
+are not real WPR startup/marker/stop or ETL-health validation. Even a successful
+future run remains `journal_complete_trace_unreviewed`, `cause=null` and
+`clears_hold=false` until the separate event-level review above. #207 HOLD remains.
+
+GitHub references: [fresh hosted VMs](https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners),
+[workflow triggers and time limits](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax).
