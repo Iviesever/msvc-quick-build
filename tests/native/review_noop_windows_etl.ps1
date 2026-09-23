@@ -19,6 +19,18 @@ Copy-Item -LiteralPath $source -Destination (Join-Path $out 'reader-source.cs')
   ConvertTo-Json | Set-Content (Join-Path $out 'native-host.json') -Encoding utf8
 
 Add-Type -Path $source
+$markerProvider = [Guid]'ce1dbfb4-137e-4da6-87b0-3f59aa102cbc'
+$cases = @(
+    @(150, [Guid]::Empty, 0, $true), @(100, [Guid]::Empty, 0, $true),
+    @(200, [Guid]::Empty, 0, $true), @(99, [Guid]::Empty, 34, $false),
+    @(99, $markerProvider, 34, $true), @(201, $markerProvider, 35, $false)
+)
+foreach ($case in $cases) {
+    $actual = [MqbOfflineEtl.Reader]::Select([long]$case[0],100,200,[Guid]$case[1],[byte]$case[2])
+    if ($actual -ne [bool]$case[3]) { throw 'Native compiled selection contract failed.' }
+}
+@{passed=6; capture_invocations=0} | ConvertTo-Json |
+    Set-Content (Join-Path $out 'selection-test.json') -Encoding utf8
 foreach ($trace in $inputData.traces) {
     $path = Join-Path $work ('evidence/traces/' + $trace.cell + '/trace.etl')
     if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $trace.sha256) {

@@ -48,8 +48,8 @@ public static class Reader {
     [DllImport("tdh.dll")] static extern uint TdhGetPropertySize(IntPtr e,uint n,IntPtr ctx,uint count,ref Property prop,out uint size);
     [DllImport("tdh.dll")] static extern uint TdhGetProperty(IntPtr e,uint n,IntPtr ctx,uint count,ref Property prop,uint size,byte[] buffer);
     static readonly HashSet<string> Allowed = new HashSet<string>(StringComparer.Ordinal) {
-        "ProcessId","ParentId","ParentProcessId","ThreadId","TThreadId","NewThreadId","OldThreadId",
-        "OldThreadState","OldThreadWaitReason","Flags","StackProcess","StackThread","EventTimeStamp",
+        "ProcessId","ParentId","ParentProcessId","ExitStatus","ThreadId","TThreadId","TTID","NewThreadId","OldThreadId",
+        "OldThreadState","OldThreadWaitReason","Flag","Flags","StackProcess","StackThread","EventTimeStamp",
         "IoSize","TransferSize","NtStatus"
     };
     static uint U32(byte[] b,int i) { return BitConverter.ToUInt32(b,i); }
@@ -99,6 +99,12 @@ public static class Reader {
         }
         return String.Join(";",values);
     }
+    // Preserve all generic marker payload DIGESTS, including markers outside the
+    // measured-call context. This changes only offline exports, never capture.
+    public static bool Select(long time,long lo,long hi,Guid provider,byte opcode) {
+        return (lo<=time && time<=hi) ||
+            (provider==new Guid("ce1dbfb4-137e-4da6-87b0-3f59aa102cbc") && opcode==34);
+    }
     public static void Read(string file,string output,long lo,long hi) {
         if(IntPtr.Size!=8 || !RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || lo<=0 || hi<lo)
             throw new InvalidOperationException("x64 Windows/file QPC interval required");
@@ -120,7 +126,7 @@ public static class Reader {
                     Record r=Marshal.PtrToStructure<Record>(pointer);
                     string key=r.Provider+"/"+r.Id+"/"+r.Opcode+"/"+r.Version;
                     census[key]=census.ContainsKey(key)?census[key]+1:1;
-                    if(r.Time<lo || r.Time>hi)return;
+                    if(!Select(r.Time,lo,hi,r.Provider,r.Opcode))return;
                     if(++selected>100000)throw new InvalidDataException("Selected record limit");
                     if(!metadata.ContainsKey(key))metadata[key]=Metadata(pointer,key,schema);
                     var b=new byte[r.Length];if(b.Length>0)Marshal.Copy(r.Data,b,0,b.Length);

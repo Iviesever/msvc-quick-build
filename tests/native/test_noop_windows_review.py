@@ -29,6 +29,11 @@ class Admission(unittest.TestCase):
             base=Path(d);a=base/'wrong.zip';a.write_bytes(b'not the pinned artifact')
             with self.assertRaises(ValueError):p.prepare(a,base/'work',base/'out')
             self.assertFalse((base/'work').exists());self.assertFalse((base/'out').exists())
+    def test_marker_export_is_independent_of_measured_interval(self):
+        s=Path(__file__).with_name('read_noop_windows_etl.cs').read_text()
+        self.assertIn('if(!Select(r.Time,lo,hi,r.Provider,r.Opcode))return;',s)
+        self.assertIn('ce1dbfb4-137e-4da6-87b0-3f59aa102cbc',s)
+        for name in ('"TTID"','"Flag"','"ExitStatus"'): self.assertIn(name,s)
     def test_reader_is_file_only(self):
         s=Path(__file__).with_name('read_noop_windows_etl.cs').read_text()
         self.assertIn('Mode=0x10001000',s)
