@@ -21,9 +21,14 @@ def write(path, value):
 
 
 @contextmanager
-def specimen():
+def specimen(alias=False):
     with tempfile.TemporaryDirectory() as d:
         top = Path(d); archive = top/'synthetic.zip'; out = top/'out'
+        if alias:
+            (top/'real').mkdir()
+            try: (top/'alias').symlink_to(top/'real', target_is_directory=True)
+            except OSError as exc: raise unittest.SkipTest('directory alias unavailable: '+str(exc))
+            out = top/'alias'/'out'
         payloads = {s: ('SYNTHETIC '+s).encode() for s in w.b.BINARIES}
         with ZipFile(archive, 'w') as z:
             for side, value in payloads.items(): z.writestr(side+'/mqb.exe', value)
@@ -78,6 +83,11 @@ class WindowContracts(unittest.TestCase):
             r=w.audit(out)
             self.assertEqual(12,len(r['trace_files'])); self.assertEqual(20,r['traced_calls'])
             self.assertFalse(r['trace_health_verified']); self.assertFalse(r['clears_hold']); self.assertIsNone(r['cause'])
+
+    def test_single_recording_root_spelling_survives_directory_alias(self):
+        with specimen(alias=True) as (out, plan):
+            self.assertEqual(str(out.absolute()), plan['root'])
+            self.assertEqual(12, w.audit(out)['windows'])
 
     def test_missing_extra_journals_and_windows_refused(self):
         for name in ['cells/1-omit-baseline.json','primes/1-omit-baseline.json','wpr-01.json','wpr-60.started.json','traces/1-omit-baseline/trace.etl']:

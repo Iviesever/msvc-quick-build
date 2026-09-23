@@ -161,13 +161,14 @@ Invoke-Case 'final failure retains its original error and one stop' {
 # Exercise actual production checkpoint code with synthetic size metadata, not huge files.
 function Invoke-BudgetCase([long]$Total,[long]$Segment,[long]$Kernel,[long]$Free) {
     $script:freeBytes=$Free
+    $script:syntheticBudget=@{total=$Total;segment=$Segment;kernel=$Kernel}
     function Get-ChildItem {
         param($LiteralPath,[switch]$Recurse,[switch]$Force,[switch]$File)
-        $length=$(if ($LiteralPath -match '[\\/]temp$') { $Kernel } else { $Total })
+        $length=$(if ($LiteralPath -match '[\\/]temp$') { $script:syntheticBudget.kernel } else { $script:syntheticBudget.total })
         return [pscustomobject]@{Attributes=0;PSIsContainer=$false;Length=$length}
     }
     function Test-Path { param($LiteralPath); return $true }
-    function Get-Item { param($LiteralPath); return [pscustomobject]@{Length=$Segment} }
+    function Get-Item { param($LiteralPath); return [pscustomobject]@{Length=$script:syntheticBudget.segment} }
     $null=Assert-CausalWindowBudget (Join-Path $root 'SYNTHETIC-segment')
 }
 Invoke-Case 'exact segment/total/free boundaries accepted' {

@@ -80,7 +80,7 @@ def prepare(archive, root, repo, reviewed_commit, profile_sha):
             (root/'inputs'/f'{side}.exe').write_bytes(z.read(side+'/mqb.exe'))
     for name, data in snapshots.items():
         p = root/'source'/name; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(data)
-    plan = dict(**specification(), reviewed_commit=reviewed_commit, root=str(root.resolve()),
+    plan = dict(**specification(), reviewed_commit=reviewed_commit, root=str(root.absolute()),
                 profile_sha256=profile_sha, source_hashes={n: b.digest(v) for n, v in snapshots.items()},
                 original=identity)
     for cell in plan['cells']:
