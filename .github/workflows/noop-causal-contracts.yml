@@ -1,0 +1,70 @@
+name: No-op causal trace contracts
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'tests/native/*noop_causal*'
+      - '.github/workflows/noop-causal-contracts.yml'
+      - 'docs/NOOP_CAUSAL_TRACE*'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/native/*noop_causal*'
+      - '.github/workflows/noop-causal-contracts.yml'
+permissions:
+  contents: read
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Static and synthetic contracts; zero study calls
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          out = pathlib.Path('causal-contract-out'); out.mkdir()
+          with (out/'python.log').open('x', encoding='utf-8') as f:
+              p = subprocess.run([sys.executable, '-B', 'tests/native/test_noop_causal_trace.py'], stdout=f, stderr=subprocess.STDOUT)
+          print((out/'python.log').read_text(encoding='utf-8'))
+          sys.exit(p.returncode)
+      - name: Windows profile and script parsing only; no recording starts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $tokens=$null; $errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile(
+              (Join-Path $PWD 'tests/native/trace_noop_causal.ps1'),[ref]$tokens,[ref]$errors)
+            if ($errors.Count) { throw ($errors | Out-String) }
+            $expected=@('ArtifactPath','OutputRoot','ReviewedCommit','ProfileSha256','ExecuteReviewedTrace')
+            $actual=@($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+            if (@(Compare-Object $expected $actual).Count) { throw 'Wrong parameters.' }
+            $wpr=(Get-Command wpr.exe -CommandType Application | Select-Object -First 1).Source
+            $profile=Join-Path $PWD 'tests/native/noop_causal_trace.wprp'
+            & $wpr -profiles $profile 2>&1 | Tee-Object causal-contract-out/wpr-profile.log
+            if ($LASTEXITCODE -ne 0) { throw 'WPR profile parse refused.' }
+            @{wpr=$wpr; version=(Get-Item $wpr).VersionInfo.FileVersion
+              sha256=(Get-FileHash $wpr -Algorithm SHA256).Hash; image=$env:ImageVersion
+              etw_sessions_started=0; study_mqb_calls=0; script_parameters=$actual} |
+              ConvertTo-Json | Set-Content causal-contract-out/windows.json -Encoding utf8
+          } catch {
+            $_ | Out-String | Add-Content causal-contract-out/windows-error.log
+            throw
+          }
+      - name: Preserve first contract results including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: noop-causal-contracts-${{ matrix.os }}
+          path: causal-contract-out/
+          if-no-files-found: error
+          retention-days: 30
+# Deliberately no dispatch job. Exact trace execution requires separate review/allocation.
