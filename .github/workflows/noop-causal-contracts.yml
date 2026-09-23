@@ -49,6 +49,22 @@ jobs:
               p = subprocess.run([sys.executable, '-B', 'tests/native/test_noop_causal_dispatch.py'], stdout=f, stderr=subprocess.STDOUT)
           print((out/'dispatch.log').read_text(encoding='utf-8'))
           sys.exit(p.returncode)
+      - name: Post-prime window journal contracts; no capture
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          out = pathlib.Path('causal-contract-out')
+          with (out/'window-python.log').open('x', encoding='utf-8') as f:
+              p = subprocess.run([sys.executable, '-B', 'tests/native/test_noop_causal_windows.py'], stdout=f, stderr=subprocess.STDOUT)
+          print((out/'window-python.log').read_text(encoding='utf-8'))
+          if p.returncode: sys.exit(p.returncode)
+          sys.exit(subprocess.run([sys.executable, '-B', 'tests/native/noop_causal_windows.py',
+              'plan', '--output', str(out/'window-plan.json')]).returncode)
+      - name: Post-prime control with in-process fakes only
+        shell: pwsh
+        run: |
+          & ./tests/native/test_noop_causal_windows_control.ps1 -OutputPath causal-contract-out/window-control.json -PlanPath causal-contract-out/window-plan.json *> causal-contract-out/window-control.log
+          if ($LASTEXITCODE -ne 0) { throw 'Window control contracts failed.' }
       - name: Windows profile and script parsing only; no recording starts
         if: runner.os == 'Windows'
         shell: pwsh
