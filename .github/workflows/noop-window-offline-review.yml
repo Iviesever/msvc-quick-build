@@ -1,0 +1,65 @@
+name: Existing no-op ETL native review (no capture)
+on:
+  pull_request:
+    paths:
+      - 'tests/native/*noop_windows*'
+      - '.github/workflows/noop-window-offline-review.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: noop-window-offline-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+jobs:
+  decode:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 8
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Portable guards; never execute archive programs
+        run: python -B tests/native/test_noop_windows_review.py
+      - name: Fetch only the completed windows001 original
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: '10755483625'
+          repository: Iviesever/msvc-quick-build
+          run-id: '35872432138'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/offline-original
+          skip-decompress: true
+          digest-mismatch: error
+      - name: Verify pinned input and read existing ETLs through Windows APIs
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $PWD 'offline-etl-review-out'
+          New-Item -ItemType Directory -Path $out | Out-Null
+          try {
+            $files = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'offline-original') -Recurse -File)
+            if ($files.Count -ne 1) { throw 'Expected one original archive.' }
+            $work = Join-Path $env:RUNNER_TEMP 'windows001-native-review'
+            python -B tests/native/prepare_noop_windows_review.py --archive $files[0].FullName --work $work --output $out
+            if ($LASTEXITCODE -ne 0) { throw 'Offline input validation failed.' }
+            & ./tests/native/review_noop_windows_etl.ps1 -WorkRoot $work -OutputRoot $out
+          } catch {
+            # Error type/message only; do not dump input paths, payloads or the environment.
+            $_.Exception.GetType().FullName | Set-Content (Join-Path $out 'failure-type.txt')
+            throw
+          }
+      - name: Preserve numerical/hash-only native results, never raw ETLs or archive programs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: noop-window-offline-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: offline-etl-review-out/
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
+# There is no workflow_dispatch, push, capture, source-rebuild or benchmark trigger.
+# OpenTrace/ProcessTrace/CloseTrace consume files; CloseTrace is not StopTrace.
