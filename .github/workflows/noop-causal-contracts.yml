@@ -5,12 +5,14 @@ on:
     paths:
       - 'tests/native/*noop_causal*'
       - '.github/workflows/noop-causal-contracts.yml'
+      - '.github/workflows/noop-causal-study.yml'
       - 'docs/NOOP_CAUSAL_TRACE*'
   push:
     branches: [main]
     paths:
       - 'tests/native/*noop_causal*'
       - '.github/workflows/noop-causal-contracts.yml'
+      - '.github/workflows/noop-causal-study.yml'
 permissions:
   contents: read
 env:
@@ -34,6 +36,19 @@ jobs:
               p = subprocess.run([sys.executable, '-B', 'tests/native/test_noop_causal_trace.py'], stdout=f, stderr=subprocess.STDOUT)
           print((out/'python.log').read_text(encoding='utf-8'))
           sys.exit(p.returncode)
+      - name: Manual wrapper contracts only; never invoke the trace entry
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          sys.path.insert(0, 'tests/native')
+          from test_noop_causal_dispatch import inline_blocks
+          out = pathlib.Path('causal-contract-out')
+          workflow = pathlib.Path('.github/workflows/noop-causal-study.yml').read_text(encoding='utf-8')
+          (out/'dispatch-inline.ps1').write_text(inline_blocks(workflow)[1], encoding='utf-8')
+          with (out/'dispatch.log').open('x', encoding='utf-8') as f:
+              p = subprocess.run([sys.executable, '-B', 'tests/native/test_noop_causal_dispatch.py'], stdout=f, stderr=subprocess.STDOUT)
+          print((out/'dispatch.log').read_text(encoding='utf-8'))
+          sys.exit(p.returncode)
       - name: Windows profile and script parsing only; no recording starts
         if: runner.os == 'Windows'
         shell: pwsh
@@ -47,6 +62,12 @@ jobs:
             $expected=@('ArtifactPath','OutputRoot','ReviewedCommit','ProfileSha256','ExecuteReviewedTrace')
             $actual=@($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
             if (@(Compare-Object $expected $actual).Count) { throw 'Wrong parameters.' }
+            $dispatchTokens=$null; $dispatchErrors=$null
+            $null=[Management.Automation.Language.Parser]::ParseFile(
+              (Join-Path $PWD 'causal-contract-out/dispatch-inline.ps1'),[ref]$dispatchTokens,[ref]$dispatchErrors)
+            if ($dispatchErrors.Count) { throw ($dispatchErrors | Out-String) }
+            @{inline_script_parsed=$true; entry_invocations=0; etw_sessions_started=0} |
+              ConvertTo-Json | Set-Content causal-contract-out/dispatch-parse.json -Encoding utf8
             $wpr=(Get-Command wpr.exe -CommandType Application | Select-Object -First 1).Source
             $profile=Join-Path $PWD 'tests/native/noop_causal_trace.wprp'
             & $wpr -profiles $profile 2>&1 | Tee-Object causal-contract-out/wpr-profile.log
@@ -72,4 +93,4 @@ jobs:
           path: causal-contract-out/
           if-no-files-found: error
           retention-days: 30
-# Deliberately no dispatch job. Exact trace execution requires separate review/allocation.
+# This contract workflow never dispatches or invokes the separate manual study workflow.
