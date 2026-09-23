@@ -57,14 +57,40 @@ $etl = Join-Path $root 'trace.etl'
 $controlSequence = 0
 function Invoke-OwnedWpr {
     param([string[]]$WprArguments)
+    $isStart = $WprArguments[0] -ceq '-start'
+    $isStop = $WprArguments[0] -ceq '-stop'
+    if (($isStart -and $script:owned) -or (-not $isStart -and -not $script:owned)) {
+        throw 'WPR control refused: this invocation does not own the required instance state.'
+    }
     ++$script:controlSequence
     $prefix = Join-Path $root ('wpr-{0:d2}' -f $script:controlSequence)
-    Write-NewJson ($prefix + '.started.json') @{ argv=$WprArguments; instance=$instance }
-    $lines = @(& $wpr @WprArguments -instancename $instance 2>&1)
-    $code = $LASTEXITCODE
-    Write-NewJson ($prefix + '.json') @{ argv=$WprArguments; instance=$instance; exit_code=$code
-        lines=@($lines | ForEach-Object { [string]$_ }) }
-    if ($code -ne 0) { throw "WPR failed ($code); original control log retained." }
+    $journalErrors = [Collections.Generic.List[string]]::new()
+    try { Write-NewJson ($prefix + '.started.json') @{ argv=$WprArguments; instance=$instance } }
+    catch {
+        # Logging gates new work, but must not prevent releasing our own session.
+        if (-not $isStop) { throw }
+        $journalErrors.Add('before: ' + $_.ToString())
+    }
+    $lines = @(); $code = $null; $commandError = $null
+    try {
+        $PSNativeCommandUseErrorActionPreference = $false
+        $lines = @(& $wpr @WprArguments -instancename $instance 2>&1)
+        $code = $LASTEXITCODE
+        # Ownership follows confirmed native completion, BEFORE fallible journal I/O.
+        if ($code -eq 0) {
+            if ($isStart) { $script:owned = $true }
+            if ($isStop) { $script:owned = $false }
+        }
+    } catch { $commandError = $_.ToString() }
+    try {
+        Write-NewJson ($prefix + '.json') @{ argv=$WprArguments; instance=$instance; exit_code=$code
+            command_error=$commandError; journal_errors=@($journalErrors.ToArray())
+            lines=@($lines | ForEach-Object { [string]$_ }) }
+    } catch { $journalErrors.Add('after: ' + $_.ToString()) }
+    $evidenceError = $journalErrors -join '; '
+    if ($null -ne $commandError) { throw "WPR invocation failed: $commandError; journal: $evidenceError" }
+    if ($null -eq $code -or $code -ne 0) { throw "WPR failed ($code); journal: $evidenceError" }
+    if ($journalErrors.Count -ne 0) { throw "WPR command completed but journal failed: $evidenceError" }
 }
 $attempted = 0; $failure = $null; $stopError = $null; $owned = $false
 $pins = [Collections.Generic.List[IO.FileStream]]::new()
@@ -80,7 +106,6 @@ try {
         instance=$instance; reviewed_commit=$ReviewedCommit; clears_hold=$false }
     # A unique instance is never cancelled/reused. A start failure does not grant ownership.
     Invoke-OwnedWpr -WprArguments @('-start', ($profile+'!MqbNoopCausal.Verbose'), '-filemode', '-recordtempto', (Join-Path $root 'wpr-temp'))
-    $owned = $true
     foreach ($cell in $plan.cells) {
         $fixture = Join-Path $root ('fixtures/'+$cell.id)
         $cellRecord = [ordered]@{cell=$cell; before=(Get-FileManifest $fixture); after_prime=$null

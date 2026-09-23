@@ -59,6 +59,11 @@ jobs:
             $_ | Out-String | Add-Content causal-contract-out/windows-error.log
             throw
           }
+      - name: Exercise owned WPR control with in-process fakes only
+        shell: pwsh
+        run: |
+          & ./tests/native/test_noop_causal_control.ps1 -OutputPath causal-contract-out/control.json *> causal-contract-out/control.log
+          if ($LASTEXITCODE -ne 0) { throw 'Owned WPR control contracts failed.' }
       - name: Preserve first contract results including failures
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

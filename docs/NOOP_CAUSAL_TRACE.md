@@ -82,6 +82,16 @@ metadata. Retain temp files if stop fails; do not claim guaranteed survival afte
 runner loss/hard kill. A partially buffered cell may lack saved output after a
 hard stop; missing records must fail acceptance, not be reconstructed.
 
+Successful WPR start/stop updates in-memory ownership before any fallible result
+journal write. A result-write failure after start therefore still reaches the
+owned stop in `finally`. If stop's pre-command journal fails, stopping that exact
+owned instance is still attempted once; both command and journal failures remain
+errors. Failed/unknown native starts never grant ownership, and an unsuccessful
+stop never claims release or retries. This does not guarantee stop/ETL survival
+after native failure, disk exhaustion, hard kill or host loss. PowerShell contracts
+exercise the extracted production control function using in-process fakes only;
+they do not run WPR, MQB or ETW. Real session behavior remains unvalidated.
+
 First unexpected call, state, marker, trace or write error stops remaining cells.
 Do not retry or refill. No cleaning user `.mqb`, and no running fixture EXEs.
 ETW is system-wide: use the dedicated runner, and review paths/process metadata
@@ -117,7 +127,7 @@ If inconclusive, report that; no automatic next experiment is authorized.
 ## 本轮与后续的明确边界
 
 本轮仅提交三组计划、Windows事件配置、薄执行脚本与静态/合成测试。
-自动CI只运行Python契约、PowerShell语法检查及`wpr -profiles`解析；不启动ETW或原A/B。
+自动CI运行Python契约、PowerShell语法及受控故障注入检查、`wpr -profiles`解析；故障注入仅调用内存替身，不启动ETW或原A/B。
 未批准003或32次新调用；原#207继续Draft/HOLD。实际事件解码、丢失检查、父子关联
 与等待/I/O原因审阅仍是执行后的必要工作，不能以本轮工具绿色代替。
 
