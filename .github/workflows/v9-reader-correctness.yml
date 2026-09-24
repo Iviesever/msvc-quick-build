@@ -1,4 +1,4 @@
-name: V9 reader prototype differential correctness
+name: V9 production reader differential correctness
 on:
   pull_request:
     paths:
@@ -7,6 +7,7 @@ on:
       - 'tests/native/assert_cpp_layout.ps1'
       - '.github/workflows/v9-reader-correctness.yml'
       - 'cpp/src/msvc/toolchain/VisualStudioToolchainCache.cpp'
+      - 'cpp/src/msvc/toolchain/VisualStudioToolchainCacheReader.hpp'
       - 'cpp/src/msvc/toolchain/ToolchainDiscoveryPrimitives.cpp'
       - 'cpp/include/mqb/process/Process.hpp'
   push:
@@ -17,6 +18,7 @@ on:
       - 'tests/native/assert_cpp_layout.ps1'
       - '.github/workflows/v9-reader-correctness.yml'
       - 'cpp/src/msvc/toolchain/VisualStudioToolchainCache.cpp'
+      - 'cpp/src/msvc/toolchain/VisualStudioToolchainCacheReader.hpp'
       - 'cpp/src/msvc/toolchain/ToolchainDiscoveryPrimitives.cpp'
       - 'cpp/include/mqb/process/Process.hpp'
 permissions:
@@ -63,7 +65,7 @@ jobs:
           foreach ($configuration in @('debug','release')) {
             $runtime=if ($configuration -eq 'debug') { 'MTd' } else { 'MT' }
             $name='v9-reader-'+$configuration
-            & $seed cpp/tests/msvc/toolchain/v9_reader_probe.cpp --env vs "--$configuration" --std 23 --runtime $runtime `
+            & $seed cpp/tests/msvc/toolchain/v9_reader_probe.cpp cpp/src/msvc/toolchain/ToolchainDiscoveryPrimitives.cpp --env vs "--$configuration" --std 23 --runtime $runtime `
               -I cpp/include -I .mqb/v9-reader-probe/generated --compiler-arg /W4 --compiler-arg /permissive- -o $name *> "v9-reader-out/build-$configuration.log"
             if ($LASTEXITCODE -ne 0) { throw "Probe build failed: $configuration" }
             $exe=Join-Path $PWD ('.mqb/bin/'+$name+'.exe')
@@ -86,5 +88,6 @@ jobs:
           if-no-files-found: error
           overwrite: false
           retention-days: 30
-# Test-only executable and synthetic inputs; not original A/B or an ETW study.
+# Probe calls the real private production reader; immutable old oracle, synthetic inputs.
+# Not original A/B or an ETW study.
 # Full native regression/self-host/package gates remain independent.

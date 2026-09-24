@@ -1,4 +1,5 @@
 #include "VisualStudioToolchainCache.hpp"
+#include "VisualStudioToolchainCacheReader.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -26,38 +27,21 @@ namespace {
 namespace fs = std::filesystem;
 using process::EnvironmentVariable;
 
-constexpr std::string_view cache_magic = "MQB_TOOLCHAIN_CACHE_V9";
-constexpr std::uintmax_t max_cache_size = 1024u * 1024u;
-constexpr std::size_t max_cache_entries = 64u;
-constexpr std::size_t max_cache_string = 256u * 1024u;
+using v9_cache::CacheRecord;
+using v9_cache::cache_magic;
+using v9_cache::max_cache_size;
+using v9_cache::max_cache_entries;
+using v9_cache::max_cache_string;
+using v9_cache::stable_path;
+using v9_cache::environment_name_equal;
+using v9_cache::cacheable_environment_name;
 constexpr auto max_cache_age = std::chrono::minutes{30};
-
-struct CacheRecord {
-    std::string target_architecture;
-    std::string host_architecture;
-    int preference{};
-    fs::path vc_tools_root;
-    std::string binary_stamp;
-    std::vector<EnvironmentVariable> environment;
-    std::string ambient_path;
-    std::string effective_path;
-};
 
 struct ToolPaths {
     fs::path compiler;
     fs::path linker;
     fs::path librarian;
 };
-
-[[nodiscard]] fs::path stable_path(fs::path path) {
-    path = path.lexically_normal();
-    while (path.filename().empty() && path.has_parent_path()) {
-        const fs::path parent = path.parent_path();
-        if (parent.empty() || parent == path) break;
-        path = parent;
-    }
-    return path;
-}
 
 [[nodiscard]] bool same_path(const fs::path& left, const fs::path& right) {
     return mqb::platform::windows::path_identity_key(left)
@@ -91,26 +75,6 @@ struct ToolPaths {
 [[nodiscard]] std::optional<fs::path> effective_cache_file(const DiscoveryOptions& options) {
     const auto destination = visual_studio_toolchain_cache_destination(options);
     return destination ? std::optional{stable_path(*destination)} : std::nullopt;
-}
-
-[[nodiscard]] bool environment_name_equal(const std::string_view left, const std::string_view right) {
-    if (left.size() != right.size()) return false;
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        if (std::tolower(static_cast<unsigned char>(left[index]))
-            != std::tolower(static_cast<unsigned char>(right[index]))) return false;
-    }
-    return true;
-}
-
-[[nodiscard]] bool cacheable_environment_name(const std::string_view name) {
-    constexpr std::string_view names[]{
-        "INCLUDE", "LIB", "LIBPATH", "VCToolsInstallDir", "WindowsSdkDir",
-        "WindowsSDKVersion", "UniversalCRTSdkDir", "UCRTVersion", "NETFXSDKDir",
-    };
-    for (const auto candidate : names) {
-        if (environment_name_equal(name, candidate)) return true;
-    }
-    return false;
 }
 
 [[nodiscard]] const EnvironmentVariable* find_environment(
@@ -250,12 +214,6 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
     return static_cast<bool>(stream);
 }
 
-[[nodiscard]] bool read_quoted(std::istream& stream, const std::string_view expected_label, std::string& value) {
-    std::string label;
-    if (!(stream >> label >> std::quoted(value))) return false;
-    return label == expected_label && value.size() <= max_cache_string;
-}
-
 [[nodiscard]] bool write_record(std::ostream& stream, const CacheRecord& record) {
     stream << cache_magic << '\n';
     if (!write_quoted(stream, "target", record.target_architecture)
@@ -270,40 +228,6 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
     }
     return write_quoted(stream, "ambient_path", record.ambient_path)
         && write_quoted(stream, "effective_path", record.effective_path);
-}
-
-[[nodiscard]] std::optional<std::size_t> read_count(std::istream& stream, const std::string_view expected_label) {
-    std::string label;
-    std::size_t count{};
-    if (!(stream >> label >> count) || label != expected_label || count > max_cache_entries) return std::nullopt;
-    return count;
-}
-
-[[nodiscard]] std::optional<CacheRecord> read_record(std::istream& stream) {
-    std::string magic;
-    if (!std::getline(stream, magic) || magic != cache_magic) return std::nullopt;
-    CacheRecord record;
-    if (!read_quoted(stream, "target", record.target_architecture) || !read_quoted(stream, "host", record.host_architecture)) return std::nullopt;
-    std::string preference_label;
-    if (!(stream >> preference_label >> record.preference) || preference_label != "preference") return std::nullopt;
-    std::string root;
-    if (!read_quoted(stream, "vc_tools_root", root) || !read_quoted(stream, "binary_stamp", record.binary_stamp)) return std::nullopt;
-    record.vc_tools_root = stable_path(detail::path_from_utf8(root));
-    const auto environment_count = read_count(stream, "environment");
-    if (!environment_count) return std::nullopt;
-    for (std::size_t index = 0; index < *environment_count; ++index) {
-        EnvironmentVariable variable;
-        if (!read_quoted(stream, "env_name", variable.name)
-            || !read_quoted(stream, "env_value", variable.value)
-            || !cacheable_environment_name(variable.name)) return std::nullopt;
-        record.environment.push_back(std::move(variable));
-    }
-    if (!read_quoted(stream, "ambient_path", record.ambient_path)
-        || !read_quoted(stream, "effective_path", record.effective_path)
-        || record.effective_path.empty()) return std::nullopt;
-    stream >> std::ws;
-    if (!stream.eof()) return std::nullopt;
-    return record;
 }
 
 [[nodiscard]] std::optional<MsvcToolchain> try_reuse_visual_studio_cache(
@@ -323,7 +247,7 @@ void append_unique_existing_root(std::vector<fs::path>& roots, fs::path root) {
         std::ifstream stream{cache_file, std::ios::binary};
         if (!stream) return std::nullopt;
         evidence.opened(static_cast<std::uint64_t>(size));
-        auto record = read_record(stream);
+        auto record = v9_cache::read_prechecked(stream, size).record;
         if (!record || !cache_key_matches(*record, options) || record->binary_stamp.empty()) return std::nullopt;
 
         const std::string current_ambient_path = detail::environment_value("PATH").value_or(std::string{});

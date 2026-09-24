@@ -1,4 +1,4 @@
-"""Extract the pinned production V9 grammar, not a hand-written reference parser.
+"""Materialize the frozen original V9 grammar, never the changing product parser.
 Only generates test input/header metadata; never executes MQB or a performance run.
 """
 from __future__ import annotations
@@ -24,43 +24,25 @@ def section(text: str, first: str, following: str) -> str:
         raise ValueError('Reversed extraction anchors')
     return text[lo:hi]
 
+REFERENCE_COMMIT = 'ed76d13df14acd680d5b523a27aa52fc99a1b09c'
+REFERENCE_PATH = 'tests/native/v9_reader_baseline.hpp'
+REFERENCE_SHA = 'da5b64cd2e2e4d3d6b2cdb592a2c6e71bcb98da9eef40bb98c3c2a378b7dcfed'
+
 def render(repo: Path) -> tuple[str, dict]:
-    source = {}
-    for name, expected in PINS.items():
-        raw = canonical((repo / name).read_bytes())
-        if hashlib.sha256(raw).hexdigest() != expected:
-            raise ValueError('Pinned production source changed: ' + name)
-        source[name] = raw.decode('utf-8')
-    cache, primitives, _ = source.values()
-    pieces = [
-        section(cache, 'constexpr std::string_view cache_magic', 'struct ToolPaths'),
-        section(cache, '[[nodiscard]] fs::path stable_path(', '[[nodiscard]] bool same_path('),
-        section(cache, '[[nodiscard]] bool environment_name_equal(', '[[nodiscard]] const EnvironmentVariable* find_environment('),
-        section(cache, '[[nodiscard]] bool write_quoted(', '[[nodiscard]] std::optional<MsvcToolchain> try_reuse_visual_studio_cache('),
-    ]
-    conversion = section(primitives, 'std::string path_to_utf8(', 'std::string trim_ascii(')
-    header = '''// GENERATED FROM PINNED PRODUCTION TEXT; DO NOT EDIT.
-#pragma once
-#include <chrono>
-#include <cctype>
-#include <filesystem>
-#include <iomanip>
-#include <istream>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
-#include "mqb/process/Process.hpp"
-namespace mqb_v9_oracle {
-namespace fs = std::filesystem;
-using mqb::process::EnvironmentVariable;
-namespace detail {
-''' + conversion + '\n}\n' + '\n'.join(pieces) + '\n}\n'
+    # Immutable output of the original exact-section generator at REFERENCE_COMMIT.
+    # Never refresh this to accept a new production parser as its own oracle.
+    raw = canonical((repo / REFERENCE_PATH).read_bytes())
+    if hashlib.sha256(raw).hexdigest() != REFERENCE_SHA:
+        raise ValueError('Frozen V9 reference changed')
+    dependency = 'cpp/include/mqb/process/Process.hpp'
+    if hashlib.sha256(canonical((repo / dependency).read_bytes())).hexdigest() != PINS[dependency]:
+        raise ValueError('Frozen reference record dependency changed')
+    header = raw.decode('utf-8')
     metadata = dict(schema=1, production_source_hashes=PINS,
-        generated_header_sha256=hashlib.sha256(header.encode()).hexdigest(),
-        extraction='exact fixed text; grammar/record/path conversion/name predicate unchanged',
-        excluded='filesystem freshness, toolchain adoption and side effects; no production integration',
+        reference_commit=REFERENCE_COMMIT, reference_path=REFERENCE_PATH,
+        generated_header_sha256=REFERENCE_SHA,
+        extraction='frozen exact original generator output; not current production grammar',
+        excluded='filesystem freshness, toolchain adoption and side effects; no equivalence beyond tested domain',
         new_study_calls=0, new_etw_sessions=0, performance_verified=False, clears_hold=False)
     return header, metadata
 

@@ -1,117 +1,135 @@
-# V9 cache reader: test-only bounded prototype
+# V9 cache reader: production integration and frozen differential reference
 
-Follow-up to #198 comment5816719996 and implementation-only record5816988847.
-**No product callsite, performance experiment, #207 HOLD waiver or release.**
+The test-only prototype was accepted in #222. The separate integration follows
+#198 comments5818119320 and5818290565. **This implementation has no measured speed
+benefit and is not a demonstrated repair of #207 / original #701.**
 
-## Decision and scope
+## Production boundary
 
-Evaluate a canonical-format fast lane before considering product integration.
-The existing V9 writer is unchanged. `cpp/tests/msvc/toolchain/v9_reader_prototype.hpp`
-accepts only its classic-locale, quoted-field, exact-label/newline layout with
-nonnegative canonical decimal numbers. Any grammar miss retries the **unedited
-production `read_record` on the same complete character bytes**, not a reopened file.
-This preserves unquoted fields, arbitrary escaped characters, whitespace, alternate
-numeric spellings, EOF behavior and invalid-input rejection through the old parser.
+`cpp/src/msvc/toolchain/VisualStudioToolchainCacheReader.hpp` is a private MSVC
+implementation, not a public cache framework or test dependency. It holds the
+existing V9 record/limits, path normalization, environment-name predicate and
+unchanged compatibility reader, plus the canonical fast lane. The existing cache
+writer stays in `VisualStudioToolchainCache.cpp`.
 
-A nonclassic C++ locale bypasses the file fast lane entirely: the original parser
-reads the original stream, including filebuf codecvt, ctype and num_get. Checking
-locale *equality*, rather than a locale name or the C `setlocale` value, is deliberate.
-The original environment-name predicate and UTF-8/path-normalization code are reused.
-C locale mutations and exotic C++ locale side effects are not accelerated.
+The product's `try_reuse_visual_studio_cache` calls `v9_cache::read_prechecked` only
+to obtain the record. Its original file type/size/time/age admission and
+`ScopedCacheRead::opened(size)` position are preserved. Every subsequent option
+key, binary-stamp, ambient PATH byte comparison, VC root/latest version,
+compiler/linker/librarian existence and environment-trust check remains in the
+original order. The locator's later SDK freshness and identity sealing are
+unchanged. **A parsed record is not an adopted toolchain.**
 
-The classic lane reads the previously checked file size (at most1MiB) into owned
-storage and checks for short/error/growth observations before parsing. Strings stay
-within256KiB, environment entries within64. This still constructs an `ifstream`;
-there is **no claim to have removed its initialization cost**. A successful fast
-parse avoids per-character formatted string extraction, but that mechanism alone
-does not demonstrate a speedup or explain original#701. Uncommon input can perform
-extra speculative work before falling back. No benchmark/timing output is added.
+For classic C++ locale, read the previously checked size (at most1MiB), check
+short/error/extra-character observations, and recognize only the old writer's
+canonical quoted fields/labels/LF and nonnegative decimal spelling. Every grammar
+miss uses the original `read_record` on the SAME complete character bytes.
+Unquoted strings, arbitrary old escapes, alternate whitespace/numbers, missing
+final LF and other compatible cases therefore remain fallback, not a new grammar
+rejection rule. Fields remain at most256KiB and entries at most64.
 
-## Exact reference, not a rewritten oracle
+For a nonclassic file locale, use the same original stream directly. Do not reopen
+or bypass filebuf codecvt, ctype or num_get. A detected size drift/bad read becomes
+a cache miss; no retry or new file is substituted. This is an explicitly reviewed
+fail-closed change for inconsistent reads, not proof of full equivalence under
+concurrent writes. Filebuf can read ahead; nonclassic conversion keeps old file
+admission rather than a new decoded-character bound. No atomic snapshot, read
+lease or syscall-count bound is introduced.
 
-`tests/native/v9_reader_oracle.py` verifies canonical-LF SHA256 of the full original
-VisualStudioToolchainCache.cpp, ToolchainDiscoveryPrimitives.cpp and Process.hpp,
-then extracts exact fixed source sections into a generated test header. Those include
-CacheRecord/constants, stable_path, UTF-8 conversions, environment-name predicate,
-and read/write grammar bodies. Process EnvironmentVariable is included from the
-actual pinned header. Function bodies are not rewritten; only a test namespace and
-required standard includes are supplied. The manifest records the source/header hashes.
+The reader still constructs `ifstream`; it does NOT eliminate stream initialization.
+Formatting work may be reduced, but fallback can do extra speculative work. No
+performance counters, timing experiments or public configuration switches are added.
 
-This reference compares grammar/record semantics, **not the entire toolchain-adoption
-function**. No source extraction silently drops admission or freshness checks and
-claims they passed: those checks are outside this prototype and remain in untouched
-production code. Production file type/size/age, ambient PATH, latest VC selection,
-compiler identity, environment trust and all later freshness/link dependencies stay
-unchanged. Successful parsing does not establish a usable/trusted toolchain.
+## Independent original reference
 
-## Differential coverage
+Before integration, freeze the EXACT previously generated old header at
+`tests/native/v9_reader_baseline.hpp`. Its canonical-LF SHA256 remains:
 
-`v9_reader_probe.cpp` is a standalone experimental executable, registered in the
-existing exact layout checker. It deliberately does not match `*_tests.cpp`: the
-existing87 native tests/driver are not renumbered or replaced. Its separate Windows
-correctness workflow builds it **through the existing pinned MQB seed**, Debug and
-Release, then runs synthetic data only. Normal Native/Release/self-host/package CI
-remain separate. The pinned seed is a builder, not original#701 A/B.
+`da5b64cd2e2e4d3d6b2cdb592a2c6e71bcb98da9eef40bb98c3c2a378b7dcfed`
 
-Each configuration performs5481 deterministic old/new comparisons, including7 real
-synthetic-file cases, plus6 explicit transport refusal controls. Comparisons check
-accept/refuse, every record field (including environment order/duplicates/removal
-flag and normalized path), and exception dynamic type/error code/category. They do
-not compare exception messages containing paths. Allocation failure is fatal, not
-masked as a parser pass. The generator has10 portable tests, including source drift,
-CRLF canonicalization, exact extraction and refusing existing output directories.
+It is the original generator output at main
+`ed76d13df14acd680d5b523a27aa52fc99a1b09c`, not regenerated from the changing product.
+The original generator and source files are recoverable at that commit.
+`v9_reader_oracle.py` retains the original three source hashes as provenance,
+validates the frozen header and its unchanged Process.hpp record dependency, and
+materializes it in a fresh directory. A change to production cannot silently
+refresh this oracle. Production never includes it.
 
-Coverage includes all256 byte values in quoted non-path fields, both quote/escape
-forms, arbitrary escapes and unquoted fallback; entry counts0/1/63/64/65; signed,
-leading-plus/zero, grouped, overflow and unsigned-negative numeric forms; empty and
-reordered labels/fields; truncation at every byte of the fixed writer output; trailing
-whitespace/garbage/EOF; string and total-file boundaries; path normalization and
-invalid UTF-8;4096 fixed-seed replacement/insertion/deletion mutations; custom ctype,
-num_get, numpunct and an actual non-noconv file codecvt. Shape and route assertions
-prevent a fake implementation that always falls back or merely returns success.
-Transport controls cover declared oversize without consumption, shrink/growth,
-already-failed input, injected read failure, and empty input. Fresh dedicated output
-directories prevent replacing the user's files. Corpus contents are synthetic; CI
-publishes counts/source/oracle/build logs, not cache values or test executables.
+`v9_reader_prototype.hpp` is now ONLY a record-shape adapter for the old probe:
+it calls the real private production reader and moves every result field without
+parsing. `v9_reader_probe.cpp` retains the exact5481-input corpus and comparison
+logic, and links the actual `ToolchainDiscoveryPrimitives.cpp` for product path
+conversion. It does not compile a copied fast parser. Full records and exception
+dynamic type/code/category are compared, not just successful exit.
 
-## Limits before any product decision
+The portable source contracts check the moved original bodies/record/limits,
+reconstruct the entire old cache source by undoing only the declared include,
+using declarations, moved definitions and one reading call, and compare to the
+ORIGINAL source SHA256. Negative controls alter PATH admission, age or disconnect
+the reader and must fail. These narrow text checks complement, not replace, C++
+execution. They are not a general C++ verifier.
 
-Fixed immutable bytes, fresh/default-format streams and the same locale are the
-comparison domain. Stream rdstate/position after a parse is not an equal-output
-contract here; production currently discards the stream. Memory allocation count,
-exception timing under exhaustion, concurrent writer races and arbitrary custom
-facet side effects are not proven equivalent. Detected size drift fails closed;
-this is not an atomic snapshot, bounded syscall count or durable read lease.
-Nonclassic direct-stream fallback retains the old bounded-file-admission policy,
-not a new decoded-character cap. Filebuf can read ahead and codecvt may expand data.
+## Correctness evidence required for this revision
 
-Finite tests do not prove equivalence for every possible byte sequence. The fast
-lane is intentionally a conservative subset; every new supported syntax requires
-old/new controls. No real toolchain cache-freshness, reparse/race or trust integration
-claim follows from synthetic grammar tests. The original failure remains
-+3.0963ms/+26.70%, #207 remains original Draft/HOLD, study history120; no new study
-allocation, original A/B run, ETW, version bump, default observation, persistence,
-clean/prune or Rium qualification occurs.
+The dedicated Windows job builds the probe through the pinned MQB seed in Debug
+and Release, using synthetic data only. It preserves source/oracle/identity and
+first failures. Each configuration retains5481 comparisons (including7 actual
+synthetic-file cases) and6 additional transport controls. The corpus contains
+all256 quoted byte values, quote/escape/unquoted compatibility, limits, numeric
+sign/overflow/grouping cases, every truncation prefix,4096 deterministic edits,
+invalidUTF8/path normalization and custom ctype/num_get/numpunct/file-codecvt.
+Route assertions reject an always-fallback substitute. The same input executed
+in two configurations is NOT10962 distinct inputs.
 
-Next: review exact Windows Debug/Release evidence and this implementation boundary.
-Only afterward consider a separate product integration proposal with full original
-freshness/admission/invalid-cache fallback controls; any performance validation
-needs a separately reviewed fixed plan. Do not deploy the prototype merely because
-this correctness workflow is green, and do not resume an old study.
+The original87 native test sources and the test driver remain byte-identical.
+One new `v9_reader_adoption_tests.cpp` is explicitly registered and joins the
+normal88-test Debug/Release matrix. It uses the real installed toolchain cache
+for canonical and four compatibility routes, calling BOTH the actual cache reuse
+entry and locator with a subprocess-rejecting runner. It also checks malformed
+records, option keys, missing/oversize/nonregular files, age/future timestamps,
+record/process PATH changes, missing root and an existing but untrusted include
+directory. A separate synthetic trusted installation tests latest-VC selection,
+three missing tool files and changed compiler stamp without modifying installed
+tools or executing synthetic programs. The28-case matrix prints labels/counts,
+not environment values. Existing SDK-freshness/identity and other native tests
+remain in place. Native logs, not the standalone grammar test, establish execution
+of these integration cases.
 
-## Local correctness replay
+Old prototype CI is not this production revision's CI. Full Native/Release,
+compatibility/freshness, self-host and runtime package gates remain necessary.
+CI builds fresh product/test programs for correctness; it never runs the original
+#701 A/B or starts ETW. Test invocation counts are not diagnostic-study counts.
 
-Generate a new oracle directory, compile with a C++23 library, and give the resulting
-probe a new synthetic working directory. This is supplemental portability checking,
-not Windows/MSVC product acceptance; use MQB in the Windows workflow.
+## Limits and release decision
+
+The differential domain remains immutable bytes, fresh default-format streams
+and the same locale. Stream state/position after parse, allocation-failure timing,
+exotic facet side effects and concurrent files are not universally proven equal.
+Full source preservation plus native negative tests do not establish every race,
+I/O fault or filesystem configuration. No bad sample or old failure is discarded.
+
+Correctness acceptance does not prove speed improvement. Any performance comparison
+needs a separately justified, bounded plan, preserving adverse results and allowing
+no benefit/regression as outcomes. Do not rerun original#701 until green, pool
+incompatible experiments, or subtract observer overhead. #207 remains original
+Draft/HOLD, +3.0963ms/+26.70%; diagnostic history remains120 with the old2 unused
+slots untouched. This patch grants no release, default observation, persistence,
+clean/prune, deletion authority or Rium qualification.
+
+## Supplemental local replay
+
+This builds a fresh synthetic probe, not an archived program. Windows product
+acceptance uses MQB in CI.
 
 ```sh
+python -B tests/native/test_v9_reader_oracle.py
 python -B tests/native/v9_reader_oracle.py --repo . --output /tmp/new-v9-oracle
 g++ -std=c++23 -O2 -Icpp/include -I/tmp/new-v9-oracle \
-  cpp/tests/msvc/toolchain/v9_reader_probe.cpp -o /tmp/v9-probe
+  cpp/tests/msvc/toolchain/v9_reader_probe.cpp \
+  cpp/src/msvc/toolchain/ToolchainDiscoveryPrimitives.cpp -o /tmp/v9-probe
 /tmp/v9-probe /tmp/new-synthetic-v9-fixtures
 ```
 
 Primary language references: [quoted extraction](https://eel.is/c++draft/quoted.manip),
-[span-based input streams](https://eel.is/c++draft/ispanstream),
+[span input streams](https://eel.is/c++draft/ispanstream),
 [filebuf conversion](https://eel.is/c++draft/filebuf.virtuals).
