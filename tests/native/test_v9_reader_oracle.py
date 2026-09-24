@@ -154,4 +154,12 @@ class OracleControls(unittest.TestCase):
                       'existing-untrusted-include','age-expired','age-future','newer-vc','compiler-file-stamp','cases == 28'):
             self.assertIn(token,t)
 
+    def test_native_driver_registers_exact_88_without_policy_changes(self):
+        driver=(ROOT/'tests/native/run_native_tests.ps1').read_text()
+        self.assertIn('if ($allTestFiles.Count -ne 88) {',driver)
+        self.assertEqual(driver.count('88'),3)
+        self.assertEqual(hashlib.sha256(o.canonical(driver.replace('88','87').encode())).hexdigest(),
+            '0762767db8ae5898dd2dd091d539cdd9edc54660ec48ffc990612cfe093ff425')
+        self.assertEqual(88,len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))))
+
 if __name__=='__main__':unittest.main(verbosity=2)

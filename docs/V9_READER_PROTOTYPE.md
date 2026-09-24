@@ -81,7 +81,9 @@ invalidUTF8/path normalization and custom ctype/num_get/numpunct/file-codecvt.
 Route assertions reject an always-fallback substitute. The same input executed
 in two configurations is NOT10962 distinct inputs.
 
-The original87 native test sources and the test driver remain byte-identical.
+The original87 native test sources remain byte-identical. The driver changes only
+its exact expected count and two diagnostic labels from87 to88; all scheduling,
+weights, execution and failure handling remain unchanged.
 One new `v9_reader_adoption_tests.cpp` is explicitly registered and joins the
 normal88-test Debug/Release matrix. It uses the real installed toolchain cache
 for canonical and four compatibility routes, calling BOTH the actual cache reuse
@@ -99,6 +101,12 @@ Old prototype CI is not this production revision's CI. Full Native/Release,
 compatibility/freshness, self-host and runtime package gates remain necessary.
 CI builds fresh product/test programs for correctness; it never runs the original
 #701 A/B or starts ETW. Test invocation counts are not diagnostic-study counts.
+
+The first integration head failed before building the shared native library because
+the driver still required87 tests. This manifest-registration error is retained;
+the correction updates the exact count to88 and adds an inverse-hash contract for
+the unchanged rest of the driver. No test or gate is removed, and old-head runs
+are not retried.
 
 ## Limits and release decision
 
