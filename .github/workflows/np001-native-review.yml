@@ -1,0 +1,75 @@
+name: Completed N-P001 native file review (no capture)
+on:
+  pull_request:
+    paths:
+      - 'tests/native/*np001_native_review.py'
+      - '.github/workflows/np001-native-review.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: np001-native-read-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+jobs:
+  read:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 8
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Portable admission controls; no archived program execution
+        run: python -B tests/native/test_np001_native_review.py
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: '10804949205'
+          repository: Iviesever/msvc-quick-build
+          run-id: '35994887542'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/np001-original
+          skip-decompress: true
+          digest-mismatch: error
+      - name: Reuse unchanged reader on the four pinned existing files
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference='Stop'
+          $out=Join-Path $PWD 'np001-native-out'
+          $work=Join-Path $env:RUNNER_TEMP 'np001-read-work'
+          $files=@(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'np001-original') -Recurse -File)
+          if ($files.Count -ne 1) { throw 'Expected one pinned original.' }
+          python -B tests/native/prepare_np001_native_review.py --archive $files[0].FullName --work $work --output $out
+          if ($LASTEXITCODE -ne 0) { throw 'Fixed original refused.' }
+          $inputData=Get-Content (Join-Path $out 'input.json') -Raw | ConvertFrom-Json
+          $src=Join-Path $PWD 'tests/native/read_noop_windows_etl.cs'
+          Copy-Item $src (Join-Path $out 'reader-source.cs')
+          @{execution_sha=$env:GITHUB_SHA;run_id=$env:GITHUB_RUN_ID;attempt=$env:GITHUB_RUN_ATTEMPT
+            powershell=$PSVersionTable.PSVersion.ToString();image=$env:ImageVersion
+            reader_sha256=(Get-FileHash $src -Algorithm SHA256).Hash.ToLowerInvariant()
+            new_mqb_calls=0;new_etw_sessions=0;clears_hold=$false} |
+              ConvertTo-Json | Set-Content (Join-Path $out 'host.json') -Encoding utf8
+          Add-Type -Path $src
+          foreach ($trace in $inputData.traces) {
+            $path=Join-Path $work ('evidence/traces/'+$trace.cell+'/trace.etl')
+            if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $trace.sha256) { throw 'Trace changed.' }
+            [MqbOfflineEtl.Reader]::Read($path,(Join-Path $out $trace.cell),[long]$trace.lo,[long]$trace.hi)
+            if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $trace.sha256) { throw 'Trace changed after read.' }
+          }
+          @{status='native_file_decode_complete_analysis_pending';traces=4
+            new_mqb_calls=0;new_etw_sessions=0;trace_health_verified=$false;cause=$null;clears_hold=$false} |
+              ConvertTo-Json | Set-Content (Join-Path $out 'completion.json') -Encoding utf8
+      - name: Retain only numeric, schema and digest projections, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: np001-native-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: np001-native-out/
+          if-no-files-found: warn
+          overwrite: false
+          retention-days: 30
+# Existing file read only; no study allocation. The reader's fixed bounds apply.
+# Full file projections retain interval rundown, but never raw payloads or addresses.
+# The original artifact remains untouched. File/host loss can prevent final upload.
