@@ -4,6 +4,8 @@ on:
     types: [opened, synchronize]
     paths:
       - 'tests/native/*noop_causal*'
+      - 'tests/native/*noop_profile_policy*'
+      - '.github/workflows/noop-profile-policy-study.yml'
       - '.github/workflows/noop-causal-contracts.yml'
       - '.github/workflows/noop-causal-study.yml'
       - '.github/workflows/noop-causal-windows-study.yml'
@@ -12,6 +14,8 @@ on:
     branches: [main]
     paths:
       - 'tests/native/*noop_causal*'
+      - 'tests/native/*noop_profile_policy*'
+      - '.github/workflows/noop-profile-policy-study.yml'
       - '.github/workflows/noop-causal-contracts.yml'
       - '.github/workflows/noop-causal-study.yml'
       - '.github/workflows/noop-causal-windows-study.yml'
@@ -80,6 +84,32 @@ jobs:
         run: |
           & ./tests/native/test_noop_causal_windows_control.ps1 -OutputPath causal-contract-out/window-control.json -PlanPath causal-contract-out/window-plan.json *> causal-contract-out/window-control.log
           if ($LASTEXITCODE -ne 0) { throw 'Window control contracts failed.' }
+      - name: N-P plan, journal and missing-sample contracts; no study execution
+        shell: python {0}
+        run: |
+          import pathlib, subprocess, sys
+          sys.path.insert(0, 'tests/native')
+          from test_noop_causal_dispatch import inline_blocks
+          out = pathlib.Path('causal-contract-out')
+          wf = pathlib.Path('.github/workflows/noop-profile-policy-study.yml').read_text(encoding='utf-8')
+          (out/'profile-policy-inline.ps1').write_text(inline_blocks(wf)[1], encoding='utf-8')
+          with (out/'profile-policy-python.log').open('x', encoding='utf-8') as f:
+              p = subprocess.run([sys.executable, '-B', 'tests/native/test_noop_profile_policy.py'], stdout=f, stderr=subprocess.STDOUT)
+          print((out/'profile-policy-python.log').read_text(encoding='utf-8'))
+          if p.returncode: sys.exit(p.returncode)
+          sys.exit(subprocess.run([sys.executable, '-B', 'tests/native/noop_profile_policy.py',
+              'plan', '--output', str(out/'profile-policy-plan.json')]).returncode)
+      - name: Actual N-P policy and wrapper functions with in-process fakes only
+        shell: pwsh
+        run: |
+          & ./tests/native/test_noop_profile_policy_control.ps1 -OutputPath causal-contract-out/profile-policy-control.json -PlanPath causal-contract-out/profile-policy-plan.json -InlinePath causal-contract-out/profile-policy-inline.ps1 *> causal-contract-out/profile-policy-control.log
+          if ($LASTEXITCODE -ne 0) { throw 'Policy control contracts failed.' }
+      - name: Windows sampling profile enumeration only; no recording
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & wpr.exe -profiles ./tests/native/noop_profile_policy.wprp *> causal-contract-out/profile-policy-wpr.log
+          if ($LASTEXITCODE -ne 0) { throw 'Sampling profile parse refused.' }
       - name: Windows profile and script parsing only; no recording starts
         if: runner.os == 'Windows'
         shell: pwsh
