@@ -1,0 +1,90 @@
+name: V9 reader prototype differential correctness
+on:
+  pull_request:
+    paths:
+      - 'cpp/tests/msvc/toolchain/v9_reader_*'
+      - 'tests/native/*v9_reader*'
+      - 'tests/native/assert_cpp_layout.ps1'
+      - '.github/workflows/v9-reader-correctness.yml'
+      - 'cpp/src/msvc/toolchain/VisualStudioToolchainCache.cpp'
+      - 'cpp/src/msvc/toolchain/ToolchainDiscoveryPrimitives.cpp'
+      - 'cpp/include/mqb/process/Process.hpp'
+  push:
+    branches: [main]
+    paths:
+      - 'cpp/tests/msvc/toolchain/v9_reader_*'
+      - 'tests/native/*v9_reader*'
+      - 'tests/native/assert_cpp_layout.ps1'
+      - '.github/workflows/v9-reader-correctness.yml'
+      - 'cpp/src/msvc/toolchain/VisualStudioToolchainCache.cpp'
+      - 'cpp/src/msvc/toolchain/ToolchainDiscoveryPrimitives.cpp'
+      - 'cpp/include/mqb/process/Process.hpp'
+permissions:
+  contents: read
+concurrency:
+  group: v9-reader-${{ github.event.pull_request.number || github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  differential:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Exact source, oracle and portable controls
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Path v9-reader-out | Out-Null
+          & git archive -o v9-reader-out/source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
+          @{head=(& git rev-parse HEAD);tree=(& git rev-parse 'HEAD^{tree}')
+            run=$env:GITHUB_RUN_ID;attempt=$env:GITHUB_RUN_ATTEMPT;image=$env:ImageVersion
+            new_study_calls=0;new_etw_sessions=0;performance_verified=$false;clears_hold=$false} |
+            ConvertTo-Json | Set-Content v9-reader-out/identity.json -Encoding utf8
+          python -B tests/native/test_v9_reader_oracle.py *> v9-reader-out/python.log
+          if ($LASTEXITCODE -ne 0) { throw 'Portable contracts failed.' }
+          python -B tests/native/v9_reader_oracle.py --repo . --output .mqb/v9-reader-probe/generated
+          if ($LASTEXITCODE -ne 0) { throw 'Oracle source changed.' }
+          Copy-Item .mqb/v9-reader-probe/generated/* v9-reader-out
+          & ./tests/native/assert_cpp_layout.ps1 -CppRoot (Join-Path $PWD 'cpp')
+      - name: Build test-only probe with pinned MQB, run Debug and Release correctness
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $seed=& ./tests/native/acquire_seed.ps1 -RepoRoot $PWD -OutputRoot (Join-Path $PWD '.mqb/v9-reader-probe/seed')
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned builder unavailable.' }
+          $results=@()
+          foreach ($configuration in @('debug','release')) {
+            $runtime=if ($configuration -eq 'debug') { 'MTd' } else { 'MT' }
+            $name='v9-reader-'+$configuration
+            & $seed cpp/tests/msvc/toolchain/v9_reader_probe.cpp --env vs "--$configuration" --std 23 --runtime $runtime `
+              -I cpp/include -I .mqb/v9-reader-probe/generated --compiler-arg /W4 --compiler-arg /permissive- -o $name *> "v9-reader-out/build-$configuration.log"
+            if ($LASTEXITCODE -ne 0) { throw "Probe build failed: $configuration" }
+            $exe=Join-Path $PWD ('.mqb/bin/'+$name+'.exe')
+            & $exe (Join-Path $PWD ('.mqb/v9-reader-probe/fixtures-'+$configuration)) 1> "v9-reader-out/$configuration.json" 2> "v9-reader-out/$configuration.stderr"
+            $exit=$LASTEXITCODE
+            $results+=@{configuration=$configuration;exit_code=$exit;exe_sha256=(Get-FileHash $exe -Algorithm SHA256).Hash}
+            $results | ConvertTo-Json | Set-Content v9-reader-out/results.json -Encoding utf8
+            if ($exit -ne 0) { throw "Differential probe failed: $configuration" }
+            $result=Get-Content "v9-reader-out/$configuration.json" -Raw | ConvertFrom-Json
+            if ($result.mismatches -ne 0 -or $result.comparisons -ne 5481 -or $result.file_cases -ne 7 -or
+                $result.transport_controls -ne 6 -or $result.fast -lt 250 -or $result.fallback -lt 1000 -or
+                $result.performance_verified -or $result.clears_hold) { throw 'Unexpected correctness coverage.' }
+          }
+      - name: Preserve first results and failures without programs or cache values
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v9-reader-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: v9-reader-out/
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
+# Test-only executable and synthetic inputs; not original A/B or an ETW study.
+# Full native regression/self-host/package gates remain independent.
