@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Diagnostic only. Sequential limits stop recording; never overwrite the beginning. -->
+<WindowsPerformanceRecorder Version="1.0" Author="MQB">
+  <Profiles>
+    <SystemCollector Id="NoopKernel" Name="NT Kernel Logger">
+      <BufferSize Value="256"/>
+      <Buffers Value="128"/>
+      <MaximumFileSize Value="256" FileMode="Sequential"/>
+    </SystemCollector>
+    <SystemProvider Id="NoopSystem">
+      <Keywords>
+        <Keyword Value="ProcessThread" Strict="true"/>
+        <Keyword Value="Loader" Strict="true"/>
+        <Keyword Value="CSwitch" Strict="true"/>
+        <Keyword Value="ReadyThread" Strict="true"/>
+        <Keyword Value="FileIO" Strict="true"/>
+        <Keyword Value="FileIOInit" Strict="true"/>
+        <Keyword Value="Filename" Strict="true"/>
+        <Keyword Value="SampledProfile" Strict="true"/>
+        <Keyword Value="DPC" Strict="true"/>
+        <Keyword Value="Interrupt" Strict="true"/>
+      </Keywords>
+      <Stacks>
+        <Stack Value="CSwitch"/>
+        <Stack Value="ReadyThread"/>
+        <Stack Value="SampledProfile"/>
+      </Stacks>
+    </SystemProvider>
+    <Profile Id="MqbNoopPolicy.Verbose.File" Name="MqbNoopPolicy"
+             Description="N/P observation strategy; sampled CPU, interrupts and existing scheduling; not a score"
+             LoggingMode="File" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="NoopKernel">
+          <SystemProviderId Value="NoopSystem"/>
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>
