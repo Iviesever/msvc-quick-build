@@ -250,7 +250,8 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'msvc') -LeafFiles ([ordered]@{
         'module_dependency_scanner_tests.cpp'
     )
     'parameters' = @('msvc_parameter_capabilities_tests.cpp', 'msvc_parameter_engine_tests.cpp')
-    'toolchain' = @('portable_tests.cpp', 'visual_studio_tests.cpp')
+    'toolchain' = @('portable_tests.cpp', 'visual_studio_tests.cpp',
+        'v9_reader_probe.cpp', 'v9_reader_prototype.hpp')
 })
 
 $orchestrationLeafFiles = [ordered]@{
