@@ -28,6 +28,11 @@ class Controls(unittest.TestCase):
         for name in ('../escape','/root','a/../x','C:/drive','a\\b','directory/'):
             with self.subTest(name=name),self.assertRaises(ValueError):p.safe_members([ZipInfo(name)])
 
+    def test_normalized_or_nul_truncated_name(self):
+        i=ZipInfo('a/b'); i.orig_filename='a\\b'
+        with self.assertRaises(ValueError):p.safe_members([i])
+        with self.assertRaises(ValueError):p.safe_members([ZipInfo('a\x00tail')])
+
     def test_duplicate(self):
         with self.assertRaises(ValueError):p.safe_members([ZipInfo('a'),ZipInfo('a')])
 

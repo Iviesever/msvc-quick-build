@@ -22,6 +22,7 @@ def safe_members(infos):
     seen = set()
     for i in infos:
         p = PurePosixPath(i.filename)
+        need(i.orig_filename == i.filename, 'Normalized or truncated member name')
         need(i.filename and not p.is_absolute() and '..' not in p.parts and
              '\\' not in i.filename and ':' not in i.filename and
              not i.is_dir() and not stat.S_ISLNK(i.external_attr >> 16), 'Unsafe member')
