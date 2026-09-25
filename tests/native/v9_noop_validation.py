@@ -264,6 +264,10 @@ def audit(root, inputs):
     need(same(plan['protocol'],protocol()) and plan['binaries']==m['binaries'] and
          plan['harness_commit']==request['REVIEWED_COMMIT'] and
          plan['input_manifest_sha256']==request['MANIFEST_SHA256'],'Plan changed')
+    return audit_calls(root, plan, m)
+
+def audit_calls(root, plan, m):
+    # Shared evidence-only audit. Caller must authenticate its own request/plan/preparation.
     need(same(load(root/'completion.json'),dict(status='calls_complete_unreviewed',attempted=16,error=None,clears_hold=False)),
          'Stopped/incomplete run')
     before_env=load(root/'environment-before.json'); after_env=load(root/'environment-after.json')

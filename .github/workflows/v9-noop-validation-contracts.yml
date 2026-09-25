@@ -3,16 +3,23 @@ on:
   pull_request:
     paths:
       - 'tests/native/*v9_noop_validation*'
+      - 'tests/native/*v9_noop_rebound*'
+      - '.github/workflows/v9-noop-rebound.yml'
+      - 'docs/V9_NOOP_REBOUND.md'
       - '.github/workflows/v9-noop-validation*.yml'
       - 'docs/V9_PERFORMANCE_VALIDATION.md'
   push:
     branches: [main]
     paths:
       - 'tests/native/*v9_noop_validation*'
+      - 'tests/native/*v9_noop_rebound*'
+      - '.github/workflows/v9-noop-rebound.yml'
+      - 'docs/V9_NOOP_REBOUND.md'
       - '.github/workflows/v9-noop-validation*.yml'
       - 'docs/V9_PERFORMANCE_VALIDATION.md'
 permissions:
   contents: read
+  actions: read
 jobs:
   contracts:
     strategy:
@@ -36,18 +43,63 @@ jobs:
           identity={k:os.environ.get(k) for k in ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','RUNNER_OS','ImageVersion')}
           identity.update(tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),real_mqb_calls=0,real_etw_sessions=0)
           (out/'identity.json').write_text(json.dumps(identity,indent=2),encoding='utf-8')
-          for name in ('test_v9_noop_validation.py','test_v9_noop_validation_cache.py','test_external_noop_gate.py'):
+          for name in ('test_v9_noop_validation.py','test_v9_noop_validation_cache.py','test_v9_noop_rebound.py','test_external_noop_gate.py'):
               with (out/(name+'.log')).open('x',encoding='utf-8') as f:
                   code=subprocess.run([sys.executable,'-B','tests/native/'+name],stdout=f,stderr=subprocess.STDOUT).returncode
               print((out/(name+'.log')).read_text(encoding='utf-8'))
               if code:raise SystemExit(code)
           subprocess.run([sys.executable,'-B','tests/native/v9_noop_validation.py','plan','--output',str(out/'plan.json')],check=True)
+          subprocess.run([sys.executable,'-B','tests/native/v9_noop_rebound.py','plan',
+              '--output',str(out/'rebound-plan.json')],check=True)
 
       - name: Actual extracted PowerShell functions; synthetic in-process launchers only
         shell: pwsh
         run: |
           & ./tests/native/test_v9_noop_validation_control.ps1 -PlanPath v9-validation-contract-out/plan.json -OutputRoot v9-validation-contract-out/control *> v9-validation-contract-out/control.log
           if ($LASTEXITCODE -ne 0) { throw 'In-process control contracts failed.' }
+      - name: Actual rebound orchestration and projection; synthetic launcher only
+        shell: pwsh
+        run: |
+          & ./tests/native/test_v9_noop_rebound_control.ps1 -PlanPath v9-validation-contract-out/rebound-plan.json -OutputRoot v9-validation-contract-out/rebound-control *> v9-validation-contract-out/rebound-control.log
+          if ($LASTEXITCODE -ne 0) { throw 'Rebound control contracts failed.' }
+      - name: Download accepted preparation for file-only binding verification
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: '10852045267'
+          repository: Iviesever/msvc-quick-build
+          run-id: '36106155413'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/rebound-contract-original
+          skip-decompress: true
+          digest-mismatch: error
+      - name: Read actual original bytes and retain original stopped verdict; zero execution
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        shell: python {0}
+        run: |
+          import os, pathlib, sys
+          sys.path.insert(0,'tests/native')
+          import v9_noop_rebound as b
+          from zipfile import ZipFile
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          files=list((root/'rebound-contract-original').rglob('*.zip'))
+          b.need(len(files)==1,'Expected one fixed preparation ZIP')
+          inputs=root/'rebound-contract-inputs'
+          b.unpack(files[0],inputs)
+          m=b.check_preparation(inputs);b.check_repo(pathlib.Path('.'))
+          out=pathlib.Path('v9-validation-contract-out')
+          b.write(out/'rebound-original-check.json',dict(status='fixed_preparation_verified_unmeasured',
+              prepare_run=m['prepare_run'],preparation_harness=m['harness_commit'],
+              manifest_sha256=b.v.file_sha(inputs/'manifest.json'),binaries=m['binaries'],
+              new_mqb_calls=0,new_etw_sessions=0,clears_hold=False))
+          failed=root/'rebound-contract-stopped';failed.mkdir()
+          with ZipFile(b.FAILURE) as z:b.v.safe_members(z);z.extractall(failed)
+          try:b.v.audit(failed,inputs)
+          except ValueError as exc:
+              b.need(str(exc)=='Stopped/incomplete run','Unexpected original rejection: '+str(exc))
+              b.write(out/'rebound-stopped-check.json',dict(status='INVALID',error=str(exc),
+                  recorded_calls=1,noop_calls=0,complete_pairs=0,clears_hold=False))
+          else:raise SystemExit('Original stopped evidence must remain invalid')
       - name: Preserve first contract results including failures
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

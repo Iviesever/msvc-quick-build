@@ -1,0 +1,90 @@
+name: V9 frozen-input rebound (separately reviewed, no preparation)
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_commit:
+        description: 'Separately reviewed exact NEW execution main commit, not the old preparation commit'
+        type: string
+        required: true
+      allocation:
+        description: 'Only separately registered v9-reader-noop-002; installation is not permission'
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: v9-reader-frozen-input-rebound
+  cancel-in-progress: false
+jobs:
+  measure:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
+      ALLOCATION: ${{ inputs.allocation }}
+    steps:
+      - name: Preserve allowlisted execution request before checkout
+        shell: python {0}
+        run: |
+          import json, os, pathlib
+          out=pathlib.Path('v9-rebound-out');out.mkdir()
+          keys=('GITHUB_REPOSITORY','GITHUB_ACTIONS','GITHUB_EVENT_NAME','GITHUB_REF',
+                'GITHUB_SHA','GITHUB_WORKFLOW_SHA','GITHUB_WORKFLOW_REF','GITHUB_RUN_ID',
+                'GITHUB_RUN_NUMBER','GITHUB_RUN_ATTEMPT','RUNNER_ENVIRONMENT','RUNNER_OS',
+                'RUNNER_ARCH','REVIEWED_COMMIT','ALLOCATION')
+          with (out/'request.json').open('x',encoding='utf-8') as f:
+              json.dump({k:os.environ.get(k) for k in keys},f,indent=2)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Refuse unreviewed source, old opportunity or repeat before download
+        shell: pwsh
+        run: |
+          python -B ./harness/tests/native/v9_noop_rebound.py admit --root ./v9-rebound-out --repo ./harness
+          if ($LASTEXITCODE -ne 0) { throw 'Rebound request refused.' }
+          git -C ./harness archive -o (Join-Path $PWD 'v9-rebound-out/source-execution.zip') HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Execution source snapshot failed.' }
+      - name: Download only the original accepted preparation ZIP
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: '10852045267'
+          repository: Iviesever/msvc-quick-build
+          run-id: '36106155413'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/v9-rebound-download
+          skip-decompress: true
+          digest-mismatch: error
+      - name: Authenticate both versions and invoke the fixed new plan once
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference='Stop'
+          $files=@(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'v9-rebound-download') -File -Recurse)
+          if ($files.Count -ne 1 -or $files[0].Extension -cne '.zip') { throw 'Expected one fixed preparation ZIP.' }
+          $inputs=Join-Path $env:RUNNER_TEMP 'v9-rebound-frozen'
+          python -B ./harness/tests/native/v9_noop_rebound.py unpack --archive $files[0].FullName --inputs $inputs
+          if ($LASTEXITCODE -ne 0) { throw 'Original preparation refused.' }
+          & ./harness/tests/native/run_v9_noop_rebound.ps1 -Root (Join-Path $PWD 'v9-rebound-out') -InputsRoot $inputs -ExecuteReviewedRebound
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid result or regression HOLD; do not retry.' }
+      - name: Retain bounded evidence including failures, never cache bodies or private values
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v9-noop-rebound-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            v9-rebound-out/*.json
+            v9-rebound-out/*.log
+            v9-rebound-out/source-execution.zip
+            v9-rebound-out/consumed-measurement.zip
+            v9-rebound-out/calls/*.json
+            v9-rebound-out/cache-projections/*.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
+# Manual-only, run1/attempt1. No modification/reopening of the consumed workflow.
+# No preparation, automatic dispatch, retries, help probes or additional samples.
+# This reserved entry is unallocated until separate exact candidate/main acceptance.
