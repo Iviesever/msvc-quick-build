@@ -1,0 +1,97 @@
+name: V9 same-job A2-B2 validation (separate review required)
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_commit:
+        description: 'Exact separately reviewed main execution commit'
+        required: true
+        type: string
+      allocation:
+        description: 'Separately registered v9-reader-samejob-001; NOT a refill'
+        required: true
+        type: string
+      accept_new_binaries_and_automatic_gate:
+        description: 'Accept new A2/B2 and automatic intermediate verification instead of cross-job human approval'
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: v9-reader-samejob-first-opportunity
+  cancel-in-progress: false
+jobs:
+  validation:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
+      ALLOCATION: ${{ inputs.allocation }}
+      ACCEPT_AUTOMATIC_GATE: ${{ inputs.accept_new_binaries_and_automatic_gate }}
+    steps:
+      - name: Save only allowlisted request metadata
+        shell: python {0}
+        run: |
+          import json, os, pathlib
+          out=pathlib.Path('v9-samejob-out');out.mkdir()
+          keys=('GITHUB_REPOSITORY','GITHUB_ACTIONS','GITHUB_EVENT_NAME','GITHUB_REF',
+                'GITHUB_SHA','GITHUB_WORKFLOW_SHA','GITHUB_WORKFLOW_REF','GITHUB_RUN_ID',
+                'GITHUB_RUN_NUMBER','GITHUB_RUN_ATTEMPT','RUNNER_ENVIRONMENT','RUNNER_OS',
+                'RUNNER_ARCH','REVIEWED_COMMIT','ALLOCATION','GITHUB_JOB','ACCEPT_AUTOMATIC_GATE')
+          with (out/'request.json').open('x',encoding='utf-8') as f:
+              json.dump({k:os.environ.get(k) for k in keys},f,indent=2)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Refuse repeat or unreviewed execution before product-source downloads
+        shell: pwsh
+        run: |
+          python -B ./harness/tests/native/v9_noop_samejob.py admit --root ./v9-samejob-out --repo ./harness
+          if ($LASTEXITCODE -ne 0) { throw 'Same-job admission refused.' }
+          git -C ./harness archive -o (Join-Path $PWD 'v9-samejob-out/source-execution.zip') HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Execution snapshot failed.' }
+      - name: Exact pre-integration source for new A2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ed76d13df14acd680d5b523a27aa52fc99a1b09c
+          path: build-src/baseline
+          persist-credentials: false
+      - name: Exact post-integration source for new B2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fea79539ba3cdb55fddf36158877bae961627c01
+          path: build-src/candidate
+          persist-credentials: false
+      - name: Build new pair, verify manifest, then run bounded full pairs in this VM
+        shell: pwsh
+        timeout-minutes: 35
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & ./harness/tests/native/run_v9_noop_samejob.ps1 -Root (Join-Path $PWD 'v9-samejob-out') -SourceRoot (Join-Path $PWD 'build-src') -ExecuteReviewedSameJob
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid evidence or regression HOLD; never retry.' }
+      - name: Preserve new preparation and all results including failures, not cache bodies
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v9-samejob-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            v9-samejob-out/*.json
+            v9-samejob-out/source-execution.zip
+            v9-samejob-out/preparation/*.json
+            v9-samejob-out/preparation/*.log
+            v9-samejob-out/preparation/source-*.zip
+            v9-samejob-out/preparation/bin/*.exe
+            v9-samejob-out/measurement/*.json
+            v9-samejob-out/measurement/calls/*.json
+            v9-samejob-out/measurement/cache-projections/*.json
+          overwrite: false
+          if-no-files-found: error
+          retention-days: 30
+# One job only; same request/VM across phases. No workflow-run/push/PR trigger.
+# No old-input overwrite, automatic retry, extra help, ETW, sleeps or new allocation.
+# The reserved name/checkbox is not an authenticated issue approval. Register separately.
+# External limits do not guarantee cleanup or preservation after host/disk loss.
