@@ -231,8 +231,21 @@ class SameJobContracts(unittest.TestCase):
             with ZipFile(path,'w') as z:z.comment=b'a'*40;z.writestr('a','x')
             for commit,tree in [('b'*40,None),('a'*40,'0'*40)]:
                 with self.assertRaises(ValueError):s.source_archive(path,commit,tree)
-            for name in ('../x','CON','a/../x','/x','a\\b'):
+            for name in ('../x','CON','a/../x','/x'):
                 with ZipFile(path,'w') as z:z.comment=b'a'*40;z.writestr(name,'x')
+                with self.subTest(name=name),self.assertRaises(ValueError):s.source_archive(path,'a'*40)
+
+    def test_raw_backslash_and_nul_names_survive_test_construction(self):
+        # ZipInfo normalizes backslashes on Windows BEFORE writing. Mutate the
+        # actual local+central filename bytes instead, without changing lengths.
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'raw.zip'
+            for name in (b'a\\b',b'a\x00b'):
+                with ZipFile(path,'w') as z:
+                    z.comment=b'a'*40;z.writestr('axb','x')
+                raw=path.read_bytes();self.assertEqual(2,raw.count(b'axb'))
+                path.write_bytes(raw.replace(b'axb',name))
+                self.assertEqual(2,path.read_bytes().count(name))
                 with self.subTest(name=name),self.assertRaises(ValueError):s.source_archive(path,'a'*40)
 
     def test_manual_workflow_has_only_one_job_and_no_implicit_execution(self):
