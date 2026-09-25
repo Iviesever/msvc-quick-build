@@ -42,7 +42,9 @@ KEYS = ('GITHUB_REPOSITORY','GITHUB_ACTIONS','GITHUB_EVENT_NAME','GITHUB_REF',
         'GITHUB_RUN_NUMBER','GITHUB_RUN_ATTEMPT','RUNNER_ENVIRONMENT','RUNNER_OS',
         'RUNNER_ARCH','REVIEWED_COMMIT','PHASE','ALLOCATION','PREP_RUN',
         'PREP_ARTIFACT','PREP_SHA256','MANIFEST_SHA256')
-CACHE = '.mqb/cache/toolchain/msvc-auto-x64-x64.mqbcache'
+# Application.cpp supplies this explicit CLI cache_file; the locator fallback
+# msvc-<preference>-<host>-<target>.mqbcache is not used by this fixed command.
+CACHE = '.mqb/cache/toolchain/vs-x64.cache'
 need = gate.require
 load = boundary.load
 write = boundary.write_new

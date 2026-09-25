@@ -47,7 +47,8 @@ function Assert-V9Space([string]$Path,[long]$Minimum) {
 }
 
 function Get-V9CacheProjection([string]$Fixture) {
-    $path=Join-Path $Fixture '.mqb/cache/toolchain/msvc-auto-x64-x64.mqbcache'
+    # The fixed CLI supplies cache_file=vs-x64.cache. Do not use the bare locator default.
+    $path=Join-Path $Fixture '.mqb/cache/toolchain/vs-x64.cache'
     $file=Get-Item -LiteralPath $path -Force
     if ($file.Length -gt 1MB -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
         throw 'Invalid V9 cache file.'
