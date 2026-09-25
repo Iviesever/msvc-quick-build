@@ -1,0 +1,149 @@
+name: V9 matched-build and no-op validation (two reviewed phases)
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: 'prepare first; measure only after separate binary/artifact review'
+        type: choice
+        options: [prepare, measure]
+        required: true
+      reviewed_commit:
+        description: 'Separately reviewed exact main harness commit; must match both phases'
+        required: true
+        type: string
+      allocation:
+        description: 'Separately registered v9-reader-prepare-001 OR v9-reader-noop-001'
+        required: true
+        type: string
+      prepared_run_id:
+        description: 'Measure only: frozen preparation run ID'
+        type: string
+      prepared_artifact_id:
+        description: 'Measure only: frozen preparation artifact ID'
+        type: string
+      prepared_sha256:
+        description: 'Measure only: exact original preparation ZIP SHA256'
+        type: string
+      manifest_sha256:
+        description: 'Measure only: exact manifest.json SHA256'
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: v9-reader-fixed-two-phase-validation
+  cancel-in-progress: false
+jobs:
+  validation:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PHASE: ${{ inputs.phase }}
+      REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
+      ALLOCATION: ${{ inputs.allocation }}
+      PREP_RUN: ${{ inputs.prepared_run_id }}
+      PREP_ARTIFACT: ${{ inputs.prepared_artifact_id }}
+      PREP_SHA256: ${{ inputs.prepared_sha256 }}
+      MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+    steps:
+      - name: Preserve allowlisted request before checkout; refuse repeats
+        shell: python {0}
+        run: |
+          import json, os, pathlib, re
+          out=pathlib.Path('v9-noop-out');out.mkdir()
+          keys=('GITHUB_REPOSITORY','GITHUB_ACTIONS','GITHUB_EVENT_NAME','GITHUB_REF',
+                'GITHUB_SHA','GITHUB_WORKFLOW_SHA','GITHUB_WORKFLOW_REF','GITHUB_RUN_ID',
+                'GITHUB_RUN_NUMBER','GITHUB_RUN_ATTEMPT','RUNNER_ENVIRONMENT','RUNNER_OS',
+                'RUNNER_ARCH','REVIEWED_COMMIT','PHASE','ALLOCATION','PREP_RUN',
+                'PREP_ARTIFACT','PREP_SHA256','MANIFEST_SHA256')
+          c={k:os.environ.get(k) for k in keys}
+          with (out/'request.json').open('x',encoding='utf-8') as f:json.dump(c,f,indent=2)
+          phase=c['PHASE'];commit=c['REVIEWED_COMMIT'] or ''
+          assert phase in ('prepare','measure'), 'Wrong phase'
+          assert c['GITHUB_REPOSITORY']=='Iviesever/msvc-quick-build'
+          assert c['GITHUB_ACTIONS']=='true' and c['GITHUB_EVENT_NAME']=='workflow_dispatch'
+          assert c['GITHUB_REF']=='refs/heads/main' and c['RUNNER_ENVIRONMENT']=='github-hosted'
+          assert c['RUNNER_OS']=='Windows' and c['RUNNER_ARCH']=='X64'
+          assert c['GITHUB_WORKFLOW_REF']=='Iviesever/msvc-quick-build/.github/workflows/v9-noop-validation.yml@refs/heads/main'
+          assert c['GITHUB_RUN_ATTEMPT']=='1' and c['GITHUB_RUN_NUMBER']==('1' if phase=='prepare' else '2')
+          assert re.fullmatch('[1-9][0-9]*',c['GITHUB_RUN_ID'] or '')
+          assert re.fullmatch('[0-9a-f]{40}',commit) and c['GITHUB_SHA']==c['GITHUB_WORKFLOW_SHA']==commit
+          assert c['ALLOCATION']==('v9-reader-prepare-001' if phase=='prepare' else 'v9-reader-noop-001')
+          if phase=='prepare':
+              assert all(c[k] in ('',None) for k in ('PREP_RUN','PREP_ARTIFACT','PREP_SHA256','MANIFEST_SHA256'))
+          else:
+              assert all(re.fullmatch('[1-9][0-9]*',c[k] or '') for k in ('PREP_RUN','PREP_ARTIFACT'))
+              assert c['PREP_RUN']!=c['GITHUB_RUN_ID']
+              assert all(re.fullmatch('[0-9a-f]{64}',c[k] or '') for k in ('PREP_SHA256','MANIFEST_SHA256'))
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Frozen pre-integration source
+        if: inputs.phase == 'prepare'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ed76d13df14acd680d5b523a27aa52fc99a1b09c
+          path: build-src/baseline
+          persist-credentials: false
+      - name: Frozen post-integration source
+        if: inputs.phase == 'prepare'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fea79539ba3cdb55fddf36158877bae961627c01
+          path: build-src/candidate
+          persist-credentials: false
+      - name: Read only the separately frozen preparation artifact
+        if: inputs.phase == 'measure'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ inputs.prepared_artifact_id }}
+          repository: Iviesever/msvc-quick-build
+          run-id: ${{ inputs.prepared_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/v9-noop-download
+          skip-decompress: true
+          digest-mismatch: error
+      - name: Build preparation only (at most five MQB calls, zero study calls)
+        if: inputs.phase == 'prepare'
+        shell: pwsh
+        timeout-minutes: 25
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & ./harness/tests/native/run_v9_noop_validation.ps1 -Root (Join-Path $PWD 'v9-noop-out') -InputsRoot (Join-Path $PWD 'build-src') -ExecuteReviewedPhase
+          if ($LASTEXITCODE -ne 0) { throw 'Preparation failed; do not retry.' }
+      - name: Exactly the fixed sixteen study calls (no build or help probes)
+        if: inputs.phase == 'measure'
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference='Stop'
+          $files=@(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'v9-noop-download') -File -Recurse)
+          if ($files.Count -ne 1 -or $files[0].Extension -cne '.zip') { throw 'Expected one frozen ZIP.' }
+          $inputRoot=Join-Path $env:RUNNER_TEMP 'v9-noop-frozen'
+          python -B ./harness/tests/native/v9_noop_validation.py unpack --archive $files[0].FullName --sha256 $env:PREP_SHA256 --inputs $inputRoot
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen ZIP refused.' }
+          & ./harness/tests/native/run_v9_noop_validation.ps1 -Root (Join-Path $PWD 'v9-noop-out') -InputsRoot $inputRoot -ExecuteReviewedPhase
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid study or regression HOLD; retain all results.' }
+      - name: Preserve allowlisted evidence, including first failures; never raw cache values
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v9-noop-${{ inputs.phase }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            v9-noop-out/*.json
+            v9-noop-out/*.log
+            v9-noop-out/source-*.zip
+            v9-noop-out/bin/*.exe
+            v9-noop-out/calls/*.json
+            v9-noop-out/cache-projections/*.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
+# No push/PR/schedule/workflow_run triggers. Run1=prepare, run2=measure, attempt1 only.
+# Preparation completion does not authorize measurement. No auto-dispatch or retry.
+# These reserved labels do not authenticate an issue registration; review separately.
+# Only calls/cache-projections metadata is uploaded, never fixtures or raw environment.
