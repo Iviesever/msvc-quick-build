@@ -1,0 +1,74 @@
+name: V9 same-job contracts (synthetic only)
+on:
+  pull_request:
+    paths:
+      - 'tests/native/*v9_noop_samejob*'
+      - '.github/workflows/v9-noop-samejob.yml'
+      - '.github/workflows/v9-samejob-contracts.yml'
+      - 'docs/V9_SAMEJOB_PROTOCOL.md'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/native/*v9_noop_samejob*'
+      - '.github/workflows/v9-noop-samejob.yml'
+      - '.github/workflows/v9-samejob-contracts.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Source and Python controls only
+        shell: python {0}
+        run: |
+          import json, os, pathlib, subprocess, sys
+          out=pathlib.Path('samejob-contract-out');out.mkdir()
+          (out/'identity.json').write_text(json.dumps({k:os.environ.get(k) for k in
+              ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','RUNNER_OS')},indent=2))
+          subprocess.run(['git','archive','-o',str(out/'source.zip'),'HEAD'],check=True)
+          with (out/'python.log').open('x',encoding='utf-8') as f:
+              code=subprocess.run([sys.executable,'-B','tests/native/test_v9_noop_samejob.py'],stdout=f,stderr=subprocess.STDOUT).returncode
+          print((out/'python.log').read_text());sys.exit(code)
+      - name: Download fixed OLD preparation as read-only control input, never execute it
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: '10852045267'
+          repository: Iviesever/msvc-quick-build
+          run-id: '36106155413'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/samejob-original-input
+          skip-decompress: true
+          digest-mismatch: error
+      - name: Exercise actual coordinator and Python gate with synthetic builds and launcher
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $files=@(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'samejob-original-input') -File -Recurse)
+          if ($files.Count -ne 1) { throw 'Expected one old fixed original.' }
+          $inputRoot=Join-Path $env:RUNNER_TEMP 'samejob-original-extracted'
+          python -B tests/native/v9_noop_rebound.py unpack --archive $files[0].FullName --inputs $inputRoot
+          if ($LASTEXITCODE -ne 0) { throw 'Old original refused.' }
+          & ./tests/native/test_v9_noop_samejob_control.ps1 -OutputRoot (Join-Path $PWD 'samejob-contract-out/control') -OriginalPreparation $inputRoot *> samejob-contract-out/powershell.log
+          if ($LASTEXITCODE -ne 0) { throw 'Same-job pipeline controls failed.' }
+      - name: Preserve first control evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v9-samejob-contracts-${{ matrix.os }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: samejob-contract-out/
+          overwrite: false
+          if-no-files-found: error
+          retention-days: 30
+# No real MQB, compiler, WPR, or manual study entry is called by these controls.
+# Original source ZIPs are copied as data; new fake binaries are never executed.
