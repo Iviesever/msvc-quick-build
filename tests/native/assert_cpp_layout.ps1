@@ -231,6 +231,7 @@ $msvcLeafFiles = [ordered]@{
         'ToolchainDiscoveryPrimitives.cpp', 'ToolchainDiscoveryPrimitives.hpp',
         'VisualStudioEnvironment.cpp', 'VisualStudioEnvironment.hpp',
         'VisualStudioToolchainCache.cpp', 'VisualStudioToolchainCache.hpp',
+        'VisualStudioToolchainCacheReader.hpp',
         'VisualStudioToolchainDiscovery.cpp', 'VisualStudioToolchainDiscovery.hpp'
     )
 }
@@ -251,7 +252,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'msvc') -LeafFiles ([ordered]@{
     )
     'parameters' = @('msvc_parameter_capabilities_tests.cpp', 'msvc_parameter_engine_tests.cpp')
     'toolchain' = @('portable_tests.cpp', 'visual_studio_tests.cpp',
-        'v9_reader_probe.cpp', 'v9_reader_prototype.hpp')
+        'v9_reader_probe.cpp', 'v9_reader_prototype.hpp', 'v9_reader_adoption_tests.cpp')
 })
 
 $orchestrationLeafFiles = [ordered]@{
