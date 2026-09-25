@@ -1,0 +1,60 @@
+name: V9 bounded validation contracts (zero study calls)
+on:
+  pull_request:
+    paths:
+      - 'tests/native/*v9_noop_validation*'
+      - '.github/workflows/v9-noop-validation*.yml'
+      - 'docs/V9_PERFORMANCE_VALIDATION.md'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/native/*v9_noop_validation*'
+      - '.github/workflows/v9-noop-validation*.yml'
+      - 'docs/V9_PERFORMANCE_VALIDATION.md'
+permissions:
+  contents: read
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Fixed protocol, inherited threshold and synthetic journal controls
+        shell: python {0}
+        run: |
+          import json, os, pathlib, subprocess, sys
+          out=pathlib.Path('v9-validation-contract-out');out.mkdir()
+          subprocess.run(['git','archive','-o',str(out/'source.zip'),'HEAD'],check=True)
+          identity={k:os.environ.get(k) for k in ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','RUNNER_OS','ImageVersion')}
+          identity.update(tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),real_mqb_calls=0,real_etw_sessions=0)
+          (out/'identity.json').write_text(json.dumps(identity,indent=2),encoding='utf-8')
+          for name in ('test_v9_noop_validation.py','test_external_noop_gate.py'):
+              with (out/(name+'.log')).open('x',encoding='utf-8') as f:
+                  code=subprocess.run([sys.executable,'-B','tests/native/'+name],stdout=f,stderr=subprocess.STDOUT).returncode
+              print((out/(name+'.log')).read_text(encoding='utf-8'))
+              if code:raise SystemExit(code)
+          subprocess.run([sys.executable,'-B','tests/native/v9_noop_validation.py','plan','--output',str(out/'plan.json')],check=True)
+
+      - name: Actual extracted PowerShell functions; synthetic in-process launchers only
+        shell: pwsh
+        run: |
+          & ./tests/native/test_v9_noop_validation_control.ps1 -PlanPath v9-validation-contract-out/plan.json -OutputRoot v9-validation-contract-out/control *> v9-validation-contract-out/control.log
+          if ($LASTEXITCODE -ne 0) { throw 'In-process control contracts failed.' }
+      - name: Preserve first contract results including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v9-validation-contracts-${{ matrix.os }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: v9-validation-contract-out/
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
+# Never invokes the manual entry, real MQB, matched builds, WPR, or a benchmark.
