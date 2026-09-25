@@ -33,35 +33,50 @@ function Write-NewJson($Path,$Value) {
     } finally {$stream.Dispose()}
 }
 function Get-Digest($Path) {
-    if ($Path.EndsWith('.mqbcache')) { return 'f'*64 }
+    if ($Path.EndsWith('.cache') -or $Path.EndsWith('.mqbcache')) {
+        return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($Path))).ToLowerInvariant()
+    }
     if ($script:badBinary) { return '0'*64 }
     return 'a'*64
 }
 function Get-FileManifest($Path) {
     $files=@([ordered]@{path='helper.cpp';size=1;mtime_ticks=1;sha256='x'},[ordered]@{path='main.cpp';size=1;mtime_ticks=1;sha256='y'})
     if ($script:built.ContainsKey($Path)) {
-        $files+=@([ordered]@{path='.mqb/bin/timing_bench.exe';size=1;mtime_ticks=1;sha256='z'},
-                  [ordered]@{path='.mqb/cache/toolchain/msvc-auto-x64-x64.mqbcache';size=1;mtime_ticks=1;sha256='f'})
+        $files+=@([ordered]@{path='.mqb/bin/timing_bench.exe';size=1;mtime_ticks=1;sha256='z'})
+        $cache=Join-Path $Path '.mqb/cache/toolchain/vs-x64.cache'
+        if (Test-Path -LiteralPath $cache -PathType Leaf) {
+            $files+=@([ordered]@{path='.mqb/cache/toolchain/vs-x64.cache';size=[long](Get-Item -LiteralPath $cache).Length
+                mtime_ticks=1;sha256=(Get-Digest $cache)})
+        }
         if ($script:badFiles -and $script:attempted -eq 2) {$files[-1].mtime_ticks=2}
     }
     return ,$files
 }
 function Assert-V9Space($Path,$Minimum) { if ($script:lowSpace) { throw 'SYNTHETIC free-space failure' } }
+# Only the process is simulated: create a real, synthetic V9 file at the CLI's
+# independently specified destination, and use the actual projection on every prime.
+function Write-SyntheticCache([string]$Fixture) {
+    if ($script:missingCache) { return }
+    $name=if ($script:fallbackOnly) {'msvc-auto-x64-x64.mqbcache'} else {'vs-x64.cache'}
+    $dir=Join-Path $Fixture '.mqb/cache/toolchain'
+    $null=New-Item -ItemType Directory -Path $dir -Force
+    $tool=if ($script:badRoot) {'C:/OTHER'} else {'C:/SYNTHETIC'}
+    $value=if ($script:badCache -and $script:attempted -ge 3) {'DIFFERENT-SYNTHETIC-VALUE'} else {'SYNTHETIC-PRIVATE-VALUE'}
+    $text="MQB_TOOLCHAIN_CACHE_V9`ntarget `"x64`"`nhost `"x64`"`npreference 0`nvc_tools_root `"$tool`"`n" +
+        "binary_stamp `"SYNTHETIC`"`nenvironment 1`nenv_name `"INCLUDE`"`nenv_value `"$value`"`n" +
+        "ambient_path `"SYNTHETIC`"`neffective_path `"SYNTHETIC`"`n"
+    [IO.File]::WriteAllText((Join-Path $dir $name),$text,[Text.UTF8Encoding]::new($false))
+}
 function Invoke-LegacyBoundary($Executable,$Cwd,$Argv,$Prefix) {
     $script:fakeCalls.Add(@{exe=$Executable;cwd=$Cwd;argv=@($Argv)})
     $prime=-not $script:built.ContainsKey($Cwd);$script:built[$Cwd]=$true
+    if ($prime) { Write-SyntheticCache $Cwd }
     $lines=if ($prime -or ($script:badNoop -and $script:attempted -eq 2)) {
         @('[compile] main.cpp','[compile] helper.cpp','[link] timing_bench.exe')
     } else {@('[up-to-date] 2 translation units','[up-to-date] timing_bench.exe')}
     return [ordered]@{clock=@{frequency=10000;outer_start=1;native_start=2;native_end=3;outer_end=4}
         exit_code=$(if ($script:attempted -eq $script:failCall) {37} else {0});error=$null
         output_format='powershell_merged_lines';output_lines=$lines;root_times=$null;cleanup=$null}
-}
-# Save the real projection function for small private-value/escaping tests.
-$realProjection=${function:Get-V9CacheProjection}
-function Get-V9CacheProjection($Path) {
-    return @{root=$(if ($script:badRoot) {'C:/OTHER'} else {'C:/SYNTHETIC'});schema='MQB_TOOLCHAIN_CACHE_V9';bytes=123
-        sha256=$(if ($script:badCache -and $script:attempted -ge 3) {'e'*64} else {'f'*64})}
 }
 function Get-V9Environment {
     return [ordered]@{image='SYNTHETIC';powershell='7';tools=@([ordered]@{root='C:/SYNTHETIC';files=@{}})
@@ -80,6 +95,7 @@ function Case([string]$Name,[scriptblock]$Action) {
     $script:plan=@{protocol=(Get-Content -LiteralPath $PlanPath -Raw | ConvertFrom-Json);binaries=@{baseline='a'*64;candidate='a'*64}}
     $script:attempted=0;$script:admitted=0;$script:badJournal='';$script:badBinary=$false;$script:badCache=$false
     $script:badFiles=$false;$script:badNoop=$false;$script:badRoot=$false;$script:lowSpace=$false;$script:failCall=0
+    $script:missingCache=$false;$script:fallbackOnly=$false
     $script:built=@{};$script:fakeCalls=[Collections.Generic.List[object]]::new()
     try { & $Action; $cases.Add(@{name=$Name;passed=$true;error=$null});Write-Host "PASS: $Name" }
     catch { ++$script:failures;$cases.Add(@{name=$Name;passed=$false;error=$_.ToString()});Write-Host "FAIL: $Name :: $_" }
@@ -136,11 +152,47 @@ Case 'existing fixture cannot resume' {
 }
 Case 'actual projection exports no private environment value' {
     $fixture=Join-Path $root 'private';$null=New-Item -ItemType Directory -Path (Join-Path $fixture '.mqb/cache/toolchain')
-    $path=Join-Path $fixture '.mqb/cache/toolchain/msvc-auto-x64-x64.mqbcache'
+    $path=Join-Path $fixture '.mqb/cache/toolchain/vs-x64.cache'
     [IO.File]::WriteAllText($path,"MQB_TOOLCHAIN_CACHE_V9`nvc_tools_root `"C:/SYNTHETIC`"`nenv_value `"SECRET-SYNTHETIC-VALUE`"`n")
-    $result=& $realProjection $fixture
+    $result=Get-V9CacheProjection $fixture
     Assert ($result.root -ceq 'C:/SYNTHETIC') 'Wrong root'
     Assert (($result | ConvertTo-Json) -notmatch 'SECRET') 'Private value disclosed'
+}
+Case 'missing CLI cache preserves first prime and blocks every final' {
+    $script:missingCache=$true
+    Refuses {Collect} 'vs-x64.cache'
+    Assert ($attempted -eq 1 -and $fakeCalls.Count -eq 1) 'Continued after missing CLI cache'
+    foreach ($suffix in @('before','started','result','after')) {
+        Assert (Test-Path (Join-Path $root ('calls/01.'+$suffix+'.json'))) 'Lost first-prime evidence'
+    }
+    Assert (-not (Test-Path (Join-Path $root 'calls/02.started.json'))) 'Final started after failure'
+}
+Case 'bare locator fallback cache is not accepted in place of CLI override' {
+    $script:fallbackOnly=$true
+    Refuses {Collect} 'vs-x64.cache'
+    Assert ($attempted -eq 1 -and $fakeCalls.Count -eq 1) 'Fallback silently accepted'
+}
+Case 'real cache projection hashes bytes and excludes environment values' {
+    $fixture=Join-Path $root 'projection with spaces'
+    Write-SyntheticCache $fixture
+    $path=Join-Path $fixture '.mqb/cache/toolchain/vs-x64.cache'
+    $result=Get-V9CacheProjection $fixture
+    Assert ($result.bytes -eq [IO.File]::ReadAllBytes($path).Length) 'Not actual size'
+    $expected=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($path))).ToLowerInvariant()
+    Assert ($result.sha256 -ceq $expected -and $result.root -ceq 'C:/SYNTHETIC') 'Not actual digest/root'
+    Assert ((@($result.Keys | Sort-Object) -join ',') -ceq 'bytes,root,schema,sha256') 'Projection leaked fields'
+    Assert (($result | ConvertTo-Json) -notmatch 'PRIVATE-VALUE') 'Leaked cache value'
+}
+Case 'real projection refuses wrong magic duplicate root and invalid UTF8' {
+    $fixture=Join-Path $root 'projection';Write-SyntheticCache $fixture
+    $path=Join-Path $fixture '.mqb/cache/toolchain/vs-x64.cache'
+    $original=[IO.File]::ReadAllText($path)
+    [IO.File]::WriteAllText($path,$original.Replace('CACHE_V9','CACHE_V8'))
+    Refuses {Get-V9CacheProjection $fixture} 'canonical V9'
+    [IO.File]::WriteAllText($path,($original+"vc_tools_root `"C:/OTHER`"`n"))
+    Refuses {Get-V9CacheProjection $fixture} 'unique tool root'
+    [IO.File]::WriteAllBytes($path,[byte[]]@(0xff,0xfe,0xff))
+    Refuses {Get-V9CacheProjection $fixture} '.'
 }
 Case 'actual size accounting accepts ordered keys and enforces exact64MiB' {
     $row=@{phase='prime'};$record=@{error=$null;exit_code=0;output_lines=@('[compile] main.cpp','[compile] helper.cpp','[link] timing_bench.exe')}

@@ -36,7 +36,7 @@ jobs:
           identity={k:os.environ.get(k) for k in ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','RUNNER_OS','ImageVersion')}
           identity.update(tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),real_mqb_calls=0,real_etw_sessions=0)
           (out/'identity.json').write_text(json.dumps(identity,indent=2),encoding='utf-8')
-          for name in ('test_v9_noop_validation.py','test_external_noop_gate.py'):
+          for name in ('test_v9_noop_validation.py','test_v9_noop_validation_cache.py','test_external_noop_gate.py'):
               with (out/(name+'.log')).open('x',encoding='utf-8') as f:
                   code=subprocess.run([sys.executable,'-B','tests/native/'+name],stdout=f,stderr=subprocess.STDOUT).returncode
               print((out/(name+'.log')).read_text(encoding='utf-8'))
