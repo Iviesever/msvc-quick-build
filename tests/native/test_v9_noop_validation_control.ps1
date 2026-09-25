@@ -142,6 +142,16 @@ Case 'actual projection exports no private environment value' {
     Assert ($result.root -ceq 'C:/SYNTHETIC') 'Wrong root'
     Assert (($result | ConvertTo-Json) -notmatch 'SECRET') 'Private value disclosed'
 }
+Case 'actual size accounting accepts ordered keys and enforces exact64MiB' {
+    $row=@{phase='prime'};$record=@{error=$null;exit_code=0;output_lines=@('[compile] main.cpp','[compile] helper.cpp','[link] timing_bench.exe')}
+    foreach ($item in @([ordered]@{size=[long]64MB},@{size=[long]64MB},[pscustomobject]@{size=[long]64MB})) {
+        Assert-V9Call $row $record @(1,2) @($item)
+    }
+    Refuses {Assert-V9Call $row $record @(1,2) @([ordered]@{size=[long]64MB},[ordered]@{size=1})} 'checkpoint exceeded'
+    foreach ($value in @(-1,$true,'1')) {
+        Refuses {Assert-V9Call $row $record @(1,2) @([ordered]@{size=$value})} 'Invalid fixture size'
+    }
+}
 Case 'preparation uses only one seed admission and two fixed helper calls' {
     $repo=Join-Path $root 'fake-repo';$src=Join-Path $root 'fake-src';$evidence=Join-Path $root 'prep'
     $null=New-Item -ItemType Directory -Path (Join-Path $repo 'tests/native')

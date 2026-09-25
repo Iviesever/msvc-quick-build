@@ -65,7 +65,14 @@ function Assert-V9Call($Row,$Record,$Before,$After) {
     if ($null -ne $Record.error -or $null -eq $Record.exit_code -or $Record.exit_code -ne 0) {
         throw 'Original call failed; no refill.'
     }
-    if (($After | Measure-Object -Property size -Sum).Sum -gt 64MB) { throw 'Fixture byte checkpoint exceeded.' }
+    [long]$fixtureBytes=0
+    foreach ($file in $After) {
+        if (($file.size -isnot [long] -and $file.size -isnot [int]) -or $file.size -lt 0) {
+            throw 'Invalid fixture size.'
+        }
+        $fixtureBytes += [long]$file.size
+        if ($fixtureBytes -gt 64MB) { throw 'Fixture byte checkpoint exceeded.' }
+    }
     $lines=@($Record.output_lines)
     if (@($lines | Where-Object { $_ -match 'mqb\.timings' }).Count) { throw 'Timings were enabled.' }
     $compiles=@($lines | Where-Object { $_.StartsWith('[compile] ') }).Count
