@@ -13,6 +13,7 @@ from unittest.mock import patch
 from zipfile import ZipFile, ZipInfo
 
 import v9_noop_samejob as s
+from v9_frozen_test_harness import pinned_test_harness
 from test_v9_noop_validation import journal, save, environment
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -29,18 +30,18 @@ def context():
     return c
 
 
-def execution_zip(root):
+def execution_zip(root, repo):
     with ZipFile(root/'source-execution.zip','w') as z:
         z.comment=context()['REVIEWED_COMMIT'].encode()
-        for name in (*s.PINS,*s.NEW_FILES): z.writestr(name,(ROOT/name).read_bytes())
+        for name in (*s.PINS,*s.NEW_FILES): z.writestr(name,(repo/name).read_bytes())
 
 
 @contextmanager
-def specimen(ticks=90, freeze=True):
+def specimen(ticks=90, freeze=True, *, repo):
     # Reuse exact old synthetic call records, but authenticate a DISTINCT new protocol.
     with journal(ticks) as (old,unused):
         root=old.parent/'samejob';root.mkdir();p=root/'preparation';p.mkdir();(p/'bin').mkdir()
-        save(root/'request.json',context());execution_zip(root)
+        save(root/'request.json',context());execution_zip(root, repo)
         sources={}
         for side in s.v.SOURCES:
             shutil.copyfile(unused/'bin'/f'{side}.exe',p/'bin'/f'{side}.exe')
@@ -59,7 +60,7 @@ def specimen(ticks=90, freeze=True):
         # ONLY this synthetic fixture substitutes its product source-tree identities.
         with patch.dict(s.v.SOURCES,sources):
             if freeze:
-                s.freeze(root,ROOT);plan=s.ready(root,ROOT);m=root/'measurement'
+                s.freeze(root,repo);plan=s.ready(root,repo);m=root/'measurement'
                 for folder in ('calls','cache-projections'):
                     for file in (old/folder).iterdir():shutil.copyfile(file,m/folder/file.name)
                 for r in s.v.rows():
@@ -73,6 +74,9 @@ def specimen(ticks=90, freeze=True):
 
 
 class SameJobContracts(unittest.TestCase):
+    def setUp(self):
+        self.replay_repo = self.enterContext(pinned_test_harness(ROOT))
+
     def test_plan_preserves_order_and_history(self):
         p=s.protocol();self.assertEqual((5,16,137,10),(p['preparation_mqb_ceiling'],p['study_mqb_ceiling'],p['proposed_study_total'],p['proposed_preparation_total']))
         self.assertEqual(s.v.rows(),p['rows']);self.assertFalse(p['execution_allocated']);self.assertFalse(p['clears_hold'])
@@ -80,7 +84,7 @@ class SameJobContracts(unittest.TestCase):
         self.assertEqual(121,p['history']['study_calls']);self.assertTrue(p['automatic_intermediate_gate'])
         p['history']['measurement001']['calls']=99;self.assertEqual(1,s.protocol()['history']['measurement001']['calls'])
 
-    def test_original_complete_helpers_unchanged(self):s.check_repo(ROOT)
+    def test_original_complete_helpers_unchanged(self):s.check_repo(self.replay_repo)
 
     def test_exact_admission_and_explicit_consent(self):self.assertEqual(context(),s.admit(context()))
 
@@ -103,8 +107,8 @@ class SameJobContracts(unittest.TestCase):
             with self.subTest(run=run),self.assertRaises(ValueError):s.admit(c)
 
     def test_complete_synthetic_new_pair_is_not_human_acceptance(self):
-        with specimen() as root:
-            result=s.audit(root,ROOT)
+        with specimen(repo=self.replay_repo) as root:
+            result=s.audit(root,self.replay_repo)
             self.assertEqual('limited_observed_improvement',result['status']);self.assertEqual('-1',result['median_delta_ms'])
             self.assertEqual(137,result['completed_study_total']);self.assertEqual(10,result['completed_preparation_total'])
             self.assertEqual(16,len(result['samples']));self.assertTrue(result['human_acceptance_pending'])
@@ -112,102 +116,102 @@ class SameJobContracts(unittest.TestCase):
 
     def test_strict_gate_is_retained(self):
         for ticks,crossed in ((100,False),(110,False),(111,True)):
-            with self.subTest(ticks=ticks),specimen(ticks) as root:
+            with self.subTest(ticks=ticks),specimen(ticks,repo=self.replay_repo) as root:
                 with patch.object(s.v.gate,'evaluate_pairs',wraps=s.v.gate.evaluate_pairs) as gate:
-                    result=s.audit(root,ROOT);self.assertEqual(crossed,result['crossed']);gate.assert_called_once()
+                    result=s.audit(root,self.replay_repo);self.assertEqual(crossed,result['crossed']);gate.assert_called_once()
 
     def test_incomplete_preparation_never_freezes(self):
         for filename in ('candidate.finished.json','seed-identity.json','source-candidate.zip','bin/baseline.exe','baseline-build.log'):
-            with self.subTest(filename=filename),specimen(freeze=False) as root:
+            with self.subTest(filename=filename),specimen(freeze=False,repo=self.replay_repo) as root:
                 (root/'preparation'/filename).unlink()
-                with self.assertRaises((ValueError,OSError)):s.freeze(root,ROOT)
+                with self.assertRaises((ValueError,OSError)):s.freeze(root,self.replay_repo)
                 self.assertFalse((root/'preparation/manifest.json').exists())
 
     def test_preparation_failure_environment_and_seed_refuse(self):
         for filename,key,value in [('completion.json','mqb_ceiling_admitted',True),('completion.json','error','failed'),
             ('environment-after.json','image','OTHER'),('environment-after.json','ambient_sha256','0'*64),
             ('seed-identity.json','sha256','0'*64)]:
-            with self.subTest(filename=filename,key=key),specimen(freeze=False) as root:
+            with self.subTest(filename=filename,key=key),specimen(freeze=False,repo=self.replay_repo) as root:
                 path=root/'preparation'/filename;data=s.load(path);data[key]=value;save(path,data)
-                with self.assertRaises(ValueError):s.freeze(root,ROOT)
+                with self.assertRaises(ValueError):s.freeze(root,self.replay_repo)
 
     def test_missing_empty_or_altered_log(self):
-        with specimen(freeze=False) as root:
+        with specimen(freeze=False,repo=self.replay_repo) as root:
             (root/'preparation/seed.log').write_bytes(b'')
-            with self.assertRaises(ValueError):s.freeze(root,ROOT)
-        with specimen() as root:
+            with self.assertRaises(ValueError):s.freeze(root,self.replay_repo)
+        with specimen(repo=self.replay_repo) as root:
             (root/'preparation/baseline-build.log').write_text('changed')
-            with self.assertRaises(ValueError):s.check_frozen(root,ROOT)
+            with self.assertRaises(ValueError):s.check_frozen(root,self.replay_repo)
 
     def test_manifest_and_binary_cannot_be_replaced(self):
         for filename in ('bin/baseline.exe','bin/candidate.exe','source-baseline.zip','manifest.json'):
-            with self.subTest(filename=filename),specimen() as root:
+            with self.subTest(filename=filename),specimen(repo=self.replay_repo) as root:
                 with (root/'preparation'/filename).open('ab') as f:f.write(b'changed')
-                with self.assertRaises((ValueError,OSError)):s.audit(root,ROOT)
+                with self.assertRaises((ValueError,OSError)):s.audit(root,self.replay_repo)
 
     def test_new_freeze_never_overwrites_and_ready_never_resumes(self):
-        with specimen() as root:
+        with specimen(repo=self.replay_repo) as root:
             raw=(root/'preparation/manifest.json').read_bytes()
-            with self.assertRaises(FileExistsError):s.freeze(root,ROOT)
-            with self.assertRaises(ValueError):s.ready(root,ROOT)
+            with self.assertRaises(FileExistsError):s.freeze(root,self.replay_repo)
+            with self.assertRaises(ValueError):s.ready(root,self.replay_repo)
             self.assertEqual(raw,(root/'preparation/manifest.json').read_bytes())
 
     def test_execution_manifest_mismatch_and_claimed_clearance(self):
         for key,value in [('kind','matched_builds_unmeasured'),('performance_verified',True),('clears_hold',True)]:
-            with self.subTest(key=key),specimen() as root:
+            with self.subTest(key=key),specimen(repo=self.replay_repo) as root:
                 path=root/'preparation/manifest.json';data=s.load(path);data[key]=value;save(path,data)
-                with self.assertRaises(ValueError):s.audit(root,ROOT)
+                with self.assertRaises(ValueError):s.audit(root,self.replay_repo)
 
     def test_missing_ready_and_bad_plan_refuse_before_gate(self):
-        with specimen() as root:
+        with specimen(repo=self.replay_repo) as root:
             (root/'ready.json').unlink()
             with patch.object(s.v.gate,'evaluate_pairs') as gate:
-                with self.assertRaises(OSError):s.audit(root,ROOT)
+                with self.assertRaises(OSError):s.audit(root,self.replay_repo)
                 gate.assert_not_called()
-        with specimen() as root:
+        with specimen(repo=self.replay_repo) as root:
             path=root/'measurement/plan.json';data=s.load(path);data['execution_job']='different';save(path,data)
-            with self.assertRaises(ValueError):s.audit(root,ROOT)
+            with self.assertRaises(ValueError):s.audit(root,self.replay_repo)
 
     def test_stopped_prefix_is_never_a_measurement(self):
         for count in (0,1,15,True):
-            with self.subTest(count=count),specimen() as root:
+            with self.subTest(count=count),specimen(repo=self.replay_repo) as root:
                 save(root/'completion.json',dict(status='stopped',preparation_mqb_ceiling_admitted=5,study_attempted=count,error='stopped',clears_hold=False))
                 with patch.object(s.v.gate,'evaluate_pairs') as gate:
-                    with self.assertRaisesRegex(ValueError,'Stopped/incomplete'):s.audit(root,ROOT)
+                    with self.assertRaisesRegex(ValueError,'Stopped/incomplete'):s.audit(root,self.replay_repo)
                     gate.assert_not_called()
 
     def test_prepare_measure_and_final_environment_drift(self):
         for name in ('environment-before.json','environment-after.json'):
             for key in ('image','powershell','ambient_sha256'):
-                with self.subTest(name=name,key=key),specimen() as root:
+                with self.subTest(name=name,key=key),specimen(repo=self.replay_repo) as root:
                     path=root/'measurement'/name;data=s.load(path);data[key]='changed';save(path,data)
-                    with self.assertRaises(ValueError):s.audit(root,ROOT)
+                    with self.assertRaises(ValueError):s.audit(root,self.replay_repo)
 
     def test_missing_extra_call_and_missing_projection(self):
         for name in ('calls/01.started.json','calls/16.result.json','cache-projections/4-baseline.json'):
-            with self.subTest(name=name),specimen() as root:
+            with self.subTest(name=name),specimen(repo=self.replay_repo) as root:
                 (root/'measurement'/name).unlink()
-                with self.assertRaises((ValueError,OSError)):s.audit(root,ROOT)
-        with specimen() as root:
+                with self.assertRaises((ValueError,OSError)):s.audit(root,self.replay_repo)
+        with specimen(repo=self.replay_repo) as root:
             save(root/'measurement/calls/17.result.json',{})
-            with self.assertRaises(ValueError):s.audit(root,ROOT)
+            with self.assertRaises(ValueError):s.audit(root,self.replay_repo)
 
     def test_fixture_mutation_and_locator_fallback_rejected(self):
         for field in ('source','fallback'):
-            with self.subTest(field=field),specimen() as root:
+            with self.subTest(field=field),specimen(repo=self.replay_repo) as root:
                 path=root/'measurement/calls/01.after.json';data=s.load(path)
                 if field=='source':data[0]['sha256']='0'*64
                 else:next(x for x in data if x['path']==s.v.CACHE)['path']='.mqb/cache/toolchain/msvc-auto-x64-x64.mqbcache'
                 save(path,data)
-                with self.assertRaises(ValueError):s.audit(root,ROOT)
+                with self.assertRaises(ValueError):s.audit(root,self.replay_repo)
 
     def test_native_cli_is_still_invalid_on_the_real_stopped_001(self):
         with ZipFile(ROOT/'tests/native/v9_noop_validation_failed_measurement.zip') as z:
             done=__import__('json').loads(z.read('completion.json'));self.assertEqual((1,'stopped'),(done['attempted'],done['status']))
-        with specimen() as root:
+        with specimen(repo=self.replay_repo) as root:
             save(root/'measurement/completion.json',done)
             with patch.object(s.v.gate,'evaluate_pairs') as gate:
-                with self.assertRaisesRegex(ValueError,'Stopped/incomplete'):s.audit(root,ROOT)
+                with self.assertRaisesRegex(ValueError,'Stopped/incomplete'):s.audit(root,self.replay_repo)
                 gate.assert_not_called()
 
     def test_git_tree_matches_independent_git(self):

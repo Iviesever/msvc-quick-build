@@ -18,6 +18,7 @@ from zipfile import ZipFile
 
 import v9_noop_rebound as b
 import v9_noop_validation as v
+from v9_frozen_test_harness import pinned_test_harness
 from test_v9_noop_validation import journal, save
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,7 +39,7 @@ def execution_archive(root, c):
         z.comment = c['REVIEWED_COMMIT'].encode()
         for name in set((*v.PINS,*b.CORE_PINS,b.IDENTITY,b.FAILURE,b.WORKFLOW,
                          'tests/native/v9_noop_rebound.py','tests/native/run_v9_noop_rebound.ps1')):
-            z.writestr(name,(ROOT/name).read_bytes())
+            z.writestr(name,(b.ROOT/name).read_bytes())
 
 
 @contextmanager
@@ -64,12 +65,18 @@ def rebound(ticks=90):
 
 
 class BindingControls(unittest.TestCase):
+    def setUp(self):
+        self.replay_repo = self.enterContext(pinned_test_harness(ROOT))
+        # The frozen rebound audit has a module-local source root. Redirect its
+        # DATA lookup only; real admission/source hashes/gate are never mocked.
+        self.enterContext(patch.object(b, 'ROOT', self.replay_repo))
+
     def test_exact_original_identity_and_helpers(self):
         f = b.frozen()
         self.assertEqual(('36106155413','10852045267',4744328,7040330,19),
                          (f['run'],f['artifact'],f['archive_bytes'],f['expanded_bytes'],len(f['members'])))
         self.assertEqual('194f3cad63a963c944b8b44f81a41a0ef7b22cb3',f['harness_commit'])
-        b.check_repo(ROOT)
+        b.check_repo(self.replay_repo)
 
     def test_old_and_new_histories_are_distinct_not_allocations(self):
         old,new = v.protocol(),b.protocol()
@@ -245,11 +252,11 @@ class BindingControls(unittest.TestCase):
     def test_fresh_plan_copies_do_not_modify_input(self):
         with rebound() as (root,inputs,f,_):
             fresh=root/'fresh-plan'; fresh.mkdir(); c=context(); save(fresh/'request.json',c); execution_archive(fresh,c)
-            plan=b.prepare_measure(fresh,inputs,ROOT)
+            plan=b.prepare_measure(fresh,inputs,self.replay_repo)
             self.assertEqual('a'*40,plan['preparation_harness_commit'])
             self.assertEqual('c'*40,plan['execution_harness_commit'])
             self.assertEqual((inputs/'manifest.json').read_bytes(),(fresh/'preparation-manifest.json').read_bytes())
-            with self.assertRaisesRegex(ValueError,'Fresh execution'): b.prepare_measure(fresh,inputs,ROOT)
+            with self.assertRaisesRegex(ValueError,'Fresh execution'): b.prepare_measure(fresh,inputs,self.replay_repo)
 
     def test_missing_wrong_or_changed_execution_snapshot_refused(self):
         with rebound() as (root,inputs,_,__):

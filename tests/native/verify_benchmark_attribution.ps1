@@ -47,6 +47,9 @@ foreach ($case in @(
     $stat = Get-AttributionStatistics @([pscustomobject]@{ left_external_ms = $case.left; right_external_ms = $case.right })
     Check $case.name ($stat.gate_crossed -eq $case.expected)
 }
+# Function-only loading skips benchmark_mqb.ps1's parameter defaults. Preserve
+# this older observed-mode fixture; it must not enable the new raw recorder.
+$RawEvidenceDirectory = $null
 $InvocationEvidenceDirectory = Join-Path $OutputRoot 'invocations'
 New-Item -ItemType Directory -Path $InvocationEvidenceDirectory | Out-Null
 $working = Join-Path $OutputRoot '[literal] directory with spaces'

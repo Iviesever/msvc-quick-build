@@ -40,6 +40,10 @@ jobs:
           retention-days: 30
 
   investigate:
+    # Retired historical AA/AB allocation. Keep its exact recipe below as evidence.
+    # Repairing contract tests must not automatically reopen this old study;
+    # this PR allocates no research, including through workflow_dispatch.
+    if: ${{ false }}
     name: Fixed AA and AB attribution study
     needs: contract
     runs-on: windows-latest

@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$MqbPath
+    [Parameter(Mandatory = $true)][string]$MqbPath,
+    [string]$EvidenceDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,6 +12,12 @@ if (-not (Test-Path -LiteralPath $MqbPath -PathType Leaf)) {
     throw "MQB executable not found: $MqbPath"
 }
 
+$script:instrumentationSequence = 0
+if ($EvidenceDirectory) {
+    . (Join-Path $PSScriptRoot 'performance_evidence_files.ps1')
+    $EvidenceDirectory = New-PerformanceEvidenceDirectory $EvidenceDirectory
+}
+
 function Invoke-MqbCapture {
     param(
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
@@ -18,6 +25,16 @@ function Invoke-MqbCapture {
         [switch]$ExpectTimings
     )
 
+    ++$script:instrumentationSequence
+    $id = 'call-{0:D2}' -f $script:instrumentationSequence
+    $output = @(); $exitCode = $null; $captureFailure = $null
+    if ($EvidenceDirectory) {
+        Write-PerformanceEvidence $EvidenceDirectory ($id + '.started.json') ([ordered]@{
+            schema = 1; executable = $MqbPath; argv = @($Arguments)
+            working_directory = $WorkingDirectory; expect_timings = [bool]$ExpectTimings
+        })
+    }
+    try {
     Push-Location $WorkingDirectory
     try {
         $output = @(& $MqbPath @Arguments 2>&1)
@@ -25,6 +42,16 @@ function Invoke-MqbCapture {
     }
     finally {
         Pop-Location
+    }
+    } catch { $captureFailure = $_.ToString(); throw }
+    finally {
+        if ($EvidenceDirectory) {
+            Write-PerformanceEvidence $EvidenceDirectory ($id + '.result.json') ([ordered]@{
+                schema = 1; exit_code = $exitCode; capture_error = $captureFailure
+                output_lines = @($output | ForEach-Object { [string]$_ })
+                output_contract = 'PowerShell merged string lines, not per-stream bytes'
+            })
+        }
     }
     if ($exitCode -ne 0) {
         $output | ForEach-Object { Write-Host $_ }

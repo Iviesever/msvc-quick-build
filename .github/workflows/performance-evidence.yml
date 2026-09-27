@@ -50,52 +50,95 @@ jobs:
           ref: main
           path: baseline
 
+      - name: Preserve request and sources before preparation can fail
+        shell: python {0}
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          import json, os, pathlib, subprocess
+          evidence = pathlib.Path('performance-out/evidence')
+          evidence.mkdir(parents=True)
+          request = {k: os.environ.get(k) for k in (
+              'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
+              'GITHUB_EVENT_NAME', 'GITHUB_SHA', 'GITHUB_WORKFLOW_SHA',
+              'EXPECTED_HEAD', 'EXPECTED_BASE', 'ImageVersion')}
+          with (evidence/'request.json').open('x', encoding='utf-8') as f:
+              json.dump(request, f, indent=2)
+          for side, expected in [('baseline', request['EXPECTED_BASE']), ('candidate', request['EXPECTED_HEAD'])]:
+              actual = subprocess.check_output(['git', '-C', side, 'rev-parse', 'HEAD'], text=True).strip()
+              if expected and actual != expected:
+                  raise ValueError((side, actual, expected))
+              subprocess.run(['git', '-C', side, 'archive', '-o',
+                  str((evidence/(side+'-source.zip')).resolve()), 'HEAD'], check=True)
+
       - name: Acquire one pinned historical MQB seed
         id: seed
         shell: pwsh
         run: |
-          $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'
-          $seed = & (Join-Path $candidateRoot 'tests/native/acquire_seed.ps1') `
-            -RepoRoot $candidateRoot `
-            -OutputRoot (Join-Path $env:GITHUB_WORKSPACE 'performance-seed')
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "path=$seed" >> $env:GITHUB_OUTPUT
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'performance-out/evidence'
+          . (Join-Path $env:GITHUB_WORKSPACE 'candidate/tests/native/performance_evidence_files.ps1')
+          Write-PerformanceEvidence $evidence 'seed.started.json' @{ phase='seed'; mqb_ceiling=1 }
+          Start-Transcript -LiteralPath (Join-Path $evidence 'seed.log') -NoClobber | Out-Null
+          try {
+            $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+            $seed = & (Join-Path $candidateRoot 'tests/native/acquire_seed.ps1') `
+              -RepoRoot $candidateRoot `
+              -OutputRoot (Join-Path $env:GITHUB_WORKSPACE 'performance-seed')
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            "path=$seed" >> $env:GITHUB_OUTPUT
+            Write-PerformanceEvidence $evidence 'seed.finished.json' @{ phase='seed'; helper_completed=$true }
+          } finally { Stop-Transcript | Out-Null }
 
       - name: Build exact baseline Release MQB
         shell: pwsh
         run: |
-          $root = Join-Path $env:GITHUB_WORKSPACE 'baseline'
-          $version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
-          $output = Join-Path $env:GITHUB_WORKSPACE 'performance-out/baseline/mqb.exe'
-          $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') `
-            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
-            -RepoRoot $root `
-            -Version $version `
-            -Configuration Release `
-            -Clean `
-            -OutputPath $output
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
-            throw "Baseline Release MQB missing: $mqb"
-          }
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'performance-out/evidence'
+          . (Join-Path $env:GITHUB_WORKSPACE 'candidate/tests/native/performance_evidence_files.ps1')
+          Write-PerformanceEvidence $evidence 'baseline-build.started.json' @{ phase='baseline-build'; mqb_ceiling=2 }
+          Start-Transcript -LiteralPath (Join-Path $evidence 'baseline-build.log') -NoClobber | Out-Null
+          try {
+            $root = Join-Path $env:GITHUB_WORKSPACE 'baseline'
+            $version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
+            $output = Join-Path $env:GITHUB_WORKSPACE 'performance-out/baseline/mqb.exe'
+            $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') `
+              -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+              -RepoRoot $root `
+              -Version $version `
+              -Configuration Release `
+              -Clean `
+              -OutputPath $output
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+              throw "Baseline Release MQB missing: $mqb"
+            }
+            Write-PerformanceEvidence $evidence 'baseline-build.finished.json' @{ phase='baseline-build'; helper_completed=$true }
+          } finally { Stop-Transcript | Out-Null }
 
       - name: Build candidate Release MQB
         shell: pwsh
         run: |
-          $root = Join-Path $env:GITHUB_WORKSPACE 'candidate'
-          $version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
-          $output = Join-Path $env:GITHUB_WORKSPACE 'performance-out/candidate/mqb.exe'
-          $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') `
-            -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
-            -RepoRoot $root `
-            -Version $version `
-            -Configuration Release `
-            -Clean `
-            -OutputPath $output
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
-            throw "Candidate Release MQB missing: $mqb"
-          }
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'performance-out/evidence'
+          . (Join-Path $env:GITHUB_WORKSPACE 'candidate/tests/native/performance_evidence_files.ps1')
+          Write-PerformanceEvidence $evidence 'candidate-build.started.json' @{ phase='candidate-build'; mqb_ceiling=2 }
+          Start-Transcript -LiteralPath (Join-Path $evidence 'candidate-build.log') -NoClobber | Out-Null
+          try {
+            $root = Join-Path $env:GITHUB_WORKSPACE 'candidate'
+            $version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
+            $output = Join-Path $env:GITHUB_WORKSPACE 'performance-out/candidate/mqb.exe'
+            $mqb = & (Join-Path $root 'tests/native/build_mqb.ps1') `
+              -BuilderMqbPath '${{ steps.seed.outputs.path }}' `
+              -RepoRoot $root `
+              -Version $version `
+              -Configuration Release `
+              -Clean `
+              -OutputPath $output
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Test-Path -LiteralPath $mqb -PathType Leaf)) {
+              throw "Candidate Release MQB missing: $mqb"
+            }
+            Write-PerformanceEvidence $evidence 'candidate-build.finished.json' @{ phase='candidate-build'; helper_completed=$true }
+          } finally { Stop-Transcript | Out-Null }
 
       - name: Preserve exact measured inputs before instrumentation
         shell: python {0}
@@ -137,7 +180,8 @@ jobs:
           $candidateRoot = Join-Path $env:GITHUB_WORKSPACE 'candidate'
           $candidateMqb = Join-Path $env:GITHUB_WORKSPACE 'performance-out/candidate/mqb.exe'
           & (Join-Path $candidateRoot 'tests/native/verify_performance_instrumentation.ps1') `
-            -MqbPath $candidateMqb
+            -MqbPath $candidateMqb `
+            -EvidenceDirectory (Join-Path $env:GITHUB_WORKSPACE 'performance-out/evidence/instrumentation')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Compare paired ABBA samples on the same runner
@@ -151,7 +195,8 @@ jobs:
             -BaselineMqbPath $baselineMqb `
             -CandidateMqbPath $candidateMqb `
             -Iterations 4 `
-            -OutputPath $comparison
+            -OutputPath $comparison `
+            -EvidenceDirectory (Join-Path $env:GITHUB_WORKSPACE 'performance-out/evidence/comparison')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Publish paired comparison summary
@@ -230,6 +275,7 @@ jobs:
             performance-out/baseline/mqb.exe
             performance-out/candidate/mqb.exe
             performance-out/provenance/
+            performance-out/evidence/
             performance-out/private-root-identity/
           if-no-files-found: error
           retention-days: 30

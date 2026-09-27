@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $true)][string]$BaselineMqbPath,
     [Parameter(Mandatory = $true)][string]$CandidateMqbPath,
     [ValidateRange(1, 20)][int]$Iterations = 4,
-    [string]$OutputPath
+    [string]$OutputPath,
+    [string]$EvidenceDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -125,7 +126,15 @@ function Invoke-OneReport {
     )
 
     Write-Host "=== $Label ==="
-    & $benchmarkScript -MqbPath $MqbPath -Iterations 1 -OutputPath $Path | Out-Host
+    $arguments = @{ MqbPath = $MqbPath; Iterations = 1; OutputPath = $Path }
+    if ($EvidenceDirectory) {
+        $id = [IO.Path]::GetFileNameWithoutExtension($Path)
+        Write-PerformanceEvidence $EvidenceDirectory ($id + '.started.json') ([ordered]@{
+            schema = 1; label = $Label; executable = $MqbPath; output = $Path
+        })
+        $arguments.RawEvidenceDirectory = Join-Path $EvidenceDirectory ($id + '-calls')
+    }
+    & $benchmarkScript @arguments | Out-Host
     if ($LASTEXITCODE -notin @(0, $null)) {
         throw "$Label failed with exit code $LASTEXITCODE"
     }
@@ -162,8 +171,17 @@ if (-not (Test-Path -LiteralPath $benchmarkScript -PathType Leaf)) {
     throw "Benchmark harness not found: $benchmarkScript"
 }
 
+if ($OutputPath -and (Test-Path -LiteralPath $OutputPath)) {
+    throw 'Refusing to replace an existing comparison report.'
+}
+if ($EvidenceDirectory) {
+    . (Join-Path $PSScriptRoot 'performance_evidence_files.ps1')
+    $EvidenceDirectory = New-PerformanceEvidenceDirectory $EvidenceDirectory
+    $tempRoot = $EvidenceDirectory
+} else {
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("mqb-benchmark-paired-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
+}
 $pairs = [System.Collections.Generic.List[object]]::new()
 $executionOrder = [System.Collections.Generic.List[string]]::new()
 
@@ -210,6 +228,13 @@ try {
                 compile_queue_delta_ms = $candidateQueue - $baseQueue
                 baseline = $baseSample
                 candidate = $candidateSample
+            })
+        }
+        if ($EvidenceDirectory) {
+            Write-PerformanceEvidence $EvidenceDirectory ("pair-$pairIndex.completed.json") ([ordered]@{
+                schema = 1; kind = 'partial-diagnostic-only'; pair = $pairIndex
+                samples = @($pairs.ToArray() | Where-Object { $_.pair -eq $pairIndex })
+                NOT_a_comparison_report = $true
             })
         }
     }
@@ -268,6 +293,17 @@ try {
         Write-Host "Benchmark comparison JSON: $OutputPath"
     }
 }
+catch {
+    if ($EvidenceDirectory) {
+        Write-PerformanceEvidence $EvidenceDirectory 'failure.json' ([ordered]@{
+            schema = 1; error = $_.ToString(); started_orientations = @($executionOrder.ToArray())
+            completed_grid_rows = $pairs.Count; status = 'INVALID'; no_retry = $true
+        })
+    }
+    throw
+}
 finally {
-    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not $EvidenceDirectory) {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }

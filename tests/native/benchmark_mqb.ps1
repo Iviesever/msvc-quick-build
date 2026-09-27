@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $true)][string]$MqbPath,
     [ValidateRange(1, 20)][int]$Iterations = 3,
     [string]$OutputPath,
-    [string]$InvocationEvidenceDirectory
+    [string]$InvocationEvidenceDirectory,
+    [string]$RawEvidenceDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +32,14 @@ if (-not [string]::IsNullOrWhiteSpace($InvocationEvidenceDirectory)) {
     $InvocationEvidenceDirectory = Get-FullPath $InvocationEvidenceDirectory
     if (Test-Path -LiteralPath $InvocationEvidenceDirectory) { throw 'Invocation evidence already exists.' }
     New-Item -ItemType Directory -Path $InvocationEvidenceDirectory -Force | Out-Null
+}
+
+# Raw records retain the original launcher and measurement_source. The separate
+# legacy observed mode changes clocks and is deliberately incompatible with this.
+if ($RawEvidenceDirectory) {
+    if ($InvocationEvidenceDirectory) { throw 'Raw and observed evidence modes cannot be combined.' }
+    . (Join-Path $PSScriptRoot 'performance_evidence_files.ps1')
+    $RawEvidenceDirectory = New-PerformanceEvidenceDirectory $RawEvidenceDirectory
 }
 
 function Invoke-ObservedMqb {
@@ -92,6 +101,16 @@ function Invoke-TimedMqb {
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
 
+    $output = @(); $exitCode = $null; $captureFailure = $null; $elapsed = $null
+    $recordName = "$Iteration-$Scenario"
+    if ($RawEvidenceDirectory) {
+        Write-PerformanceEvidence $RawEvidenceDirectory ($recordName + '.started.json') ([ordered]@{
+            schema = 1; scenario = $Scenario; iteration = $Iteration; executable = $MqbPath
+            working_directory = $WorkingDirectory; argv = @($Arguments) + @('--timings=json')
+            timing_policy = 'mqb.timings'; root_pid = $null
+        })
+    }
+    try {
     if ($InvocationEvidenceDirectory) {
         $observed = Invoke-ObservedMqb $Scenario $Iteration $WorkingDirectory ($Arguments + @('--timings=json'))
         $output = $observed.output; $exitCode = $observed.exit_code
@@ -103,6 +122,21 @@ function Invoke-TimedMqb {
         }
         finally {
             Pop-Location
+        }
+    }
+
+    } catch { $captureFailure = $_.ToString(); throw }
+    finally {
+        # After the original clock has stopped, before exit/timing/cache validation.
+        # Merged PowerShell text is not original stream bytes or a child-process trace.
+        if ($RawEvidenceDirectory) {
+            Write-PerformanceEvidence $RawEvidenceDirectory ($recordName + '.result.json') ([ordered]@{
+                schema = 1; scenario = $Scenario; iteration = $Iteration
+                exit_code = $exitCode; capture_error = $captureFailure; elapsed_ms = $elapsed
+                output_lines = @($output | ForEach-Object { [string]$_ })
+                output_contract = 'PowerShell merged string lines, not per-stream bytes'
+                limitation = 'Record writes are outside timing but may perturb subsequent samples'
+            })
         }
     }
 
@@ -155,6 +189,16 @@ function Invoke-UntimedMqb {
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
 
+    $output = @(); $exitCode = $null; $captureFailure = $null; $elapsed = $null
+    $recordName = "$Iteration-$Scenario"
+    if ($RawEvidenceDirectory) {
+        Write-PerformanceEvidence $RawEvidenceDirectory ($recordName + '.started.json') ([ordered]@{
+            schema = 1; scenario = $Scenario; iteration = $Iteration; executable = $MqbPath
+            working_directory = $WorkingDirectory; argv = @($Arguments)
+            timing_policy = 'external_stopwatch'; root_pid = $null
+        })
+    }
+    try {
     if ($InvocationEvidenceDirectory) {
         $observed = Invoke-ObservedMqb $Scenario $Iteration $WorkingDirectory $Arguments
         $output = $observed.output; $exitCode = $observed.exit_code; $elapsed = $observed.elapsed_ms
@@ -171,6 +215,21 @@ function Invoke-UntimedMqb {
         }
         $elapsed = [double]$stopwatch.Elapsed.TotalMilliseconds
     }
+    } catch { $captureFailure = $_.ToString(); throw }
+    finally {
+        # After the original clock has stopped, before exit/timing/cache validation.
+        # Merged PowerShell text is not original stream bytes or a child-process trace.
+        if ($RawEvidenceDirectory) {
+            Write-PerformanceEvidence $RawEvidenceDirectory ($recordName + '.result.json') ([ordered]@{
+                schema = 1; scenario = $Scenario; iteration = $Iteration
+                exit_code = $exitCode; capture_error = $captureFailure; elapsed_ms = $elapsed
+                output_lines = @($output | ForEach-Object { [string]$_ })
+                output_contract = 'PowerShell merged string lines, not per-stream bytes'
+                limitation = 'Record writes are outside timing but may perturb subsequent samples'
+            })
+        }
+    }
+
     if ($exitCode -ne 0) {
         foreach ($line in $output) { Write-Host $line }
         throw "Benchmark scenario '$Scenario' failed with exit code $exitCode"
@@ -387,15 +446,22 @@ int main() { return bench_value() == 42 ? 0 : 1; }
     }
 }
 finally {
-    if ($InvocationEvidenceDirectory) {
+    if ($InvocationEvidenceDirectory -or $RawEvidenceDirectory) {
         # Final source snapshots are NOT per-invocation inputs or timing-time state.
-        $snapshot = Join-Path $InvocationEvidenceDirectory 'post-suite-sources'
+        $snapshotRoot = if ($RawEvidenceDirectory) { $RawEvidenceDirectory } else { $InvocationEvidenceDirectory }
+        $snapshot = Join-Path $snapshotRoot 'post-suite-sources'
         foreach ($file in @(Get-ChildItem -LiteralPath $benchmarkRoot -Recurse -File |
             Where-Object { $_.Extension -in @('.cpp', '.hpp', '.ixx') })) {
             $target = Join-Path $snapshot ([IO.Path]::GetRelativePath($benchmarkRoot, $file.FullName))
             New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($target)) -Force | Out-Null
             Copy-Item -LiteralPath $file.FullName -Destination $target
         }
+    }
+    if ($RawEvidenceDirectory) {
+        Write-PerformanceEvidence $RawEvidenceDirectory 'completed-samples.json' ([ordered]@{
+            schema = 1; kind = 'partial-diagnostic-only'; iterations = $Iterations
+            completed_samples = @($results.ToArray()); NOT_a_comparison_report = $true
+        })
     }
     Remove-Item -LiteralPath $benchmarkRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

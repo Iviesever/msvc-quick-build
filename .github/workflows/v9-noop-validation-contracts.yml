@@ -86,7 +86,10 @@ jobs:
           b.need(len(files)==1,'Expected one fixed preparation ZIP')
           inputs=root/'rebound-contract-inputs'
           b.unpack(files[0],inputs)
-          m=b.check_preparation(inputs);b.check_repo(pathlib.Path('.'))
+          m=b.check_preparation(inputs)
+          from v9_frozen_test_harness import pinned_test_harness
+          with pinned_test_harness(pathlib.Path('.')) as replay_repo:
+              b.check_repo(replay_repo)
           out=pathlib.Path('v9-validation-contract-out')
           b.write(out/'rebound-original-check.json',dict(status='fixed_preparation_verified_unmeasured',
               prepare_run=m['prepare_run'],preparation_harness=m['harness_commit'],
