@@ -7,9 +7,6 @@ $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $OutputRoot=[IO.Path]::GetFullPath($OutputRoot);$OriginalPreparation=[IO.Path]::GetFullPath($OriginalPreparation)
 if (Test-Path -LiteralPath $OutputRoot) { throw 'Fresh synthetic evidence required.' }
 $null=New-Item -ItemType Directory -Path $OutputRoot
-# This read-only check accepts only the historical source archive/input; no programs run.
-& python -B (Join-Path $PSScriptRoot 'v9_noop_rebound.py') check-preparation --inputs $OriginalPreparation
-if ($LASTEXITCODE -ne 0) { throw 'Original fixed input refused for synthetic control.' }
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'run_v9_noop_samejob.ps1'),[ref]$tokens,[ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
@@ -32,6 +29,10 @@ $replayRepo=Join-Path $OutputRoot 'frozen-test-helpers'
 $syntheticZip=Join-Path $OutputRoot 'synthetic-harness-source.zip'
 & python -B (Join-Path $PSScriptRoot 'v9_frozen_test_harness.py') --output $replayRepo --archive $syntheticZip
 if ($LASTEXITCODE -ne 0) { throw 'Pinned test helper snapshot refused.' }
+# Authenticate old input with the same frozen helpers used by the synthetic loop.
+# The moving production inventory is intentionally still refused by old protocols.
+& python -B (Join-Path $replayRepo 'tests/native/v9_noop_rebound.py') check-preparation --inputs $OriginalPreparation --repo $replayRepo
+if ($LASTEXITCODE -ne 0) { throw 'Original fixed input refused for synthetic control.' }
 $repo=$replayRepo
 $sourceZip=$syntheticZip
 $commit='c'*40 # Synthetic requests, explicitly not the real CI checkout identity.

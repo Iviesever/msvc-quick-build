@@ -1,6 +1,8 @@
 """The test fixture preserves old admission, not permission to rerun a study."""
 from pathlib import Path
 import hashlib
+import subprocess
+import sys
 import tempfile
 import unittest
 from zipfile import ZipFile
@@ -85,6 +87,44 @@ class FrozenTestData(unittest.TestCase):
                     self.assertEqual(digest,hashlib.sha256(z.read(name)).hexdigest())
             identity,_=s.source_archive(archive,h.SYNTHETIC_COMMIT)
             self.assertEqual(17,identity['files'])
+
+    def test_powershell_authenticates_snapshot_before_original_input(self):
+        # This is the actual script launched by the two-platform contract job.
+        text=(ROOT/'tests/native/test_v9_noop_samejob_control.ps1').read_text()
+        create="& python -B (Join-Path $PSScriptRoot 'v9_frozen_test_harness.py') --output $replayRepo --archive $syntheticZip"
+        check="& python -B (Join-Path $replayRepo 'tests/native/v9_noop_rebound.py') check-preparation --inputs $OriginalPreparation --repo $replayRepo"
+        self.assertEqual(1,text.count(create))
+        self.assertEqual(1,text.count(check))
+        self.assertNotIn("(Join-Path $PSScriptRoot 'v9_noop_rebound.py') check-preparation",text)
+        self.assertLess(text.index(create),text.index(check))
+        self.assertLess(text.index("throw 'Pinned test helper snapshot refused.'"),text.index(check))
+        self.assertLess(text.index(check),text.index("$repo=$replayRepo"))
+        self.assertIn("throw 'Original fixed input refused for synthetic control.'",text)
+        # The real checkout archive is not relabelled as the synthetic helper ZIP.
+        self.assertLess(text.index('& git -C $repo archive'),text.index(create))
+        self.assertLess(text.index(check),text.index('$sourceZip=$syntheticZip'))
+
+    def test_frozen_cli_preserves_repository_and_input_rejection(self):
+        # No archived program is executed. Empty input must still be rejected;
+        # selecting frozen helpers only removes the unrelated moving-layout error.
+        with tempfile.TemporaryDirectory() as temp, h.pinned_test_harness(ROOT) as replay:
+            empty=Path(temp)/'empty';empty.mkdir()
+            def check(repo):
+                return subprocess.run([sys.executable,'-B',
+                    str(repo/'tests/native/v9_noop_rebound.py'),'check-preparation',
+                    '--inputs',str(empty),'--repo',str(repo)],
+                    capture_output=True,text=True,timeout=15)
+            current=check(ROOT)
+            self.assertEqual(2,current.returncode)
+            self.assertIn('Retained helper changed: tests/native/assert_cpp_layout.ps1',current.stderr)
+            frozen=check(replay)
+            self.assertEqual(2,frozen.returncode)
+            self.assertIn('Prepared member inventory changed',frozen.stderr)
+            (replay/h.LAYOUT).write_bytes(b'changed after authentication')
+            tampered=check(replay)
+            self.assertEqual(2,tampered.returncode)
+            self.assertIn('Retained helper changed: tests/native/assert_cpp_layout.ps1',tampered.stderr)
+            self.assertEqual([],list(empty.iterdir()))
 
     def test_current_sources_untouched_and_context_removed(self):
         before={name: (ROOT/name).read_bytes() for name in h.PINS}
