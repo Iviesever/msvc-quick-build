@@ -13,6 +13,7 @@ from unittest.mock import patch
 from zipfile import ZipFile, ZipInfo
 
 import v9_noop_validation as v
+from v9_frozen_test_harness import pinned_test_harness
 
 ROOT=Path(__file__).resolve().parents[2]
 
@@ -90,7 +91,9 @@ class Contracts(unittest.TestCase):
         self.assertEqual(list(range(1,17)),[r['sequence'] for r in v.rows()])
         self.assertFalse(p['measurement_allocated']);self.assertFalse(p['preparation_allocated'])
 
-    def test_retained_helpers_are_byte_pinned(self): v.check_repo(ROOT)
+    def test_retained_helpers_are_byte_pinned(self):
+        with pinned_test_harness(ROOT) as replay_repo:
+            v.check_repo(replay_repo)
 
     def test_preparation_and_measure_admission(self):
         for phase in ('prepare','measure'):self.assertEqual(context(phase),v.admit(context(phase)))

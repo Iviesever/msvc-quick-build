@@ -26,6 +26,15 @@ if ($LASTEXITCODE -ne 0) { throw 'Missing exact test source.' }
 $sourceZip=Join-Path $OutputRoot 'test-source.zip'
 & git -C $repo archive -o $sourceZip HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Test source export failed.' }
+# Historical verifier pins must not follow the moving production TU inventory.
+# Only the synthetic data root changes; the real CI source archive above is retained.
+$replayRepo=Join-Path $OutputRoot 'frozen-test-helpers'
+$syntheticZip=Join-Path $OutputRoot 'synthetic-harness-source.zip'
+& python -B (Join-Path $PSScriptRoot 'v9_frozen_test_harness.py') --output $replayRepo --archive $syntheticZip
+if ($LASTEXITCODE -ne 0) { throw 'Pinned test helper snapshot refused.' }
+$repo=$replayRepo
+$sourceZip=$syntheticZip
+$commit='c'*40 # Synthetic requests, explicitly not the real CI checkout identity.
 function Assert([bool]$Condition,[string]$Message) { if (-not $Condition) { throw $Message } }
 function Refuses([scriptblock]$Action,[string]$Pattern) {
     $caught=$null;try { & $Action } catch { $caught=$_.ToString() }
