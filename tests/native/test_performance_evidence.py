@@ -18,6 +18,11 @@ SCHEDULE = [
 
 def source(name): return (HERE/name).read_text(encoding='utf-8')
 
+def gate_digest(raw):
+    # Git checkout may use CRLF. Only compare its LF representation; retain all
+    # other bytes, including a lone CR, BOM, content edits and trailing whitespace.
+    return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+
 def launcher(text, name, end):
     part = text.split('function '+name+' {',1)[1].split('function '+end+' {',1)[0]
     return part[part.index('    if ($InvocationEvidenceDirectory) {'):part.index('    } catch { $captureFailure')]
@@ -60,7 +65,32 @@ class EvidenceContracts(unittest.TestCase):
         self.assertEqual(1+2*2+8+4*2*len(SCHEDULE),181)
 
     def test_original_gate_is_not_modified_to_admit_observed_samples(self):
-        self.assertEqual(hashlib.sha256((HERE/'check_external_noop_gate.py').read_bytes()).hexdigest(),GATE_SHA)
+        self.assertEqual(gate_digest((HERE/'check_external_noop_gate.py').read_bytes()),GATE_SHA)
+
+    def test_gate_digest_accepts_only_checkout_newline_difference(self):
+        raw=(HERE/'check_external_noop_gate.py').read_bytes().replace(b"\r\n", b"\n")
+        self.assertEqual(gate_digest(raw),GATE_SHA)
+        self.assertEqual(gate_digest(raw.replace(b"\n",b"\r\n")),GATE_SHA)
+        for changed in (raw+b' ', b'\xef\xbb\xbf'+raw, raw.replace(b'\n',b'\r',1),
+                        raw.replace(b'> 1',b'> 2',1) if b'> 1' in raw else raw+b'# changed'):
+            self.assertNotEqual(gate_digest(changed),GATE_SHA)
+
+    def test_observed_function_fixture_initializes_disabled_raw_mode(self):
+        s=source('verify_benchmark_attribution.ps1')
+        self.assertIn('$RawEvidenceDirectory = $null',s)
+        self.assertLess(s.index('$RawEvidenceDirectory = $null'),
+                        s.index("$result = Invoke-ObservedMqb"))
+        self.assertIn("'malformed-timing-retained-before-parse-failure'",s)
+        self.assertIn("'inactive-observer-retains-legacy-clock-and-unavailable-counters'",s)
+
+    def test_historical_attribution_research_remains_disabled(self):
+        s=(ROOT/'.github/workflows/benchmark-attribution.yml').read_text()
+        contract,investigation=s.split('  investigate:\n',1)
+        self.assertIn('verify_benchmark_attribution.ps1',contract)
+        self.assertIn('    if: ${{ false }}',investigation)
+        self.assertLess(investigation.index('    if: ${{ false }}'),investigation.index('    steps:'))
+        self.assertIn('d01bb920e030202c33639f59139491ac7f49117c',investigation)
+        self.assertIn('283b50733601926840fdcd0474d10a06a4f75c7d',investigation)
 
     def test_record_write_precedes_validation(self):
         s=source('benchmark_mqb.ps1')
