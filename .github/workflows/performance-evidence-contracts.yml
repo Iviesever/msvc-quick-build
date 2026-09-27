@@ -1,0 +1,51 @@
+name: Performance failure-evidence contracts (synthetic only)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/performance-evidence*.yml'
+      - 'tests/native/benchmark_mqb.ps1'
+      - 'tests/native/compare_mqb_benchmarks.ps1'
+      - 'tests/native/verify_performance_instrumentation.ps1'
+      - 'tests/native/performance_evidence_files.ps1'
+      - 'tests/native/test_performance_evidence*'
+permissions:
+  contents: read
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Save exact source and run Python source controls
+        shell: python {0}
+        run: |
+          import json, os, pathlib, subprocess, sys
+          out=pathlib.Path('performance-contract-out'); out.mkdir()
+          (out/'identity.json').write_text(json.dumps({k:os.environ.get(k) for k in
+              ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','RUNNER_OS')},indent=2))
+          subprocess.run(['git','archive','-o',str(out/'source.zip'),'HEAD'],check=True)
+          with (out/'python.log').open('x',encoding='utf-8') as f:
+              code=subprocess.run([sys.executable,'-B','tests/native/test_performance_evidence.py'],stdout=f,stderr=subprocess.STDOUT).returncode
+          print((out/'python.log').read_text());sys.exit(code)
+      - name: Execute actual recorder and comparator with synthetic outputs
+        shell: pwsh
+        run: |
+          & ./tests/native/test_performance_evidence_control.ps1 -OutputRoot (Join-Path $PWD 'performance-contract-out/control') *> performance-contract-out/powershell.log
+          if ($LASTEXITCODE -ne 0) { throw 'Failure-evidence controls failed.' }
+      - name: Preserve first results including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: performance-contracts-${{ matrix.os }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: performance-contract-out/
+          overwrite: false
+          if-no-files-found: error
+          retention-days: 30
