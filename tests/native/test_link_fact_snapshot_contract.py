@@ -44,7 +44,38 @@ def pure_source(text):
     if any(token in body for token in forbidden):
         raise ValueError("snapshot acquired filesystem/execution authority")
 
+
+def repeated_fixture_copies(text):
+    """Narrow source contract for the two count-limit fixtures, not a C++ alias analyzer."""
+    body = re.sub(r"//[^\n]*|/\*.*?\*/", "", text, flags=re.S)
+    for collection, sample, count in (
+        ("v.warnings", "warning_sample", "warnings"),
+        ("v.observation.issues", "issue_sample", "issues"),
+    ):
+        # const auto copies the element; const auto& would preserve the bad alias.
+        owned = rf"const\s+auto\s+{sample}\s*=\s*{re.escape(collection)}\.front\(\)\s*;"
+        fill = rf"{re.escape(collection)}\.assign\(LinkFactSnapshotLimits::{count},\s*{sample}\)\s*;"
+        if not re.search(owned + r"\s*" + fill, body):
+            raise ValueError("count-limit fixture must copy its source before assign")
+
 class SnapshotContracts(unittest.TestCase):
+    def test_repeated_fixture_sources_are_owned(self):
+        repeated_fixture_copies(read("cpp/tests/core/cache/link_fact_snapshot_tests.cpp"))
+
+    def test_repeated_fixture_sources_reject_self_alias(self):
+        text = read("cpp/tests/core/cache/link_fact_snapshot_tests.cpp")
+        for collection, sample, count in (
+            ("v.warnings", "warning_sample", "warnings"),
+            ("v.observation.issues", "issue_sample", "issues"),
+        ):
+            for old, new in (
+                (f"const auto {sample}", f"const auto& {sample}"),
+                (f"{count}, {sample});", f"{count}, {collection}[0]);"),
+            ):
+                self.assertIn(old, text)
+                with self.assertRaises(ValueError):
+                    repeated_fixture_copies(text.replace(old, new, 1))
+
     def test_existing_boundaries_unchanged(self):
         for name, pin in PINS.items():
             self.assertEqual(digest(read(name)), pin, name)

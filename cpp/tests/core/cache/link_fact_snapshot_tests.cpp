@@ -1,5 +1,6 @@
 #include "mqb/core/LinkFactSnapshot.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -154,10 +155,22 @@ void contracts() {
     v = fixture(); v.linker_stamp.assign(LinkFactSnapshotLimits::string_bytes, 'a'); roundtrip(v);
     v.linker_stamp += 'b'; check(!encode_link_fact_snapshot(v), "single-string encoder bound");
     check(!decode_link_fact_snapshot(replace(good, "opaque stamp", v.linker_stamp)), "single-string decoder bound");
-    v = fixture(); v.warnings.assign(LinkFactSnapshotLimits::warnings, v.warnings[0]); roundtrip(v);
-    v.warnings.push_back(v.warnings[0]); check(!encode_link_fact_snapshot(v), "warning count budget");
-    v = fixture(); v.observation.issues.assign(LinkFactSnapshotLimits::issues, v.observation.issues[0]); roundtrip(v);
-    v.observation.issues.push_back(v.observation.issues[0]); check(!encode_link_fact_snapshot(v), "issue count budget");
+    v = fixture();
+    // assign(count, value) requires value not to refer into the destination.
+    // Keep an owned copy: reallocation may destroy the old vector elements.
+    const auto warning_sample = v.warnings.front();
+    v.warnings.assign(LinkFactSnapshotLimits::warnings, warning_sample);
+    check(std::all_of(v.warnings.begin(), v.warnings.end(),
+        [&](const auto& item) { return item == warning_sample; }), "warning fixture copies retain all fields");
+    roundtrip(v);
+    v.warnings.push_back(warning_sample); check(!encode_link_fact_snapshot(v), "warning count budget");
+    v = fixture();
+    const auto issue_sample = v.observation.issues.front();
+    v.observation.issues.assign(LinkFactSnapshotLimits::issues, issue_sample);
+    check(std::all_of(v.observation.issues.begin(), v.observation.issues.end(),
+        [&](const auto& item) { return item == issue_sample; }), "issue fixture copies retain all fields");
+    roundtrip(v);
+    v.observation.issues.push_back(issue_sample); check(!encode_link_fact_snapshot(v), "issue count budget");
     v = fixture(); v.warnings.clear(); v.observation.issues.clear();
     v.output.assign(131072, 'x'); v.linker_path.assign(131072, 'x'); v.linker_version.assign(131072, 'x'); v.linker_stamp.assign(131072, 'x');
     check(!encode_link_fact_snapshot(v), "aggregate string budget");
