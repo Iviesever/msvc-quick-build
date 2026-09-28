@@ -185,6 +185,7 @@ $coreLeafFiles = [ordered]@{
     'cache' = @(
         'ArchiveCache.cpp', 'ArchiveCacheFile.cpp', 'ArtifactStorageAssociation.cpp',
         'CompileCache.cpp', 'CompileCacheFile.cpp',
+        'LinkFactSnapshot.cpp',
         'LinkCache.cpp', 'LinkCacheFile.cpp', 'StorageInventory.cpp'
     )
     'model' = @('BuildSignature.cpp', 'BuildTypes.cpp', 'TranslationUnitClassifier.cpp')
@@ -195,6 +196,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'core') -LeafFiles ([ordered]@{
     'cache' = @(
         'archive_cache_file_tests.cpp',
         'compile_cache_file_tests.cpp', 'compile_cache_tests.cpp',
+        'link_fact_snapshot_tests.cpp',
         'link_cache_file_tests.cpp', 'link_state_tests.cpp',
         'module_scan_cache_tests.cpp'
     )
@@ -259,6 +261,7 @@ $orchestrationLeafFiles = [ordered]@{
     'incremental' = @(
         'ArtifactStorageProjection.cpp', 'IncrementalFileSnapshot.hpp',
         'ObservedLinkCompletion.cpp',
+        'LinkFactSnapshotProjection.cpp',
         'TargetCompileWave.hpp',
         'MsvcIncrementalArchiveCoordinator.cpp',
         'MsvcIncrementalCompileCoordinator.cpp',
@@ -286,6 +289,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'orchestration') -LeafFiles ([orde
     'incremental' = @(
         'incremental_archive_coordinator_tests.cpp',
         'incremental_compile_coordinator_tests.cpp',
+        'link_fact_snapshot_projection_tests.cpp',
         'incremental_link_coordinator_tests.cpp',
         'incremental_target_coordinator_tests.cpp', 'prewrite_inventory_cases.hpp'
     )

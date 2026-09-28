@@ -103,7 +103,7 @@ class OracleControls(unittest.TestCase):
                 if path.is_file():
                     for token in (b'v9_reader_prototype',b'v9_oracle.hpp',b'mqb_v9_oracle'):
                         self.assertNotIn(token,path.read_bytes())
-        self.assertEqual(89,len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))))
+        self.assertEqual(91,len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))))
         layout=(ROOT/'tests/native/assert_cpp_layout.ps1').read_text()
         for name in ('v9_reader_probe.cpp','v9_reader_prototype.hpp','VisualStudioToolchainCacheReader.hpp'):
             self.assertIn("'"+name+"'",layout)
@@ -154,12 +154,12 @@ class OracleControls(unittest.TestCase):
                       'existing-untrusted-include','age-expired','age-future','newer-vc','compiler-file-stamp','cases == 28'):
             self.assertIn(token,t)
 
-    def test_native_driver_registers_exact_89_without_policy_changes(self):
+    def test_native_driver_registers_exact_91_without_policy_changes(self):
         driver=(ROOT/'tests/native/run_native_tests.ps1').read_text()
-        self.assertIn('if ($allTestFiles.Count -ne 89) {',driver)
-        self.assertEqual(driver.count('89'),3)
-        self.assertEqual(hashlib.sha256(o.canonical(driver.replace('89','87').encode())).hexdigest(),
+        self.assertIn('if ($allTestFiles.Count -ne 91) {',driver)
+        self.assertEqual(driver.count('91'),3)
+        self.assertEqual(hashlib.sha256(o.canonical(driver.replace('91','87').encode())).hexdigest(),
             '0762767db8ae5898dd2dd091d539cdd9edc54660ec48ffc990612cfe093ff425')
-        self.assertEqual(89,len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))))
+        self.assertEqual(91,len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))))
 
 if __name__=='__main__':unittest.main(verbosity=2)

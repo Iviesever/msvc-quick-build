@@ -45,7 +45,8 @@ $pairs = @(
     @{ English = 'docs/V5_5_CUMULATIVE_EVIDENCE.md'; Chinese = 'docs/V5_5_CUMULATIVE_EVIDENCE_ZH.md' },
     @{ English = 'docs/PROCESS_LIFETIME.md'; Chinese = 'docs/PROCESS_LIFETIME_ZH.md' },
     @{ English = 'docs/V5_6_RELEASE_BOUNDARY.md'; Chinese = 'docs/V5_6_RELEASE_BOUNDARY_ZH.md' },
-    @{ English = 'docs/STORAGE_INVENTORY.md'; Chinese = 'docs/STORAGE_INVENTORY_ZH.md' }
+    @{ English = 'docs/STORAGE_INVENTORY.md'; Chinese = 'docs/STORAGE_INVENTORY_ZH.md' },
+    @{ English = 'docs/LINK_FACT_SNAPSHOT.md'; Chinese = 'docs/LINK_FACT_SNAPSHOT_ZH.md' }
 )
 
 $failures = [System.Collections.Generic.List[string]]::new()
