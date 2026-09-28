@@ -75,3 +75,5 @@ authorize merge/release from correctness alone. Complete candidate and resulting
 main evidence, plus separately reviewed performance disposition, remain required.
 Ownership, complete generations, writer concurrency, Rium and safe `clean/prune`
 requirements in #198 are not reduced by this adapter.
+
+Historical fact-only codec: [Link fact snapshots](LINK_FACT_SNAPSHOT.md).
