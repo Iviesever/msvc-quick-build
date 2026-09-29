@@ -262,6 +262,8 @@ $orchestrationLeafFiles = [ordered]@{
         'ArtifactStorageProjection.cpp', 'IncrementalFileSnapshot.hpp',
         'ObservedLinkCompletion.cpp',
         'LinkFactSnapshotProjection.cpp',
+        'LinkCompletionArchive.cpp',
+        'LinkCompletionArchiveOperation.hpp',
         'TargetCompileWave.hpp',
         'MsvcIncrementalArchiveCoordinator.cpp',
         'MsvcIncrementalCompileCoordinator.cpp',
@@ -290,6 +292,7 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'orchestration') -LeafFiles ([orde
         'incremental_archive_coordinator_tests.cpp',
         'incremental_compile_coordinator_tests.cpp',
         'link_fact_snapshot_projection_tests.cpp',
+        'link_completion_archive_tests.cpp',
         'incremental_link_coordinator_tests.cpp',
         'incremental_target_coordinator_tests.cpp', 'prewrite_inventory_cases.hpp'
     )
