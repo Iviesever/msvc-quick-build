@@ -35,6 +35,7 @@
       "src/orchestration/incremental/ObservedLinkCompletion.cpp",
       "src/orchestration/incremental/LinkFactSnapshotProjection.cpp",
       "src/platform/windows/StorageFileObservation.cpp",
+      "src/platform/windows/LinkFactSnapshotFile.cpp",
       "src/platform/windows/StorageInventory.cpp",
       "src/app/cli/Cli.cpp",
       "src/app/diagnostics/Diagnostics.cpp",

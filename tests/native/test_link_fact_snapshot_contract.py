@@ -20,6 +20,9 @@ NEW_TUS = {
     "cpp/src/orchestration/incremental/LinkFactSnapshotProjection.cpp",
 }
 PINS = {'cpp/include/mqb/json/Json.hpp': 'ee4d127d2a9940ada21c8f908b5e9b5403c0df486766f613be940bc326ac6099', 'cpp/src/json/Json.cpp': '79c3272c15f97782179c28ac6556c6f17a04e3dce147b735f38bf6037ba409f3', 'cpp/include/mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp': '2c92d6de2c6bf9f262d5152f6e76afbec364401092f36b2916c31466ca5e825d', 'cpp/include/mqb/orchestration/ObservedLinkCompletion.hpp': '5980a2a9bb6c73046ad6c95513aa2dcce3409aa1fa953f35f92d9e2cd6c49422', 'cpp/include/mqb/core/BuildArtifactRecord.hpp': 'c0e7d0d7342647d9fb2b4fb9d4ebecaa0fe392f1123a2bfd54497ef3c39a75e4', 'cpp/include/mqb/core/StorageFileObservation.hpp': 'eec03bd186d0dd92fa816972b8fb8629d16d8b8746e4675b28e4705f0a66630f', 'cpp/include/mqb/platform/windows/StorageInventory.hpp': '39069edcc2ae944a7794e11f5736a5d32f7645afff748d4c98dd244c164dd717', 'cpp/src/orchestration/incremental/MsvcIncrementalLinkCoordinator.cpp': 'e403c70c90ca35a954e969055eac2a487008a86008cd784bd103a0ea6019260c', 'cpp/src/orchestration/incremental/ObservedLinkCompletion.cpp': '09f8b65bba192693ce9a8e2a4b64d54af37aedf5c1171d53e4658ae5c06d04f9', 'cpp/src/platform/windows/StorageFileObservation.cpp': '5f4e0018ed3829e10f2ac68663d658e7f343c266eb60a3bf237ad783cbf5a4dc', 'VERSION': 'e51f139763c0958d77e9454ad75fc927c601dad6512842bdf94a79a8e755374c'}
+FILE_TESTS = {'cpp/tests/e2e/mqb_snapshot_file_e2e_tests.cpp', 'cpp/tests/platform/windows/link_fact_file_transfer_tests.cpp'}
+FILE_TU = "cpp/src/platform/windows/LinkFactSnapshotFile.cpp"
+
 OLD_TESTS_SHA = "cb9bb48dc68b6c27a0e2154d33ac66132cf850bd5239b0701647c46c1185084f"
 
 def read(name):
@@ -29,7 +32,7 @@ def digest(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 def legacy_tests(values):
-    old = {n: v for n, v in values.items() if n not in NEW_TESTS}
+    old = {n: v for n, v in values.items() if n not in NEW_TESTS and n not in FILE_TESTS}
     encoded = ''.join(f'{n}\0{digest(v)}\n' for n, v in sorted(old.items()))
     if len(old) != 89 or digest(encoded) != OLD_TESTS_SHA:
         raise ValueError("existing native test changed or replaced")
@@ -83,7 +86,7 @@ class SnapshotContracts(unittest.TestCase):
     def test_all_previous_native_programs_preserved(self):
         values = {p.relative_to(ROOT).as_posix(): p.read_text(encoding="utf-8")
                   for p in (ROOT / "cpp/tests").rglob("*_tests.cpp")}
-        self.assertEqual(len(values), 91)
+        self.assertEqual(len(values), 93)
         self.assertTrue(NEW_TESTS <= values.keys())
         legacy_tests(values)
 
@@ -99,15 +102,15 @@ class SnapshotContracts(unittest.TestCase):
         manifest = json.loads(read("cpp/mqb.json"))
         declared = ["cpp/src/app/main.cpp"] + ["cpp/"+n for n in manifest["discovery"]["extra_sources"]]
         actual = {p.relative_to(ROOT).as_posix() for p in (ROOT/"cpp/src").rglob("*.cpp")}
-        self.assertEqual(len(declared), 93)
+        self.assertEqual(len(declared), 94)
         self.assertEqual(len(declared), len(set(declared)))
         self.assertEqual(set(declared), actual)
         self.assertTrue(NEW_TUS <= actual)
 
     def test_exact_driver_inventory(self):
         driver = read("tests/native/run_native_tests.ps1")
-        self.assertIn("$allTestFiles.Count -ne 91", driver)
-        self.assertEqual(driver.count("91"), 3)
+        self.assertIn("$allTestFiles.Count -ne 93", driver)
+        self.assertEqual(driver.count("93"), 3)
 
     def test_layout_registers_new_files(self):
         layout = read("tests/native/assert_cpp_layout.ps1")
@@ -138,7 +141,7 @@ class SnapshotContracts(unittest.TestCase):
 
     def test_default_production_has_no_snapshot_adoption(self):
         for p in (ROOT/"cpp/src").rglob("*.cpp"):
-            if p.relative_to(ROOT).as_posix() in NEW_TUS:
+            if p.relative_to(ROOT).as_posix() in NEW_TUS | {FILE_TU}:
                 continue
             text = p.read_text(encoding="utf-8")
             self.assertNotRegex(text, r"(?:capture|encode|decode)_link_fact_snapshot\s*\(", str(p))
