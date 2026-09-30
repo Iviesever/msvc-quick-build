@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PINS = {'VERSION': 'e51f139763c0958d77e9454ad75fc927c601dad6512842bdf94a79a8e755374c', 'cpp/include/mqb/core/LinkFactSnapshot.hpp': '0f6dc6524d1ce7e4bbc151dce3d2b8eba38e6a83305b7eadcd09d44c4b04f036', 'cpp/src/core/cache/LinkFactSnapshot.cpp': '7e8f574780532ed9a1289c728b58a7b57b53402cb69f690f07847b3595f4a458', 'cpp/src/orchestration/incremental/LinkFactSnapshotProjection.cpp': 'eabba24ce173ee940d169c218125cb6b0f3cd0e9346abada477d6265632fac1b', 'cpp/src/orchestration/incremental/ObservedLinkCompletion.cpp': '09f8b65bba192693ce9a8e2a4b64d54af37aedf5c1171d53e4658ae5c06d04f9', 'cpp/src/platform/windows/PhysicalPath.hpp': '0251fd534f01432d67dce6b8f8b4c8ce8e050be3daeab61803082eb5a67fbf02', 'cpp/src/platform/windows/StorageFileObservation.cpp': '5f4e0018ed3829e10f2ac68663d658e7f343c266eb60a3bf237ad783cbf5a4dc', 'cpp/src/platform/windows/StorageReadPrimitives.hpp': 'a0e5ae3edad3a0be67449318ee36c77d7d0b0b6f0c5d841ec82eadb32815f627'}
 WORKFLOW_SHA = '2e928f795bff8a8148f4e3f7f40eb3ac869f7dc0f0ddf859ea1827a3fd560a3c'
 OLD_NATIVE_SHA = 'e4ae1deb69aec53786ca81e2a4acbdc935687770ec1d0dfa554abe60c78c207c'
+MODEL_TESTS = {"cpp/tests/orchestration/incremental/artifact_generation_model_tests.cpp"}
 ARCHIVE_TESTS = {'cpp/tests/orchestration/incremental/link_completion_archive_tests.cpp', 'cpp/tests/e2e/mqb_link_completion_archive_e2e_tests.cpp'}
 NEW_TESTS = {'cpp/tests/platform/windows/link_fact_file_transfer_tests.cpp', 'cpp/tests/e2e/mqb_snapshot_file_e2e_tests.cpp'}
 TU = 'cpp/src/platform/windows/LinkFactSnapshotFile.cpp'
@@ -18,7 +19,7 @@ def sha(data): return hashlib.sha256(data).hexdigest()
 def read(name): return (ROOT/name).read_text(encoding='utf-8')
 def canonical(name): return read(name).encode('utf-8')
 def old_tests(values):
-    old = {n:v for n,v in values.items() if n not in NEW_TESTS and n not in ARCHIVE_TESTS}
+    old = {n:v for n,v in values.items() if n not in NEW_TESTS and n not in ARCHIVE_TESTS and n not in MODEL_TESTS}
     text = ''.join(f'{n}\0{sha(v)}\n' for n,v in sorted(old.items()))
     if len(old) != 91 or sha(text.encode()) != OLD_NATIVE_SHA:
         raise ValueError('old native test changed')
@@ -33,7 +34,7 @@ def no_destructive_policy(text):
 class FileContracts(unittest.TestCase):
     def test_previous_91_native_programs_exact(self):
         values={p.relative_to(ROOT).as_posix():p.read_text(encoding='utf-8').encode() for p in (ROOT/'cpp/tests').rglob('*_tests.cpp')}
-        self.assertEqual(len(values),95); old_tests(values)
+        self.assertEqual(len(values),96); old_tests(values)
         values['cpp/tests/core/cache/link_fact_snapshot_tests.cpp'] += b'// changed'
         with self.assertRaises(ValueError): old_tests(values)
     def test_existing_codec_and_private_primitives_unchanged(self):
@@ -44,7 +45,7 @@ class FileContracts(unittest.TestCase):
     def test_exact_product_manifest(self):
         actual={p.relative_to(ROOT/'cpp').as_posix() for p in (ROOT/'cpp/src').rglob('*.cpp')}
         declared=['src/app/main.cpp']+json.loads(read('cpp/mqb.json'))['discovery']['extra_sources']
-        self.assertEqual(len(declared),95); self.assertEqual(len(set(declared)),95); self.assertEqual(set(declared),actual)
+        self.assertEqual(len(declared),96); self.assertEqual(len(set(declared)),96); self.assertEqual(set(declared),actual)
     def test_create_new_no_destructive_fallback(self):
         text=read(TU); no_destructive_policy(text)
         self.assertIn('nullptr, CREATE_NEW,',text)
