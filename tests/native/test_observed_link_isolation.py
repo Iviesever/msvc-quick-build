@@ -25,6 +25,8 @@ LEGACY_TESTS_SHA = '9c5a2143783687924e0449e01536a686d234242c295afd5b00f3c201bf78
 OLD_OBSERVER_SHA = '1ff5775264219b16a85e44aacb46ab256a6c6272851614c409262b333caedd50'
 OLD_MODEL_SHA = 'eec03bd186d0dd92fa816972b8fb8629d16d8b8746e4675b28e4705f0a66630f'
 FILE_TU = 'cpp/src/platform/windows/LinkFactSnapshotFile.cpp'
+ARCHIVE_TESTS = {'cpp/tests/orchestration/incremental/link_completion_archive_tests.cpp', 'cpp/tests/e2e/mqb_link_completion_archive_e2e_tests.cpp'}
+ARCHIVE_TU = 'cpp/src/orchestration/incremental/LinkCompletionArchive.cpp'
 FILE_TESTS = {'cpp/tests/e2e/mqb_snapshot_file_e2e_tests.cpp', 'cpp/tests/platform/windows/link_fact_file_transfer_tests.cpp'}
 SNAPSHOT_TESTS = {
     'cpp/tests/core/cache/link_fact_snapshot_tests.cpp',
@@ -86,16 +88,16 @@ def audit(files):
 
     # Preserve all 88 existing native programs, including V9 adoption.
     tests = {n: v for n, v in files.items() if n.startswith('cpp/tests/') and n.endswith('_tests.cpp')}
-    need(len(tests) == 93 and E2E in tests and (SNAPSHOT_TESTS | FILE_TESTS) <= tests.keys(),
-         'native inventory must be the exact 88+1+2+2 union')
-    old = {n: v for n, v in tests.items() if n != E2E and n not in SNAPSHOT_TESTS and n not in FILE_TESTS}
+    need(len(tests) == 95 and E2E in tests and (SNAPSHOT_TESTS | FILE_TESTS | ARCHIVE_TESTS) <= tests.keys(),
+         'native inventory must be the exact 88+1+2+2+2 union')
+    old = {n: v for n, v in tests.items() if n != E2E and n not in SNAPSHOT_TESTS and n not in FILE_TESTS and n not in ARCHIVE_TESTS}
     encoded = ''.join(f'{n}\0{digest(v)}\n' for n, v in sorted(old.items()))
     need(digest(encoded) == LEGACY_TESTS_SHA, 'existing native test changed or replaced')
     driver = files['tests/native/run_native_tests.ps1']
-    need(driver.count('93') == 3 and digest(driver.replace('93', '88')) ==
+    need(driver.count('95') == 3 and digest(driver.replace('95', '88')) ==
          PINS['tests/native/run_native_tests.ps1'], 'native driver policy changed')
     layout = files['tests/native/assert_cpp_layout.ps1']
-    for addition in ('LinkFactSnapshot.cpp', 'LinkFactSnapshotProjection.cpp',
+    for addition in ('LinkCompletionArchive.cpp', 'LinkCompletionArchiveOperation.hpp', 'link_completion_archive_tests.cpp', 'LinkFactSnapshot.cpp', 'LinkFactSnapshotProjection.cpp',
                      'link_fact_snapshot_tests.cpp', 'link_fact_snapshot_projection_tests.cpp'):
         line = f"\n        '{addition}',"
         need(layout.count(line) == 1, 'snapshot layout registration missing')
@@ -104,7 +106,7 @@ def audit(files):
     need(digest(layout.replace("\n        'ObservedLinkCompletion.cpp',", '')) ==
          PINS['tests/native/assert_cpp_layout.ps1'], 'layout changed beyond registration')
     manifest = files['cpp/mqb.json']
-    for name in ('src/orchestration/incremental/ObservedLinkCompletion.cpp',
+    for name in ('src/orchestration/incremental/LinkCompletionArchive.cpp', 'src/orchestration/incremental/ObservedLinkCompletion.cpp',
                  'src/platform/windows/StorageFileObservation.cpp',
                  'src/core/cache/LinkFactSnapshot.cpp',
                  'src/orchestration/incremental/LinkFactSnapshotProjection.cpp',
@@ -112,7 +114,7 @@ def audit(files):
         line = '      "' + name + '",\n'
         need(manifest.count(line) == 1, 'new product TU not registered exactly once')
         manifest = manifest.replace(line, '')
-    need(digest(manifest) == PINS['cpp/mqb.json'], 'manifest/policy changed beyond five registered additions')
+    need(digest(manifest) == PINS['cpp/mqb.json'], 'manifest/policy changed beyond six registered additions')
     declared = ['cpp/src/app/main.cpp'] + ['cpp/' + n for n in json.loads(files['cpp/mqb.json'])['discovery']['extra_sources']]
     actual = sorted(n for n in files if n.startswith('cpp/src/') and n.endswith('.cpp'))
     need(sorted(declared) == actual and len(set(declared)) == len(declared), 'production manifest mismatch')
@@ -150,7 +152,7 @@ def audit(files):
             graph[name] = edges
     reachable = []
     for tu in actual:
-        if tu in (ADAPT, PLAT, FILE_TU) or tu in SNAPSHOT_TUS:
+        if tu in (ADAPT, PLAT, FILE_TU, ARCHIVE_TU) or tu in SNAPSHOT_TUS:
             continue
         seen = set()
         todo = [tu]
@@ -165,7 +167,7 @@ def audit(files):
         need(not re.search(r'\b(?:observe_link_completion|observe_storage_file|run_observed)\s*\(',
                            without_comments(files[tu])), 'existing production caller adopted observation')
     need(not reachable, 'observation type leaks into an original production TU')
-    return dict(native_programs=93, original_native_programs=88, production_tus=len(actual),
+    return dict(native_programs=95, original_native_programs=88, production_tus=len(actual),
                 original_tus_reaching_observation=reachable, legacy_extractions_exact=True,
                 new_benchmarks=0, performance_verified=False, clears_hold=False)
 
@@ -177,7 +179,7 @@ class Isolation(unittest.TestCase):
 
     def test_complete_actual_source(self):
         result = audit(self.files)
-        self.assertEqual(94, result['production_tus'])
+        self.assertEqual(95, result['production_tus'])
         self.assertFalse(result['clears_hold'])
 
     def test_public_facade_drift(self):
