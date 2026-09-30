@@ -1,0 +1,81 @@
+# #819 身份／槽位／顺序诊断：仅计划、审计与合成控制
+
+接续 #198 的诊断规格5907289669、未提交实现5908954158，以及模块隔离登记5910254176。
+**本切片没有真实进程捕获模块、没有Windows诊断执行入口，也不授予执行权限。**
+#232仍为Draft/HOLD；#819的+1.85585ms/+15.9539%原门槛失败不会被本工具改判。
+
+## 提供的能力
+
+`noop_identity_slots.py`只生成固定计划、验证原#819输入并准备全新证据目录、审计完整日志。
+`noop_identity_slots_runtime.psm1`只定义协调与文件操作函数，没有真实启动器或默认回退。
+调用者必须显式提供callback；本PR唯一接线者是合成控制测试，callback仅产生小型文本文件和假日志。
+测试不导入原采集器，不运行A/B EXE、编译器、链接器、WPR或ETW。
+
+原动态AST抽取、字符串执行和测试覆盖生产同名函数的设计不再采用。
+模块用明确导出列表，测试通过每个case独立context提供假启动、日志故障和空间数据。
+三个文件IO helper的函数体与固定旧源码逐字核对；运行时不抽取它们。
+Python保存并验证当前三份实际准备／审计／模块依赖源码，不把不存在的执行入口写进清单。
+计划显式保存 `native_entry_available=false`、`execution_allocated=false`。
+
+真实捕获模块提交曾被工具安全检查拒绝，原因未提供。这不是已解决的权限问题，
+也不等于整个诊断驱动已提交。本PR只提交上述非启动部分，不借旧脚本重新组合等效真实执行路径。
+要开展真实诊断，仍欠缺可获准且经独立审阅的执行入口、精确代码和一次性执行分配。
+
+## 固定计划，不是已执行次数
+
+原A/B身份与原#819 ZIP摘要保持固定，不重建或修改原程序。
+两个隔离槽L/R，首轮AA、AB、BB、BA，第二轮BA、BB、AB、AA。
+每块使用新两源文件夹具，两槽共用该块cwd；第一个prime必须2次编译/1次链接，
+第二个prime必须no-op，之后四次测量按LRRL或RLLR固定顺序。
+总上限为8块、48次根请求：16prime与32测量，A/B和L/R各占16个测量位置。
+原参数 `main.cpp helper.cpp --output timing_bench -j 1`，不打开内部计时。
+
+准备程序核对原ZIP的大小/SHA256、2553成员/CRC、run/attempt、HOLD及程序/源码身份。
+只写新的输出目录，保留原ZIP与输入副本，不执行其中内容。
+这些文件可用于离线核对，准备成功不代表任何本地或远端进程已经运行。
+
+## 文件与失败契约
+
+模块在每次槽轮换前检查本次拥有文件的摘要、大小和创建/修改时间；
+将原槽移至唯一retired位置，再以禁止覆盖方式复制下一映像。不覆盖未拥有路径。
+原PE时间戳、类型名和历史ZIP不修改，副本自身文件时间据实记录，不归一化。
+已有journal、新夹具冲突、未知或改变的槽和输入全部拒绝。
+
+块中四个测量请求之间不增加哈希、清单、磁盘journal、资源探测或采集。
+返回的callback结果先保存，再验证；未返回时保留pending请求。
+首次身份、输出、clock、文件或journal错误即停，保留失败前缀，不补位、重试、删除或续跑。
+负QPC值立即拒绝。完整审计拒绝停止／缺失／多余日志，不伪造未来调用已发生。
+
+30秒是返回后检查，无法中断同步挂起。4GiB空闲和256MiB证据上限是检查点，不是磁盘配额。
+未来真实执行若获准仍需20分钟硬job上限；强制终止可能丢失内存测量或阻止最终上传。
+原合流文本不等于独立stdout/stderr字节，报告no-op不等于完整子进程普查。
+本模块不是对抗恶意写者的文件身份协议。
+
+## 合成控制与审计
+
+20个PowerShell案例覆盖完整48次假请求、无额外测量窗探测、首失败停止、未知请求、
+错误输出/时间、夹具变化、日志失败、路径冲突、输入/槽篡改、预算、准入拒绝、
+无默认启动器、callback类型拒绝和跨case状态隔离。
+完整假运行的原日志再交给真实Python审计器，而非只相信测试计数；仅合成原ZIP认证被显式mock。
+
+现有Reporting工作流自动发现Python测试，有PowerShell时运行上述合成案例。
+记录保留在其既有 `journal-checks/slot-controls/` 上传目录；无新workflow、perf标题或真实测量。
+没有PowerShell则明确skip，不能算作控制案例通过。
+
+审计列出每次外部包围计时、所有分块相邻R−L对比和AA/BB标记。
+不输出winner、修正资格分数、合并后的新门槛或统计显著结论；
+`original_decision=HOLD`、`may_clear_hold=false`、`gate_replacement=false`固定不变。
+不得减去自对照、筛选方向或用小样本取消原失败。未来复制、prime和轮换本身会扰动宿主；
+此计划不是原#819无扰动复现，也不能直接解决129TU冷构建、链接风险或显式模型API成本。
+
+## 只运行契约测试
+
+```text
+python -B tests/native/test_noop_identity_slots.py
+python -B tests/native/noop_identity_slots.py plan --output NEW_PLAN.json
+pwsh -NoProfile -File tests/native/test_noop_identity_slots_control.ps1 -OutputRoot NEW_FAKE_ROOT -PlanPath NEW_PLAN.json
+```
+
+这三条命令不会运行原A/B程序。契约通过不构成真实诊断或性能放行。
+原616文件、50workflow和产品/95原生测试不变；VERSION5.6.0，v5.7.0未发布。
+历史HOLD和所有不利证据保留，不默认采用、不合并#232、不启动安全clean/prune。
