@@ -2,6 +2,7 @@
 
 #include <iomanip>
 #include <limits>
+#include <locale>
 #include <map>
 #include <ostream>
 #include <sstream>
@@ -95,9 +96,7 @@ void groups_json(std::ostream& out, const Groups& groups) {
     }
     out << '}';
 }
-} // namespace
-
-bool write_storage_report(std::ostream& out, const StorageInventory& inventory, bool json) {
+bool write_report(std::ostream& out, const StorageInventory& inventory, bool json) {
     Total total;
     Groups directories, types, categories;
     std::vector<Total> targets(inventory.references.size());
@@ -132,6 +131,7 @@ bool write_storage_report(std::ostream& out, const StorageInventory& inventory, 
         number(out, total.logical);
         if (total.logical) {
             std::ostringstream units;
+            units.imbue(std::locale::classic());
             units << std::fixed << std::setprecision(6)
                   << static_cast<long double>(*total.logical) / 1000000000.0L << " GB; "
                   << static_cast<long double>(*total.logical) / 1073741824.0L << " GiB";
@@ -228,5 +228,28 @@ bool write_storage_report(std::ostream& out, const StorageInventory& inventory, 
     }
     out.flush();
     return static_cast<bool>(out);
+}
+} // namespace
+
+bool write_storage_report(std::ostream& destination, const StorageInventory& inventory, bool json) {
+    if (!destination.good()) return false;
+    // Use a separate formatting state without buffering the entire inventory.
+    // ios_base::imbue intentionally avoids basic_ios::imbue: the latter would
+    // also re-imbue the caller's shared streambuf (for example a file codecvt).
+    std::ostream out{destination.rdbuf()};
+    static_cast<std::ios_base&>(out).imbue(std::locale::classic());
+    out.tie(destination.tie());
+    out.setf(destination.flags() & std::ios_base::unitbuf);
+    out.exceptions(destination.exceptions());
+    try {
+        const bool complete = write_report(out, inventory, json);
+        destination.setstate(out.rdstate());
+        return complete && static_cast<bool>(destination);
+    } catch (...) {
+        // Preserve both the original sink/validation exception and failure bits.
+        // setstate may itself throw under the destination's exception mask.
+        try { destination.setstate(out.rdstate()); } catch (...) {}
+        throw;
+    }
 }
 } // namespace mqb::app::diagnostics
