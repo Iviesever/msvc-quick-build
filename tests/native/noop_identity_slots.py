@@ -95,9 +95,16 @@ def check_archive(path):
     return data, binaries
 
 
+def validate_review_claim(reviewed_commit, allocation):
+    # Syntax only: matching claims do not prove approval or allocate execution.
+    need(isinstance(reviewed_commit, str) and re.fullmatch('[0-9a-f]{40}', reviewed_commit) is not None,
+         'invalid reviewed commit')
+    need(isinstance(allocation, str) and re.fullmatch('pr232-slot-[0-9]{3}', allocation) is not None,
+         'invalid separate allocation label')
+
+
 def prepare(archive, root, repo, reviewed_commit, allocation):
-    need(re.fullmatch('[0-9a-f]{40}', reviewed_commit or '') is not None, 'invalid reviewed commit')
-    need(re.fullmatch('pr232-slot-[0-9]{3}', allocation or '') is not None, 'invalid separate allocation label')
+    validate_review_claim(reviewed_commit, allocation)
     need(not root.exists() and not root.is_symlink(), 'new root required; no resume')
     for parent in (root.parent, *root.parents):
         need(not parent.is_symlink(), 'root ancestor alias refused')
@@ -148,10 +155,11 @@ def check_call(row, value):
                 root_cpu_ms=None, child_process_count=None)
 
 
-def metadata(value, expected_sha):
+def metadata(value, expected_sha, expected_size):
     need(value['sha256'] == expected_sha, 'slot identity mismatch')
     need(all(type(value[k]) is int and value[k] >= 0 for k in ('size', 'mtime_ticks', 'creation_ticks')),
          'invalid slot metadata')
+    need(value['size'] == expected_size, 'slot size differs from verified input bytes')
 
 
 def limits(value):
@@ -162,13 +170,18 @@ def limits(value):
 
 def audit(root):
     p = b.load(root/'plan.json')
+    validate_review_claim(p['reviewed_commit'], p['allocation_label'])
     for key, expected in plan().items():
         need(same(p[key], expected), 'fixed plan changed: '+key)
     need(set(p['source_hashes']) == set(SOURCE_FILES), 'wrong collector inventory')
     for name, sha in p['source_hashes'].items():
         need(digest(root/'source'/name) == sha, 'collector source changed')
     check_archive(root/'inputs/original-819.zip')
-    for side, sha in IMAGES.items(): need(digest(root/'inputs'/(side+'.exe')) == sha, 'input binary changed')
+    image_sizes = {}
+    for side, sha in IMAGES.items():
+        path = root/'inputs'/(side+'.exe')
+        need(digest(path) == sha, 'input binary changed')
+        image_sizes[side] = path.stat().st_size
     host = b.load(root/'host.json')
     need(host['plan_sha256'] == digest(root/'plan.json') and host['reviewed_commit'] == p['reviewed_commit'] and
          host['allocation_label'] == p['allocation_label'], 'wrong host request')
@@ -202,7 +215,8 @@ def audit(root):
         for name, f in physical.items():
             need(f.stat().st_size == after[name]['size'] and digest(f) == after[name]['sha256'], 'retained bytes differ')
         for slot in ('L', 'R'):
-            metadata(record['slots_before'][slot], IMAGES[block['mapping'][slot]])
+            image = block['mapping'][slot]
+            metadata(record['slots_before'][slot], IMAGES[image], image_sizes[image])
             need(same(record['slots_before'][slot], record['slots_after'][slot]), 'slot changed in window')
             if previous is None:
                 need(record['retired'][slot] is None, 'foreign initial slot')
