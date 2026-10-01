@@ -54,6 +54,15 @@ enum class WorkKind : std::size_t {
     // Inclusive target preamble/result reporting, including formatting and
     // nested stream writes. Not additive with WallKind::reporting.
     target_reporting,
+    // Nested diagnostic work, not additional wall time. Serialize/prepare/
+    // stream/install are disjoint children of link_cache_write. Payload/flush
+    // are nested within stream, which also includes open, close and errors.
+    link_cache_serialize,
+    link_cache_prepare,
+    link_cache_stream,
+    link_cache_write_payload,
+    link_cache_flush,
+    link_cache_install,
     count,
 };
 
