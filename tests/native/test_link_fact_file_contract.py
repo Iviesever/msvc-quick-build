@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import unittest
+from noop_identity_slots_workflow_contract import legacy_workflow_view
 import accepted_reporting_extension as reporting_extension
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +43,7 @@ class FileContracts(unittest.TestCase):
         for n,h in PINS.items(): self.assertEqual(sha(canonical(n)),h,n)
     def test_all_existing_workflows_identical(self):
         actual={p.relative_to(ROOT).as_posix():sha(p.read_text(encoding='utf-8').encode()) for p in (ROOT/'.github/workflows').glob('*') if p.is_file()}
+        actual=legacy_workflow_view(actual)
         self.assertEqual(sha(''.join(f'{k}\0{v}\n' for k,v in sorted(actual.items())).encode()),WORKFLOW_SHA)
     def test_exact_product_manifest(self):
         actual={p.relative_to(ROOT/'cpp').as_posix() for p in (ROOT/'cpp/src').rglob('*.cpp')}

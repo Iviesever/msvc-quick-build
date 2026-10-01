@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 import noop_identity_slots as d
+import noop_identity_slots_workflow_contract as workflow_contract
 from test_noop_identity_slots import fixture, write
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -97,7 +98,11 @@ class NativeEntryContracts(unittest.TestCase):
             for banned in ('Invoke-Expression','scriptblock]::Create','EncodedCommand','DllImport','Remove-Item','.Kill('):
                 self.assertNotIn(banned,text)
         for path in (ROOT/'.github/workflows').glob('*.yml'):
-            self.assertNotIn('run_noop_identity_slots.ps1',path.read_text())
+            if path.relative_to(ROOT).as_posix() == workflow_contract.WORKFLOW:
+                self.assertEqual(workflow_contract.WORKFLOW_SHA256,
+                    d.b.digest(path.read_text(encoding='utf-8').encode()))
+            else:
+                self.assertNotIn('run_noop_identity_slots.ps1',path.read_text())
         self.assertLess(entry.index('Assert-SlotAdmission'),entry.index('& $python -B $tool prepare'))
         self.assertIn('Export-ModuleMember -Function @(\'Invoke-PinnedSlotCapture\')',capture)
 
