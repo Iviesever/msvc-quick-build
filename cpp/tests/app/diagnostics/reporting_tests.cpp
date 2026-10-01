@@ -14,6 +14,7 @@
 #include "Diagnostics.hpp"
 #include "PerformanceTimings.hpp"
 #include "ReportBuffer.hpp"
+#include "storage_report_format_cases.hpp"
 
 namespace {
 namespace diagnostics = mqb::app::diagnostics;
@@ -317,6 +318,7 @@ int main() {
     test_forwarded_bytes();
     test_target_reports();
     test_failure_reports();
+    failures += storage_report_format_cases::run();
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;
