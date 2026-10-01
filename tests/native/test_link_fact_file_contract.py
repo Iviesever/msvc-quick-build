@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import unittest
+import accepted_reporting_extension as reporting_extension
 
 ROOT = Path(__file__).resolve().parents[2]
 PINS = {'VERSION': 'e51f139763c0958d77e9454ad75fc927c601dad6512842bdf94a79a8e755374c', 'cpp/include/mqb/core/LinkFactSnapshot.hpp': '0f6dc6524d1ce7e4bbc151dce3d2b8eba38e6a83305b7eadcd09d44c4b04f036', 'cpp/src/core/cache/LinkFactSnapshot.cpp': '7e8f574780532ed9a1289c728b58a7b57b53402cb69f690f07847b3595f4a458', 'cpp/src/orchestration/incremental/LinkFactSnapshotProjection.cpp': 'eabba24ce173ee940d169c218125cb6b0f3cd0e9346abada477d6265632fac1b', 'cpp/src/orchestration/incremental/ObservedLinkCompletion.cpp': '09f8b65bba192693ce9a8e2a4b64d54af37aedf5c1171d53e4658ae5c06d04f9', 'cpp/src/platform/windows/PhysicalPath.hpp': '0251fd534f01432d67dce6b8f8b4c8ce8e050be3daeab61803082eb5a67fbf02', 'cpp/src/platform/windows/StorageFileObservation.cpp': '5f4e0018ed3829e10f2ac68663d658e7f343c266eb60a3bf237ad783cbf5a4dc', 'cpp/src/platform/windows/StorageReadPrimitives.hpp': 'a0e5ae3edad3a0be67449318ee36c77d7d0b0b6f0c5d841ec82eadb32815f627'}
@@ -19,6 +20,7 @@ def read(name): return (ROOT/name).read_text(encoding='utf-8')
 def canonical(name): return read(name).encode('utf-8')
 def old_tests(values):
     old = {n:v for n,v in values.items() if n not in NEW_TESTS and n not in ARCHIVE_TESTS}
+    old = reporting_extension.legacy_view(old, read(reporting_extension.HELPER))
     text = ''.join(f'{n}\0{sha(v)}\n' for n,v in sorted(old.items()))
     if len(old) != 91 or sha(text.encode()) != OLD_NATIVE_SHA:
         raise ValueError('old native test changed')

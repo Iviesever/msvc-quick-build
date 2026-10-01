@@ -256,9 +256,10 @@ class SlotContracts(unittest.TestCase):
     def test_tests_cannot_import_or_default_to_native_launcher(self):
         runtime=(ROOT/'tests/native/noop_identity_slots_runtime.psm1').read_text()
         tests=(ROOT/'tests/native/test_noop_identity_slots_control.ps1').read_text()
-        self.assertFalse((ROOT/'tests/native/run_noop_identity_slots.ps1').exists())
-        self.assertFalse((ROOT/'tests/native/noop_identity_slots_capture.psm1').exists())
-        self.assertFalse(d.plan()['native_entry_available'])
+        self.assertTrue((ROOT/'tests/native/run_noop_identity_slots.ps1').is_file())
+        self.assertTrue((ROOT/'tests/native/noop_identity_slots_capture.psm1').is_file())
+        self.assertTrue(d.plan()['native_entry_available'])
+        self.assertFalse(d.plan()['execution_allocated'])
         for text in (runtime,tests):
             for forbidden in ('scriptblock]::Create','Invoke-Expression','Extent.Text','Import-SlotDefinitions'):
                 self.assertNotIn(forbidden,text)
