@@ -8,7 +8,8 @@ function Invoke-SlotNativeEnvelope {
     param([string]$Executable,[string]$Cwd,[string[]]$Argv)
     $ErrorActionPreference='Stop'
     $PSNativeCommandUseErrorActionPreference=$false
-    $LASTEXITCODE=$null
+    # NativeCommandProcessor writes global:LASTEXITCODE. A local shadow would
+    # hide the real exit (as the first Windows/Linux IO controls demonstrated).
     $output=@(); $exitCode=$null; $errorText=$null; $pushed=$false
     $clock=[ordered]@{frequency=[Diagnostics.Stopwatch]::Frequency
         outer_start=$null;native_start=$null;native_end=$null;outer_end=$null}
@@ -20,7 +21,7 @@ function Invoke-SlotNativeEnvelope {
         # an already captured prefix. Native nonzero exits remain data, not success.
         $output=@(try {
             & $Executable @Argv 2>&1
-            $exitCode=$LASTEXITCODE
+            $exitCode=$global:LASTEXITCODE
         } catch { $errorText=$_.ToString() })
     } catch { $errorText=$_.ToString() }
     finally {
