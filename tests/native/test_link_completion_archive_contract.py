@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import unittest
+from noop_identity_slots_workflow_contract import legacy_workflow_view
 
 ROOT = Path(__file__).resolve().parents[2]
 PUBLIC = "cpp/include/mqb/orchestration/LinkCompletionArchive.hpp"
@@ -59,6 +60,7 @@ class ArchiveContracts(unittest.TestCase):
         self.assertIn("$allTestFiles.Count -ne 95",read("tests/native/run_native_tests.ps1"))
     def test_original_50_workflows_unchanged(self):
         values={p.relative_to(ROOT).as_posix():sha(p.read_text(encoding="utf-8").encode()) for p in (ROOT/".github/workflows").glob("*") if p.is_file()}
+        values=legacy_workflow_view(values)
         self.assertEqual(50,len(values))
         self.assertEqual("2e928f795bff8a8148f4e3f7f40eb3ac869f7dc0f0ddf859ea1827a3fd560a3c",sha(''.join(f'{n}\0{v}\n' for n,v in sorted(values.items())).encode()))
     def test_e2e_retains_counts_and_real_file_operations(self):

@@ -90,3 +90,9 @@ python -B -m unittest discover -s tests/native -p "test_noop_identity_slots*.py"
 完整审计分别展示所有外部包围计时、16个分块相邻R−L对照及AA/BB标签，原决定仍为HOLD。
 本工具不能直接解决129TU冷构建、链接风险或显式模型API成本；#819全部不利证据保留。
 产品、95原生程序、50份工作流和VERSION保持；v5.7.0未发布，不批准安全clean/prune。
+
+## 后续独立手动工作流
+
+已交付入口的手动接线、首次运行限制、失败上传和契约测试另见
+[NOOP_IDENTITY_SLOTS_WORKFLOW.md](NOOP_IDENTITY_SLOTS_WORKFLOW.md)。
+工作流的安装与测试不分配原48次诊断；上述入口交付阶段与历史结果不改写为真实研究已完成。
