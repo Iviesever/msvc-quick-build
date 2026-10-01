@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 import unittest
+import accepted_reporting_extension as reporting_extension
 
 ROOT = Path(__file__).resolve().parents[2]
 NEW_TESTS = {
@@ -34,6 +35,7 @@ def digest(value):
 
 def legacy_tests(values):
     old = {n: v for n, v in values.items() if n not in NEW_TESTS and n not in FILE_TESTS and n not in ARCHIVE_TESTS}
+    old = reporting_extension.legacy_view(old, read(reporting_extension.HELPER))
     encoded = ''.join(f'{n}\0{digest(v)}\n' for n, v in sorted(old.items()))
     if len(old) != 89 or digest(encoded) != OLD_TESTS_SHA:
         raise ValueError("existing native test changed or replaced")

@@ -21,9 +21,12 @@ def no_execution(s):
     for token in ("run_recorded(", "observe_link_completion(", "observe_storage_file(", "read_link_fact_snapshot_file(", "current_path(", "exists(", "create_directories(", "remove(", "DeleteFile", "CreateFile", "while (", "for (", "catch ("):
         if token in s: raise ValueError("unexpected execution or fallback: "+token)
 
+import accepted_reporting_extension as reporting_extension
+
 class ArchiveContracts(unittest.TestCase):
     def test_original_93_native_programs_unchanged(self):
         old={p.relative_to(ROOT).as_posix():p.read_text(encoding="utf-8").encode() for p in (ROOT/"cpp/tests").rglob("*_tests.cpp") if p.relative_to(ROOT).as_posix() not in NEW_TESTS}
+        old=reporting_extension.legacy_view(old,read(reporting_extension.HELPER))
         self.assertEqual(93,len(old))
         self.assertEqual(OLD_TESTS,sha(''.join(f'{n}\0{sha(v)}\n' for n,v in sorted(old.items())).encode()))
     def test_existing_implementations_and_authority_flags_unchanged(self):

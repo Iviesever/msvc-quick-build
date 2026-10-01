@@ -10,6 +10,7 @@ import json
 import posixpath
 import re
 import unittest
+import accepted_reporting_extension as reporting_extension
 
 ROOT = Path(__file__).resolve().parents[2]
 SCAN = 'cpp/src/platform/windows/StorageInventory.cpp'
@@ -91,12 +92,16 @@ def audit(files):
     need(len(tests) == 95 and E2E in tests and (SNAPSHOT_TESTS | FILE_TESTS | ARCHIVE_TESTS) <= tests.keys(),
          'native inventory must be the exact 88+1+2+2+2 union')
     old = {n: v for n, v in tests.items() if n != E2E and n not in SNAPSHOT_TESTS and n not in FILE_TESTS and n not in ARCHIVE_TESTS}
+    old = reporting_extension.legacy_view(old, files[reporting_extension.HELPER])
     encoded = ''.join(f'{n}\0{digest(v)}\n' for n, v in sorted(old.items()))
     need(digest(encoded) == LEGACY_TESTS_SHA, 'existing native test changed or replaced')
     driver = files['tests/native/run_native_tests.ps1']
     need(driver.count('95') == 3 and digest(driver.replace('95', '88')) ==
          PINS['tests/native/run_native_tests.ps1'], 'native driver policy changed')
     layout = files['tests/native/assert_cpp_layout.ps1']
+    reporting_registration = ", 'storage_report_format_cases.hpp'"
+    need(layout.count(reporting_registration) == 1, 'reporting layout registration missing')
+    layout = layout.replace(reporting_registration, '')
     for addition in ('LinkCompletionArchive.cpp', 'LinkCompletionArchiveOperation.hpp', 'link_completion_archive_tests.cpp', 'LinkFactSnapshot.cpp', 'LinkFactSnapshotProjection.cpp',
                      'link_fact_snapshot_tests.cpp', 'link_fact_snapshot_projection_tests.cpp'):
         line = f"\n        '{addition}',"

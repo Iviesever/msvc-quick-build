@@ -1,7 +1,7 @@
 """Fixed #819 identity/slot diagnostic: prepare and audit only, never execute MQB.
 
 A complete journal is NOT performance acceptance. The failed qualification stays
-HOLD. This contract-only slice provides no native execution entry or allocation.
+HOLD. A separate explicitly gated Windows entry exists; this module never launches MQB.
 """
 from __future__ import annotations
 import argparse
@@ -26,7 +26,8 @@ REVISIONS = {'baseline': '4cd17c74aeda33eb6a7220fa227c58fabb8b202a',
 LEGACY = 'tests/native/collect_external_noop_boundary.ps1'
 LEGACY_SHA = '4b99ee4b1ad4de3608d3079175ff47bbd1de74e8f80dad715ac6b303698f9ebf'
 SOURCE_FILES = ('tests/native/noop_identity_slots.py', 'tests/native/noop_identity_slots_runtime.psm1',
-                'tests/native/external_noop_boundary.py')
+                'tests/native/external_noop_boundary.py', 'tests/native/noop_identity_slots_capture.psm1',
+                'tests/native/run_noop_identity_slots.ps1')
 LIMITS = dict(root_calls=48, returned_seconds=30, free_bytes=4294967296,
               evidence_bytes=268435456, job_minutes=20)
 need = b.require
@@ -49,10 +50,10 @@ def plan():
                                slot=slot, image=mapping[slot], sha256=IMAGES[mapping[slot]], argv=b.ARGV.copy())
                     rows.append(row); block['rows'].append(row)
             blocks.append(block)
-    return dict(schema=1, purpose='fixed_819_identity_slot_order_diagnostic', blocks=blocks,
+    return dict(schema=2, purpose='fixed_819_identity_slot_order_diagnostic', blocks=blocks,
                 limits=LIMITS.copy(), original_sha256=ARCHIVE_SHA, images=IMAGES.copy(),
                 sources={n: v.decode('ascii') for n, v in b.SOURCES.items()},
-                prime_calls=16, measured_calls=32, execution_allocated=False, native_entry_available=False,
+                prime_calls=16, measured_calls=32, execution_allocated=False, native_entry_available=True,
                 original_qualification=dict(run=36682255779, attempt=1, decision='HOLD'),
                 may_clear_hold=False, gate_replacement=False, etw_sessions=0)
 
@@ -253,9 +254,53 @@ def audit(root):
                 limitation='Envelope timings only. No root lifetime/CPU/I-O census. No subtraction of self-controls or new qualification score.')
 
 
+def native_preflight(root, repo, reviewed_commit, allocation):
+    """Validate fixed inputs before any native dispatch; no execution grant."""
+    validate_review_claim(reviewed_commit, allocation)
+    p = b.load(root/'plan.json')
+    for key, expected in plan().items():
+        need(same(p[key], expected), 'fixed plan changed: '+key)
+    need(p['root'] == str(root.absolute()) and p['reviewed_commit'] == reviewed_commit and
+         p['allocation_label'] == allocation, 'native request differs from preparation')
+    need(set(p['source_hashes']) == set(SOURCE_FILES), 'wrong native source inventory')
+    for name, sha in p['source_hashes'].items():
+        need(digest(root/'source'/name) == sha == digest(repo/name), 'native source differs')
+    check_archive(root/'inputs/original-819.zip')
+    for side, sha in IMAGES.items():
+        need(digest(root/'inputs'/(side+'.exe')) == sha, 'native input differs')
+    for name in ('blocks', 'fixtures', 'retired', 'slots'):
+        need(not (root/name).is_symlink() and not any((root/name).iterdir()), 'native root not fresh')
+    return dict(status='prepared_inputs_verified_not_execution_authority',
+                reviewed_commit=reviewed_commit, allocation_label=allocation,
+                plan_sha256=digest(root/'plan.json'), source_hashes=p['source_hashes'],
+                mqb_calls=0, may_clear_hold=False)
+
+
+def audit_native(root):
+    """Extend the data audit with real-entry provenance; remote review is separate."""
+    host = b.load(root/'host.json')
+    p = b.load(root/'plan.json')
+    preflight = b.load(root/'native-preflight.json')
+    need(host['native_entry'] == 'run_noop_identity_slots.ps1' and
+         host['protocol'] == 'pinned_819_merged_lines_v1', 'wrong native capture entry')
+    need(host['repository'] == 'Iviesever/msvc-quick-build' and host['event'] == 'workflow_dispatch' and
+         host['run_attempt'] == '1' and isinstance(host['run_id'], str) and
+         re.fullmatch('[1-9][0-9]*', host['run_id']) is not None, 'wrong native run claim')
+    need(host['execution_allocated_by_plan'] is False and host['may_clear_hold'] is False,
+         'invented native authority')
+    need(same(preflight, dict(status='prepared_inputs_verified_not_execution_authority',
+         reviewed_commit=p['reviewed_commit'], allocation_label=p['allocation_label'],
+         plan_sha256=digest(root/'plan.json'), source_hashes=p['source_hashes'],
+         mqb_calls=0, may_clear_hold=False)), 'native preflight binding differs')
+    result = audit(root)
+    result['native_provenance'] = dict(run_id=host['run_id'], reviewed_commit=p['reviewed_commit'],
+                                      remote_allocation_verified=False)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('plan', 'prepare', 'audit'))
+    parser.add_argument('command', choices=('plan', 'prepare', 'audit', 'native-preflight', 'audit-native'))
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--archive', type=Path); parser.add_argument('--root', type=Path)
     parser.add_argument('--repo', type=Path); parser.add_argument('--reviewed-commit'); parser.add_argument('--allocation')
@@ -266,8 +311,12 @@ def main():
         elif a.command == 'prepare':
             need(all((a.archive, a.root, a.repo, a.reviewed_commit, a.allocation)), 'missing preparation arguments')
             value = prepare(a.archive, a.root, a.repo, a.reviewed_commit, a.allocation)
+        elif a.command == 'native-preflight':
+            need(all((a.root, a.repo, a.reviewed_commit, a.allocation)), 'missing preflight arguments')
+            value = native_preflight(a.root, a.repo, a.reviewed_commit, a.allocation)
         else:
-            need(a.root is not None, 'missing evidence root'); value = audit(a.root)
+            need(a.root is not None, 'missing evidence root')
+            value = audit_native(a.root) if a.command == 'audit-native' else audit(a.root)
         b.write_new(a.output, value)
         return 0
     except (ValueError, OSError, KeyError, TypeError) as exc:
