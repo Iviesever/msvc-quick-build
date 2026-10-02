@@ -11,9 +11,9 @@ $first=Join-Path $FixtureRoot 'first tools'; $second=Join-Path $FixtureRoot 'sec
 $empty=Join-Path $FixtureRoot 'empty'; $extension=if ($IsWindows) {'.cmd'} else {''}
 function Check { param([bool]$Value,[string]$Message) if (-not $Value) {throw $Message} }
 function Case {
-    param([string]$Name,[scriptblock]$Test)
-    try { & $Test; $cases.Add(@{name=$Name;passed=$true;error=$null}) }
-    catch { $cases.Add(@{name=$Name;passed=$false;error=$_.ToString()}) }
+    param([string]$CaseName,[scriptblock]$Test)
+    try { & $Test; $cases.Add(@{name=$CaseName;passed=$true;error=$null}) }
+    catch { $cases.Add(@{name=$CaseName;passed=$false;error=$_.ToString()}) }
 }
 function PathOrder { param([string[]]$Directories) $env:PATH=$Directories -join [IO.Path]::PathSeparator }
 function SelectAndRun {
@@ -51,7 +51,8 @@ try {
         Case ($name+' missing application fails closed') {
             PathOrder @($empty)
             $refused=$false
-            try { $null=Resolve-SlotApplication $name } catch {$refused=$true}
+            try { $null=Resolve-SlotApplication $name }
+            catch {$refused=$_.FullyQualifiedErrorId -like '*CommandNotFoundException*'}
             Check $refused 'Missing application was accepted.'
         }
     }
