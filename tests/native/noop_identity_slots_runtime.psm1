@@ -1,6 +1,20 @@
 # Definition-only runtime: explicit dependencies, no native process-launch default.
 Set-StrictMode -Version 2.0
 
+function Resolve-SlotApplication {
+    param([Parameter(Mandatory)][ValidateSet('git','python')][string]$Name)
+    # Application lookup may return several PATH matches. Resolve one command
+    # before reading Source; never stringify an array into an executable name.
+    $command = Get-Command -Name $Name -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1
+    if ($null -eq $command -or $command.Source -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($command.Source) -or
+        -not [IO.Path]::IsPathFullyQualified($command.Source)) {
+        throw 'One absolute prerequisite application path is required.'
+    }
+    return $command.Source
+}
+
 function Write-NewJson {
     param([string]$Path, $Value)
     $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
@@ -263,4 +277,4 @@ function Assert-SlotAdmission {
     }
 }
 
-Export-ModuleMember -Function @('New-SlotState','Invoke-SlotStudy','Invoke-SlotBlock','Assert-SlotAdmission','Assert-SlotLimits','Assert-SlotPath','Get-SlotFreeBytes','Write-NewJson','Get-Digest','Get-FileManifest')
+Export-ModuleMember -Function @('Resolve-SlotApplication','New-SlotState','Invoke-SlotStudy','Invoke-SlotBlock','Assert-SlotAdmission','Assert-SlotLimits','Assert-SlotPath','Get-SlotFreeBytes','Write-NewJson','Get-Digest','Get-FileManifest')

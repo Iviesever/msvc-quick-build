@@ -25,8 +25,8 @@ if ($OutputRoot -cne $expectedRoot -or (Test-Path -LiteralPath $OutputRoot)) {
     throw 'New exact allocation-owned temporary directory required; no resume.'
 }
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$git=(Get-Command git -CommandType Application -ErrorAction Stop).Source
-$python=(Get-Command python -CommandType Application -ErrorAction Stop).Source
+$git=Resolve-SlotApplication 'git'
+$python=Resolve-SlotApplication 'python'
 $head=@(& $git -C $repo rev-parse HEAD)
 if ($LASTEXITCODE -ne 0 -or $head.Count -ne 1 -or $head[0] -cne $ReviewedCommit) {
     throw 'Checked-out source differs from reviewed commit.'
