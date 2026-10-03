@@ -110,6 +110,31 @@ class CompileCacheEvidenceContracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             extension.original_program(value)
 
+    def test_save_failure_blocker_requires_nonempty_directory_and_preserved_bytes(self):
+        text = read(extension.TEST)
+        before = 'write(evidence / "05-blocker-before.txt", bytes(blocker));'
+        invoke = 'auto save_failed = invoke("05-save-failed", refused);'
+        after = 'write(evidence / "05-blocker-after.txt", bytes(blocker));'
+        self.assertLess(text.index('write(blocker, blocker_bytes);'), text.index(before))
+        self.assertLess(text.index(before), text.index(invoke))
+        self.assertLess(text.index(invoke), text.index(after))
+        self.assertEqual(2, text.count('fs::is_directory(refused.cache_file) && bytes(blocker) == blocker_bytes'))
+        for check in ('save_failed->record.save_error->code == CompileCacheFileErrorCode::replace_failed',
+                      'save_failed->record.save_error->file == refused.cache_file',
+                      'save_failed->record.save_error->offset == 0',
+                      'save_failed->record.save_error->message == "failed to remove previous cache entry"'):
+            self.assertIn(check, text)
+
+    def test_empty_blocker_and_weakened_save_failure_assertions_refused(self):
+        text = read(extension.TEST)
+        for removed in ('write(blocker, blocker_bytes);',
+                        'save_failed->record.save_error->code == CompileCacheFileErrorCode::replace_failed',
+                        'fs::is_directory(refused.cache_file) && bytes(blocker) == blocker_bytes',
+                        'write(evidence / "05-blocker-after.txt", bytes(blocker));'):
+            self.assertIn(removed, text)
+            with self.subTest(removed=removed), self.assertRaises(ValueError):
+                extension.original_program(text.replace(removed, '', 1))
+
     def test_old_native_assertion_changes_refused(self):
         value = read(extension.TEST).replace('unchanged warm build should reuse the cached object', 'changed old assertion')
         with self.assertRaises(ValueError):

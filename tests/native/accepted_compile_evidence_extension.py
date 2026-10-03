@@ -8,7 +8,7 @@ This is a historical-test view only; it never modifies product or test files.
 import hashlib
 
 TEST = 'cpp/tests/msvc/compiler/incremental_loop_tests.cpp'
-CURRENT = '85e4b996c769dcbf03e65d21ec1a75c2c50a2f69'
+CURRENT = '31546ea5b32ef84cda673cf755a3eb57dd0deabc'
 PRIOR = '3943fa92457f0a0f3e73de1cf110372ad4db6637'
 BEGIN = '// BEGIN MQB_COMPILE_CACHE_EVIDENCE_CASES\n'
 END = '// END MQB_COMPILE_CACHE_EVIDENCE_CASES\n'

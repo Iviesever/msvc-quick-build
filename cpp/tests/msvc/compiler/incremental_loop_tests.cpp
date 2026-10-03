@@ -602,12 +602,28 @@ void native(const msvc::MsvcToolchain& toolchain, process::ProcessRunner& actual
         warning(repaired->result, IncrementalCompileWarningCode::cache_load_failed), "corrupt cache warning retained");
     auto refused = request;
     refused.force_rebuild = true; refused.cache_file = root / "ordinary/out/cache-directory";
-    fs::create_directory(refused.cache_file);
+    // The saver removes the previous path before installing the new entry.
+    // An empty directory is removable, so it does not inject a save failure.
+    require(fs::create_directory(refused.cache_file), "fresh save-failure blocker directory");
+    const auto blocker = refused.cache_file / "KEEP";
+    const std::string blocker_bytes = "nonempty cache blocker must survive the failed save\n";
+    write(blocker, blocker_bytes);
+    require(fs::is_directory(refused.cache_file) && bytes(blocker) == blocker_bytes,
+        "save-failure blocker is nonempty before compilation");
+    write(evidence / "05-blocker-before.txt", bytes(blocker));
     auto save_failed = invoke("05-save-failed", refused);
     require(save_failed && save_failed->result.compiled && save_failed->record.save_error &&
         save_failed->record.state == CompileCacheEvidenceState::save_failed &&
         warning(save_failed->result, IncrementalCompileWarningCode::cache_save_failed),
         "successful compile retains exact entry and typed save failure");
+    require(save_failed->record.save_error->code == CompileCacheFileErrorCode::replace_failed &&
+        save_failed->record.save_error->file == refused.cache_file &&
+        save_failed->record.save_error->offset == 0 &&
+        save_failed->record.save_error->message == "failed to remove previous cache entry",
+        "save failure retains the exact typed replacement error");
+    require(fs::is_directory(refused.cache_file) && bytes(blocker) == blocker_bytes,
+        "failed save preserves the nonempty blocker and its bytes");
+    write(evidence / "05-blocker-after.txt", bytes(blocker));
     write(request.unit.source, "static_assert(false, \"MQB_CACHE_EVIDENCE_EXPECTED_FAILURE\");\n");
     request.force_rebuild = true;
     auto failed = invoke("06-compiler-failure", request);
