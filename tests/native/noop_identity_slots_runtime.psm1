@@ -15,6 +15,34 @@ function Resolve-SlotApplication {
     return $command.Source
 }
 
+function Invoke-SlotPreparation {
+    param([string]$ArtifactPath,[string]$OutputRoot,[string]$RepoRoot,
+          [string]$ReviewedCommit,[string]$AllocationLabel)
+    # This shared preparation-only boundary has no launcher or native invocation.
+    # Tests call THIS function without spoofing a workflow execution admission.
+    $ErrorActionPreference='Stop'
+    if (-not [IO.Path]::IsPathFullyQualified($RepoRoot) -or
+        -not [IO.Path]::IsPathFullyQualified($OutputRoot)) { throw 'Absolute preparation paths required.' }
+    Assert-SlotPath $RepoRoot
+    Assert-SlotPath ([IO.Path]::GetDirectoryName($OutputRoot))
+    $git=Resolve-SlotApplication 'git'
+    $python=Resolve-SlotApplication 'python'
+    $head=@(& $git -C $RepoRoot rev-parse HEAD)
+    if ($LASTEXITCODE -ne 0 -or $head.Count -ne 1 -or $head[0] -cne $ReviewedCommit) {
+        throw 'Checked-out source differs from reviewed commit.'
+    }
+    $dirty=@(& $git -C $RepoRoot status --porcelain --untracked-files=no)
+    if ($LASTEXITCODE -ne 0 -or $dirty.Count) { throw 'Tracked collector source is dirty.' }
+    $tool=Join-Path $RepoRoot 'tests/native/noop_identity_slots.py'
+    & $python -B $tool prepare --archive $ArtifactPath --root $OutputRoot --repo $RepoRoot `
+        --reviewed-commit $ReviewedCommit --allocation $AllocationLabel --output (Join-Path $OutputRoot 'prepared.json')
+    if ($LASTEXITCODE -ne 0) { throw 'Preparation failed; preserve any existing prefix.' }
+    & $python -B $tool native-preflight --root $OutputRoot --repo $RepoRoot --reviewed-commit $ReviewedCommit `
+        --allocation $AllocationLabel --output (Join-Path $OutputRoot 'native-preflight.json')
+    if ($LASTEXITCODE -ne 0) { throw 'Native preflight refused; no measurement started.' }
+    return @{python=$python;tool=$tool;mqb_calls=0;execution_authority=$false}
+}
+
 function Write-NewJson {
     param([string]$Path, $Value)
     $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
@@ -277,4 +305,4 @@ function Assert-SlotAdmission {
     }
 }
 
-Export-ModuleMember -Function @('Resolve-SlotApplication','New-SlotState','Invoke-SlotStudy','Invoke-SlotBlock','Assert-SlotAdmission','Assert-SlotLimits','Assert-SlotPath','Get-SlotFreeBytes','Write-NewJson','Get-Digest','Get-FileManifest')
+Export-ModuleMember -Function @('Resolve-SlotApplication','Invoke-SlotPreparation','New-SlotState','Invoke-SlotStudy','Invoke-SlotBlock','Assert-SlotAdmission','Assert-SlotLimits','Assert-SlotPath','Get-SlotFreeBytes','Write-NewJson','Get-Digest','Get-FileManifest')

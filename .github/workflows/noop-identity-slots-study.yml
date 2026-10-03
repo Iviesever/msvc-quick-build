@@ -10,6 +10,14 @@ on:
         description: 'Separately registered pr232-slot-001; installation is not an allocation'
         required: true
         type: string
+      recovery_id:
+        description: 'Reviewed recovery lineage; not a replacement for the failed first run'
+        required: true
+        type: string
+      permit_comment_id:
+        description: 'Owner permit in issue 198 published after review, before this dispatch'
+        required: true
+        type: string
       execute_reviewed_diagnostic:
         description: 'Explicitly execute the separately reviewed 48-call diagnostic'
         required: true
@@ -28,12 +36,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - name: Preserve request and admit only the explicit first reviewed dispatch
+      - name: Preserve request and require an explicit recovery claim
         shell: python {0}
         env:
           REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
           ALLOCATION: ${{ inputs.allocation }}
           EXECUTE_REVIEWED: ${{ inputs.execute_reviewed_diagnostic }}
+          RECOVERY_ID: ${{ inputs.recovery_id }}
+          PERMIT_COMMENT_ID: ${{ inputs.permit_comment_id }}
         run: |
           import json, os, pathlib, re
           out = pathlib.Path('slot-execution-out')
@@ -41,7 +51,8 @@ jobs:
           keys = ('GITHUB_ACTIONS', 'GITHUB_REPOSITORY', 'GITHUB_EVENT_NAME', 'GITHUB_REF',
                   'GITHUB_SHA', 'GITHUB_WORKFLOW_SHA', 'GITHUB_WORKFLOW_REF', 'GITHUB_RUN_ID',
                   'GITHUB_RUN_NUMBER', 'GITHUB_RUN_ATTEMPT', 'RUNNER_ENVIRONMENT', 'RUNNER_OS',
-                  'RUNNER_ARCH', 'RUNNER_TEMP', 'REVIEWED_COMMIT', 'ALLOCATION', 'EXECUTE_REVIEWED')
+                  'RUNNER_ARCH', 'RUNNER_TEMP', 'REVIEWED_COMMIT', 'ALLOCATION', 'EXECUTE_REVIEWED',
+                  'RECOVERY_ID', 'PERMIT_COMMENT_ID')
           context = {key: os.environ.get(key) for key in keys}
           with (out/'request.json').open('x', encoding='utf-8') as stream:
               json.dump(context, stream, indent=2)
@@ -50,7 +61,9 @@ jobs:
                   and context['GITHUB_EVENT_NAME'] == 'workflow_dispatch'
                   and context['GITHUB_REF'] == 'refs/heads/main'
                   and context['GITHUB_WORKFLOW_REF'] == 'Iviesever/msvc-quick-build/.github/workflows/noop-identity-slots-study.yml@refs/heads/main'
-                  and context['GITHUB_RUN_NUMBER'] == context['GITHUB_RUN_ATTEMPT'] == '1'
+                  and context['GITHUB_RUN_NUMBER'] == '2' and context['GITHUB_RUN_ATTEMPT'] == '1'
+                  and context['RECOVERY_ID'] == 'slot001-preparation-recovery-001'
+                  and re.fullmatch('[1-9][0-9]*', context['PERMIT_COMMENT_ID'] or '')
                   and re.fullmatch('[1-9][0-9]*', context['GITHUB_RUN_ID'] or '')
                   and context['RUNNER_ENVIRONMENT'] == 'github-hosted'
                   and context['RUNNER_OS'] == 'Windows' and context['RUNNER_ARCH'] == 'X64'
@@ -59,7 +72,7 @@ jobs:
                   and re.fullmatch('[0-9a-f]{40}', context['REVIEWED_COMMIT'] or '')
                   and context['GITHUB_SHA'] == context['GITHUB_WORKFLOW_SHA'] == context['REVIEWED_COMMIT']
                   and context['RUNNER_TEMP'] and pathlib.Path(context['RUNNER_TEMP']).is_absolute()):
-              raise SystemExit('REFUSED: source/host/explicit allocation or first attempt differs; do not retry.')
+              raise SystemExit('REFUSED: source/host/recovery claim differs; do not retry.')
           study = pathlib.Path(context['RUNNER_TEMP']) / ('pr232-slot-001-'+context['GITHUB_RUN_ID']+'-1')
           if study.exists() or study.is_symlink():
               raise SystemExit('REFUSED: existing study directory; no overwrite or resume.')
@@ -82,9 +95,23 @@ jobs:
           path: slot-execution-out/download
           skip-decompress: true
           digest-mismatch: error
+      - name: Download the exact consumed preparation-failure prefix
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: '11203257232'
+          repository: Iviesever/msvc-quick-build
+          run-id: '36948961360'
+          github-token: ${{ github.token }}
+          path: slot-execution-out/failure-download
+          skip-decompress: true
+          digest-mismatch: error
       - name: Invoke the existing pinned entry once and preserve returned failures
         shell: python {0}
         timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVERY_ID: ${{ inputs.recovery_id }}
+          PERMIT_COMMENT_ID: ${{ inputs.permit_comment_id }}
         run: |
           import json, os, pathlib, shutil, subprocess, sys
           out = pathlib.Path('slot-execution-out').absolute()
@@ -124,6 +151,7 @@ jobs:
                   stream.write(workflow.read_bytes())
               sys.path.insert(0, str(repo/'tests/native'))
               import noop_identity_slots as slots
+              import noop_identity_slots_recovery as recovery
               files = list((out/'download').rglob('*'))
               if any(path.is_symlink() for path in files):
                   raise ValueError('Aliased download refused.')
@@ -132,14 +160,25 @@ jobs:
                   raise ValueError('Exactly one original ZIP is required.')
               # Reuse the unchanged full size/SHA256/CRC/run/HOLD/A/B identity validator.
               slots.check_archive(files[0])
+              failed = list((out/'failure-download').rglob('*'))
+              if any(path.is_symlink() for path in failed):
+                  raise ValueError('Aliased failed evidence refused.')
+              failed = [path for path in failed if path.is_file()]
+              if len(failed) != 1 or failed[0].suffix != '.zip':
+                  raise ValueError('Exactly one original failure ZIP is required.')
+              receipt = recovery.authorize(context, repo, read_git('rev-parse', 'HEAD^{tree}'),
+                  failed[0], out, os.environ.get('GH_TOKEN', ''))
+              result['recovery'] = receipt
               command = [pwsh, '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
                   str(repo/'tests/native/run_noop_identity_slots.ps1'),
                   '-ArtifactPath', str(files[0]), '-OutputRoot', str(study),
                   '-ReviewedCommit', context['REVIEWED_COMMIT'], '-AllocationLabel', 'pr232-slot-001',
                   '-ExecuteReviewedDiagnostic']
               env = dict(os.environ, MQB_SLOT_DISPOSABLE='1', MQB_SLOT_ALLOCATION='pr232-slot-001')
+              env.pop('GH_TOKEN', None)
+              env.pop('GITHUB_TOKEN', None)
               write_new(out/'entry-intent.json', dict(argv=command, intent_only=True,
-                  maximum_mqb_calls=48, original_decision='HOLD', may_clear_hold=False))
+                  maximum_mqb_calls=48, recovery=receipt, original_decision='HOLD', may_clear_hold=False))
               with (out/'entry.stdout').open('xb') as stdout, (out/'entry.stderr').open('xb') as stderr:
                   result['entry_requested'] = True
                   child = subprocess.run(command, cwd=repo, stdout=stdout, stderr=stderr, env=env, check=False)

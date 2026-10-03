@@ -25,21 +25,9 @@ if ($OutputRoot -cne $expectedRoot -or (Test-Path -LiteralPath $OutputRoot)) {
     throw 'New exact allocation-owned temporary directory required; no resume.'
 }
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$git=Resolve-SlotApplication 'git'
-$python=Resolve-SlotApplication 'python'
-$head=@(& $git -C $repo rev-parse HEAD)
-if ($LASTEXITCODE -ne 0 -or $head.Count -ne 1 -or $head[0] -cne $ReviewedCommit) {
-    throw 'Checked-out source differs from reviewed commit.'
-}
-$dirty=@(& $git -C $repo status --porcelain --untracked-files=no)
-if ($LASTEXITCODE -ne 0 -or $dirty.Count) { throw 'Tracked collector source is dirty.' }
-$tool=Join-Path $PSScriptRoot 'noop_identity_slots.py'
-& $python -B $tool prepare --archive $ArtifactPath --root $OutputRoot --repo $repo `
-    --reviewed-commit $ReviewedCommit --allocation $AllocationLabel --output (Join-Path $OutputRoot 'prepared.json')
-if ($LASTEXITCODE -ne 0) { throw 'Preparation failed; preserve any existing prefix.' }
-& $python -B $tool native-preflight --root $OutputRoot --repo $repo --reviewed-commit $ReviewedCommit `
-    --allocation $AllocationLabel --output (Join-Path $OutputRoot 'native-preflight.json')
-if ($LASTEXITCODE -ne 0) { throw 'Native preflight refused; no measurement started.' }
+$prepared=Invoke-SlotPreparation -ArtifactPath $ArtifactPath -OutputRoot $OutputRoot -RepoRoot $repo `
+    -ReviewedCommit $ReviewedCommit -AllocationLabel $AllocationLabel
+$python=$prepared.python; $tool=$prepared.tool
 $plan=Get-Content -LiteralPath (Join-Path $OutputRoot 'plan.json') -Raw | ConvertFrom-Json
 $hostRecord=@{plan_sha256=Get-Digest (Join-Path $OutputRoot 'plan.json');reviewed_commit=$ReviewedCommit
     allocation_label=$AllocationLabel;qpc_frequency=[Diagnostics.Stopwatch]::Frequency
