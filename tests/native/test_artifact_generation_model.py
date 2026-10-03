@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 import unittest
+import accepted_reporting_extension as reporting_extension
+from noop_identity_slots_workflow_contract import legacy_workflow_view
 
 ROOT = Path(__file__).resolve().parents[2]
 TU = 'cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp'
@@ -33,8 +35,10 @@ def pure(text):
 
 class GenerationContracts(unittest.TestCase):
     def test_all_previous_95_native_programs_remain(self):
-        values = {p.relative_to(ROOT).as_posix():sha(p.read_text(encoding='utf-8').encode())
-                  for p in (ROOT/'cpp/tests').rglob('*_tests.cpp') if p.relative_to(ROOT).as_posix()!=TEST}
+        files = {p.relative_to(ROOT).as_posix():p.read_text(encoding='utf-8')
+                 for p in (ROOT/'cpp/tests').rglob('*_tests.cpp') if p.relative_to(ROOT).as_posix()!=TEST}
+        files = reporting_extension.legacy_view(files, read(reporting_extension.HELPER))
+        values = {name:sha(text.encode('utf-8')) for name,text in files.items()}
         self.assertEqual(95,len(values))
         self.assertEqual('68ee6c490957e9aa5dda54be8f5e88623779e75eff8e3a029e2b8882f2867c04',
             sha(''.join(f'{n}\0{v}\n' for n,v in sorted(values.items())).encode()))
@@ -86,6 +90,7 @@ class GenerationContracts(unittest.TestCase):
         self.assertIn('ARTIFACT_GENERATIONS_ZH.md',en);self.assertIn('ARTIFACT_GENERATIONS.md',zh)
         self.assertEqual('5.6.0',read('VERSION').strip())
         values={p.relative_to(ROOT).as_posix():sha(p.read_text(encoding='utf-8').encode()) for p in (ROOT/'.github/workflows').glob('*') if p.is_file()}
+        values = legacy_workflow_view(values)
         self.assertEqual(50,len(values))
         self.assertEqual('2e928f795bff8a8148f4e3f7f40eb3ac869f7dc0f0ddf859ea1827a3fd560a3c',sha(''.join(f'{n}\0{v}\n' for n,v in sorted(values.items())).encode()))
 

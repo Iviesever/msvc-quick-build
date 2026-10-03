@@ -141,7 +141,7 @@ foreach ($leaf in $appLeafFiles.Keys) {
 }
 Assert-LeafLayout -Root (Join-Path $testsRoot 'app') -LeafFiles ([ordered]@{
     'cli' = @('build_policy_cli_tests.cpp', 'cli_argument_tests.cpp', 'mqb_native_msvc_cli_e2e_tests.cpp')
-    'diagnostics' = @('reporting_tests.cpp')
+    'diagnostics' = @('reporting_tests.cpp', 'storage_report_format_cases.hpp')
 })
 
 Assert-LeafLayout -Root (Join-Path $srcRoot 'config') -LeafFiles ([ordered]@{

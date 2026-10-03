@@ -70,12 +70,20 @@ jobs:
               data = response.read()
           (root/'original-cumulative.zip').write_bytes(data)
           assert hashlib.sha256(data).hexdigest() == 'd70a0478c8b060e1da1b64e1361ec9ee69978277eed3d2c671149cff372c4530'
+          # Fixed preparation-only regression input. Never execute contained MQB images.
+          request = urllib.request.Request('https://api.github.com/repos/Iviesever/msvc-quick-build/actions/artifacts/11203257232/zip',
+              headers={'Authorization': 'Bearer '+os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+          with urllib.request.build_opener(Redirect()).open(request, timeout=60) as response:
+              failed = response.read(11226369)
+          (root/'slot001-failed-original.zip').write_bytes(failed)
+          assert len(failed) == 11226368 and hashlib.sha256(failed).hexdigest() == '70fba5cb2fe61f196614e81fee9c34229e6af30caea25ef22d91e92090625a3a'
       - name: Python lifecycle, injected failures and byte-compatible 1446-row replay
         shell: python {0}
         run: |
           import json, os, pathlib, subprocess, sys
           root = pathlib.Path('journal-checks')
-          env = dict(os.environ, MQB_JOURNAL_ORIGINAL_ZIP=str((root/'original-cumulative.zip').resolve()))
+          env = dict(os.environ, MQB_JOURNAL_ORIGINAL_ZIP=str((root/'original-cumulative.zip').resolve()),
+              MQB_SLOT_FAILED_ZIP=str((root/'slot001-failed-original.zip').resolve()))
           commands = [[sys.executable, 'tests/native/'+name, '--self-test'] for name in
               ('compare_reporting.py','compare_archive.py','compare_release_cumulative.py')]
           commands.append([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/native', '-p', 'test_*.py', '-v'])
