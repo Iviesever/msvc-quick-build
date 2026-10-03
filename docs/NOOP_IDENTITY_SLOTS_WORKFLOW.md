@@ -1,5 +1,15 @@
 # #819 身份／槽位诊断：独立手动工作流
 
+## 当前状态：首次协议已消耗，恢复仍需另行许可
+
+slot-001 / run36948961360 / attempt1已在准备前失败。以下“唯一一次手动执行”描述
+保留的是已执行的首次协议，不是当前可重新使用的触发参数。
+现有文件已修订为失败证据绑定的恢复准入，准确规则及准备链测试见
+[NOOP_IDENTITY_SLOTS_RECOVERY.md](NOOP_IDENTITY_SLOTS_RECOVERY.md)。
+本次工具修订没有发布恢复许可，也没有触发新运行。不要重跑原slot-001。
+
+## 历史首次协议与不变的采样边界
+
 本页描述 `.github/workflows/noop-identity-slots-study.yml` 的接线与审阅边界。
 入口实现及捕获限制见 [NOOP_IDENTITY_SLOTS.md](NOOP_IDENTITY_SLOTS.md)。
 工作流安装、契约测试和合并都不是执行分配。原 #232／#819 仍为 HOLD。

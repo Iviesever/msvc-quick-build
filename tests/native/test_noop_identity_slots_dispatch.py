@@ -16,6 +16,7 @@ import unittest
 from unittest.mock import patch
 
 import noop_identity_slots as slots
+import noop_identity_slots_recovery as recovery
 from test_noop_causal_dispatch import inline_blocks
 import noop_identity_slots_workflow_contract as contract
 
@@ -29,9 +30,10 @@ def valid_context(temp):
         GITHUB_EVENT_NAME='workflow_dispatch', GITHUB_REF='refs/heads/main', GITHUB_SHA='a'*40,
         GITHUB_WORKFLOW_SHA='a'*40,
         GITHUB_WORKFLOW_REF='Iviesever/msvc-quick-build/'+contract.WORKFLOW+'@refs/heads/main',
-        GITHUB_RUN_ID='123', GITHUB_RUN_NUMBER='1', GITHUB_RUN_ATTEMPT='1',
+        GITHUB_RUN_ID='123', GITHUB_RUN_NUMBER='2', GITHUB_RUN_ATTEMPT='1',
         RUNNER_ENVIRONMENT='github-hosted', RUNNER_OS='Windows', RUNNER_ARCH='X64',
-        RUNNER_TEMP=str(temp), REVIEWED_COMMIT='a'*40, ALLOCATION='pr232-slot-001', EXECUTE_REVIEWED='true')
+        RUNNER_TEMP=str(temp), REVIEWED_COMMIT='a'*40, ALLOCATION='pr232-slot-001', EXECUTE_REVIEWED='true',
+        RECOVERY_ID='slot001-preparation-recovery-001', PERMIT_COMMENT_ID='123')
 
 
 @contextlib.contextmanager
@@ -68,12 +70,13 @@ def guard_case(change=None, missing=None):
 def invoke_case(*, exit_code=0, source='a'*40, dirty='', download_count=1,
                 archive_error=None, launch_error=None, audit_error=None,
                 saved_mismatch=False, wrong_provenance=False, missing_pwsh=False,
-                save_error=False, mutate_context=False, existing_intent=False):
+                save_error=False, mutate_context=False, existing_intent=False, recovery_error=None):
     """Mock only external archive/process seams; exercise real wrapper IO and control flow."""
     with workspace() as (root, context):
         execute(GUARD)
         out = root/'slot-execution-out'; download = out/'download'; download.mkdir()
         for i in range(download_count): (download/f'{i}.zip').write_bytes(b'SYNTHETIC ORIGINAL')
+        failed=out/'failure-download'; failed.mkdir(); (failed/'original.zip').write_bytes(b'SYNTHETIC FAILURE')
         repo = root/'checkout'; workflow = repo/contract.WORKFLOW
         workflow.parent.mkdir(parents=True); workflow.write_bytes(WORKFLOW.read_bytes())
         (repo/'tests/native').mkdir(parents=True)
@@ -102,6 +105,7 @@ def invoke_case(*, exit_code=0, source='a'*40, dirty='', download_count=1,
             return subprocess.CompletedProcess(argv, exit_code)
         def git(argv, **kwargs):
             if argv[-2:] == ['rev-parse', 'HEAD']: return source+'\n'
+            if argv[-2:] == ['rev-parse', 'HEAD^{tree}']: return 'b'*40+'\n'
             if argv[-3:] == ['status', '--porcelain', '--untracked-files=no']: return dirty
             raise AssertionError('Unexpected Git query')
         original_open = Path.open
@@ -114,6 +118,7 @@ def invoke_case(*, exit_code=0, source='a'*40, dirty='', download_count=1,
         with patch('subprocess.run', side_effect=run), patch('subprocess.check_output', side_effect=git), \
              patch('shutil.which', side_effect=lambda name: None if missing_pwsh and name == 'pwsh' else '/synthetic/'+name), \
              patch.object(slots, 'check_archive', side_effect=archive_error) as checked, \
+             patch.object(recovery,'authorize', side_effect=recovery_error, return_value={'synthetic':True}), \
              patch.object(slots, 'audit_native', side_effect=audit_error, return_value=good), \
              patch.object(Path, 'open', opening), contextlib.redirect_stderr(stderr):
             try: execute(INVOKE)
@@ -150,7 +155,8 @@ class DispatchAdmission(unittest.TestCase):
                 self.assertIsNotNone(error); self.assertFalse(admitted)
 
     def test_repeated_run_attempt_or_different_allocation_is_refused(self):
-        for key, value in [('GITHUB_RUN_NUMBER','2'), ('GITHUB_RUN_NUMBER','01'),
+        for key, value in [('GITHUB_RUN_NUMBER','1'), ('GITHUB_RUN_NUMBER','3'), ('GITHUB_RUN_NUMBER','02'),
+                           ('RECOVERY_ID','other'), ('PERMIT_COMMENT_ID',''),
                            ('GITHUB_RUN_ATTEMPT','2'), ('GITHUB_RUN_ID','0'), ('GITHUB_RUN_ID','1\n'),
                            ('ALLOCATION','pr232-slot-002'), ('ALLOCATION','pr232-slot-000')]:
             with self.subTest(key=key, value=value): self.assertIsNotNone(guard_case({key:value})[1])
@@ -220,7 +226,7 @@ class DispatchInvocation(unittest.TestCase):
     def test_preparation_failures_never_request_the_entry(self):
         for options in (dict(source='b'*40), dict(dirty=' M changed'), dict(download_count=0),
                         dict(download_count=2), dict(archive_error=ValueError('wrong archive SHA')),
-                        dict(missing_pwsh=True), dict(mutate_context=True)):
+                        dict(missing_pwsh=True), dict(mutate_context=True), dict(recovery_error=ValueError('permit rejected'))):
             with self.subTest(options=str(options)):
                 value = invoke_case(**options)
                 self.assertIsNotNone(value['error']); self.assertEqual([], value['calls'])
@@ -260,7 +266,10 @@ class WorkflowStructure(unittest.TestCase):
         self.assertIn("run-id: '36682255779'", text)
         self.assertIn('          skip-decompress: true', text)
         self.assertIn('          digest-mismatch: error', text)
-        self.assertEqual(3, len(re.findall(r'uses: actions/[a-z-]+@[0-9a-f]{40}', text)))
+        self.assertEqual(4, len(re.findall(r'uses: actions/[a-z-]+@[0-9a-f]{40}', text)))
+        self.assertIn("artifact-ids: '11203257232'",text)
+        self.assertIn("run-id: '36948961360'",text)
+        self.assertLess(INVOKE.index('receipt = recovery.authorize'),INVOKE.index('child = subprocess.run'))
         self.assertIn('          persist-credentials: false', text)
         self.assertIn('slots.check_archive(files[0])', INVOKE)
 

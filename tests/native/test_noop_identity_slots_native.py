@@ -103,7 +103,7 @@ class NativeEntryContracts(unittest.TestCase):
                     d.b.digest(path.read_text(encoding='utf-8').encode()))
             else:
                 self.assertNotIn('run_noop_identity_slots.ps1',path.read_text())
-        self.assertLess(entry.index('Assert-SlotAdmission'),entry.index('& $python -B $tool prepare'))
+        self.assertLess(entry.index('Assert-SlotAdmission'),entry.index('$prepared=Invoke-SlotPreparation'))
         self.assertIn('Export-ModuleMember -Function @(\'Invoke-PinnedSlotCapture\')',capture)
 
     def test_powershell_capture_with_real_harmless_children(self):

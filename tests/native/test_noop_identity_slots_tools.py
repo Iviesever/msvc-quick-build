@@ -16,17 +16,19 @@ ROOT = Path(__file__).resolve().parents[2]
 class PrerequisiteDiscoveryTests(unittest.TestCase):
     def test_entry_uses_scalar_resolver_for_both_prerequisites(self):
         entry = (ROOT/'tests/native/run_noop_identity_slots.ps1').read_text(encoding='utf-8')
+        runtime = (ROOT/'tests/native/noop_identity_slots_runtime.psm1').read_text(encoding='utf-8')
+        preparation = runtime.split('function Invoke-SlotPreparation {',1)[1].split('function Write-NewJson {',1)[0]
         for name in ('git', 'python'):
-            self.assertEqual(1, entry.count(f"${name}=Resolve-SlotApplication '{name}'"))
-            self.assertNotIn(f'${name}=(Get-Command', entry)
-        self.assertLess(entry.index('Assert-SlotAdmission'), entry.index("$git=Resolve-SlotApplication"))
-        self.assertLess(entry.index("$python=Resolve-SlotApplication"), entry.index('& $git -C $repo rev-parse HEAD'))
+            self.assertEqual(1, preparation.count(f"${name}=Resolve-SlotApplication '{name}'"))
+            self.assertNotIn(f'${name}=(Get-Command', entry + preparation)
+        self.assertLess(entry.index('Assert-SlotAdmission'), entry.index('$prepared=Invoke-SlotPreparation'))
+        self.assertLess(preparation.index("$python=Resolve-SlotApplication"), preparation.index('& $git -C $RepoRoot rev-parse HEAD'))
 
     def test_exact_entry_pins_and_consumed_workflow_remain_bound(self):
         for name, expected in pins.ENTRY_PINS.items():
             content = (ROOT/name).read_text(encoding='utf-8').encode()
             self.assertEqual(expected, hashlib.sha256(content).hexdigest(), name)
-        self.assertEqual('73425e14a4e523deaef53d47aa2fcebf842ddb606cfe7f4eb210413c6c388e0f',
+        self.assertEqual(pins.WORKFLOW_SHA256,
                          hashlib.sha256((ROOT/pins.WORKFLOW).read_text(encoding='utf-8').encode()).hexdigest())
 
     def test_real_powershell_multiple_path_matches_and_selected_children(self):
