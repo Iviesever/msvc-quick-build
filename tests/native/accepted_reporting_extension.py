@@ -4,8 +4,11 @@ The pre-236 whole-program fingerprints remain unchanged. Validate BOTH complete
 current files, reverse exactly two added lines, then validate the whole old file.
 This is not a wildcard exclusion and cannot admit altered old or new assertions.
 Source anchor: main b5a8b9543f8cb44047a9e9b2db989d5e21361f43 / PR236.
+The independent compile-evidence extension is checked by its own exact inverse
+before historical whole-program fingerprints are evaluated.
 """
 import hashlib
+import accepted_compile_evidence_extension as compile_evidence_extension
 
 REPORT = 'cpp/tests/app/diagnostics/reporting_tests.cpp'
 HELPER = 'cpp/tests/app/diagnostics/storage_report_format_cases.hpp'
@@ -35,4 +38,4 @@ def legacy_view(values, helper):
         raise ValueError('original reporting assertions changed')
     result=dict(values)
     result[REPORT]=text.encode('utf-8') if binary else text
-    return result
+    return compile_evidence_extension.legacy_view(result)
