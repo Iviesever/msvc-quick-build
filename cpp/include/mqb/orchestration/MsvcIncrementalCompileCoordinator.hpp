@@ -51,6 +51,9 @@ struct IncrementalCompileWarning {
 enum class IncrementalCompileErrorCode {
     planning_failed,
     compile_failed,
+    // Recorded calls only: refuse an inconsistent internal success instead of
+    // fabricating a cache entry or repeating any filesystem/compiler operation.
+    cache_evidence_unavailable,
 };
 
 struct IncrementalCompileError {
@@ -69,6 +72,33 @@ struct IncrementalCompileInspection {
 struct IncrementalCompileResult : IncrementalCompileInspection {
     bool compiled{false};
     std::optional<process::ProcessResult> process;
+};
+
+// The state belongs to this invocation, not to the current contents of a path.
+// Reuse does not save; save_failed still retains the entry offered to save().
+enum class CompileCacheEvidenceState { reused, saved, save_failed };
+
+struct CompileCacheEvidence {
+    IncrementalCompileRequest request;
+    // Coordinator context used for validation and scan sealing. An executor
+    // supplied by the caller can have a different toolchain; cache_entry retains
+    // that executor's actual entry without normalizing the discrepancy away.
+    // Environment values remain in memory and must not be dumped as evidence.
+    msvc::MsvcToolchain inspection_toolchain;
+    CompileCacheEntry cache_entry;
+    CompileCacheEvidenceState state{CompileCacheEvidenceState::reused};
+    std::optional<CompileCacheFileError> save_error;
+
+    static constexpr bool exact_cache_entry_captured = true;
+    static constexpr bool producer_identity_verified = false;
+    static constexpr bool current_content_verified = false;
+    static constexpr bool complete_producer_inventory = false;
+    static constexpr bool deletion_authorized = false;
+};
+
+struct RecordedIncrementalCompileResult {
+    IncrementalCompileResult result;
+    CompileCacheEvidence record;
 };
 
 class MsvcIncrementalCompileCoordinator {
@@ -92,8 +122,15 @@ public:
     [[nodiscard]] std::expected<IncrementalCompileResult, IncrementalCompileError>
     run(const IncrementalCompileRequest& request) const;
 
+    // Explicit opt-in. Move the final accepted/sealed cache value from this
+    // invocation; never reload a path, rebuild a signature or compile twice.
+    // Failure returns the original typed error, with no public success record.
+    [[nodiscard]] std::expected<RecordedIncrementalCompileResult, IncrementalCompileError>
+    run_recorded(const IncrementalCompileRequest& request) const;
+
 private:
     friend class detail::TargetCompileWave;
+    struct CacheCapture;
 
     // Only run() and the invocation-owned target wave may consume a decision.
     // Public inspect() remains diagnostic data, not a reusable execution ticket.
@@ -101,6 +138,18 @@ private:
     execute_inspected(
         const IncrementalCompileRequest& request,
         IncrementalCompileInspection inspection) const;
+
+    // Compile-time opt-in: the default instantiations contain no cache capture
+    // or unconditional copies of request, environment, or cache entry vectors.
+    template<bool Capture>
+    [[nodiscard]] std::expected<IncrementalCompileInspection, IncrementalCompileError>
+    inspect_impl(const IncrementalCompileRequest& request, CacheCapture* capture) const;
+
+    template<bool Capture>
+    [[nodiscard]] std::expected<IncrementalCompileResult, IncrementalCompileError>
+    execute_inspected_impl(const IncrementalCompileRequest& request,
+                           IncrementalCompileInspection inspection,
+                           CacheCapture* capture) const;
 
     const msvc::MsvcToolchain& toolchain_;
     msvc::MsvcCompileExecutor& executor_;

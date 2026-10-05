@@ -176,8 +176,21 @@ void seal_module_scan_evidence(
 
 } // namespace
 
+struct MsvcIncrementalCompileCoordinator::CacheCapture {
+    std::optional<CompileCacheEntry> entry;
+    CompileCacheEvidenceState state{CompileCacheEvidenceState::reused};
+    std::optional<CompileCacheFileError> save_error;
+};
+
 std::expected<IncrementalCompileInspection, IncrementalCompileError>
 MsvcIncrementalCompileCoordinator::inspect(const IncrementalCompileRequest& request) const {
+    return inspect_impl<false>(request, nullptr);
+}
+
+template<bool Capture>
+std::expected<IncrementalCompileInspection, IncrementalCompileError>
+MsvcIncrementalCompileCoordinator::inspect_impl(
+    const IncrementalCompileRequest& request, CacheCapture* capture) const {
     mqb::performance::ScopedWork evidence{
         mqb::performance::WorkKind::compile_inspection};
     mqb::performance::ScopedFilesystemDomain filesystem_domain{
@@ -266,6 +279,11 @@ MsvcIncrementalCompileCoordinator::inspect(const IncrementalCompileRequest& requ
         // A reusable validation is already the final no-op decision. Keep the
         // generic planner off the warm path exactly as normal execution does.
         if (result.validation.reusable()) {
+            if constexpr (Capture) {
+                // Preserve the exact value accepted by BOTH freshness checks.
+                // No cache reread and no copy into the default inspection API.
+                capture->entry = std::move(cached_entry);
+            }
             return result;
         }
     }
@@ -323,6 +341,15 @@ std::expected<IncrementalCompileResult, IncrementalCompileError>
 MsvcIncrementalCompileCoordinator::execute_inspected(
     const IncrementalCompileRequest& request,
     IncrementalCompileInspection inspection) const {
+    return execute_inspected_impl<false>(request, std::move(inspection), nullptr);
+}
+
+template<bool Capture>
+std::expected<IncrementalCompileResult, IncrementalCompileError>
+MsvcIncrementalCompileCoordinator::execute_inspected_impl(
+    const IncrementalCompileRequest& request,
+    IncrementalCompileInspection inspection,
+    CacheCapture* capture) const {
     IncrementalCompileResult result;
     static_cast<IncrementalCompileInspection&>(result) = std::move(inspection);
 
@@ -360,7 +387,43 @@ MsvcIncrementalCompileCoordinator::execute_inspected(
         });
     }
 
+    if constexpr (Capture) {
+        // Move only AFTER sealing and the original persistence attempt. A save
+        // failure is retained as typed evidence, never upgraded to durability.
+        capture->state = saved_cache ? CompileCacheEvidenceState::saved
+                                    : CompileCacheEvidenceState::save_failed;
+        if (!saved_cache) capture->save_error = std::move(saved_cache.error());
+        capture->entry = std::move(executed->cache_entry);
+    }
     return result;
+}
+
+std::expected<RecordedIncrementalCompileResult, IncrementalCompileError>
+MsvcIncrementalCompileCoordinator::run_recorded(const IncrementalCompileRequest& request) const {
+    // Only this opt-in entry allocates owning request/toolchain copies.
+    auto captured_request = request;
+    auto captured_toolchain = toolchain_;
+    CacheCapture capture;
+    auto inspected = inspect_impl<true>(request, &capture);
+    if (!inspected) return std::unexpected(std::move(inspected.error()));
+    auto completed = execute_inspected_impl<true>(request, std::move(*inspected), &capture);
+    if (!completed) return std::unexpected(std::move(completed.error()));
+    if (!capture.entry) {
+        return std::unexpected(IncrementalCompileError{
+            .code = IncrementalCompileErrorCode::cache_evidence_unavailable,
+            .message = "successful compile decision did not expose its cache entry",
+        });
+    }
+    return RecordedIncrementalCompileResult{
+        .result = std::move(*completed),
+        .record = CompileCacheEvidence{
+            .request = std::move(captured_request),
+            .inspection_toolchain = std::move(captured_toolchain),
+            .cache_entry = std::move(*capture.entry),
+            .state = capture.state,
+            .save_error = std::move(capture.save_error),
+        },
+    };
 }
 
 } // namespace mqb::orchestration
