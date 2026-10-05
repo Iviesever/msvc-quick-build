@@ -179,10 +179,12 @@ make_compile_request(const IncrementalPchRequest& request) {
     };
 }
 
+template<typename Inspect>
 [[nodiscard]] std::expected<PchInspectionState, IncrementalPchError>
-inspect_pch(
+inspect_pch_impl(
     const IncrementalPchRequest& request,
-    MsvcIncrementalCompileCoordinator& compile_coordinator) {
+    MsvcIncrementalCompileCoordinator& compile_coordinator,
+    Inspect&& inspect_compile) {
     auto compile_request = make_compile_request(request);
     if (!compile_request) {
         return std::unexpected(compile_request.error());
@@ -192,7 +194,7 @@ inspect_pch(
     state.inspection.creator_source_materialization_required =
         !creator_source_is_current(request.artifacts.source);
 
-    auto compile = compile_coordinator.inspect(*compile_request);
+    auto compile = inspect_compile(*compile_request);
     if (!compile) {
         return std::unexpected(compile_failure(
             "failed to inspect precompiled-header creator compilation",
@@ -227,6 +229,13 @@ inspect_pch(
     return state;
 }
 
+[[nodiscard]] std::expected<PchInspectionState, IncrementalPchError>
+inspect_pch(const IncrementalPchRequest& request,
+            MsvcIncrementalCompileCoordinator& compile_coordinator) {
+    return inspect_pch_impl(request, compile_coordinator,
+        [&](const IncrementalCompileRequest& creator) { return compile_coordinator.inspect(creator); });
+}
+
 [[nodiscard]] IncrementalCompileResult result_from_inspection(
     const IncrementalCompileInspection& inspection) {
     IncrementalCompileResult result;
@@ -247,7 +256,7 @@ MsvcIncrementalPchCoordinator::inspect(const IncrementalPchRequest& request) con
 
 std::expected<IncrementalPchResult, IncrementalPchError>
 MsvcIncrementalPchCoordinator::run(const IncrementalPchRequest& request) const {
-    return run_impl(request, nullptr);
+    return run_impl<false>(request, nullptr, nullptr);
 }
 
 std::expected<RecordedPchResult, IncrementalPchError>
@@ -255,32 +264,57 @@ MsvcIncrementalPchCoordinator::run_recorded(
     const IncrementalPchRequest& request,
     std::optional<ArtifactGenerationLabel> caller_label) const {
     std::optional<PchArtifactRecord> record;
-    auto result = run_impl(request, &record);
+    std::optional<CompileCacheEvidence> cache_evidence;
+    auto result = run_impl<true>(request, &record, &cache_evidence);
     if (!result) return std::unexpected(std::move(result.error()));
-    if (!record) return std::unexpected(failure(
+    if (!record || !cache_evidence) return std::unexpected(failure(
         IncrementalPchErrorCode::compile_failed, "successful PCH completion record unavailable"));
     record->caller_label = std::move(caller_label);
-    return RecordedPchResult{std::move(*result), std::move(*record)};
+    return RecordedPchResult{std::move(*result), std::move(*record), std::move(*cache_evidence)};
 }
 
+template<bool Capture>
 std::expected<IncrementalPchResult, IncrementalPchError>
 MsvcIncrementalPchCoordinator::run_impl(
-    const IncrementalPchRequest& request, std::optional<PchArtifactRecord>* record) const {
-    auto inspected = inspect_pch(request, compile_coordinator_);
+    const IncrementalPchRequest& request, std::optional<PchArtifactRecord>* record,
+    std::optional<CompileCacheEvidence>* cache_evidence) const {
+    auto inspected = [&]() {
+        if constexpr (Capture) {
+            return inspect_pch_impl(request, compile_coordinator_,
+                [&](const IncrementalCompileRequest& creator) {
+                    return compile_coordinator_.inspect_for_pch_record(creator, *cache_evidence);
+                });
+        } else {
+            return inspect_pch(request, compile_coordinator_);
+        }
+    }();
     if (!inspected) return std::unexpected(inspected.error());
 
-    auto complete = [&](IncrementalCompileResult compile) {
+    auto complete = [&](IncrementalCompileResult compile)
+        -> std::expected<IncrementalPchResult, IncrementalPchError> {
+        if constexpr (Capture) {
+            if (!*cache_evidence) return std::unexpected(failure(
+                IncrementalPchErrorCode::compile_failed, "same-invocation PCH cache evidence unavailable"));
+        }
         if (record) {
             // Cache save status is part of the lower layer's typed result. Do
             // not inspect text or reread the file to invent a stronger result.
             const bool save_failed = std::any_of(compile.warnings.begin(), compile.warnings.end(),
                 [](const auto& warning) { return warning.code == IncrementalCompileWarningCode::cache_save_failed; });
+            auto cache_state = !compile.compiled ? ArtifactCacheState::reused :
+                save_failed ? ArtifactCacheState::save_failed : ArtifactCacheState::saved;
+            if constexpr (Capture) {
+                switch ((*cache_evidence)->state) {
+                case CompileCacheEvidenceState::reused: cache_state = ArtifactCacheState::reused; break;
+                case CompileCacheEvidenceState::saved: cache_state = ArtifactCacheState::saved; break;
+                case CompileCacheEvidenceState::save_failed: cache_state = ArtifactCacheState::save_failed; break;
+                }
+            }
             const auto& creator = inspected->compile_request;
             record->emplace(PchArtifactRecord{
                 .caller_label = std::nullopt,
                 .completion = compile.compiled ? ArtifactCompletion::executed : ArtifactCompletion::reused,
-                .cache_state = !compile.compiled ? ArtifactCacheState::reused :
-                    save_failed ? ArtifactCacheState::save_failed : ArtifactCacheState::saved,
+                .cache_state = cache_state,
                 .input_header = creator.options.precompiled_header->header,
                 .creator = creator.unit,
                 .compiler_options = creator.options,
@@ -316,7 +350,19 @@ MsvcIncrementalPchCoordinator::run_impl(
         compile_request.force_rebuild = true;
     }
 
-    auto compiled = compile_coordinator_.run(compile_request);
+    auto compiled = [&]() -> std::expected<IncrementalCompileResult, IncrementalCompileError> {
+        if constexpr (Capture) {
+            // This replaces the original post-materialization run/recheck; it
+            // is not an additional inspect or compile for evidence collection.
+            cache_evidence->reset();
+            auto captured = compile_coordinator_.run_recorded(compile_request);
+            if (!captured) return std::unexpected(std::move(captured.error()));
+            *cache_evidence = std::move(captured->record);
+            return std::move(captured->result);
+        } else {
+            return compile_coordinator_.run(compile_request);
+        }
+    }();
     if (!compiled) {
         return std::unexpected(compile_failure(
             "precompiled-header creator compilation failed",

@@ -50,6 +50,10 @@ struct IncrementalPchResult {
 struct RecordedPchResult {
     IncrementalPchResult result;
     PchArtifactRecord record;
+    // Separate from the legacy projection: only this returned value carries
+    // the same-invocation accepted/sealed entry and the typed save error.
+    // The projection alone continues to advertise no exact cache capture.
+    CompileCacheEvidence cache_evidence;
 };
 
 class MsvcIncrementalPchCoordinator {
@@ -67,7 +71,8 @@ public:
     [[nodiscard]] std::expected<IncrementalPchResult, IncrementalPchError>
     run(const IncrementalPchRequest& request) const;
 
-    // Opt-in owned associations from this invocation's actual creator request.
+    // Opt-in owned associations plus this invocation's exact compile cache.
+    // The standalone PchArtifactRecord remains a non-authoritative projection.
     // No extra inspect/run, cache read, signature reconstruction or persistence.
     // Failure preserves the original error and publishes no successful record.
     [[nodiscard]] std::expected<RecordedPchResult, IncrementalPchError>
@@ -75,9 +80,11 @@ public:
                  std::optional<ArtifactGenerationLabel> caller_label = std::nullopt) const;
 
 private:
+    template<bool Capture>
     [[nodiscard]] std::expected<IncrementalPchResult, IncrementalPchError>
     run_impl(const IncrementalPchRequest& request,
-             std::optional<PchArtifactRecord>* record) const;
+             std::optional<PchArtifactRecord>* record,
+             std::optional<CompileCacheEvidence>* cache_evidence) const;
 
     MsvcIncrementalCompileCoordinator& compile_coordinator_;
 };

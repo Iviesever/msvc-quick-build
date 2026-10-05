@@ -130,6 +130,13 @@ public:
 
 private:
     friend class detail::TargetCompileWave;
+    friend class MsvcIncrementalPchCoordinator;
+
+    // Invocation-local handoff to PCH only, not a public execution ticket.
+    // Capture the value accepted by this inspection without another cache read.
+    [[nodiscard]] std::expected<IncrementalCompileInspection, IncrementalCompileError>
+    inspect_for_pch_record(const IncrementalCompileRequest& request,
+                          std::optional<CompileCacheEvidence>& accepted) const;
     struct CacheCapture;
 
     // Only run() and the invocation-owned target wave may consume a decision.

@@ -205,7 +205,7 @@ class CompileCacheEvidenceContracts(unittest.TestCase):
         for name in ('producer_identity_verified', 'current_content_verified', 'complete_producer_inventory', 'deletion_authorized'):
             self.assertIn(f'static constexpr bool {name} = false;', text)
         for path in (ROOT / 'cpp/src').rglob('*'):
-            if path.suffix not in ('.cpp', '.hpp') or path.relative_to(ROOT).as_posix() == TU:
+            if path.suffix not in ('.cpp', '.hpp') or path.relative_to(ROOT).as_posix() in (TU, 'cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp'):
                 continue
             self.assertNotIn('CompileCacheEvidence', path.read_text(encoding='utf-8'), str(path))
 

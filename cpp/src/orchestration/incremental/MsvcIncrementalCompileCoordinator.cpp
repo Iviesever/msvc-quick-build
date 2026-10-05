@@ -426,4 +426,27 @@ MsvcIncrementalCompileCoordinator::run_recorded(const IncrementalCompileRequest&
     };
 }
 
+// The PCH warm path completes from its initial inspection. Keep that exact
+// accepted entry rather than invoking run_recorded() again after a cache hit.
+std::expected<IncrementalCompileInspection, IncrementalCompileError>
+MsvcIncrementalCompileCoordinator::inspect_for_pch_record(
+    const IncrementalCompileRequest& request,
+    std::optional<CompileCacheEvidence>& accepted) const {
+    accepted.reset();
+    auto captured_request = request;
+    auto captured_toolchain = toolchain_;
+    CacheCapture capture;
+    auto inspected = inspect_impl<true>(request, &capture);
+    if (!inspected) return std::unexpected(std::move(inspected.error()));
+    if (capture.entry) {
+        accepted.emplace(CompileCacheEvidence{
+            .request = std::move(captured_request),
+            .inspection_toolchain = std::move(captured_toolchain),
+            .cache_entry = std::move(*capture.entry),
+            .state = CompileCacheEvidenceState::reused,
+        });
+    }
+    return inspected;
+}
+
 } // namespace mqb::orchestration
