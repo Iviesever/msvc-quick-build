@@ -126,6 +126,11 @@ void log_result(const fs::path& prefix, const std::expected<process::ProcessResu
         write(prefix.string()+".stderr.txt", r->stderr_text);
     }
 }
+void save_pch_cache_evidence(const fs::path&, const RecordedPchResult&);
+void check_pch_cache_history(const fs::path&, const RecordedPchResult&);
+std::expected<RecordedPchResult, IncrementalPchError> run_pch_cache_checked(
+    MsvcIncrementalPchCoordinator&, const IncrementalPchRequest&,
+    ArtifactGenerationLabel, const fs::path&);
 void save_call(const fs::path& evidence, const char* phase,
                const std::expected<RecordedPchResult, IncrementalPchError>& r, bool copy_artifacts) {
     const auto prefix = evidence / phase;
@@ -143,6 +148,7 @@ void save_call(const fs::path& evidence, const char* phase,
         return;
     }
     write(prefix.string()+".record.txt", describe(*r));
+    save_pch_cache_evidence(prefix, *r);
     if (copy_artifacts) {
         // Test-only evidence outside .mqb; never a product persistence format.
         write(prefix.string()+".creator.cpp", bytes(r->record.creator.source));
@@ -221,6 +227,7 @@ void deterministic_cases(const fs::path& root, const fs::path& evidence) {
     auto request = request_for(root);
     write(request.header, "#pragma once\ninline int value(){return 7;}\n");
     msvc::MsvcToolchain toolchain{.identity={.compiler=root/"tools/cl.exe", .version="pch-record-mock", .binary_stamp="fixture"}};
+    toolchain.environment = {{"MQB_PCH_OWNERSHIP", "first"}, {"MQB_PCH_OWNERSHIP", "second"}};
     msvc::MsvcCompileExecutor executor{toolchain, runner};
     MsvcIncrementalCompileCoordinator compiling{toolchain, executor};
     MsvcIncrementalPchCoordinator pch{compiling};
@@ -228,7 +235,7 @@ void deterministic_cases(const fs::path& root, const fs::path& evidence) {
     auto invoke = [&](const char* phase, const IncrementalPchRequest& input) {
         require(++calls <= 10, "mock PCH API budget"); runner.phase = phase;
         write(evidence/(std::string{phase}+".attempt.txt"), "mock cl; real PCH/compile/cache pipeline\n");
-        auto r = pch.run_recorded(input, ArtifactGenerationLabel{"mock-pch",phase});
+        auto r = run_pch_cache_checked(pch, input, ArtifactGenerationLabel{"mock-pch",phase}, evidence/phase);
         save_call(evidence, phase, r, false); return r;
     };
     // The PCH coordinator replaces a caller's use binding with its own creator
@@ -275,6 +282,13 @@ void deterministic_cases(const fs::path& root, const fs::path& evidence) {
     auto invalid = request; invalid.artifacts.object.clear();
     const auto bad = invoke("10-invalid", invalid);
     require(!bad && bad.error().code == IncrementalPchErrorCode::invalid_request, "empty output rejected");
+    toolchain.environment[0].value = "changed after failures";
+    require(cold->cache_evidence.inspection_toolchain.environment.size() == 2 &&
+        cold->cache_evidence.inspection_toolchain.environment[0].value == "first" &&
+        cold->cache_evidence.inspection_toolchain.environment[1].value == "second",
+        "owning environment preserves order and duplicate names without serialization");
+    check_pch_cache_history(evidence/"01-cold", *cold);
+    check_pch_cache_history(evidence/"02-reuse", *warm);
     require(calls == 10 && runner.calls == 6, "mock fixed budget completed");
     write(evidence/"completed.txt", "10 PCH API calls; 5 success, 5 expected errors; 6 mock processes; no retries\n");
 }
@@ -307,7 +321,7 @@ void native_cases(const fs::path& root, const fs::path& evidence) {
     auto invoke = [&](const char* phase) {
         require(++calls <= 6, "native PCH API budget"); runner.phase=phase;
         write(evidence/(std::string{phase}+".attempt.txt"),"real PCH recorded API invocation\n");
-        auto r=pch.run_recorded(request,ArtifactGenerationLabel{"native-pch",phase});
+        auto r=run_pch_cache_checked(pch,request,ArtifactGenerationLabel{"native-pch",phase},evidence/phase);
         save_call(evidence,phase,r,true); return r;
     };
     const auto cold=invoke("01-cold");
@@ -366,6 +380,11 @@ void native_cases(const fs::path& root, const fs::path& evidence) {
     const auto failed=invoke("06-compile-failed");
     require(!failed && failed.error().code==IncrementalPchErrorCode::compile_failed && failed.error().compile_error &&
         !fs::exists(evidence/"06-compile-failed.record.txt"),"failed PCH publishes no success record");
+    check_pch_cache_history(evidence/"01-cold", *cold);
+    check_pch_cache_history(evidence/"02-reuse", *reuse);
+    require(cold->cache_evidence.request.options.configuration == BuildConfiguration::debug &&
+        release->cache_evidence.request.options.configuration == BuildConfiguration::release,
+        "recorded effective compiler options survive configuration change and later failure");
     require(calls==6,"six native PCH calls completed");
     write(evidence/"completed.txt","6 PCH API calls; 5 success, 1 expected compile failure; 1 consumer build/run before failure; no retries\n");
 }
@@ -386,3 +405,99 @@ int main() {
         return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }
+// BEGIN MQB_PCH_CACHE_EVIDENCE_CASES
+#ifdef _WIN32
+#include "mqb/core/CompileCacheFile.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
+namespace {
+void save_pch_cache_evidence(const fs::path& prefix, const RecordedPchResult& result) {
+    const auto& e = result.cache_evidence;
+    const auto& r = result.record;
+    static_assert(!CompileCacheEvidence::producer_identity_verified);
+    static_assert(!CompileCacheEvidence::current_content_verified);
+    static_assert(!CompileCacheEvidence::complete_producer_inventory);
+    static_assert(!CompileCacheEvidence::deletion_authorized);
+    static_assert(!PchArtifactRecord::exact_cache_entry_captured);
+    require(e.request.unit.source == r.creator.source && e.cache_entry.source == r.creator.source &&
+        e.request.cache_file == r.compile_cache && e.request.source_dependencies_file == r.dependencies &&
+        e.request.working_directory == r.working_directory,
+        "cache evidence is attached to the effective same-call PCH creator, not caller's use binding");
+    require(e.request.options.configuration == r.compiler_options.configuration &&
+        e.request.options.precompiled_header && e.request.options.precompiled_header->role == PrecompiledHeaderRole::create &&
+        e.request.options.precompiled_header->header == r.input_header &&
+        e.request.options.precompiled_header->artifact == r.compiler_options.precompiled_header->artifact,
+        "effective PCH cache request retains actual options and binding");
+    auto paired = [&](const auto& outputs) {
+        require(outputs.size() == r.creator.outputs.size() && outputs.size() == 2, "exact paired PCH outputs");
+        for (std::size_t i=0; i<outputs.size(); ++i)
+            require(outputs[i].path == r.creator.outputs[i].path && outputs[i].kind == r.creator.outputs[i].kind,
+                "PCH output order, path and kind preserved");
+    };
+    paired(e.request.unit.outputs); paired(e.cache_entry.outputs);
+    const auto expected = r.cache_state == ArtifactCacheState::saved ? CompileCacheEvidenceState::saved :
+        r.cache_state == ArtifactCacheState::reused ? CompileCacheEvidenceState::reused : CompileCacheEvidenceState::save_failed;
+    require(e.state == expected, "PCH projection agrees with typed same-call cache state");
+    require((e.state == CompileCacheEvidenceState::reused) == !result.result.compile.compiled,
+        "reused evidence is not invented production");
+    if (e.state == CompileCacheEvidenceState::save_failed) {
+        require(e.save_error && e.save_error->code == CompileCacheFileErrorCode::replace_failed &&
+            e.save_error->file == r.compile_cache && e.save_error->offset == 0 &&
+            e.save_error->message == "failed to remove previous cache entry",
+            "PCH preserves original typed save failure, path and message");
+        require(bytes(r.compile_cache/"sentinel") == "retain obstruction", "save failure keeps blocking bytes");
+    } else require(!e.save_error, "success or reuse does not invent save error");
+    if (r.creator_source_materialization_required &&
+        std::find(result.result.compile.validation.reasons.begin(), result.result.compile.validation.reasons.end(),
+                  BuildReason::source_changed) != result.result.compile.validation.reasons.end())
+        require(e.request.force_rebuild, "same-timestamp repair records the final effective forced request");
+    const fs::path snapshot = prefix.string()+".captured.cache";
+    require(CompileCacheFile::save(snapshot, e.cache_entry).has_value(), "test-only copy with the existing cache codec");
+    if (e.state != CompileCacheEvidenceState::save_failed)
+        require(bytes(snapshot) == bytes(r.compile_cache), "captured value equals saved/accepted cache bytes");
+    std::ostringstream info;
+    info << "attached_exact_cache_entry_captured=true\nlegacy_projection_exact_cache_entry_captured=false\n"
+        << "state=" << static_cast<int>(e.state) << "\nforce_rebuild=" << e.request.force_rebuild
+        << "\nconfiguration=" << static_cast<int>(e.request.options.configuration)
+        << "\nsave_error=" << e.save_error.has_value()
+        << "\nproducer_identity_verified=false\ncurrent_content_verified=false\n"
+        << "complete_producer_inventory=false\ndeletion_authorized=false\n";
+    if (e.save_error) info << "save_code=" << static_cast<int>(e.save_error->code)
+        << "\nsave_path=" << text(e.save_error->file) << "\nsave_offset=" << e.save_error->offset
+        << "\nsave_message=" << e.save_error->message << '\n';
+    // Environment values are deliberately neither logged nor serialized.
+    write(prefix.string()+".cache-evidence.txt", info.str());
+}
+void check_pch_cache_history(const fs::path& prefix, const RecordedPchResult& old) {
+    const fs::path after = prefix.string()+".history.cache";
+    require(CompileCacheFile::save(after, old.cache_evidence.cache_entry).has_value(), "serialize retained old value after failures");
+    require(bytes(after) == bytes(prefix.string()+".captured.cache"), "later overwrite/failure cannot mutate earlier captured cache value");
+}
+std::expected<RecordedPchResult, IncrementalPchError> run_pch_cache_checked(
+    MsvcIncrementalPchCoordinator& pch, const IncrementalPchRequest& request,
+    ArtifactGenerationLabel label, const fs::path& prefix) {
+    performance::Collector collector;
+    const auto result = [&]() {
+        performance::Activation activation{collector};
+        return pch.run_recorded(request, std::move(label));
+    }();
+    const auto count = collector.snapshot();
+    constexpr auto ci = static_cast<std::size_t>(performance::CacheKind::compile);
+    const auto name = prefix.filename().string();
+    // Counters count successful payload opens, not failed load attempts.
+    // Source contracts separately pin the inspect/recheck call sites.
+    std::uint64_t expected_reads = 2;
+    if (name == "02-reuse" || name == "03-creator-repair" || name == "08-blocked-creator") expected_reads = 1;
+    if (name == "09-no-header" || name == "10-invalid") expected_reads = 0;
+    require(count.cache_files_opened[ci] <= expected_reads, "recording adds no cache open beyond original PCH path");
+    if (name == "02-reuse") require(count.cache_files_opened[ci] == 1, "warm PCH accepts exactly one cache read");
+    if (name == "02-reuse") require(count.cache_files_written[ci] == 0, "warm recording does not save again");
+    std::ostringstream summary;
+    summary << "compile_cache_reads=" << count.cache_files_opened[ci]
+        << "\ncompile_cache_writes=" << count.cache_files_written[ci]
+        << "\nmaximum_original_payload_opens=" << expected_reads << '\n';
+    write(prefix.string()+".cache-counts.txt", summary.str());
+    return result;
+}
+} // namespace
+#endif
+// END MQB_PCH_CACHE_EVIDENCE_CASES

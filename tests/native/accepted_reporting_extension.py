@@ -9,6 +9,7 @@ before historical whole-program fingerprints are evaluated.
 """
 import hashlib
 import accepted_compile_evidence_extension as compile_evidence_extension
+import accepted_pch_cache_evidence_extension as pch_evidence_extension
 
 REPORT = 'cpp/tests/app/diagnostics/reporting_tests.cpp'
 HELPER = 'cpp/tests/app/diagnostics/storage_report_format_cases.hpp'
@@ -38,4 +39,4 @@ def legacy_view(values, helper):
         raise ValueError('original reporting assertions changed')
     result=dict(values)
     result[REPORT]=text.encode('utf-8') if binary else text
-    return compile_evidence_extension.legacy_view(result)
+    return pch_evidence_extension.legacy_view(compile_evidence_extension.legacy_view(result))
