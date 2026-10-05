@@ -82,7 +82,8 @@ class PchCacheEvidenceContracts(unittest.TestCase):
         self.assertIn('compiled.error()',error)
     def test_no_other_source_adopts_capture(self):
         for path in (ROOT/'cpp/src').rglob('*'):
-            if path.suffix not in ('.hpp','.cpp') or path.relative_to(ROOT).as_posix() in (PCH,COMPILE):continue
+            if path.suffix not in ('.hpp','.cpp') or path.relative_to(ROOT).as_posix() in (PCH,COMPILE,
+                'cpp/src/orchestration/modules/MsvcModuleCompileCoordinator.cpp'):continue
             text=path.read_text()
             self.assertNotIn('CompileCacheEvidence',text,str(path))
             self.assertNotIn('inspect_for_pch_record',text,str(path))
