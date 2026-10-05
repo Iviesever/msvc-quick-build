@@ -79,7 +79,7 @@ class ModuleTargetCacheEvidenceContracts(unittest.TestCase):
                        'actual fixed-point std chain, header and external association',
                        'original stage error yields no public successful target',
                        'target scan/compile evidence correspondence',
-                       'warm target has one accepted payload open per actual node and zero writes',
+                       'warm target reads each scanned source twice and each HU once, with zero writes',
                        'later overwrite/failure cannot mutate earlier target cache evidence'):
             self.assertIn(phrase, t)
             with self.subTest(phrase=phrase), self.assertRaises(ValueError):
@@ -105,9 +105,47 @@ class ModuleTargetCacheEvidenceContracts(unittest.TestCase):
         self.assertNotIn('CompileCacheFile::save', wrapper)
         self.assertLess(wrapper.index('performance::Activation active'), wrapper.index('target.run_recorded('))
         self.assertLess(wrapper.index('}();'), wrapper.index('collector.snapshot()'))
-        for phrase in ('count.cache_files_opened[ci]==nodes', 'count.cache_files_written[ci]==0',
+        for phrase in ('reads - nodes == scans', 'writes == 0',
                        '++count <= 10', 'calls.count == 10 && runner.programs == 2'):
             self.assertIn(phrase, t)
+
+    def test_target_counter_budget_includes_scans_without_allowing_extra_reads(self):
+        t = read(x.TEST)
+        helper = t.split('constexpr bool target_cache_counts_match(', 1)[1].split('\n}', 1)[0]
+        self.assertIn('if (writes > nodes) return false;', helper)
+        self.assertIn('if (warm) return writes == 0 && reads >= nodes && reads - nodes == scans;', helper)
+        self.assertIn('return reads <= nodes || reads - nodes <= scans;', helper)
+        self.assertIn('result->record.scans.size()', t)
+        self.assertIn('scans==result->cache_evidence.compiles.size()', t)
+        for args in ('9, 0, 4, 5, true', '5, 0, 2, 3, true', '6, 0, 3, 3, true', '1, 0, 0, 1, true'):
+            self.assertIn('static_assert(target_cache_counts_match('+args+'));', t)
+        for args in ('10, 0, 4, 5, false', '10, 0, 4, 5, true', '8, 0, 4, 5, true',
+                     '9, 1, 4, 5, true', '0, 6, 4, 5, false', '2, 0, 0, 1, true'):
+            self.assertIn('static_assert(!target_cache_counts_match('+args+'));', t)
+        self.assertIn('UINT64_MAX', t)
+
+    def test_counter_raw_journal_precedes_every_counter_refusal(self):
+        wrapper = read(x.TEST).rsplit('run_target_cache_checked(', 1)[1]
+        saved = wrapper.index('write(prefix.string()+".cache-counts.txt",out.str());')
+        self.assertLess(wrapper.index('collector.snapshot()'), saved)
+        self.assertLess(saved, wrapper.index('require(scans=='))
+        self.assertLess(saved, wrapper.index('require(target_cache_counts_match'))
+        self.assertIn('counter_scope=target_scan_and_compile', wrapper)
+        self.assertIn('compile_cache_reads=', wrapper)
+        self.assertIn('compile_cache_writes=', wrapper)
+
+    def test_scan_and_compile_counter_sources_are_unchanged(self):
+        # Source pins justify adding existing scan reads, not a blanket allowance.
+        for path, expected in {
+            'cpp/src/orchestration/modules/MsvcIncrementalModuleScanCoordinator.cpp': '2cbdb35f1fdb2bddf39e365e98bad24b09eec54b',
+            'cpp/src/orchestration/modules/ModuleTargetPreparation.cpp': '45d509cc090c9252a8667956c5e003cf4a00cff9',
+            'cpp/src/orchestration/modules/ModuleTargetScanner.cpp': '467d2e2b4042e74ff6060236dc88547fe2ba00bd',
+            'cpp/src/orchestration/modules/StandardLibraryModuleProvider.cpp': 'c0401e29a13ccabc982d12c0ef6eae2370826d1c',
+            'cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp': '280ff02e95a9b6ee1502823ca77025f7436394a6',
+        }.items():
+            self.assertEqual(expected, x.git_blob(read(path)), path)
+        self.assertIn('CompileCacheFile::load(request.compile_cache_file)',
+                      read('cpp/src/orchestration/modules/MsvcIncrementalModuleScanCoordinator.cpp'))
 
     def test_dynamic_provider_and_header_values_are_not_reconstructed(self):
         t = read(x.TEST)

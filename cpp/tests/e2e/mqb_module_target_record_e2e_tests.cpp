@@ -530,6 +530,34 @@ int main() {
     } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }
 // BEGIN MQB_MODULE_TARGET_CACHE_EVIDENCE_CASES
+#include <cstdint>
+namespace {
+// The collector covers scan preparation AND the compile wave. Source/provider
+// scans load the same compile-cache payload; HUs have no scan. Count successful
+// opens, not missing-file attempts. Subtraction avoids overflowing an upper sum.
+constexpr bool target_cache_counts_match(
+    std::uint64_t reads, std::uint64_t writes,
+    std::uint64_t scans, std::uint64_t nodes, bool warm) {
+    if (writes > nodes) return false;
+    if (warm) return writes == 0 && reads >= nodes && reads - nodes == scans;
+    return reads <= nodes || reads - nodes <= scans;
+}
+// Pure counting controls; these are not additional target/tool invocations.
+static_assert(target_cache_counts_match(0, 5, 4, 5, false)); // cold mock
+static_assert(target_cache_counts_match(9, 0, 4, 5, true));  // 4 sources + HU
+static_assert(target_cache_counts_match(5, 0, 2, 3, true));  // native source/HU
+static_assert(target_cache_counts_match(6, 0, 3, 3, true));  // std/std.compat
+static_assert(target_cache_counts_match(1, 0, 0, 1, true));  // HU has no scan
+static_assert(target_cache_counts_match(0, 0, 0, 0, true));  // empty model only
+static_assert(!target_cache_counts_match(10, 0, 4, 5, false)); // extra read
+static_assert(!target_cache_counts_match(10, 0, 4, 5, true));
+static_assert(!target_cache_counts_match(8, 0, 4, 5, true));  // missing warm read
+static_assert(!target_cache_counts_match(9, 1, 4, 5, true));  // warm write
+static_assert(!target_cache_counts_match(0, 6, 4, 5, false)); // extra write
+static_assert(!target_cache_counts_match(2, 0, 0, 1, true)); // phantom HU scan
+static_assert(target_cache_counts_match(UINT64_MAX, 0, 1, UINT64_MAX, false));
+static_assert(!target_cache_counts_match(0, 0, 1, UINT64_MAX, true));
+} // namespace
 #ifdef _WIN32
 #include "mqb/core/CompileCacheFile.hpp"
 #include "mqb/core/PerformanceEvidence.hpp"
@@ -648,18 +676,24 @@ std::expected<RecordedModuleTargetResult, IncrementalModuleTargetError> run_targ
     }();
     const auto count=collector.snapshot();
     constexpr auto ci=static_cast<std::size_t>(performance::CacheKind::compile);
-    if (result) {
-        const auto nodes=result->cache_evidence.compiles.size()+result->cache_evidence.header_unit_compiles.size();
-        require(count.cache_files_opened[ci]<=nodes && count.cache_files_written[ci]<=nodes,
-            "target pass-through adds no compile cache read/save beyond its single wave");
-        if (prefix.filename()=="02-reuse" || prefix.filename()=="07-standard-reuse")
-            require(count.cache_files_opened[ci]==nodes && count.cache_files_written[ci]==0,
-                "warm target has one accepted payload open per actual node and zero writes");
-    } else require(!fs::exists(prefix.string()+".source0.captured.cache"), "failed target publishes no successful cache evidence");
+    const auto scans=result ? result->record.scans.size() : 0;
+    const auto nodes=result ? result->cache_evidence.compiles.size()+result->cache_evidence.header_unit_compiles.size() : 0;
+    const bool warm=prefix.filename()=="02-reuse" || prefix.filename()=="07-standard-reuse";
+    // Preserve the actual aggregate even when the assertion below refuses it.
+    // Serialization/verification is outside Activation and cannot inflate it.
     std::ostringstream out;
     out<<"compile_cache_reads="<<count.cache_files_opened[ci]<<"\ncompile_cache_writes="<<count.cache_files_written[ci]
-        <<"\ntarget_success="<<result.has_value()<<'\n';
+        <<"\ntarget_success="<<result.has_value()<<"\ncounter_scope=target_scan_and_compile"
+        <<"\nscan_checks="<<scans<<"\ncompile_nodes="<<nodes<<"\nwarm_check="<<warm<<'\n';
     write(prefix.string()+".cache-counts.txt",out.str());
+    if (result) {
+        require(scans==result->cache_evidence.compiles.size(), "one scan per prepared source/provider, none for HU");
+        require(target_cache_counts_match(count.cache_files_opened[ci], count.cache_files_written[ci], scans, nodes, false),
+            "target pass-through adds no reads/writes beyond its scan checks and compile wave");
+        if (warm)
+            require(target_cache_counts_match(count.cache_files_opened[ci], count.cache_files_written[ci], scans, nodes, true),
+                "warm target reads each scanned source twice and each HU once, with zero writes");
+    } else require(!fs::exists(prefix.string()+".source0.captured.cache"), "failed target publishes no successful cache evidence");
     return result;
 }
 } // namespace

@@ -36,8 +36,14 @@ The existing ten mock and ten native target invocations remain, with all origina
 assertions and tool budgets. Their successful cold, warm, shared-output, repair,
 configuration and injected-provider cases now check every attached source/HU
 value against its matching record and same-call retained cache bytes. Warm calls
-check one accepted compile-cache payload open per actual node and zero writes;
-counters exclude test-only serialization. Stage failures remain failures without
+check the exact whole-target budget: one accepted payload open per scan record
+(requested and injected sources), plus one per compile-wave node (sources and
+HUs), with zero writes. Thus a warm source is read twice across the two stages,
+a HU once; an external provider reference is not another node. General calls
+allow at most those scan-plus-node successful opens and one save attempt per node.
+Failed opens are not measured as successful reads. Raw counts and scope are saved
+before assertions, and counters exclude test-only serialization. Pure compile-time
+controls reject extra reads/writes, missing warm reads and phantom HU scans. Stage failures remain failures without
 successful evidence files. Earlier cold/warm and standard-library cache values
 are serialized again after later overwrites and failures to check value ownership.
 
