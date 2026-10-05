@@ -8,6 +8,7 @@ The independent compile-evidence extension is checked by its own exact inverse
 before historical whole-program fingerprints are evaluated.
 """
 import hashlib
+import accepted_module_cache_evidence_extension as module_evidence_extension
 import accepted_compile_evidence_extension as compile_evidence_extension
 import accepted_pch_cache_evidence_extension as pch_evidence_extension
 
@@ -39,4 +40,4 @@ def legacy_view(values, helper):
         raise ValueError('original reporting assertions changed')
     result=dict(values)
     result[REPORT]=text.encode('utf-8') if binary else text
-    return pch_evidence_extension.legacy_view(compile_evidence_extension.legacy_view(result))
+    return module_evidence_extension.legacy_view(pch_evidence_extension.legacy_view(compile_evidence_extension.legacy_view(result)))

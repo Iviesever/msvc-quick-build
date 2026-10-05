@@ -219,7 +219,7 @@ MsvcModuleCompileCoordinator::inspect(const ModuleCompileWaveRequest& request) c
 
 std::expected<ModuleCompileWaveResult, ModuleCompileError>
 MsvcModuleCompileCoordinator::run(const ModuleCompileWaveRequest& request) const {
-    return run_impl(request, nullptr);
+    return run_impl<false>(request, nullptr, nullptr);
 }
 
 std::expected<RecordedModuleCompileWaveResult, ModuleCompileError>
@@ -227,16 +227,19 @@ MsvcModuleCompileCoordinator::run_recorded(
     const ModuleCompileWaveRequest& request,
     std::optional<ArtifactGenerationLabel> caller_label) const {
     ModuleCompileWaveArtifactRecord record;
-    auto result = run_impl(request, &record);
+    ModuleCompileWaveCacheEvidence cache_evidence;
+    auto result = run_impl<true>(request, &record, &cache_evidence);
     if (!result) return std::unexpected(std::move(result.error()));
     record.caller_label = std::move(caller_label);
-    return RecordedModuleCompileWaveResult{std::move(*result), std::move(record)};
+    return RecordedModuleCompileWaveResult{std::move(*result), std::move(record), std::move(cache_evidence)};
 }
 
+template<bool Capture>
 std::expected<ModuleCompileWaveResult, ModuleCompileError>
 MsvcModuleCompileCoordinator::run_impl(
     const ModuleCompileWaveRequest& request,
-    ModuleCompileWaveArtifactRecord* record) const {
+    ModuleCompileWaveArtifactRecord* record,
+    ModuleCompileWaveCacheEvidence* cache_evidence) const {
     if (!request.max_parallel_compiles.valid()) {
         return std::unexpected(failure(
             ModuleCompileErrorCode::invalid_parallelism,
@@ -251,9 +254,13 @@ MsvcModuleCompileCoordinator::run_impl(
 
     // Allocate only for the explicit recorded path. Each worker writes its own
     // pre-sized non-bit-packed slot; no vector growth occurs inside the wave.
-    if (record) {
+    std::vector<std::optional<CompileCacheEvidence>> captured_nodes;
+    if constexpr (Capture) {
+        captured_nodes.resize(plan.node_count());
         record->compiles.resize(plan.source_count);
         record->header_unit_compiles.resize(plan.header_count);
+        cache_evidence->compiles.reserve(plan.source_count);
+        cache_evidence->header_unit_compiles.reserve(plan.header_count);
     }
 
     using CompileAttempt = std::expected<IncrementalCompileResult, IncrementalCompileError>;
@@ -270,13 +277,21 @@ MsvcModuleCompileCoordinator::run_impl(
                     plan,
                     node_index,
                     provider_work_planned(plan, compiled_this_run, node_index));
-                attempts[node_index].emplace(
-                    compile_coordinator_.run(compile_request));
-                if (record && attempts[node_index]->has_value()) {
+                if constexpr (Capture) {
+                    auto compiled = compile_coordinator_.run_recorded(compile_request);
+                    if (!compiled) {
+                        attempts[node_index].emplace(std::unexpected(std::move(compiled.error())));
+                        return false;
+                    }
                     auto& slot = node_index < plan.source_count
                         ? record->compiles[node_index]
                         : record->header_unit_compiles[node_index - plan.source_count];
-                    slot = capture_compile(std::move(compile_request), attempts[node_index]->value());
+                    slot = capture_compile(std::move(compile_request), compiled->result);
+                    captured_nodes[node_index].emplace(std::move(compiled->record));
+                    attempts[node_index].emplace(std::move(compiled->result));
+                } else {
+                    attempts[node_index].emplace(
+                        compile_coordinator_.run(compile_request));
                 }
                 return attempts[node_index]->has_value();
             });
@@ -321,6 +336,14 @@ MsvcModuleCompileCoordinator::run_impl(
                 "module compile result is missing after all dependency levels completed",
                 request.sources[index].source));
         }
+        if constexpr (Capture) {
+            if (!captured_nodes[index]) {
+                return std::unexpected(failure(ModuleCompileErrorCode::scheduling_failed,
+                    "module compile cache evidence is missing after all dependency levels completed",
+                    request.sources[index].source));
+            }
+            cache_evidence->compiles.push_back(std::move(*captured_nodes[index]));
+        }
         auto compiled = std::move(attempts[index]->value());
         result.any_compiled = result.any_compiled || compiled.compiled;
         result.compiles.push_back(ModuleCompileResult{
@@ -338,6 +361,14 @@ MsvcModuleCompileCoordinator::run_impl(
                 "header-unit compile result is missing after all dependency levels completed",
                 request.header_units[index].source));
         }
+        if constexpr (Capture) {
+            if (!captured_nodes[node_index]) {
+                return std::unexpected(failure(ModuleCompileErrorCode::scheduling_failed,
+                    "header-unit cache evidence is missing after all dependency levels completed",
+                    request.header_units[index].source));
+            }
+            cache_evidence->header_unit_compiles.push_back(std::move(*captured_nodes[node_index]));
+        }
         auto compiled = std::move(attempts[node_index]->value());
         result.any_compiled = result.any_compiled || compiled.compiled;
         result.header_unit_compiles.push_back(HeaderUnitCompileResult{
@@ -349,7 +380,7 @@ MsvcModuleCompileCoordinator::run_impl(
     }
     // Retain provider selection only after the whole wave succeeds. External
     // providers remain references; no extra owned producer is synthesized.
-    if (record) record->dependencies = request.plan;
+    if constexpr (Capture) record->dependencies = request.plan;
     return result;
 }
 

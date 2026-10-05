@@ -127,9 +127,18 @@ struct ModuleCompileWaveArtifactRecord {
     static constexpr bool deletion_authorized = false;
 };
 
+// Owning values from the same lower-level compile calls. Each vector preserves
+// its corresponding request order. External providers remain graph references,
+// not fabricated local cache entries. These are not current-file/cleanup proofs.
+struct ModuleCompileWaveCacheEvidence {
+    std::vector<CompileCacheEvidence> compiles;
+    std::vector<CompileCacheEvidence> header_unit_compiles;
+};
+
 struct RecordedModuleCompileWaveResult {
     ModuleCompileWaveResult result;
     ModuleCompileWaveArtifactRecord record;
+    ModuleCompileWaveCacheEvidence cache_evidence;
 };
 
 class MsvcModuleCompileCoordinator {
@@ -153,9 +162,11 @@ public:
                  std::optional<ArtifactGenerationLabel> caller_label = std::nullopt) const;
 
 private:
+    template<bool Capture>
     [[nodiscard]] std::expected<ModuleCompileWaveResult, ModuleCompileError>
     run_impl(const ModuleCompileWaveRequest& request,
-             ModuleCompileWaveArtifactRecord* record) const;
+             ModuleCompileWaveArtifactRecord* record,
+             ModuleCompileWaveCacheEvidence* cache_evidence) const;
 
     MsvcIncrementalCompileCoordinator& compile_coordinator_;
 };
