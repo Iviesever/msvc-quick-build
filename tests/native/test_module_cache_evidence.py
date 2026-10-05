@@ -113,7 +113,8 @@ class ModuleCacheEvidenceContracts(unittest.TestCase):
         self.assertNotIn('CompileCacheFile::save',call)
         self.assertNotIn('environment[0].value',helper)
     def test_default_adoption_has_not_spread(self):
-        allowed={TU,'cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp',
+        allowed={TU,'cpp/src/orchestration/modules/MsvcModuleTargetCoordinator.cpp',
+                 'cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp',
                  'cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp'}
         for path in (ROOT/'cpp/src').rglob('*'):
             if path.suffix not in ('.cpp','.hpp') or path.relative_to(ROOT).as_posix() in allowed:continue

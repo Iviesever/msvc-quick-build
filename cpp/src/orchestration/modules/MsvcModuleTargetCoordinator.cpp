@@ -125,6 +125,7 @@ MsvcModuleTargetCoordinator::run(const IncrementalModuleTargetRequest& request) 
 struct MsvcModuleTargetCoordinator::Recording {
     std::vector<ModuleTargetScanArtifactRecord> scans;
     std::optional<ModuleCompileWaveArtifactRecord> compiles;
+    std::optional<ModuleCompileWaveCacheEvidence> cache_evidence;
     std::optional<LinkArtifactRecord> link;
 };
 
@@ -135,7 +136,7 @@ MsvcModuleTargetCoordinator::run_recorded(
     Recording record;
     auto completed = run_impl(request, &record);
     if (!completed) return std::unexpected(std::move(completed.error()));
-    if (!record.compiles || !record.link) {
+    if (!record.compiles || !record.link || !record.cache_evidence) {
         return std::unexpected(failure(
             IncrementalModuleTargetErrorCode::link_failed,
             "module target recording completed without its typed stage records"));
@@ -148,6 +149,7 @@ MsvcModuleTargetCoordinator::run_recorded(
             .compiles = std::move(*record.compiles),
             .link = std::move(*record.link),
         },
+        .cache_evidence = std::move(*record.cache_evidence),
     };
 }
 
@@ -172,6 +174,7 @@ MsvcModuleTargetCoordinator::run_impl(
         auto completed = compile_coordinator_.run_recorded(prepared->compile_request);
         if (!completed) return std::unexpected(std::move(completed.error()));
         record->compiles = std::move(completed->record);
+        record->cache_evidence.emplace(std::move(completed->cache_evidence));
         return std::move(completed->result);
     }();
     result.timings.compile = std::chrono::duration_cast<std::chrono::nanoseconds>(
