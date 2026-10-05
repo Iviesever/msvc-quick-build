@@ -24,6 +24,12 @@ namespace {
 namespace fs = std::filesystem;
 using namespace mqb;
 using namespace mqb::orchestration;
+#ifdef _WIN32
+void save_target_cache_evidence(const fs::path&, const RecordedModuleTargetResult&);
+void check_target_cache_history(const fs::path&, const RecordedModuleTargetResult&);
+std::expected<RecordedModuleTargetResult, IncrementalModuleTargetError> run_target_cache_checked(
+    MsvcModuleTargetCoordinator&, const IncrementalModuleTargetRequest&, ArtifactGenerationLabel, const fs::path&);
+#endif
 void require(bool value, std::string_view message) {
     if (!value) throw std::runtime_error(std::string{message});
 }
@@ -273,14 +279,14 @@ struct Calls {
             write(prefix.string() + ".attempt" + std::to_string(i), bytes(request.sources[i].source));
         }
         write(prefix.string() + ".attempt.txt", attempt.str());
-        auto r = harness.target.run_recorded(request, ArtifactGenerationLabel{"fixture", phase});
+        auto r = run_target_cache_checked(harness.target, request, ArtifactGenerationLabel{"fixture", phase}, prefix);
         const auto after = runner.counts();
         std::ostringstream delta;
         delta << "scan=" << after.scan - before.scan << "\ncompile=" << after.compile - before.compile
             << "\nlink=" << after.link - before.link << '\n';
         write(prefix.string() + ".counts.txt", delta.str());
         if (!r) save_failure(prefix, r.error());
-        else { save_success(prefix, *r, copies); check_success(*r, request); }
+        else { save_success(prefix, *r, copies); check_success(*r, request); save_target_cache_evidence(prefix, *r); }
         return r;
     }
 };
@@ -409,6 +415,11 @@ void mock_cases(const fs::path& root, const fs::path& evidence) {
         if (c.fault == MockTools::Fault::scan || c.fault == MockTools::Fault::graph)
             require(runner.compiles == n.compile, "failed preparation never compiles");
     }
+    check_target_cache_history(evidence / "01-cold", *first);
+    check_target_cache_history(evidence / "02-reuse", *warm);
+    require(first->cache_evidence.compiles.size() == 4 && first->cache_evidence.header_unit_compiles.size() == 1,
+        "target keeps actual injected providers but no fabricated external cache slot");
+    require(bytes(r.target.link_cache / "sentinel") == "preserve obstruction", "terminal save failure preserves original obstruction");
     require(calls.count == 10 && snapshot(tools) == tool_inputs, "fixed mock calls, read-only toolchain/external inputs");
     write(evidence / "completed.txt", "10 targets; 5 successes; 5 expected stage errors; mock tools\n");
 }
@@ -491,6 +502,13 @@ void native_cases(const fs::path& root, const fs::path& evidence) {
         if (c.code != IncrementalModuleTargetErrorCode::link_failed) require(runner.links == n.link, "real early failure suppresses link");
         if (c.code == IncrementalModuleTargetErrorCode::scan_failed) require(runner.compiles == n.compile, "real scan failure suppresses compile");
     }
+    check_target_cache_history(evidence / "01-cold", *cold);
+    check_target_cache_history(evidence / "02-reuse", *warm);
+    check_target_cache_history(evidence / "06-standard-cold", *std_cold);
+    check_target_cache_history(evidence / "07-standard-reuse", *std_warm);
+    require(cold->cache_evidence.compiles[0].request.options.configuration == BuildConfiguration::debug &&
+        release->cache_evidence.compiles[0].request.options.configuration == BuildConfiguration::release,
+        "retained target cache request survives configuration overwrite and later errors");
     require(calls.count == 10 && runner.programs == 2, "fixed real target/program count");
     write(evidence / "completed.txt", "10 targets; 7 successes; 3 independent expected stage errors; 2 successful programs before faults\n");
 }
@@ -511,3 +529,173 @@ int main() {
         return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }
+// BEGIN MQB_MODULE_TARGET_CACHE_EVIDENCE_CASES
+#include <cstdint>
+namespace {
+// The collector covers scan preparation AND the compile wave. Source/provider
+// scans load the same compile-cache payload; HUs have no scan. Count successful
+// opens, not missing-file attempts. Subtraction avoids overflowing an upper sum.
+constexpr bool target_cache_counts_match(
+    std::uint64_t reads, std::uint64_t writes,
+    std::uint64_t scans, std::uint64_t nodes, bool warm) {
+    if (writes > nodes) return false;
+    if (warm) return writes == 0 && reads >= nodes && reads - nodes == scans;
+    return reads <= nodes || reads - nodes <= scans;
+}
+// Pure counting controls; these are not additional target/tool invocations.
+static_assert(target_cache_counts_match(0, 5, 4, 5, false)); // cold mock
+static_assert(target_cache_counts_match(9, 0, 4, 5, true));  // 4 sources + HU
+static_assert(target_cache_counts_match(5, 0, 2, 3, true));  // native source/HU
+static_assert(target_cache_counts_match(6, 0, 3, 3, true));  // std/std.compat
+static_assert(target_cache_counts_match(1, 0, 0, 1, true));  // HU has no scan
+static_assert(target_cache_counts_match(0, 0, 0, 0, true));  // empty model only
+static_assert(!target_cache_counts_match(10, 0, 4, 5, false)); // extra read
+static_assert(!target_cache_counts_match(10, 0, 4, 5, true));
+static_assert(!target_cache_counts_match(8, 0, 4, 5, true));  // missing warm read
+static_assert(!target_cache_counts_match(9, 1, 4, 5, true));  // warm write
+static_assert(!target_cache_counts_match(0, 6, 4, 5, false)); // extra write
+static_assert(!target_cache_counts_match(2, 0, 0, 1, true)); // phantom HU scan
+static_assert(target_cache_counts_match(UINT64_MAX, 0, 1, UINT64_MAX, false));
+static_assert(!target_cache_counts_match(0, 0, 1, UINT64_MAX, true));
+} // namespace
+#ifdef _WIN32
+#include "mqb/core/CompileCacheFile.hpp"
+#include "mqb/core/PerformanceEvidence.hpp"
+namespace {
+void save_target_cache_evidence(const fs::path& prefix, const RecordedModuleTargetResult& wave) {
+    static_assert(!ModuleCompileArtifactRecord::exact_cache_entry_captured);
+    static_assert(!CompileCacheEvidence::producer_identity_verified);
+    static_assert(!CompileCacheEvidence::current_content_verified);
+    static_assert(!CompileCacheEvidence::complete_producer_inventory);
+    static_assert(!CompileCacheEvidence::deletion_authorized);
+    auto nodes = [&](const auto& captured, const auto& records, const auto& results, const char* category) {
+        require(captured.size() == records.size() && records.size() == results.size(),
+            "every successful target node owns one exact cache value in request order");
+        for (std::size_t i=0; i<captured.size(); ++i) {
+            const auto& e = captured[i]; const auto& r = records[i];
+            require(e.request.unit.source == r.unit.source && e.cache_entry.source == r.unit.source &&
+                e.request.unit.kind == r.unit.kind && e.cache_entry.kind == r.unit.kind &&
+                e.request.cache_file == r.compile_cache && e.request.source_dependencies_file == r.dependencies &&
+                e.request.module_scan_output == r.module_scan_output && e.request.working_directory == r.working_directory &&
+                e.request.force_rebuild == r.force_rebuild,
+                "captured cache/request belongs to this node and effective provider force");
+            require(e.request.options.configuration == r.compiler_options.configuration &&
+                e.request.options.standard == r.compiler_options.standard &&
+                e.request.options.defines == r.compiler_options.defines &&
+                e.request.options.include_directories == r.compiler_options.include_directories &&
+                e.request.options.additional_arguments == r.compiler_options.additional_arguments,
+                "recorded node retains effective ordered options");
+            auto outputs = [&](const auto& values) {
+                require(values.size() == r.unit.outputs.size(), "captured output cardinality");
+                for (std::size_t j=0; j<values.size(); ++j)
+                    require(values[j].path == r.unit.outputs[j].path && values[j].kind == r.unit.outputs[j].kind,
+                        "object/IFC ordered output pairing matches original projection");
+            };
+            outputs(e.request.unit.outputs); outputs(e.cache_entry.outputs);
+            require(e.request.unit.module_references.size() == r.unit.module_references.size() &&
+                e.request.unit.header_unit_references.size() == r.unit.header_unit_references.size(),
+                "captured provider reference cardinality");
+            for (std::size_t j=0; j<r.unit.module_references.size(); ++j) {
+                const auto& a=e.request.unit.module_references[j]; const auto& b=r.unit.module_references[j];
+                require(a.logical_name==b.logical_name && a.interface_file==b.interface_file,
+                    "named and external references remain inputs, not extra evidence slots");
+            }
+            for (std::size_t j=0; j<r.unit.header_unit_references.size(); ++j) {
+                const auto& a=e.request.unit.header_unit_references[j]; const auto& b=r.unit.header_unit_references[j];
+                require(a.header_name==b.header_name && a.interface_file==b.interface_file && a.lookup_method==b.lookup_method,
+                    "header references retain exact identity and order");
+            }
+            if (r.unit.header_unit) require(e.request.unit.header_unit &&
+                e.request.unit.header_unit->header_name == r.unit.header_unit->header_name &&
+                e.request.unit.header_unit->lookup_method == r.unit.header_unit->lookup_method &&
+                !e.cache_entry.module_scan, "HU value retains header identity and no fabricated scan");
+            const auto state = r.cache_state==ArtifactCacheState::reused ? CompileCacheEvidenceState::reused :
+                r.cache_state==ArtifactCacheState::saved ? CompileCacheEvidenceState::saved : CompileCacheEvidenceState::save_failed;
+            require(e.state==state && (e.state==CompileCacheEvidenceState::reused)==!results[i].result.compiled,
+                "typed cache disposition agrees with original completion and warning projection");
+            if (e.state==CompileCacheEvidenceState::save_failed) {
+                require(e.save_error && e.save_error->code==CompileCacheFileErrorCode::replace_failed &&
+                    e.save_error->file==r.compile_cache && e.save_error->offset==0 &&
+                    e.save_error->message=="failed to remove previous cache entry",
+                    "retain original typed save failure and attempted cache value");
+                require(bytes(r.compile_cache/"sentinel")=="retain obstruction", "save failure preserves sentinel");
+            } else require(!e.save_error, "saved/reused evidence has no invented save error");
+            const auto stem=prefix.string()+"."+category+std::to_string(i);
+            require(CompileCacheFile::save(stem+".captured.cache",e.cache_entry).has_value(),
+                "test-only serialization of owning cache with unchanged codec");
+            if (e.state!=CompileCacheEvidenceState::save_failed)
+                require(bytes(stem+".captured.cache")==bytes(r.compile_cache), "same-call cache bytes match disk copy");
+            std::ostringstream out;
+            out<<"attached_exact_cache_entry_captured=true\nlegacy_projection_exact_cache_entry_captured=false\n"
+                <<"state="<<static_cast<int>(e.state)<<"\nsource="<<text(e.request.unit.source)
+                <<"\nforce_rebuild="<<e.request.force_rebuild<<"\nconfiguration="<<to_string(e.request.options.configuration)
+                <<"\nsave_error="<<e.save_error.has_value()<<"\nproducer_identity_verified=false\ncurrent_content_verified=false\n"
+                <<"complete_producer_inventory=false\ndeletion_authorized=false\n";
+            if (e.save_error) out<<"save_code="<<static_cast<int>(e.save_error->code)
+                <<"\nsave_path="<<text(e.save_error->file)<<"\nsave_offset="<<e.save_error->offset
+                <<"\nsave_message="<<e.save_error->message<<'\n';
+            write(stem+".cache-evidence.txt",out.str());
+            // Value ownership control, not a new compiler/cache operation.
+            const auto source=e.request.unit.source;
+            const auto environments=e.inspection_toolchain.environment.size();
+            auto copy=e;
+            copy.request.unit.source="changed-copy.cpp";
+            copy.cache_entry.outputs.clear();
+            copy.inspection_toolchain.environment.push_back({"SYNTHETIC_ONLY","not serialized"});
+            require(e.request.unit.source==source && e.cache_entry.outputs.size()==r.unit.outputs.size() &&
+                e.inspection_toolchain.environment.size()==environments, "cache/request/toolchain vectors own their values");
+        }
+    };
+    require(wave.cache_evidence.compiles.size() == wave.record.scans.size(), "target scan/compile evidence correspondence");
+    for (std::size_t i=0; i<wave.record.scans.size(); ++i) {
+        const auto& scan=wave.record.scans[i]; const auto& cache=wave.cache_evidence.compiles[i];
+        require(scan.scan.recipe.invocation.source==cache.request.unit.source &&
+            scan.scan.compile_cache_reference==cache.request.cache_file,
+            "cache belongs to actual project or injected provider scan, never filename-inferred");
+    }
+    nodes(wave.cache_evidence.compiles,wave.record.compiles.compiles,wave.result.compiles.compiles,"source");
+    nodes(wave.cache_evidence.header_unit_compiles,wave.record.compiles.header_unit_compiles,wave.result.compiles.header_unit_compiles,"header");
+}
+void check_target_cache_history(const fs::path& prefix, const RecordedModuleTargetResult& wave) {
+    auto nodes=[&](const auto& values,const char* category) {
+        for (std::size_t i=0;i<values.size();++i) {
+            const auto stem=prefix.string()+"."+category+std::to_string(i);
+            require(CompileCacheFile::save(stem+".history.cache",values[i].cache_entry).has_value(),"serialize old target value after later failures");
+            require(bytes(stem+".history.cache")==bytes(stem+".captured.cache"), "later overwrite/failure cannot mutate earlier target cache evidence");
+        }
+    };
+    nodes(wave.cache_evidence.compiles,"source"); nodes(wave.cache_evidence.header_unit_compiles,"header");
+}
+std::expected<RecordedModuleTargetResult, IncrementalModuleTargetError> run_target_cache_checked(
+    MsvcModuleTargetCoordinator& target, const IncrementalModuleTargetRequest& request,
+    ArtifactGenerationLabel label, const fs::path& prefix) {
+    performance::Collector collector;
+    auto result=[&]() {
+        performance::Activation active{collector};
+        return target.run_recorded(request,std::move(label));
+    }();
+    const auto count=collector.snapshot();
+    constexpr auto ci=static_cast<std::size_t>(performance::CacheKind::compile);
+    const auto scans=result ? result->record.scans.size() : 0;
+    const auto nodes=result ? result->cache_evidence.compiles.size()+result->cache_evidence.header_unit_compiles.size() : 0;
+    const bool warm=prefix.filename()=="02-reuse" || prefix.filename()=="07-standard-reuse";
+    // Preserve the actual aggregate even when the assertion below refuses it.
+    // Serialization/verification is outside Activation and cannot inflate it.
+    std::ostringstream out;
+    out<<"compile_cache_reads="<<count.cache_files_opened[ci]<<"\ncompile_cache_writes="<<count.cache_files_written[ci]
+        <<"\ntarget_success="<<result.has_value()<<"\ncounter_scope=target_scan_and_compile"
+        <<"\nscan_checks="<<scans<<"\ncompile_nodes="<<nodes<<"\nwarm_check="<<warm<<'\n';
+    write(prefix.string()+".cache-counts.txt",out.str());
+    if (result) {
+        require(scans==result->cache_evidence.compiles.size(), "one scan per prepared source/provider, none for HU");
+        require(target_cache_counts_match(count.cache_files_opened[ci], count.cache_files_written[ci], scans, nodes, false),
+            "target pass-through adds no reads/writes beyond its scan checks and compile wave");
+        if (warm)
+            require(target_cache_counts_match(count.cache_files_opened[ci], count.cache_files_written[ci], scans, nodes, true),
+                "warm target reads each scanned source twice and each HU once, with zero writes");
+    } else require(!fs::exists(prefix.string()+".source0.captured.cache"), "failed target publishes no successful cache evidence");
+    return result;
+}
+} // namespace
+#endif
+// END MQB_MODULE_TARGET_CACHE_EVIDENCE_CASES

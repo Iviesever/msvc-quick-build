@@ -137,6 +137,10 @@ struct ModuleTargetArtifactRecord {
 struct RecordedModuleTargetResult {
     IncrementalModuleTargetResult result;
     ModuleTargetArtifactRecord record;
+    // Same-call values returned by the actual compile wave, including injected
+    // providers and dynamic HUs in that wave's input order. No cache reload or
+    // new ownership/cleanup authority; ordinary run/inspect do not capture.
+    ModuleCompileWaveCacheEvidence cache_evidence;
 };
 
 class MsvcModuleTargetCoordinator {
