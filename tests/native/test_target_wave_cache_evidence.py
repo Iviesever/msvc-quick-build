@@ -262,15 +262,23 @@ class TargetWaveCacheContracts(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell unavailable: literal/legacy contracts still run')
     def test_real_powershell_layout_accepts_source_and_rejects_missing_extra_files(self):
-        # Only inventory checks: no MQB, MSVC or synthetic tool execution.
-        def invoke(root):
-            return subprocess.run([shutil.which('pwsh'), '-NoProfile', '-NonInteractive',
-                '-File', str(ROOT/LAYOUT), '-CppRoot', str(root)],
-                capture_output=True, text=True, timeout=30)
-        result = invoke(ROOT/'cpp')
-        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
-        self.assertIn('C++ responsibility layout contract passed.', result.stdout)
+        # Catch the actual exception before ConciseView adds ANSI/wrapping. The
+        # production gate is unchanged; require its full raw message and exit 1.
         with tempfile.TemporaryDirectory() as temp:
+            wrapper = Path(temp)/'capture-layout-error.ps1'
+            wrapper.write_text("""param([string]$LayoutScript, [string]$CppRoot)
+$ErrorActionPreference = 'Stop'
+try { & $LayoutScript -CppRoot $CppRoot }
+catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
+""", encoding='utf-8')
+            def invoke(root):
+                return subprocess.run([shutil.which('pwsh'), '-NoProfile', '-NonInteractive',
+                    '-File', str(wrapper), '-LayoutScript', str(ROOT/LAYOUT), '-CppRoot', str(root)],
+                    capture_output=True, text=True, timeout=30)
+            result = invoke(ROOT/'cpp')
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+            self.assertIn('C++ responsibility layout contract passed.', result.stdout)
+            self.assertEqual(result.stderr, '')
             root = Path(temp)/'cpp'
             # The actual gate reads directory membership, not source contents.
             for path in (ROOT/'cpp').rglob('*'):
@@ -283,13 +291,19 @@ class TargetWaveCacheContracts(unittest.TestCase):
             helper = root/Path(CASES).relative_to('cpp')
             helper.unlink()
             result = invoke(root)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('missing: TargetWaveCacheEvidenceCases.hpp', result.stdout+result.stderr)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout, '')
+            self.assertEqual(result.stderr,
+                f"Responsibility layout drift under '{helper.parent}':\n"
+                '  missing: TargetWaveCacheEvidenceCases.hpp\n')
             helper.touch()
             (helper.parent/'Unregistered.hpp').touch()
             result = invoke(root)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('unexpected: Unregistered.hpp', result.stdout+result.stderr)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout, '')
+            self.assertEqual(result.stderr,
+                f"Responsibility layout drift under '{helper.parent}':\n"
+                '  unexpected: Unregistered.hpp\n')
 
     def test_bilingual_contract_documents_keep_validation_and_cost_boundaries(self):
         for path in ('docs/TARGET_WAVE_CACHE_EVIDENCE.md','docs/TARGET_WAVE_CACHE_EVIDENCE_ZH.md'):
