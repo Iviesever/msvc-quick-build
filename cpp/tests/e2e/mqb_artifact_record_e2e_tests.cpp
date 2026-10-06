@@ -18,6 +18,8 @@
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 #include "TargetWaveCacheEvidenceChecks.hpp"
+#include "mqb/orchestration/ArtifactStorageProjection.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 #endif
 
 namespace {
@@ -299,6 +301,12 @@ void recorded_target_lifecycle(const fs::path& root, const fs::path& evidence) {
         write(evidence / (std::string{phase} + ".attempt.txt"), "recorded API invocation\n");
         auto result = target_wave_cache_checks::recorded(target, request,
             evidence / phase, ArtifactGenerationLabel{"fixture", phase});
+        if (result) {
+            const auto projected = project_storage_references(*result, platform::windows::path_identity_key);
+            if (!projected) throw std::runtime_error("native recorded storage projection: " + projected.error().message);
+            require(projected->compiles.size() == result->cache_evidence.compiles.size(),
+                    "real target cache evidence projected without extra tool calls");
+        }
         ++completed_calls;
         if (!result) write(evidence / (std::string{phase} + ".error.txt"), result.error().message);
         else {

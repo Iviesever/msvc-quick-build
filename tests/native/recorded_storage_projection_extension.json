@@ -1,0 +1,91 @@
+{
+  "base": "77b7b7af383c1ebfcc17e971d70b97b0906cdee4",
+  "files": {
+    "cpp/include/mqb/orchestration/ArtifactStorageProjection.hpp": {
+      "cuts": [
+        [
+          "\n// BEGIN recorded storage projection interface\n",
+          "// END recorded storage projection interface\n"
+        ]
+      ],
+      "replacements": [
+        [
+          "",
+          "#include \"mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp\"\n"
+        ]
+      ],
+      "current": "ad881a98eb7ddc85740de73a31c6a479b7a7fff0957736c220902572ca2d7a9f",
+      "prior": "2475f1896fa9a08bf5beeac0484b0295eb03c09881d9ce99efd8515d1eed255e"
+    },
+    "cpp/src/orchestration/incremental/ArtifactStorageProjection.cpp": {
+      "cuts": [
+        [
+          "\n// BEGIN recorded ordinary-target storage projection\n",
+          "// END recorded ordinary-target storage projection\n"
+        ]
+      ],
+      "replacements": [
+        [
+          "",
+          "\n#include <algorithm>\n#include <set>\n#include <type_traits>\n\n#include \"mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp\""
+        ]
+      ],
+      "current": "cb3a8686e63f0c8860da7b49f70e5f1f77562c24e6322c19f5c851468489ee87",
+      "prior": "03800e0bf298b30be0885d74ac7289503183f7a38f58362c2f399a2e53f08842"
+    },
+    "cpp/tests/e2e/mqb_storage_association_e2e_tests.cpp": {
+      "cuts": [
+        [
+          "// BEGIN recorded storage projection contracts\n",
+          "// END recorded storage projection contracts\n"
+        ]
+      ],
+      "replacements": [
+        [
+          "",
+          "#include \"mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp\"\n"
+        ],
+        [
+          "",
+          "        recorded_projection_contracts();\n"
+        ],
+        [
+          "        require(r.has_value(),\"native recorded target success\");records.push_back(project_storage_references(r->record));return r;",
+          "        require(r.has_value(),\"native recorded target success\");\n        const auto rich = project_storage_references(*r, platform::windows::path_identity_key);\n        if (!rich) throw std::runtime_error(\"native rich storage projection: \" + rich.error().message);\n        require(rich->compiles.size()==r->cache_evidence.compiles.size() &&\n            rich->references.stages[0].working_directory==r->cache_evidence.compiles[0].request.working_directory &&\n            rich->compiles[0].captured_signature==r->cache_evidence.compiles[0].cache_entry.signature,\n            \"same native call rich storage evidence correspondence\");\n        records.push_back(project_storage_references(r->record));return r;"
+        ]
+      ],
+      "current": "37396c63dc538733ffc0c46dc3b87e6ca7854b2b7c4122ce1d3543a96cb9f4dd",
+      "prior": "a0db0ef261c96da0aa183efafe7c5bc42e9a7765b840c9e8dfb409512bad99f0"
+    },
+    "cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp": {
+      "cuts": [],
+      "replacements": [
+        [
+          "",
+          "#include \"mqb/orchestration/ArtifactStorageProjection.hpp\"\n#include \"mqb/platform/windows/PathIdentity.hpp\"\n"
+        ],
+        [
+          "",
+          "\n        if (result) {\n            const auto projected = project_storage_references(*result, platform::windows::path_identity_key);\n            if (!projected) throw std::runtime_error(\"native recorded storage projection: \" + projected.error().message);\n            require(projected->compiles.size() == result->cache_evidence.compiles.size(),\n                    \"real target cache evidence projected without extra tool calls\");\n        }"
+        ]
+      ],
+      "current": "78de7857e1c1c0c69ce6dbbbc3ae8c5b6f2ee71c88653c039a7dbae2ceb27d9d",
+      "prior": "4c2f279eca50d7f434c7cc3b03ff02b601c7c1a6bb0d9ce7e98f3a68526e055e"
+    },
+    "cpp/tests/e2e/mqb_static_record_e2e_tests.cpp": {
+      "cuts": [],
+      "replacements": [
+        [
+          "",
+          "#include \"mqb/orchestration/ArtifactStorageProjection.hpp\"\n#include \"mqb/platform/windows/PathIdentity.hpp\"\n"
+        ],
+        [
+          "",
+          "\n        if (result) {\n            const auto projected = project_storage_references(*result, platform::windows::path_identity_key);\n            if (!projected) throw std::runtime_error(\"native recorded storage projection: \" + projected.error().message);\n            require(projected->compiles.size() == result->cache_evidence.compiles.size(),\n                    \"real target cache evidence projected without extra tool calls\");\n        }"
+        ]
+      ],
+      "current": "cfd0f113f24fab013e938293f3c1fcdf507d382060419901e1ca0d5a0a4a2c39",
+      "prior": "e381a055faadcc7bfed1bd4e72c6ef7217d5192baf83269b05996eb79b3f9b13"
+    }
+  }
+}
