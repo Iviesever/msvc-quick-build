@@ -562,6 +562,8 @@ static_assert(!PublicInspectionExecution<
 
 } // namespace
 
+#include "TargetWaveCacheEvidenceCases.hpp"
+
 int main() {
     TemporaryDirectory fixture;
     const fs::path compiler = fixture.path() / "tools" / "cl.exe";
@@ -1025,6 +1027,7 @@ int main() {
            "target must not link when any parallel compile fails");
 
     target_admission_cases();
+    target_wave_cache_cases();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

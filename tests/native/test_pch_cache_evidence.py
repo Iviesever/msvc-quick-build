@@ -1,6 +1,7 @@
 """PCH handoff contracts; static/synthetic checks, not native performance tests."""
 import hashlib
 from pathlib import Path
+import accepted_target_wave_cache_extension as wave_extension
 import unittest
 import accepted_pch_cache_evidence_extension as x
 
@@ -9,7 +10,7 @@ PCH='cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp'
 COMPILE='cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp'
 HEADER='cpp/include/mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp'
 
-def read(path):return (ROOT/path).read_text(encoding='utf-8')
+def read(path):return wave_extension.legacy_text(path, (ROOT / path).read_text(encoding='utf-8'))
 def body(text, begin, end):return text.split(begin,1)[1].split(end,1)[0]
 
 def captured_boundaries(pch, compile_header, compile_source):
@@ -84,7 +85,7 @@ class PchCacheEvidenceContracts(unittest.TestCase):
         for path in (ROOT/'cpp/src').rglob('*'):
             if path.suffix not in ('.hpp','.cpp') or path.relative_to(ROOT).as_posix() in (PCH,COMPILE,
                 'cpp/src/orchestration/modules/MsvcModuleCompileCoordinator.cpp'):continue
-            text=path.read_text()
+            text=wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), path.read_text())
             self.assertNotIn('CompileCacheEvidence',text,str(path))
             self.assertNotIn('inspect_for_pch_record',text,str(path))
     def test_original_pch_native_program_preserved(self):

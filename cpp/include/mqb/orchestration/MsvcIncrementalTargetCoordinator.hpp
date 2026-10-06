@@ -95,9 +95,17 @@ struct IncrementalTargetResult {
     bool any_compiled{false};
 };
 
+// Same-invocation owning cache values, in original source order. Only the
+// final successful wave is retained after a conservative freshness rebuild.
+// Additional objects are references, not invented compile/cache producers.
+struct TargetCompileCacheEvidence {
+    std::vector<CompileCacheEvidence> compiles;
+};
+
 struct RecordedTargetResult {
     IncrementalTargetResult result;
     TargetArtifactRecord record;
+    TargetCompileCacheEvidence cache_evidence;
 };
 
 struct TargetWriteCollection {
@@ -147,7 +155,8 @@ private:
     template<bool WithAdmissionStop>
     [[nodiscard]] std::expected<IncrementalTargetResult, IncrementalTargetError>
     run_impl(const IncrementalTargetRequest& request, std::stop_token admission_stop,
-             std::optional<LinkArtifactRecord>* record = nullptr) const;
+             std::optional<LinkArtifactRecord>* record = nullptr,
+             TargetCompileCacheEvidence* cache_evidence = nullptr) const;
 
     MsvcIncrementalCompileCoordinator& compile_coordinator_;
     MsvcIncrementalLinkCoordinator& link_coordinator_;
