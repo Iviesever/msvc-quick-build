@@ -279,7 +279,9 @@ catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
             self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
             self.assertIn('C++ responsibility layout contract passed.', result.stdout)
             self.assertEqual(result.stderr, '')
-            root = Path(temp)/'cpp'
+            # Resolve the existing temporary directory before adding children;
+            # Windows may expose its parent through an 8.3 profile-name alias.
+            root = Path(temp).resolve()/'cpp'
             # The actual gate reads directory membership, not source contents.
             for path in (ROOT/'cpp').rglob('*'):
                 target = root/path.relative_to(ROOT/'cpp')
