@@ -7,6 +7,9 @@ import copy
 import json
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -20,6 +23,8 @@ TARGET = 'cpp/src/orchestration/incremental/MsvcIncrementalTargetCoordinator.cpp
 STATIC = 'cpp/src/orchestration/incremental/MsvcIncrementalStaticTargetCoordinator.cpp'
 CASES = 'cpp/tests/orchestration/incremental/TargetWaveCacheEvidenceCases.hpp'
 HELPER = 'cpp/tests/e2e/TargetWaveCacheEvidenceChecks.hpp'
+LAYOUT = 'tests/native/assert_cpp_layout.ps1'
+REGISTRATION = ",\n        'TargetWaveCacheEvidenceCases.hpp'"
 
 
 def read(path):
@@ -28,6 +33,23 @@ def read(path):
 
 def between(text, first, last):
     return text.split(first, 1)[1].split(last, 1)[0]
+
+
+def check_incremental_layout(layout, actual):
+    """Check this literal leaf declaration, not a general PowerShell evaluator."""
+    root = "Assert-LeafLayout -Root (Join-Path $testsRoot 'orchestration') -LeafFiles ([ordered]@{"
+    if layout.count(root) != 1:
+        raise ValueError('ambiguous orchestration layout')
+    leaf = layout.split(root, 1)[1].split("    'modules' = @(", 1)[0]
+    match = re.fullmatch(r"\s*'incremental' = @\((.*?)\)\s*", leaf, re.S)
+    if match is None:
+        raise ValueError('unexpected incremental layout expression')
+    names = re.findall(r"'([^']+)'", match[1])
+    remainder = re.sub(r"'[^']+'", '', match[1])
+    if re.sub(r'[\s,]', '', remainder) or len(names) != len(set(names)):
+        raise ValueError('nonliteral or duplicate layout registration')
+    if len(actual) != len(set(actual)) or set(names) != set(actual):
+        raise ValueError('incremental leaf membership mismatch')
 
 
 class TargetWaveCacheContracts(unittest.TestCase):
@@ -204,6 +226,70 @@ class TargetWaveCacheContracts(unittest.TestCase):
         self.assertIn('cache_entry', text)
         self.assertNotIn('CompileCacheFile::load', text)
         self.assertNotIn('environment=', text)
+
+    def test_registered_incremental_leaf_matches_actual_source(self):
+        leaf = ROOT/'cpp/tests/orchestration/incremental'
+        actual = [p.name for p in leaf.iterdir() if p.is_file()]
+        check_incremental_layout(read(LAYOUT), actual)
+        self.assertEqual(read(LAYOUT).count(REGISTRATION), 1)
+
+    def test_missing_extra_duplicate_and_wrong_leaf_registration_rejected(self):
+        layout = read(LAYOUT)
+        actual = [p.name for p in (ROOT/'cpp/tests/orchestration/incremental').iterdir() if p.is_file()]
+        helper = Path(CASES).name
+        for changed_layout, changed_files in (
+            (layout.replace(REGISTRATION, '', 1), actual),
+            (layout.replace(REGISTRATION, REGISTRATION*2, 1), actual),
+            (layout.replace(helper, 'Unregistered.hpp', 1), actual),
+            (layout, [name for name in actual if name != helper]),
+            (layout, actual+['Unregistered.hpp']),
+        ):
+            with self.subTest(files=changed_files), self.assertRaises(ValueError):
+                check_incremental_layout(changed_layout, changed_files)
+
+    def test_legacy_layout_guard_rejects_unrelated_changes(self):
+        import test_observed_link_isolation as isolation
+        original = isolation.read_tree(ROOT)
+        for changed in (original[LAYOUT].replace(REGISTRATION, '', 1),
+                        original[LAYOUT]+REGISTRATION,
+                        original[LAYOUT].replace('Compare-Object', 'Write-Output', 1),
+                        original[LAYOUT]+"\n# unrelated layout change\n"):
+            values = dict(original)
+            values[LAYOUT] = changed
+            with self.subTest(change=changed[-100:]), self.assertRaises(ValueError):
+                isolation.audit(values)
+        self.assertEqual(isolation.audit(original)['native_programs'], 96)
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell unavailable: literal/legacy contracts still run')
+    def test_real_powershell_layout_accepts_source_and_rejects_missing_extra_files(self):
+        # Only inventory checks: no MQB, MSVC or synthetic tool execution.
+        def invoke(root):
+            return subprocess.run([shutil.which('pwsh'), '-NoProfile', '-NonInteractive',
+                '-File', str(ROOT/LAYOUT), '-CppRoot', str(root)],
+                capture_output=True, text=True, timeout=30)
+        result = invoke(ROOT/'cpp')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn('C++ responsibility layout contract passed.', result.stdout)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)/'cpp'
+            # The actual gate reads directory membership, not source contents.
+            for path in (ROOT/'cpp').rglob('*'):
+                target = root/path.relative_to(ROOT/'cpp')
+                if path.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                elif path.is_file():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.touch()
+            helper = root/Path(CASES).relative_to('cpp')
+            helper.unlink()
+            result = invoke(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('missing: TargetWaveCacheEvidenceCases.hpp', result.stdout+result.stderr)
+            helper.touch()
+            (helper.parent/'Unregistered.hpp').touch()
+            result = invoke(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('unexpected: Unregistered.hpp', result.stdout+result.stderr)
 
     def test_bilingual_contract_documents_keep_validation_and_cost_boundaries(self):
         for path in ('docs/TARGET_WAVE_CACHE_EVIDENCE.md','docs/TARGET_WAVE_CACHE_EVIDENCE_ZH.md'):

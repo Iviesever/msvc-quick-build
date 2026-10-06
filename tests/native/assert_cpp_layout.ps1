@@ -296,7 +296,8 @@ Assert-LeafLayout -Root (Join-Path $testsRoot 'orchestration') -LeafFiles ([orde
         'link_completion_archive_tests.cpp',
         'artifact_generation_model_tests.cpp',
         'incremental_link_coordinator_tests.cpp',
-        'incremental_target_coordinator_tests.cpp', 'prewrite_inventory_cases.hpp'
+        'incremental_target_coordinator_tests.cpp', 'prewrite_inventory_cases.hpp',
+        'TargetWaveCacheEvidenceCases.hpp'
     )
     'modules' = @(
         'header_unit_incremental_integration_tests.cpp',
