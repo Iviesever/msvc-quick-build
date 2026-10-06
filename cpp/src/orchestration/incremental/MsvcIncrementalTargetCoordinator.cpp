@@ -124,7 +124,8 @@ MsvcIncrementalTargetCoordinator::run_recorded(
     const IncrementalTargetRequest& request,
     std::optional<ArtifactGenerationLabel> caller_label) const {
     std::optional<LinkArtifactRecord> link_record;
-    auto result = run_impl<false>(request, {}, &link_record);
+    TargetCompileCacheEvidence cache_evidence;
+    auto result = run_impl<false>(request, {}, &link_record, &cache_evidence);
     if (!result) return std::unexpected(std::move(result.error()));
     if (!link_record) return std::unexpected(failure(
         IncrementalTargetErrorCode::link_failed, "successful target link record unavailable"));
@@ -149,14 +150,14 @@ MsvcIncrementalTargetCoordinator::run_recorded(
         .additional_object_inputs = request.additional_objects,
         .link = std::move(*link_record),
     };
-    return RecordedTargetResult{std::move(*result), std::move(record)};
+    return RecordedTargetResult{std::move(*result), std::move(record), std::move(cache_evidence)};
 }
 
 template<bool WithAdmissionStop>
 std::expected<IncrementalTargetResult, IncrementalTargetError>
 MsvcIncrementalTargetCoordinator::run_impl(
     const IncrementalTargetRequest& request, std::stop_token admission_stop,
-    std::optional<LinkArtifactRecord>* record) const {
+    std::optional<LinkArtifactRecord>* record, TargetCompileCacheEvidence* cache_evidence) const {
     mqb::performance::ScopedWall validation_evidence{
         mqb::performance::WallKind::target_validation};
     if (request.sources.empty()) {
@@ -240,11 +241,15 @@ MsvcIncrementalTargetCoordinator::run_impl(
     detail::FilesystemEvidenceTable* shared_evidence =
         filesystem_evidence ? &*filesystem_evidence : nullptr;
 
+    // Default/stop paths never allocate per-source cache-capture slots.
+    std::vector<std::optional<CompileCacheEvidence>> captured_compiles;
     struct NoAdmissionEvidence {};
     std::conditional_t<WithAdmissionStop, TargetAdmissionEvidence, NoAdmissionEvidence> admission;
     const auto run_wave = [&](bool force, detail::FilesystemEvidenceTable* table)
         -> std::expected<detail::TargetCompileWaveSummary, BoundedWorkError> {
         if constexpr (!WithAdmissionStop) {
+            if (cache_evidence) return detail::TargetCompileWave::run<false, true>(
+                request, compile_coordinator_, force, table, attempts, {}, nullptr, &captured_compiles);
             return detail::TargetCompileWave::run(
                 request, compile_coordinator_, force, table, attempts);
         } else {
@@ -326,6 +331,7 @@ MsvcIncrementalTargetCoordinator::run_impl(
 
     IncrementalTargetResult result;
     result.compiles.reserve(request.sources.size());
+    if (cache_evidence) cache_evidence->compiles.reserve(request.sources.size());
     std::vector<fs::path> objects;
     objects.reserve(request.sources.size() + request.additional_objects.size());
     objects.insert(
@@ -341,6 +347,18 @@ MsvcIncrementalTargetCoordinator::run_impl(
                 request.sources[index].source));
         }
 
+        if (cache_evidence) {
+            if (index >= captured_compiles.size() || !captured_compiles[index]) {
+                auto error = failure(IncrementalTargetErrorCode::compile_failed,
+                    "successful target wave cache evidence unavailable", request.sources[index].source);
+                error.compile_error = IncrementalCompileError{
+                    .code = IncrementalCompileErrorCode::cache_evidence_unavailable,
+                    .message = "successful target wave cache evidence unavailable",
+                };
+                return std::unexpected(std::move(error));
+            }
+            cache_evidence->compiles.push_back(std::move(*captured_compiles[index]));
+        }
         auto compiled = std::move(attempts[index]->value());
         result.any_compiled = result.any_compiled || compiled.compiled;
         result.compiles.push_back(TargetCompileResult{

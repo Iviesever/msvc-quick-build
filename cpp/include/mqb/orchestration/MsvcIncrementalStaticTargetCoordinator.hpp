@@ -58,6 +58,7 @@ struct IncrementalStaticTargetResult {
 struct RecordedStaticTargetResult {
     IncrementalStaticTargetResult result;
     StaticTargetArtifactRecord record;
+    TargetCompileCacheEvidence cache_evidence;
 };
 
 class MsvcIncrementalStaticTargetCoordinator {
@@ -79,7 +80,8 @@ public:
 private:
     [[nodiscard]] std::expected<IncrementalStaticTargetResult, IncrementalStaticTargetError>
     run_impl(const IncrementalStaticTargetRequest& request,
-             std::optional<ArchiveArtifactRecord>* record) const;
+             std::optional<ArchiveArtifactRecord>* record,
+             TargetCompileCacheEvidence* cache_evidence = nullptr) const;
 
     MsvcIncrementalCompileCoordinator& compile_coordinator_;
     MsvcIncrementalArchiveCoordinator& archive_coordinator_;

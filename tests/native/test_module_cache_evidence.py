@@ -1,6 +1,7 @@
 """Same-call module/HU capture contracts; not Windows execution or performance."""
 import hashlib
 from pathlib import Path
+import accepted_target_wave_cache_extension as wave_extension
 import unittest
 import accepted_module_cache_evidence_extension as x
 
@@ -8,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[2]
 TU='cpp/src/orchestration/modules/MsvcModuleCompileCoordinator.cpp'
 HEADER='cpp/include/mqb/orchestration/MsvcModuleCompileCoordinator.hpp'
 
-def read(name):return (ROOT/name).read_text(encoding='utf-8')
+def read(name):return wave_extension.legacy_text(name, (ROOT / name).read_text(encoding='utf-8'))
 def between(text, first, last):return text.split(first,1)[1].split(last,1)[0]
 
 def wiring(text):
@@ -118,7 +119,7 @@ class ModuleCacheEvidenceContracts(unittest.TestCase):
                  'cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp'}
         for path in (ROOT/'cpp/src').rglob('*'):
             if path.suffix not in ('.cpp','.hpp') or path.relative_to(ROOT).as_posix() in allowed:continue
-            t=path.read_text();self.assertNotIn('CompileCacheEvidence',t,str(path));self.assertNotIn('ModuleCompileWaveCacheEvidence',t,str(path))
+            t=wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), path.read_text());self.assertNotIn('CompileCacheEvidence',t,str(path));self.assertNotIn('ModuleCompileWaveCacheEvidence',t,str(path))
     def test_bilingual_docs_and_unreleased_version(self):
         a=read('docs/MODULE_CACHE_EVIDENCE.md');b=read('docs/MODULE_CACHE_EVIDENCE_ZH.md')
         self.assertEqual(a.count('\n## '),b.count('\n## '))

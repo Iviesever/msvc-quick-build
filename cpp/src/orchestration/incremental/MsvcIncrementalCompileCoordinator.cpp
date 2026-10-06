@@ -398,6 +398,58 @@ MsvcIncrementalCompileCoordinator::execute_inspected_impl(
     return result;
 }
 
+// Keep the toolchain used by the original inspection even for a miss. The
+// split execution must not silently label a later context as its inspection.
+std::expected<IncrementalCompileInspection, IncrementalCompileError>
+MsvcIncrementalCompileCoordinator::inspect_for_target_record(
+    const IncrementalCompileRequest& request,
+    std::optional<CompileCacheEvidence>& accepted,
+    std::optional<msvc::MsvcToolchain>& miss_context) const {
+    accepted.reset();
+    miss_context.reset();
+    auto captured_toolchain = toolchain_;
+    CacheCapture capture;
+    auto inspected = inspect_impl<true>(request, &capture);
+    if (!inspected) return std::unexpected(std::move(inspected.error()));
+    if (capture.entry) {
+        accepted.emplace(CompileCacheEvidence{
+            .request = request,
+            .inspection_toolchain = std::move(captured_toolchain),
+            .cache_entry = std::move(*capture.entry),
+            .state = CompileCacheEvidenceState::reused,
+        });
+    } else {
+        miss_context.emplace(std::move(captured_toolchain));
+    }
+    return inspected;
+}
+
+std::expected<IncrementalCompileResult, IncrementalCompileError>
+MsvcIncrementalCompileCoordinator::execute_inspected_for_target_record(
+    const IncrementalCompileRequest& request,
+    IncrementalCompileInspection inspection,
+    msvc::MsvcToolchain inspection_context,
+    std::optional<CompileCacheEvidence>& captured) const {
+    captured.reset();
+    auto captured_request = request;
+    auto captured_toolchain = std::move(inspection_context);
+    CacheCapture capture;
+    auto completed = execute_inspected_impl<true>(request, std::move(inspection), &capture);
+    if (!completed) return std::unexpected(std::move(completed.error()));
+    if (!capture.entry) return std::unexpected(IncrementalCompileError{
+        .code = IncrementalCompileErrorCode::cache_evidence_unavailable,
+        .message = "successful target miss did not expose its cache entry",
+    });
+    captured.emplace(CompileCacheEvidence{
+        .request = std::move(captured_request),
+        .inspection_toolchain = std::move(captured_toolchain),
+        .cache_entry = std::move(*capture.entry),
+        .state = capture.state,
+        .save_error = std::move(capture.save_error),
+    });
+    return completed;
+}
+
 std::expected<RecordedIncrementalCompileResult, IncrementalCompileError>
 MsvcIncrementalCompileCoordinator::run_recorded(const IncrementalCompileRequest& request) const {
     // Only this opt-in entry allocates owning request/toolchain copies.

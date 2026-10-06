@@ -101,6 +101,11 @@ def audit(files):
     need(driver.count('96') == 3 and digest(driver.replace('96', '88')) ==
          PINS['tests/native/run_native_tests.ps1'], 'native driver policy changed')
     layout = files['tests/native/assert_cpp_layout.ps1']
+    # Remove only the exact registered test helper, then keep the entire legacy
+    # layout fingerprint check below. Unknown or duplicated additions still fail.
+    wave_registration = ",\n        'TargetWaveCacheEvidenceCases.hpp'"
+    need(layout.count(wave_registration) == 1, 'target-wave layout registration missing or duplicated')
+    layout = layout.replace(wave_registration, '', 1)
     reporting_registration = ", 'storage_report_format_cases.hpp'"
     need(layout.count(reporting_registration) == 1, 'reporting layout registration missing')
     layout = layout.replace(reporting_registration, '')

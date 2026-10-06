@@ -137,6 +137,18 @@ private:
     [[nodiscard]] std::expected<IncrementalCompileInspection, IncrementalCompileError>
     inspect_for_pch_record(const IncrementalCompileRequest& request,
                           std::optional<CompileCacheEvidence>& accepted) const;
+    // Private, invocation-owned wave seams. No public executable inspection or
+    // reusable ticket. Hits take the entry from the first inspection; misses
+    // execute that exact inspection once without a second cache load.
+    [[nodiscard]] std::expected<IncrementalCompileInspection, IncrementalCompileError>
+    inspect_for_target_record(const IncrementalCompileRequest& request,
+                              std::optional<CompileCacheEvidence>& accepted,
+                              std::optional<msvc::MsvcToolchain>& miss_context) const;
+    [[nodiscard]] std::expected<IncrementalCompileResult, IncrementalCompileError>
+    execute_inspected_for_target_record(const IncrementalCompileRequest& request,
+                                       IncrementalCompileInspection inspection,
+                                       msvc::MsvcToolchain inspection_context,
+                                       std::optional<CompileCacheEvidence>& captured) const;
     struct CacheCapture;
 
     // Only run() and the invocation-owned target wave may consume a decision.

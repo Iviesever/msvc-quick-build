@@ -17,6 +17,7 @@
 #include "mqb/core/ArchiveCacheFile.hpp"
 #include "mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
+#include "TargetWaveCacheEvidenceChecks.hpp"
 #endif
 
 namespace {
@@ -291,7 +292,8 @@ void native_static_lifecycle(const fs::path& root, const fs::path& evidence) {
         require(++api_calls <= 6, "static recorded API budget");
         runner.phase = phase;
         write(evidence / (std::string{phase} + ".attempt.txt"), "real static recorded API invocation\n");
-        auto result = target.run_recorded(input, ArtifactGenerationLabel{"static-fixture", phase});
+        auto result = target_wave_cache_checks::recorded(target, input,
+            evidence / phase, ArtifactGenerationLabel{"static-fixture", phase});
         if (!result) write(evidence / (std::string{phase} + ".error.txt"), result.error().message);
         else {
             const auto& record = result->record;
@@ -378,6 +380,8 @@ void native_static_lifecycle(const fs::path& root, const fs::path& evidence) {
     program.capture_stdout = program.capture_stderr = true;
     const auto ran = runner.run(program);
     require(ran && ran->exit_code == 0, "static library consumer executes correctly");
+    target_wave_cache_checks::history(evidence / "01-cold", *cold);
+    target_wave_cache_checks::history(evidence / "02-reuse", *warm);
     require(api_calls == 6, "six real static calls completed");
     write(evidence / "completed.txt", "6 static API calls: 5 successes, 1 expected failure; 1 consumer build/run; no retries\n");
 }

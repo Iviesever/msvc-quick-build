@@ -1,0 +1,233 @@
+{
+  "base": "0d001342409db347287161873d1af9de3160c52a",
+  "files": {
+    "cpp/include/mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp": {
+      "prior": "08cb5d86f04fcc9ab7d1894b5e3c9883b0f6c457",
+      "current": "1f34917afe1b7cb8ca5416a2430ca3221d954d63",
+      "replacements": [
+        [
+          "    struct CacheCapture;",
+          "    // Private, invocation-owned wave seams. No public executable inspection or\n    // reusable ticket. Hits take the entry from the first inspection; misses\n    // execute that exact inspection once without a second cache load.\n    [[nodiscard]] std::expected<IncrementalCompileInspection, IncrementalCompileError>\n    inspect_for_target_record(const IncrementalCompileRequest& request,\n                              std::optional<CompileCacheEvidence>& accepted) const;\n    [[nodiscard]] std::expected<IncrementalCompileResult, IncrementalCompileError>\n    execute_inspected_for_target_record(const IncrementalCompileRequest& request,\n                                       IncrementalCompileInspection inspection,\n                                       std::optional<CompileCacheEvidence>& captured) const;\n    struct CacheCapture;"
+        ],
+        [
+          "                              std::optional<CompileCacheEvidence>& accepted) const;",
+          "                              std::optional<CompileCacheEvidence>& accepted,\n                              std::optional<msvc::MsvcToolchain>& miss_context) const;"
+        ],
+        [
+          "                                       IncrementalCompileInspection inspection,\n                                       std::optional<CompileCacheEvidence>& captured) const;",
+          "                                       IncrementalCompileInspection inspection,\n                                       msvc::MsvcToolchain inspection_context,\n                                       std::optional<CompileCacheEvidence>& captured) const;"
+        ]
+      ]
+    },
+    "cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp": {
+      "prior": "280ff02e95a9b6ee1502823ca77025f7436394a6",
+      "current": "95a23d5232f60127924f10372145ac331b7af302",
+      "replacements": [
+        [
+          "std::expected<RecordedIncrementalCompileResult, IncrementalCompileError>\nMsvcIncrementalCompileCoordinator::run_recorded",
+          "// The target wave shares PCH's existing accepted-value inspection seam. This\n// forwarding call performs one original inspection, not a second probe.\nstd::expected<IncrementalCompileInspection, IncrementalCompileError>\nMsvcIncrementalCompileCoordinator::inspect_for_target_record(\n    const IncrementalCompileRequest& request,\n    std::optional<CompileCacheEvidence>& accepted) const {\n    return inspect_for_pch_record(request, accepted);\n}\n\nstd::expected<IncrementalCompileResult, IncrementalCompileError>\nMsvcIncrementalCompileCoordinator::execute_inspected_for_target_record(\n    const IncrementalCompileRequest& request,\n    IncrementalCompileInspection inspection,\n    std::optional<CompileCacheEvidence>& captured) const {\n    captured.reset();\n    auto captured_request = request;\n    auto captured_toolchain = toolchain_;\n    CacheCapture capture;\n    auto completed = execute_inspected_impl<true>(request, std::move(inspection), &capture);\n    if (!completed) return std::unexpected(std::move(completed.error()));\n    if (!capture.entry) return std::unexpected(IncrementalCompileError{\n        .code = IncrementalCompileErrorCode::cache_evidence_unavailable,\n        .message = \"successful target miss did not expose its cache entry\",\n    });\n    captured.emplace(CompileCacheEvidence{\n        .request = std::move(captured_request),\n        .inspection_toolchain = std::move(captured_toolchain),\n        .cache_entry = std::move(*capture.entry),\n        .state = capture.state,\n        .save_error = std::move(capture.save_error),\n    });\n    return completed;\n}\n\nstd::expected<RecordedIncrementalCompileResult, IncrementalCompileError>\nMsvcIncrementalCompileCoordinator::run_recorded"
+        ],
+        [
+          "// The target wave shares PCH's existing accepted-value inspection seam. This\n// forwarding call performs one original inspection, not a second probe.\nstd::expected<IncrementalCompileInspection, IncrementalCompileError>\nMsvcIncrementalCompileCoordinator::inspect_for_target_record(\n    const IncrementalCompileRequest& request,\n    std::optional<CompileCacheEvidence>& accepted) const {\n    return inspect_for_pch_record(request, accepted);\n}",
+          "// Keep the toolchain used by the original inspection even for a miss. The\n// split execution must not silently label a later context as its inspection.\nstd::expected<IncrementalCompileInspection, IncrementalCompileError>\nMsvcIncrementalCompileCoordinator::inspect_for_target_record(\n    const IncrementalCompileRequest& request,\n    std::optional<CompileCacheEvidence>& accepted,\n    std::optional<msvc::MsvcToolchain>& miss_context) const {\n    accepted.reset();\n    miss_context.reset();\n    auto captured_toolchain = toolchain_;\n    CacheCapture capture;\n    auto inspected = inspect_impl<true>(request, &capture);\n    if (!inspected) return std::unexpected(std::move(inspected.error()));\n    if (capture.entry) {\n        accepted.emplace(CompileCacheEvidence{\n            .request = request,\n            .inspection_toolchain = std::move(captured_toolchain),\n            .cache_entry = std::move(*capture.entry),\n            .state = CompileCacheEvidenceState::reused,\n        });\n    } else {\n        miss_context.emplace(std::move(captured_toolchain));\n    }\n    return inspected;\n}"
+        ],
+        [
+          "    IncrementalCompileInspection inspection,\n    std::optional<CompileCacheEvidence>& captured) const {\n    captured.reset();\n    auto captured_request = request;\n    auto captured_toolchain = toolchain_;",
+          "    IncrementalCompileInspection inspection,\n    msvc::MsvcToolchain inspection_context,\n    std::optional<CompileCacheEvidence>& captured) const {\n    captured.reset();\n    auto captured_request = request;\n    auto captured_toolchain = std::move(inspection_context);"
+        ]
+      ]
+    },
+    "cpp/include/mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp": {
+      "prior": "1936a1151550985cb265c3f0ed0689953196d762",
+      "current": "6093efc282ce13c2ef5caae5fdea1ac2dd94dbb5",
+      "replacements": [
+        [
+          "struct RecordedTargetResult {",
+          "// Same-invocation owning cache values, in original source order. Only the\n// final successful wave is retained after a conservative freshness rebuild.\n// Additional objects are references, not invented compile/cache producers.\nstruct TargetCompileCacheEvidence {\n    std::vector<CompileCacheEvidence> compiles;\n};\n\nstruct RecordedTargetResult {"
+        ],
+        [
+          "    TargetArtifactRecord record;\n};",
+          "    TargetArtifactRecord record;\n    TargetCompileCacheEvidence cache_evidence;\n};"
+        ],
+        [
+          "             std::optional<LinkArtifactRecord>* record = nullptr) const;",
+          "             std::optional<LinkArtifactRecord>* record = nullptr,\n             TargetCompileCacheEvidence* cache_evidence = nullptr) const;"
+        ]
+      ]
+    },
+    "cpp/include/mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp": {
+      "prior": "3e24d2d46207a97c29f42d5414f5e3a57e5ba363",
+      "current": "73c0d96cf9e8b9659a57d1814d1ec368665b3217",
+      "replacements": [
+        [
+          "    StaticTargetArtifactRecord record;\n};",
+          "    StaticTargetArtifactRecord record;\n    TargetCompileCacheEvidence cache_evidence;\n};"
+        ],
+        [
+          "             std::optional<ArchiveArtifactRecord>* record) const;",
+          "             std::optional<ArchiveArtifactRecord>* record,\n             TargetCompileCacheEvidence* cache_evidence = nullptr) const;"
+        ]
+      ]
+    },
+    "cpp/src/orchestration/incremental/TargetCompileWave.hpp": {
+      "prior": "6ce8c701734a30f5dd830060ecba23538e388b19",
+      "current": "4b5e76d12499f3b3ee537fc4f6ae306a7a200e58",
+      "replacements": [
+        [
+          "template <bool WithAdmissionStop = false, typename TargetRequest>",
+          "template <bool WithAdmissionStop = false, bool CaptureCache = false, typename TargetRequest>"
+        ],
+        [
+          "        TargetCompileWaveEvidence* typed = nullptr) {",
+          "        TargetCompileWaveEvidence* typed = nullptr,\n        std::vector<std::optional<CompileCacheEvidence>>* captured = nullptr) {\n        static_assert(!WithAdmissionStop || !CaptureCache,\n            \"cache recording is separate from admission-stop evidence\");\n        if constexpr (CaptureCache) {\n            // Every call is a new wave. Discard all invalidated first-pass\n            // values before the owner's conservative whole-target rebuild.\n            captured->clear();\n            captured->resize(request.sources.size());\n        }"
+        ],
+        [
+          "                        attempts[index].emplace(coordinator.run(compile_request));",
+          "                        if constexpr (CaptureCache) {\n                            auto completed = coordinator.run_recorded(compile_request);\n                            if (!completed) {\n                                attempts[index].emplace(std::unexpected(std::move(completed.error())));\n                            } else {\n                                (*captured)[index].emplace(std::move(completed->record));\n                                attempts[index].emplace(std::move(completed->result));\n                            }\n                        } else {\n                            attempts[index].emplace(coordinator.run(compile_request));\n                        }"
+        ],
+        [
+          "            auto inspected = coordinator.inspect(compile_request);",
+          "            auto inspected = [&] {\n                if constexpr (CaptureCache) {\n                    return coordinator.inspect_for_target_record(compile_request, (*captured)[index]);\n                } else {\n                    return coordinator.inspect(compile_request);\n                }\n            }();"
+        ],
+        [
+          "            attempts[source_index].emplace(coordinator.execute_inspected(\n                work->request, std::move(work->inspection)));",
+          "            if constexpr (CaptureCache) {\n                attempts[source_index].emplace(coordinator.execute_inspected_for_target_record(\n                    work->request, std::move(work->inspection), (*captured)[source_index]));\n            } else {\n                attempts[source_index].emplace(coordinator.execute_inspected(\n                    work->request, std::move(work->inspection)));\n            }"
+        ],
+        [
+          "        std::vector<std::unique_ptr<PendingCompile>> pending(request.sources.size());",
+          "        std::vector<std::unique_ptr<PendingCompile>> pending(request.sources.size());\n        std::vector<std::optional<msvc::MsvcToolchain>> captured_contexts;\n        if constexpr (CaptureCache) captured_contexts.resize(request.sources.size());"
+        ],
+        [
+          "return coordinator.inspect_for_target_record(compile_request, (*captured)[index]);",
+          "return coordinator.inspect_for_target_record(\n                        compile_request, (*captured)[index], captured_contexts[index]);"
+        ],
+        [
+          "                attempts[source_index].emplace(coordinator.execute_inspected_for_target_record(\n                    work->request, std::move(work->inspection), (*captured)[source_index]));",
+          "                if (!captured_contexts[source_index]) {\n                    attempts[source_index].emplace(std::unexpected(IncrementalCompileError{\n                        .code = IncrementalCompileErrorCode::cache_evidence_unavailable,\n                        .message = \"target miss inspection context unavailable\",\n                    }));\n                    return false;\n                }\n                attempts[source_index].emplace(coordinator.execute_inspected_for_target_record(\n                    work->request, std::move(work->inspection),\n                    std::move(*captured_contexts[source_index]), (*captured)[source_index]));"
+        ]
+      ]
+    },
+    "cpp/src/orchestration/incremental/MsvcIncrementalTargetCoordinator.cpp": {
+      "prior": "baac58ded64699c7480f10884d15388470767b3b",
+      "current": "4b130fef9d203f6505df040a510225d90218e12a",
+      "replacements": [
+        [
+          "    std::optional<LinkArtifactRecord> link_record;\n    auto result = run_impl<false>(request, {}, &link_record);",
+          "    std::optional<LinkArtifactRecord> link_record;\n    TargetCompileCacheEvidence cache_evidence;\n    auto result = run_impl<false>(request, {}, &link_record, &cache_evidence);"
+        ],
+        [
+          "    return RecordedTargetResult{std::move(*result), std::move(record)};",
+          "    return RecordedTargetResult{std::move(*result), std::move(record), std::move(cache_evidence)};"
+        ],
+        [
+          "    std::optional<LinkArtifactRecord>* record) const {",
+          "    std::optional<LinkArtifactRecord>* record, TargetCompileCacheEvidence* cache_evidence) const {"
+        ],
+        [
+          "    struct NoAdmissionEvidence {};",
+          "    // Default/stop paths never allocate per-source cache-capture slots.\n    std::vector<std::optional<CompileCacheEvidence>> captured_compiles;\n    struct NoAdmissionEvidence {};"
+        ],
+        [
+          "        if constexpr (!WithAdmissionStop) {\n            return detail::TargetCompileWave::run(",
+          "        if constexpr (!WithAdmissionStop) {\n            if (cache_evidence) return detail::TargetCompileWave::run<false, true>(\n                request, compile_coordinator_, force, table, attempts, {}, nullptr, &captured_compiles);\n            return detail::TargetCompileWave::run("
+        ],
+        [
+          "    IncrementalTargetResult result;\n    result.compiles.reserve(request.sources.size());",
+          "    IncrementalTargetResult result;\n    result.compiles.reserve(request.sources.size());\n    if (cache_evidence) cache_evidence->compiles.reserve(request.sources.size());"
+        ],
+        [
+          "        auto compiled = std::move(attempts[index]->value());",
+          "        if (cache_evidence) {\n            if (index >= captured_compiles.size() || !captured_compiles[index]) {\n                auto error = failure(IncrementalTargetErrorCode::compile_failed,\n                    \"successful target wave cache evidence unavailable\", request.sources[index].source);\n                error.compile_error = IncrementalCompileError{\n                    .code = IncrementalCompileErrorCode::cache_evidence_unavailable,\n                    .message = \"successful target wave cache evidence unavailable\",\n                };\n                return std::unexpected(std::move(error));\n            }\n            cache_evidence->compiles.push_back(std::move(*captured_compiles[index]));\n        }\n        auto compiled = std::move(attempts[index]->value());"
+        ]
+      ]
+    },
+    "cpp/src/orchestration/incremental/MsvcIncrementalStaticTargetCoordinator.cpp": {
+      "prior": "f438f69b3bb3783a15d21f049b7daf0649405299",
+      "current": "2db76b2e143d589e93f1d127d5a75d3686f0f531",
+      "replacements": [
+        [
+          "    std::optional<ArchiveArtifactRecord> archive_record;\n    auto result = run_impl(request, &archive_record);",
+          "    std::optional<ArchiveArtifactRecord> archive_record;\n    TargetCompileCacheEvidence cache_evidence;\n    auto result = run_impl(request, &archive_record, &cache_evidence);"
+        ],
+        [
+          "    return RecordedStaticTargetResult{std::move(*result), std::move(record)};",
+          "    return RecordedStaticTargetResult{std::move(*result), std::move(record), std::move(cache_evidence)};"
+        ],
+        [
+          "    const IncrementalStaticTargetRequest& request, std::optional<ArchiveArtifactRecord>* record) const {",
+          "    const IncrementalStaticTargetRequest& request, std::optional<ArchiveArtifactRecord>* record,\n    TargetCompileCacheEvidence* cache_evidence) const {"
+        ],
+        [
+          "    auto scheduled = detail::TargetCompileWave::run(\n        request,\n        compile_coordinator_,\n        request.force_downstream_rebuild,\n        shared_evidence,\n        attempts);",
+          "    std::vector<std::optional<CompileCacheEvidence>> captured_compiles;\n    const auto run_wave = [&](bool force, detail::FilesystemEvidenceTable* table) {\n        if (cache_evidence) return detail::TargetCompileWave::run<false, true>(\n            request, compile_coordinator_, force, table, attempts, {}, nullptr, &captured_compiles);\n        return detail::TargetCompileWave::run(request, compile_coordinator_, force, table, attempts);\n    };\n    auto scheduled = run_wave(request.force_downstream_rebuild, shared_evidence);"
+        ],
+        [
+          "        scheduled = detail::TargetCompileWave::run(\n            request,\n            compile_coordinator_,\n            true,\n            nullptr,\n            attempts);",
+          "        scheduled = run_wave(true, nullptr);"
+        ],
+        [
+          "    IncrementalStaticTargetResult result;\n    result.compiles.reserve(request.sources.size());",
+          "    IncrementalStaticTargetResult result;\n    result.compiles.reserve(request.sources.size());\n    if (cache_evidence) cache_evidence->compiles.reserve(request.sources.size());"
+        ],
+        [
+          "        auto compiled = std::move(attempts[index]->value());",
+          "        if (cache_evidence) {\n            if (index >= captured_compiles.size() || !captured_compiles[index]) {\n                auto error = failure(IncrementalStaticTargetErrorCode::compile_failed,\n                    \"successful static target wave cache evidence unavailable\", request.sources[index].source);\n                error.compile_error = IncrementalCompileError{\n                    .code = IncrementalCompileErrorCode::cache_evidence_unavailable,\n                    .message = \"successful static target wave cache evidence unavailable\",\n                };\n                return std::unexpected(std::move(error));\n            }\n            cache_evidence->compiles.push_back(std::move(*captured_compiles[index]));\n        }\n        auto compiled = std::move(attempts[index]->value());"
+        ]
+      ]
+    },
+    "cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp": {
+      "prior": "6479a38f278c60d8e52797b9ab1221fc91dd57c5",
+      "current": "35c5650d0df1c06f592cd5b480beceec18dad0ba",
+      "replacements": [
+        [
+          "#include \"mqb/platform/windows/WindowsProcessRunner.hpp\"\n",
+          "#include \"mqb/platform/windows/WindowsProcessRunner.hpp\"\n#include \"TargetWaveCacheEvidenceChecks.hpp\"\n"
+        ],
+        [
+          "        auto result = target.run_recorded(request, ArtifactGenerationLabel{\"fixture\", phase});",
+          "        auto result = target_wave_cache_checks::recorded(target, request,\n            evidence / phase, ArtifactGenerationLabel{\"fixture\", phase});"
+        ],
+        [
+          "    const auto failed = run(\"06-failed\");",
+          "    const auto failed = run(\"06-failed\");\n    target_wave_cache_checks::history(evidence / \"01-cold\", *cold);\n    target_wave_cache_checks::history(evidence / \"02-reuse\", *warm);"
+        ]
+      ]
+    },
+    "cpp/tests/e2e/mqb_static_record_e2e_tests.cpp": {
+      "prior": "9711f58d27dce89f97bae89d841b4e3c7190eab4",
+      "current": "5d181f974d26625ebf1c31ac73db4491a725bf93",
+      "replacements": [
+        [
+          "#include \"mqb/platform/windows/WindowsProcessRunner.hpp\"\n",
+          "#include \"mqb/platform/windows/WindowsProcessRunner.hpp\"\n#include \"TargetWaveCacheEvidenceChecks.hpp\"\n"
+        ],
+        [
+          "        auto result = target.run_recorded(input, ArtifactGenerationLabel{\"static-fixture\", phase});",
+          "        auto result = target_wave_cache_checks::recorded(target, input,\n            evidence / phase, ArtifactGenerationLabel{\"static-fixture\", phase});"
+        ],
+        [
+          "    require(api_calls == 6, \"six real static calls completed\");",
+          "    target_wave_cache_checks::history(evidence / \"01-cold\", *cold);\n    target_wave_cache_checks::history(evidence / \"02-reuse\", *warm);\n    require(api_calls == 6, \"six real static calls completed\");"
+        ]
+      ]
+    },
+    "cpp/tests/orchestration/incremental/incremental_target_coordinator_tests.cpp": {
+      "prior": "55a591b23a0a8e6eb170eab7bcfb445087f53f87",
+      "current": "9039c76e0d22c083f54228d959d8bb61e85e0227",
+      "replacements": [
+        [
+          "int main() {",
+          "#include \"TargetWaveCacheEvidenceCases.hpp\"\n\nint main() {"
+        ],
+        [
+          "    target_admission_cases();",
+          "    target_admission_cases();\n    target_wave_cache_cases();"
+        ]
+      ]
+    }
+  },
+  "new_helpers": {
+    "cpp/tests/e2e/TargetWaveCacheEvidenceChecks.hpp": "068999f37683a1ab407f20987ec6de37feb5a43e",
+    "cpp/tests/orchestration/incremental/TargetWaveCacheEvidenceCases.hpp": "e3dd4d11d232b0e21068a07e706311cd2c637a67"
+  }
+}

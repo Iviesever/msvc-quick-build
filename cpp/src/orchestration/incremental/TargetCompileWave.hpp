@@ -35,7 +35,7 @@ struct TargetCompileWaveSummary {
 // and conservative whole-target retry, including mutations during execution.
 class TargetCompileWave {
 public:
-    template <bool WithAdmissionStop = false, typename TargetRequest>
+    template <bool WithAdmissionStop = false, bool CaptureCache = false, typename TargetRequest>
     [[nodiscard]] static std::expected<TargetCompileWaveSummary, BoundedWorkError>
     run(
         const TargetRequest& request,
@@ -44,7 +44,16 @@ public:
         FilesystemEvidenceTable* evidence_table,
         std::vector<std::optional<TargetCompileAttempt>>& attempts,
         std::stop_token admission_stop = {},
-        TargetCompileWaveEvidence* typed = nullptr) {
+        TargetCompileWaveEvidence* typed = nullptr,
+        std::vector<std::optional<CompileCacheEvidence>>* captured = nullptr) {
+        static_assert(!WithAdmissionStop || !CaptureCache,
+            "cache recording is separate from admission-stop evidence");
+        if constexpr (CaptureCache) {
+            // Every call is a new wave. Discard all invalidated first-pass
+            // values before the owner's conservative whole-target rebuild.
+            captured->clear();
+            captured->resize(request.sources.size());
+        }
         attempts.clear();
         attempts.resize(request.sources.size());
 
@@ -85,7 +94,17 @@ public:
                         auto compile_request = make_request(
                             request.sources[index], request.compiler_options,
                             force_rebuild);
-                        attempts[index].emplace(coordinator.run(compile_request));
+                        if constexpr (CaptureCache) {
+                            auto completed = coordinator.run_recorded(compile_request);
+                            if (!completed) {
+                                attempts[index].emplace(std::unexpected(std::move(completed.error())));
+                            } else {
+                                (*captured)[index].emplace(std::move(completed->record));
+                                attempts[index].emplace(std::move(completed->result));
+                            }
+                        } else {
+                            attempts[index].emplace(coordinator.run(compile_request));
+                        }
                         return attempts[index]->has_value();
                     });
             };
@@ -108,10 +127,19 @@ public:
         // One pointer slot per TU; full request/plan storage is allocated only
         // for misses. Distinct callbacks own distinct slots, not a shared queue.
         std::vector<std::unique_ptr<PendingCompile>> pending(request.sources.size());
+        std::vector<std::optional<msvc::MsvcToolchain>> captured_contexts;
+        if constexpr (CaptureCache) captured_contexts.resize(request.sources.size());
         const auto inspect_one = [&](const std::size_t index) {
             auto compile_request = make_request(
                 request.sources[index], request.compiler_options, false);
-            auto inspected = coordinator.inspect(compile_request);
+            auto inspected = [&] {
+                if constexpr (CaptureCache) {
+                    return coordinator.inspect_for_target_record(
+                        compile_request, (*captured)[index], captured_contexts[index]);
+                } else {
+                    return coordinator.inspect(compile_request);
+                }
+            }();
             if (!inspected) {
                 attempts[index].emplace(std::unexpected(std::move(inspected.error())));
                 return false;
@@ -161,8 +189,21 @@ public:
         const auto execute_one = [&](const std::size_t miss_index) {
             const std::size_t source_index = misses[miss_index];
             auto work = std::move(pending[source_index]);
-            attempts[source_index].emplace(coordinator.execute_inspected(
-                work->request, std::move(work->inspection)));
+            if constexpr (CaptureCache) {
+                if (!captured_contexts[source_index]) {
+                    attempts[source_index].emplace(std::unexpected(IncrementalCompileError{
+                        .code = IncrementalCompileErrorCode::cache_evidence_unavailable,
+                        .message = "target miss inspection context unavailable",
+                    }));
+                    return false;
+                }
+                attempts[source_index].emplace(coordinator.execute_inspected_for_target_record(
+                    work->request, std::move(work->inspection),
+                    std::move(*captured_contexts[source_index]), (*captured)[source_index]));
+            } else {
+                attempts[source_index].emplace(coordinator.execute_inspected(
+                    work->request, std::move(work->inspection)));
+            }
             return attempts[source_index]->has_value();
         };
         const auto executed = [&] {

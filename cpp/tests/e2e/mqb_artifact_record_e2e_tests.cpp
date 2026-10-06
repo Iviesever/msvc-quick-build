@@ -17,6 +17,7 @@
 #include "mqb/core/ProjectArtifactLayout.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
+#include "TargetWaveCacheEvidenceChecks.hpp"
 #endif
 
 namespace {
@@ -296,7 +297,8 @@ void recorded_target_lifecycle(const fs::path& root, const fs::path& evidence) {
     auto run = [&](const char* phase) {
         runner.phase = phase;
         write(evidence / (std::string{phase} + ".attempt.txt"), "recorded API invocation\n");
-        auto result = target.run_recorded(request, ArtifactGenerationLabel{"fixture", phase});
+        auto result = target_wave_cache_checks::recorded(target, request,
+            evidence / phase, ArtifactGenerationLabel{"fixture", phase});
         ++completed_calls;
         if (!result) write(evidence / (std::string{phase} + ".error.txt"), result.error().message);
         else {
@@ -361,6 +363,8 @@ void recorded_target_lifecycle(const fs::path& root, const fs::path& evidence) {
     write(root / "renamed.cpp", "static_assert(false, \"MQB_RECORD_EXPECTED_FAILURE\"); int helper(){return 7;}\n");
     request.force_downstream_rebuild = true;
     const auto failed = run("06-failed");
+    target_wave_cache_checks::history(evidence / "01-cold", *cold);
+    target_wave_cache_checks::history(evidence / "02-reuse", *warm);
     require(!failed && failed.error().code == IncrementalTargetErrorCode::compile_failed,
         "real failed compile has no successful target record");
     require(!fs::exists(evidence / "06-failed.record.txt") &&

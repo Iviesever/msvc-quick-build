@@ -71,7 +71,8 @@ MsvcIncrementalStaticTargetCoordinator::run_recorded(
     const IncrementalStaticTargetRequest& request,
     std::optional<ArtifactGenerationLabel> caller_label) const {
     std::optional<ArchiveArtifactRecord> archive_record;
-    auto result = run_impl(request, &archive_record);
+    TargetCompileCacheEvidence cache_evidence;
+    auto result = run_impl(request, &archive_record, &cache_evidence);
     if (!result) return std::unexpected(std::move(result.error()));
     if (!archive_record) return std::unexpected(failure(
         IncrementalStaticTargetErrorCode::archive_failed, "successful static target archive record unavailable"));
@@ -96,12 +97,13 @@ MsvcIncrementalStaticTargetCoordinator::run_recorded(
         .additional_object_inputs = request.additional_objects,
         .archive = std::move(*archive_record),
     };
-    return RecordedStaticTargetResult{std::move(*result), std::move(record)};
+    return RecordedStaticTargetResult{std::move(*result), std::move(record), std::move(cache_evidence)};
 }
 
 std::expected<IncrementalStaticTargetResult, IncrementalStaticTargetError>
 MsvcIncrementalStaticTargetCoordinator::run_impl(
-    const IncrementalStaticTargetRequest& request, std::optional<ArchiveArtifactRecord>* record) const {
+    const IncrementalStaticTargetRequest& request, std::optional<ArchiveArtifactRecord>* record,
+    TargetCompileCacheEvidence* cache_evidence) const {
     mqb::performance::ScopedWall validation_evidence{
         mqb::performance::WallKind::target_validation};
     if (request.sources.empty()) {
@@ -183,12 +185,13 @@ MsvcIncrementalStaticTargetCoordinator::run_impl(
     detail::FilesystemEvidenceTable* shared_evidence =
         filesystem_evidence ? &*filesystem_evidence : nullptr;
 
-    auto scheduled = detail::TargetCompileWave::run(
-        request,
-        compile_coordinator_,
-        request.force_downstream_rebuild,
-        shared_evidence,
-        attempts);
+    std::vector<std::optional<CompileCacheEvidence>> captured_compiles;
+    const auto run_wave = [&](bool force, detail::FilesystemEvidenceTable* table) {
+        if (cache_evidence) return detail::TargetCompileWave::run<false, true>(
+            request, compile_coordinator_, force, table, attempts, {}, nullptr, &captured_compiles);
+        return detail::TargetCompileWave::run(request, compile_coordinator_, force, table, attempts);
+    };
+    auto scheduled = run_wave(request.force_downstream_rebuild, shared_evidence);
     if (!scheduled) {
         return std::unexpected(failure(
             IncrementalStaticTargetErrorCode::scheduling_failed,
@@ -202,12 +205,7 @@ MsvcIncrementalStaticTargetCoordinator::run_impl(
     // Keep the barrier after execution, exactly as for executable/DLL targets.
     if (shared_evidence != nullptr
         && !shared_evidence->revalidate_shared()) {
-        scheduled = detail::TargetCompileWave::run(
-            request,
-            compile_coordinator_,
-            true,
-            nullptr,
-            attempts);
+        scheduled = run_wave(true, nullptr);
         if (!scheduled) {
             return std::unexpected(failure(
                 IncrementalStaticTargetErrorCode::scheduling_failed,
@@ -224,6 +222,7 @@ MsvcIncrementalStaticTargetCoordinator::run_impl(
 
     IncrementalStaticTargetResult result;
     result.compiles.reserve(request.sources.size());
+    if (cache_evidence) cache_evidence->compiles.reserve(request.sources.size());
     std::vector<fs::path> objects;
     objects.reserve(request.sources.size() + request.additional_objects.size());
     objects.insert(
@@ -236,6 +235,18 @@ MsvcIncrementalStaticTargetCoordinator::run_impl(
                 IncrementalStaticTargetErrorCode::scheduling_failed,
                 "static target compile scheduler stopped without a recorded failure",
                 request.sources[index].source));
+        }
+        if (cache_evidence) {
+            if (index >= captured_compiles.size() || !captured_compiles[index]) {
+                auto error = failure(IncrementalStaticTargetErrorCode::compile_failed,
+                    "successful static target wave cache evidence unavailable", request.sources[index].source);
+                error.compile_error = IncrementalCompileError{
+                    .code = IncrementalCompileErrorCode::cache_evidence_unavailable,
+                    .message = "successful static target wave cache evidence unavailable",
+                };
+                return std::unexpected(std::move(error));
+            }
+            cache_evidence->compiles.push_back(std::move(*captured_compiles[index]));
         }
         auto compiled = std::move(attempts[index]->value());
         result.any_compiled = result.any_compiled || compiled.compiled;

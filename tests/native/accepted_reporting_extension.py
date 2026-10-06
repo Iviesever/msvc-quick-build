@@ -8,6 +8,7 @@ The independent compile-evidence extension is checked by its own exact inverse
 before historical whole-program fingerprints are evaluated.
 """
 import hashlib
+import accepted_target_wave_cache_extension as wave_cache_extension
 import accepted_module_target_cache_extension as target_cache_extension
 import accepted_module_cache_evidence_extension as module_evidence_extension
 import accepted_compile_evidence_extension as compile_evidence_extension
@@ -28,6 +29,7 @@ def digest(text):
 
 def legacy_view(values, helper):
     """Return a copy for historical fingerprinting; never mutate the source map."""
+    values=wave_cache_extension.legacy_view(values)
     value=values[REPORT]
     binary=isinstance(value, bytes)
     text=value.decode('utf-8') if binary else value
