@@ -301,12 +301,6 @@ void recorded_target_lifecycle(const fs::path& root, const fs::path& evidence) {
         write(evidence / (std::string{phase} + ".attempt.txt"), "recorded API invocation\n");
         auto result = target_wave_cache_checks::recorded(target, request,
             evidence / phase, ArtifactGenerationLabel{"fixture", phase});
-        if (result) {
-            const auto projected = project_storage_references(*result, platform::windows::path_identity_key);
-            if (!projected) throw std::runtime_error("native recorded storage projection: " + projected.error().message);
-            require(projected->compiles.size() == result->cache_evidence.compiles.size(),
-                    "real target cache evidence projected without extra tool calls");
-        }
         ++completed_calls;
         if (!result) write(evidence / (std::string{phase} + ".error.txt"), result.error().message);
         else {
@@ -332,6 +326,40 @@ void recorded_target_lifecycle(const fs::path& root, const fs::path& evidence) {
             }
             write(evidence / (std::string{phase} + ".record.txt"), out.str());
             require(fs::is_regular_file(record.link.association.output), "native terminal output exists");
+        }
+        if (result) {
+            // Build completion and pure projection admission are separate.
+            // The unchanged record/cache evidence above must survive refusal.
+            const auto file_inputs = result->record.link.association.file_inputs;
+            const auto side_outputs = result->record.link.association.side_outputs;
+            const auto projected = project_storage_references(*result, platform::windows::path_identity_key);
+            if (std::string_view{phase} == "07-dll") {
+                const auto import_library = msvc::MsvcLinker::import_library_path(result->record.link.association.output);
+                const auto import_key = platform::windows::path_identity_key(import_library);
+                const auto contains_import = [&](const auto& paths) {
+                    return std::any_of(paths.begin(), paths.end(), [&](const auto& path) {
+                        return platform::windows::path_identity_key(path) == import_key;
+                    });
+                };
+                const bool dual_role = contains_import(file_inputs) && contains_import(side_outputs);
+                std::cout << "recorded storage projection phase=" << phase
+                          << " import_library_input_and_output=" << dual_role << '\n';
+                require(result->record.link.options.target_kind == TargetKind::dynamic_library && dual_role,
+                        "native DLL retains the observed import-library input/output conflict");
+                require(!projected && projected.error().issue == RecordedStorageProjectionIssue::path_conflict &&
+                        !projected.error().source_index &&
+                        projected.error().message == "output or metadata aliases a protected input",
+                        "native DLL dual-role input requires the exact terminal path_conflict refusal");
+                std::cout << "recorded storage projection phase=" << phase
+                          << " result=path_conflict build_record_retained=true\n";
+            } else {
+                if (!projected) throw std::runtime_error("native recorded storage projection: " + projected.error().message);
+                require(projected->compiles.size() == result->cache_evidence.compiles.size(),
+                        "real target cache evidence projected without extra tool calls");
+            }
+            require(result->record.link.association.file_inputs == file_inputs &&
+                    result->record.link.association.side_outputs == side_outputs,
+                    "pure projection never removes conflicting historical input or output roles");
         }
         return result;
     };

@@ -388,6 +388,61 @@ void recorded_projection_contracts() {
     auto collision=rich_target();
     require(!project_storage_references(collision,[](const fs::path&){return std::string{"colliding-platform-key"};}),
         "platform aliases cannot silently choose a source/output");
+    // DLL completion alone does not resolve dual-role storage references.
+    // Keep the old 22 refusals and exercise both terminal completion states.
+    unsigned dll_admitted = 0, dll_refused = 0;
+    for (const bool reused : {false, true}) {
+        auto dll = rich_target();
+        auto& link = dll.record.link;
+        link.options.target_kind = TargetKind::dynamic_library;
+        link.association.output = fs::absolute("recorded-projection-model/.mqb/bin/component.dll");
+        const auto import_library = fs::absolute("recorded-projection-model/.mqb/bin/component.lib");
+        const auto export_file = fs::absolute("recorded-projection-model/.mqb/bin/component.exp");
+        link.association.side_outputs = {import_library, export_file};
+        if (reused) {
+            dll.result.link.linked = false;
+            link.completion = ArtifactCompletion::reused;
+            link.cache_state = ArtifactCacheState::reused;
+            dll.result.any_compiled = false;
+            for (std::size_t i = 0; i < dll.record.sources.size(); ++i) {
+                dll.record.sources[i].completion = ArtifactCompletion::reused;
+                dll.result.compiles[i].result.compiled = false;
+                dll.cache_evidence.compiles[i].state = CompileCacheEvidenceState::reused;
+            }
+        }
+        const auto accepted = project_storage_references(dll, key);
+        require(accepted.has_value(), "nonconflicting DLL projection is not blanket-refused");
+        ++dll_admitted;
+        for (const auto& overlap : {import_library, export_file}) {
+            auto ambiguous = dll;
+            ambiguous.record.link.association.file_inputs.push_back(overlap);
+            const auto original_inputs = ambiguous.record.link.association.file_inputs;
+            const auto original_outputs = ambiguous.record.link.association.side_outputs;
+            const auto refused = project_storage_references(ambiguous, key);
+            require(!refused && refused.error().issue == Issue::path_conflict &&
+                    !refused.error().source_index &&
+                    refused.error().message == "output or metadata aliases a protected input",
+                    "DLL self-input/output overlap has an exact terminal refusal");
+            require(ambiguous.record.link.association.file_inputs == original_inputs &&
+                    ambiguous.record.link.association.side_outputs == original_outputs,
+                    "refusal preserves both original DLL path roles");
+            const auto legacy = project_storage_references(ambiguous.record);
+            const auto& paths = legacy.stages.back().paths;
+            const auto has_role = [&](Role role) {
+                return std::any_of(paths.begin(), paths.end(), [&](const auto& path) {
+                    return path.path == overlap && path.role == role;
+                });
+            };
+            require(has_role(Role::input) && has_role(Role::declared_output),
+                    "legacy projection still preserves the conflicting DLL roles");
+            require(ambiguous.result.link.linked == dll.result.link.linked &&
+                    ambiguous.record.link.completion == link.completion,
+                    "projection refusal does not erase successful or reused link completion");
+            ++dll_refused;
+        }
+    }
+    require(dll_admitted == 2 && dll_refused == 4, "fixed DLL success/refusal controls completed");
+    std::cout << "recorded storage DLL controls: 2 admitted, 4 exact terminal refusals; original roles retained\n";
     require(rejected==22,"all fixed negative mutation cases ran");
     std::cout<<"recorded storage projection: 22 typed refusals; EXE/static, ownership, reuse, failed save, contexts and limits passed\n";
 }

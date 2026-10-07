@@ -48,6 +48,16 @@ colliding output/metadata paths, protected-input aliases and local-object
 context disagreement at the terminal are refused. Key exceptions propagate.
 Lexical identity is never physical identity or current-content proof.
 
+Successful LINK completion does not guarantee projection admission. The first
+PR #246 Native898/Release723 artifacts recorded `component.lib` in both the
+DLL's `file_inputs` and `side_outputs`; the exact terminal `path_conflict`
+refusal is intentional. Do not delete the captured input or exempt DLLs from
+alias validation. The native fixture preserves its successful build record
+before checking that refusal. Separate pure DLL controls admit disjoint roles
+and reject import-library/export-file overlaps for both executed and reused
+terminal records. This preserves the original link result and both path roles;
+it does not diagnose why the linker collector recorded the dual role.
+
 Defaults cap sources at **100000**, selected items at **1000000** and selected
 text at **64 * 1024 * 1024 native code units**. Callers may lower but cannot raise
 these caps. Checked subtraction precedes copying/bulk allocation; exceeding a

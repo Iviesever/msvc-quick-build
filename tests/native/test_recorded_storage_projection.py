@@ -126,6 +126,32 @@ class RecordedStorageProjectionContracts(unittest.TestCase):
         self.assertEqual(len(list((ROOT/'.github/workflows').glob('*.yml'))), 51)
         self.assertEqual(read('VERSION').strip(), '5.6.0')
 
+    def test_native_record_is_saved_before_projection_can_refuse(self):
+        text = read('cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp')
+        start = text.index('auto run = [&](const char* phase)')
+        end = text.index('const auto cold = run("01-cold")', start)
+        call = text[start:end]
+        self.assertLess(call.index('".record.txt"'), call.index('project_storage_references(*result,'))
+        self.assertIn('"07-dll"', call)
+        self.assertIn('contains_import(file_inputs) && contains_import(side_outputs)', call)
+        self.assertIn('projected.error().issue == RecordedStorageProjectionIssue::path_conflict', call)
+        self.assertIn('!projected.error().source_index', call)
+        self.assertIn('"output or metadata aliases a protected input"', call)
+        self.assertIn('association.file_inputs == file_inputs', call)
+        self.assertIn('association.side_outputs == side_outputs', call)
+        self.assertIn('if (!projected) throw', call)
+        self.assertEqual(call.count('project_storage_references(*result,'), 1)
+        self.assertIn('require(completed_calls == 7,', text)
+
+    def test_dll_dual_role_controls_do_not_replace_existing_refusals(self):
+        text = read(TEST)
+        self.assertIn('for (const bool reused : {false, true})', text)
+        self.assertIn('for (const auto& overlap : {import_library, export_file})', text)
+        self.assertIn('dll_admitted == 2 && dll_refused == 4', text)
+        self.assertIn('rejected==22', text)
+        self.assertIn('has_role(Role::input) && has_role(Role::declared_output)', text)
+        self.assertIn('!refused.error().source_index', text)
+
     def test_bilingual_scope_and_unqualified_costs(self):
         en=read('docs/RECORDED_STORAGE_PROJECTION.md'); zh=read('docs/RECORDED_STORAGE_PROJECTION_ZH.md')
         self.assertEqual(en.count('\n## '), zh.count('\n## '))
