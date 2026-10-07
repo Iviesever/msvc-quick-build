@@ -92,3 +92,5 @@ old hashes/assertions are not discarded. Python contracts do not substitute for
 Windows Native/Release execution. Explicit copying/allocation, peak/resident
 memory and default-path generated-code/performance changes require separate
 qualification; this interface is not approved for default/high-frequency use.
+
+The CLI role regression canonicalizes its existing temporary root before deriving expected paths, matching the artifact layout rather than comparing unresolved short-name aliases. The original four role assertions remain; each phase first preserves a new raw cache snapshot under `storage-evidence/dll-role-cli`, then parses that copy and retains full comparison keys and both role booleans. This adds fixture canonicalization, four copies and four snapshot reads, not MQB/MSVC calls. Native901/Release725's first CLI failures had no retained cache or separate boolean diagnostics; the alias explanation remains a hypothesis about those erased fixtures, not reconstructed historical evidence.

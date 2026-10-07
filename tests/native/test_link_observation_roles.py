@@ -103,6 +103,49 @@ class LinkObservationRoleContracts(unittest.TestCase):
         self.assertEqual(len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))),96)
         self.assertEqual(len(list((ROOT/'cpp/src').rglob('*.cpp'))),96)
 
+    def test_cli_fixture_canonicalizes_before_deriving_outputs(self):
+        s=read('cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp')
+        self.assertLess(s.index('fs::create_directories(tree.root);'),
+                        s.index('fs::canonical(tree.root, root_error)'))
+        self.assertLess(s.index('tree.root = canonical_root.lexically_normal();'),
+                        s.index('const fs::path import_library'))
+        self.assertIn('if (root_error || canonical_root.empty())',s)
+        self.assertIn('path_identity_key(p) == key',s)
+        self.assertIn('path_identity_key(value.output)',s)
+        self.assertNotIn('fs::equivalent(',s)
+
+    def test_cli_original_snapshots_precede_the_unchanged_role_assertion(self):
+        s=read('cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp')
+        audit=s.split('const auto verify_library_roles = [&] {',1)[1].split('    auto cold = run_mqb(',1)[0]
+        self.assertLess(audit.index('fs::copy_file('), audit.index('LinkCacheFile::load(snapshot)'))
+        self.assertLess(audit.index('retained.close();'), audit.index('expect(!contains_import'))
+        self.assertIn('fs::copy_options::none',audit)
+        self.assertNotIn('LinkCacheFile::save',audit)
+        self.assertNotIn('run_mqb(',audit)
+        for token in ('requested_root_key=', 'canonical_root_key=', 'import_is_input=',
+                      'import_is_side_output=', 'input_key=', 'side_output_key='):
+            self.assertIn(token,audit)
+        self.assertIn('role_checks == 4',s)
+
+    def test_cli_revision_preserves_first_candidate_pins_and_rejects_corruption(self):
+        path='cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp'
+        rule=roles.SPEC['files'][path]
+        self.assertEqual(rule['current'], 'cbfd8b900803a0002bf6412dc83a3449115aa0b34e644b0484eaeabfb300db77')
+        self.assertEqual(rule['revision']['base'], 'b01572c4d9ece5a3f9544098a8ec067a3efb1772')
+        text=read(path)
+        for pair in rule['revision']['replacements']:
+            self.assertEqual(text.count(pair['after']),1)
+            text=text.replace(pair['after'],pair['before'],1)
+        self.assertEqual(roles.digest(text),rule['current'])
+        for bad in (read(path)+'\n', text,
+                    read(path).replace('!contains_import(value.file_inputs)', 'true'),
+                    read(path).replace('fs::copy_options::none', 'fs::copy_options::overwrite_existing')):
+            with self.assertRaises(ValueError): roles.legacy_text(path,bad)
+        broken=copy.deepcopy(roles.SPEC)
+        broken['files'][path]['revision']['replacements'][0]['after']='ABSENT'
+        with patch.object(roles,'SPEC',broken), self.assertRaises(ValueError):
+            roles.legacy_text(path,read(path))
+
     def test_bilingual_boundaries_remain_explicit(self):
         en=read('docs/RECORDED_STORAGE_PROJECTION.md')
         zh=read('docs/RECORDED_STORAGE_PROJECTION_ZH.md')

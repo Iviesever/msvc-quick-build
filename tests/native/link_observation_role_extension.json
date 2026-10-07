@@ -57,7 +57,33 @@
           "before": "               \"fresh DLL object should relink DLL\");\n    }\n    auto mutated_answer = call_answer(dll);\n    expect(mutated_answer.has_value() && *mutated_answer == 43,\n",
           "after": "               \"fresh DLL object should relink DLL\");\n    }\n    verify_library_roles();\n    auto mutated_answer = call_answer(dll);\n    expect(mutated_answer.has_value() && *mutated_answer == 43,\n"
         }
-      ]
+      ],
+      "revision": {
+        "base": "b01572c4d9ece5a3f9544098a8ec067a3efb1772",
+        "current": "9283b137aabce44914c08e87a50d774e20b2e1f0edb07d8e292b56defa2e7106",
+        "replacements": [
+          {
+            "before": "#include <iostream>\n#include <string>\n",
+            "after": "#include <iostream>\n#include <sstream>\n#include <string>\n"
+          },
+          {
+            "before": "    fs::create_directories(tree.root);\n    mqb::platform::windows::WindowsProcessRunner runner;\n",
+            "after": "    fs::create_directories(tree.root);\n    // Match ProjectArtifactLayout's existing-root spelling before deriving any\n    // expected output. A lexical key alone cannot resolve a short-name alias.\n    const auto requested_root_key = mqb::platform::windows::path_identity_key(tree.root);\n    std::error_code root_error;\n    auto canonical_root = fs::canonical(tree.root, root_error);\n    if (root_error || canonical_root.empty()) {\n        std::cerr << \"FAIL: canonical DLL fixture root: \" << root_error.message() << '\\n';\n        return 1;\n    }\n    tree.root = canonical_root.lexically_normal();\n    mqb::platform::windows::WindowsProcessRunner runner;\n"
+          },
+          {
+            "before": "    const auto verify_library_roles = [&] {\n        const auto cache = mqb::LinkCacheFile::load(tree.root / \".mqb/cache/link/plugin.linkcache\");\n",
+            "after": "    const fs::path role_evidence = fs::current_path() / \"storage-evidence/dll-role-cli\";\n    fs::create_directories(role_evidence);\n    const std::string_view role_phases[]{\"cold\", \"warm\", \"side-repair\", \"source-change\"};\n    std::size_t role_checks = 0;\n    const auto verify_library_roles = [&] {\n        expect(role_checks < 4, \"DLL role audit has exactly four existing lifecycle phases\");\n        if (role_checks >= 4) return;\n        const std::string phase{role_phases[role_checks++]};\n        const fs::path snapshot = role_evidence / (phase + \".linkcache\");\n        std::error_code copy_error;\n        // Preserve the original bytes before parsing/asserting. Never save a\n        // reconstructed cache or overwrite an earlier phase's evidence.\n        const bool copied = fs::copy_file(tree.root / \".mqb/cache/link/plugin.linkcache\",\n                                          snapshot, fs::copy_options::none, copy_error);\n        expect(copied && !copy_error, \"DLL role audit preserves a new original cache snapshot\");\n        if (!copied || copy_error) {\n            std::cerr << \"DLL role snapshot \" << phase << \": \" << copy_error.message() << '\\n';\n            return;\n        }\n        const auto cache = mqb::LinkCacheFile::load(snapshot);\n"
+          },
+          {
+            "before": "        expect(!contains_import(value.file_inputs) && contains_import(value.side_outputs),\n",
+            "after": "        std::ostringstream diagnostic;\n        diagnostic << \"phase=\" << phase\n                   << \"\\nrequested_root_key=\" << requested_root_key\n                   << \"\\ncanonical_root_key=\" << mqb::platform::windows::path_identity_key(tree.root)\n                   << \"\\nexpected_import_key=\" << key\n                   << \"\\nexpected_dll_key=\" << mqb::platform::windows::path_identity_key(dll)\n                   << \"\\ncache_output_key=\" << mqb::platform::windows::path_identity_key(value.output)\n                   << \"\\nimport_is_input=\" << contains_import(value.file_inputs)\n                   << \"\\nimport_is_side_output=\" << contains_import(value.side_outputs) << '\\n';\n        for (const auto& input : value.file_inputs)\n            diagnostic << \"input_key=\" << mqb::platform::windows::path_identity_key(input) << '\\n';\n        for (const auto& output : value.side_outputs)\n            diagnostic << \"side_output_key=\" << mqb::platform::windows::path_identity_key(output) << '\\n';\n        std::cout << \"DLL_ROLE_CLI \" << diagnostic.str();\n        std::ofstream retained{role_evidence / (phase + \".txt\"), std::ios::binary};\n        retained << diagnostic.str();\n        retained.close();\n        expect(static_cast<bool>(retained), \"DLL role audit retains comparison diagnostics\");\n        expect(mqb::platform::windows::path_identity_key(value.output) ==\n                   mqb::platform::windows::path_identity_key(dll),\n               \"DLL role audit snapshot belongs to the expected primary output\");\n        expect(!contains_import(value.file_inputs) && contains_import(value.side_outputs),\n"
+          },
+          {
+            "before": "    verify_library_roles();\n    auto mutated_answer = call_answer(dll);\n",
+            "after": "    verify_library_roles();\n    expect(role_checks == 4, \"all four DLL role snapshots were inspected\");\n    auto mutated_answer = call_answer(dll);\n"
+          }
+        ]
+      }
     },
     "cpp/tests/msvc/linker/linker_arguments_tests.cpp": {
       "current": "1add8b5bb6e81ec9ca11e58acd796e858610cecb8cf5826b5e5747a284af8882",
