@@ -127,7 +127,10 @@ class RecordedStorageProjectionContracts(unittest.TestCase):
         self.assertEqual(read('VERSION').strip(), '5.6.0')
 
     def test_native_record_is_saved_before_projection_can_refuse(self):
-        text = read('cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp')
+        path = 'cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp'
+        # Original #246 failure-preservation contract runs on the exact pinned
+        # predecessor. The new LINK-role suite independently checks current code.
+        text = ext.link_roles.legacy_text(path, read(path))
         start = text.index('auto run = [&](const char* phase)')
         end = text.index('const auto cold = run("01-cold")', start)
         call = text[start:end]

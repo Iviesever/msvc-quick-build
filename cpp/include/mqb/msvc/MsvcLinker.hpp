@@ -97,10 +97,11 @@ public:
         const LinkOptions& options,
         const std::filesystem::path& working_directory = {});
 
-    // Parse /VERBOSE:LIB output without depending on localized progress labels.
-    // LINK documents that the library/object names are emitted as full paths;
-    // MQB extracts only absolute .lib path tokens and treats them as non-owning
-    // freshness evidence.
+    // Parse absolute .lib observations from /VERBOSE:LIB output. Exclude only
+    // complete known "Creating library ... and object ..." notifications, not
+    // paths merely equal to an output. Other/unknown/localized lines retain the
+    // conservative extraction rule; a separate search of that same path remains
+    // non-owning freshness evidence. Existing cache roles are not rewritten.
     [[nodiscard]] static std::vector<std::filesystem::path>
     observed_library_paths(std::string_view stdout_text);
 

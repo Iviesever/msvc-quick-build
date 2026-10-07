@@ -110,6 +110,52 @@ int main() {
                "different non-ASCII library components must remain distinct path identities");
     }
 
+    // LINK creation messages must not manufacture input edges. Keep observations
+    // from other lines, even when their path equals a newly created import lib.
+    const auto observe = [](std::u8string_view value) {
+        return mqb::msvc::MsvcLinker::observed_library_paths(std::string_view{
+            reinterpret_cast<const char*>(value.data()), value.size()});
+    };
+    const auto creation_only = observe(
+        u8"  Creating library D:/build space/项目/component.lib and object D:/build space/项目/component.exp\r\n");
+    expect(creation_only.empty(), "complete LINK creation message is not input evidence");
+    expect(observe(u8"\tCreating library \"C:/a b/plugin.LIB\" and object \"C:/a b/plugin.EXP\"\r").empty(),
+           "quoted creation paths and final line without newline are recognized");
+    expect(observe(u8"creating LIBRARY C:/x.lib AND OBJECT C:/x.exp\n").empty(),
+           "creation message ASCII casing is not a read dependency");
+    const auto separate_search = observe(
+        u8"Searching C:/sdk/input.lib:\n"
+        u8"Creating library C:/out/plugin.lib and object C:/out/plugin.exp\n"
+        u8"  Loaded C:/out/plugin.lib(member.obj)\n"
+        u8"  Searching c:/SDK/INPUT.LIB:\n");
+    expect(separate_search.size() == 2 &&
+           contains_path(separate_search, "C:/sdk/input.lib") &&
+           contains_path(separate_search, "C:/out/plugin.lib"),
+           "genuine separate same-output read remains an input; unrelated input deduplication survives");
+    const auto search_before = observe(
+        u8"Loaded C:/out/plugin.lib(member.obj)\n"
+        u8"Creating library C:/out/plugin.lib and object C:/out/plugin.exp");
+    expect(search_before.size() == 1 && contains_path(search_before, "C:/out/plugin.lib"),
+           "later creation never erases an earlier input observation");
+    for (const auto line : {
+             u8"Searching C:/Creating library/plugin.lib:\n",
+             u8"Found C:/out/plugin.lib\n",
+             u8"未知消息 C:/out/plugin.lib\n",
+             u8"Creating library C:/out/plugin.lib\n",
+             u8"Not Creating library C:/out/plugin.lib and object C:/out/plugin.exp\n",
+             u8"Creating library C:/out/plugin.lib and object C:/out/plugin.exp: warning LNK9999\n",
+             u8"Creating library C:/out/plugin.lib and object C:/out/plugin.obj\n",
+             u8"Creating library \"C:/out/plugin.lib and object C:/out/plugin.exp\n"}) {
+        expect(!observe(line).empty(), "unknown, malformed or non-creation progress remains conservative input evidence");
+    }
+    expect(observe(u8"Creating library rel.lib and object rel.exp\n").empty(),
+           "relative creation progress does not fabricate absolute inputs");
+    const auto unicode_input = observe(
+        u8"Creating library C:/项目/plugin.lib and object C:/项目/plugin.exp\n"
+        u8"Found C:/项目/plugin.lib\nFound C:/項目/plugin.lib\n");
+    expect(unicode_input.size() == 2,
+           "creation filtering preserves separate Unicode input identities");
+
     auto debug_none = invocation;
     debug_none.options.additional_arguments = {"/DEBUG:NONE"};
     const auto debug_none_result = mqb::msvc::MsvcLinker::build_arguments(debug_none);

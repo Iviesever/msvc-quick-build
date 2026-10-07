@@ -1,0 +1,73 @@
+{
+  "base": "399e06fa43d2052ac0d452e1320438c015c65145",
+  "files": {
+    "cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp": {
+      "current": "a6f9b228600acc5650cfc486ea7e881ec8f5a9612f40dd9e3ffe3ea3a8546222",
+      "prior": "b771b6dbb1cd03ccceaf85cdb2b9e92646e0eae4a91376af32a5f0e9628bec18",
+      "replacements": [
+        {
+          "before": "                const bool dual_role = contains_import(file_inputs) && contains_import(side_outputs);\n                std::cout << \"recorded storage projection phase=\" << phase\n                          << \" import_library_input_and_output=\" << dual_role << '\\n';\n                require(result->record.link.options.target_kind == TargetKind::dynamic_library && dual_role,\n                        \"native DLL retains the observed import-library input/output conflict\");\n                require(!projected && projected.error().issue == RecordedStorageProjectionIssue::path_conflict &&\n                        !projected.error().source_index &&\n                        projected.error().message == \"output or metadata aliases a protected input\",\n                        \"native DLL dual-role input requires the exact terminal path_conflict refusal\");\n                std::cout << \"recorded storage projection phase=\" << phase\n                          << \" result=path_conflict build_record_retained=true\\n\";\n",
+          "after": "                const bool dual_role = contains_import(file_inputs) && contains_import(side_outputs);\n                std::cout << \"recorded storage projection phase=\" << phase\n                          << \" import_library_input_and_output=\" << dual_role << '\\n';\n                require(result->record.link.options.target_kind == TargetKind::dynamic_library &&\n                        !contains_import(file_inputs) && contains_import(side_outputs),\n                        \"native clean DLL creation records import library only as a side output\");\n                if (!projected) throw std::runtime_error(\"native recorded storage projection: \" + projected.error().message);\n                require(projected->compiles.size() == result->cache_evidence.compiles.size(),\n                        \"clean DLL projects the original successful compile evidence\");\n                std::cout << \"recorded storage projection phase=\" << phase\n                          << \" result=accepted build_record_retained=true\\n\";\n"
+        },
+        {
+          "before": "",
+          "after": "        library_observation_role_cases(root / \"link-role-model\", work / \"storage-evidence/link-role-model\");\n"
+        },
+        {
+          "before": "",
+          "after": "#include <chrono>\n"
+        }
+      ],
+      "cuts": [
+        [
+          "// BEGIN link observation role compatibility controls\n",
+          "// END link observation role compatibility controls\n\n"
+        ]
+      ]
+    },
+    "cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp": {
+      "current": "cbfd8b900803a0002bf6412dc83a3449115aa0b34e644b0484eaeabfb300db77",
+      "prior": "f6c3f0947d4398befaa52ca6de4d1affab5b0a1ea042514750c1752beefd1e36",
+      "replacements": [
+        {
+          "before": "#include <windows.h>\n\n#include <chrono>\n#include <expected>\n",
+          "after": "#include <windows.h>\n\n#include <algorithm>\n#include <chrono>\n#include <expected>\n"
+        },
+        {
+          "before": "#include <vector>\n\n#include \"mqb/platform/windows/WindowsProcessRunner.hpp\"\n#include \"mqb/process/Process.hpp\"\n",
+          "after": "#include <vector>\n\n#include \"mqb/core/LinkCacheFile.hpp\"\n#include \"mqb/platform/windows/PathIdentity.hpp\"\n#include \"mqb/platform/windows/WindowsProcessRunner.hpp\"\n#include \"mqb/process/Process.hpp\"\n"
+        },
+        {
+          "before": "    const fs::path export_file = tree.root / \".mqb\" / \"bin\" / \"plugin.exp\";\n\n    auto cold = run_mqb(\n        runner,\n",
+          "after": "    const fs::path export_file = tree.root / \".mqb\" / \"bin\" / \"plugin.exp\";\n\n    const auto verify_library_roles = [&] {\n        const auto cache = mqb::LinkCacheFile::load(tree.root / \".mqb/cache/link/plugin.linkcache\");\n        expect(cache && *cache, \"DLL role audit loads the cache from the existing invocation\");\n        if (!cache || !*cache) return;\n        const auto& value = **cache;\n        const auto key = mqb::platform::windows::path_identity_key(import_library);\n        const auto contains_import = [&](const auto& paths) {\n            return std::any_of(paths.begin(), paths.end(), [&](const auto& p) {\n                return mqb::platform::windows::path_identity_key(p) == key;\n            });\n        };\n        expect(!contains_import(value.file_inputs) && contains_import(value.side_outputs),\n               \"clean DLL creation has no false import-library input, while side-output tracking remains\");\n    };\n\n    auto cold = run_mqb(\n        runner,\n"
+        },
+        {
+          "before": "    expect(fs::is_regular_file(import_library), \"exporting DLL should produce deterministic import library\");\n    expect(fs::is_regular_file(export_file), \"exporting DLL should produce export side file\");\n    auto answer = call_answer(dll);\n    expect(answer.has_value() && *answer == 42,\n",
+          "after": "    expect(fs::is_regular_file(import_library), \"exporting DLL should produce deterministic import library\");\n    expect(fs::is_regular_file(export_file), \"exporting DLL should produce export side file\");\n    verify_library_roles();\n    auto answer = call_answer(dll);\n    expect(answer.has_value() && *answer == 42,\n"
+        },
+        {
+          "before": "    }\n\n    std::error_code error_code;\n    fs::remove(import_library, error_code);\n",
+          "after": "    }\n\n    verify_library_roles();\n    std::error_code error_code;\n    fs::remove(import_library, error_code);\n"
+        },
+        {
+          "before": "    expect(fs::is_regular_file(import_library), \"repair relink should recreate import library\");\n\n    write_text(tree.root / \"plugin.cpp\", R\"cpp(extern \"C\" __declspec(dllexport) int mqb_answer() {\n    return 43;\n",
+          "after": "    expect(fs::is_regular_file(import_library), \"repair relink should recreate import library\");\n\n    verify_library_roles();\n    write_text(tree.root / \"plugin.cpp\", R\"cpp(extern \"C\" __declspec(dllexport) int mqb_answer() {\n    return 43;\n"
+        },
+        {
+          "before": "               \"fresh DLL object should relink DLL\");\n    }\n    auto mutated_answer = call_answer(dll);\n    expect(mutated_answer.has_value() && *mutated_answer == 43,\n",
+          "after": "               \"fresh DLL object should relink DLL\");\n    }\n    verify_library_roles();\n    auto mutated_answer = call_answer(dll);\n    expect(mutated_answer.has_value() && *mutated_answer == 43,\n"
+        }
+      ]
+    },
+    "cpp/tests/msvc/linker/linker_arguments_tests.cpp": {
+      "current": "1add8b5bb6e81ec9ca11e58acd796e858610cecb8cf5826b5e5747a284af8882",
+      "prior": "25fdb1ff1900a34685be8eee88a0d65ba681c886b26ecae50816da22b17b642b",
+      "replacements": [
+        {
+          "before": "               \"different non-ASCII library components must remain distinct path identities\");\n    }\n\n    auto debug_none = invocation;\n",
+          "after": "               \"different non-ASCII library components must remain distinct path identities\");\n    }\n\n    // LINK creation messages must not manufacture input edges. Keep observations\n    // from other lines, even when their path equals a newly created import lib.\n    const auto observe = [](std::u8string_view value) {\n        return mqb::msvc::MsvcLinker::observed_library_paths(std::string_view{\n            reinterpret_cast<const char*>(value.data()), value.size()});\n    };\n    const auto creation_only = observe(\n        u8\"  Creating library D:/build space/项目/component.lib and object D:/build space/项目/component.exp\\r\\n\");\n    expect(creation_only.empty(), \"complete LINK creation message is not input evidence\");\n    expect(observe(u8\"\\tCreating library \\\"C:/a b/plugin.LIB\\\" and object \\\"C:/a b/plugin.EXP\\\"\\r\").empty(),\n           \"quoted creation paths and final line without newline are recognized\");\n    expect(observe(u8\"creating LIBRARY C:/x.lib AND OBJECT C:/x.exp\\n\").empty(),\n           \"creation message ASCII casing is not a read dependency\");\n    const auto separate_search = observe(\n        u8\"Searching C:/sdk/input.lib:\\n\"\n        u8\"Creating library C:/out/plugin.lib and object C:/out/plugin.exp\\n\"\n        u8\"  Loaded C:/out/plugin.lib(member.obj)\\n\"\n        u8\"  Searching c:/SDK/INPUT.LIB:\\n\");\n    expect(separate_search.size() == 2 &&\n           contains_path(separate_search, \"C:/sdk/input.lib\") &&\n           contains_path(separate_search, \"C:/out/plugin.lib\"),\n           \"genuine separate same-output read remains an input; unrelated input deduplication survives\");\n    const auto search_before = observe(\n        u8\"Loaded C:/out/plugin.lib(member.obj)\\n\"\n        u8\"Creating library C:/out/plugin.lib and object C:/out/plugin.exp\");\n    expect(search_before.size() == 1 && contains_path(search_before, \"C:/out/plugin.lib\"),\n           \"later creation never erases an earlier input observation\");\n    for (const auto line : {\n             u8\"Searching C:/Creating library/plugin.lib:\\n\",\n             u8\"Found C:/out/plugin.lib\\n\",\n             u8\"未知消息 C:/out/plugin.lib\\n\",\n             u8\"Creating library C:/out/plugin.lib\\n\",\n             u8\"Not Creating library C:/out/plugin.lib and object C:/out/plugin.exp\\n\",\n             u8\"Creating library C:/out/plugin.lib and object C:/out/plugin.exp: warning LNK9999\\n\",\n             u8\"Creating library C:/out/plugin.lib and object C:/out/plugin.obj\\n\",\n             u8\"Creating library \\\"C:/out/plugin.lib and object C:/out/plugin.exp\\n\"}) {\n        expect(!observe(line).empty(), \"unknown, malformed or non-creation progress remains conservative input evidence\");\n    }\n    expect(observe(u8\"Creating library rel.lib and object rel.exp\\n\").empty(),\n           \"relative creation progress does not fabricate absolute inputs\");\n    const auto unicode_input = observe(\n        u8\"Creating library C:/项目/plugin.lib and object C:/项目/plugin.exp\\n\"\n        u8\"Found C:/项目/plugin.lib\\nFound C:/項目/plugin.lib\\n\");\n    expect(unicode_input.size() == 2,\n           \"creation filtering preserves separate Unicode input identities\");\n\n    auto debug_none = invocation;\n"
+        }
+      ]
+    }
+  }
+}

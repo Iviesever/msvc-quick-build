@@ -7,6 +7,7 @@ is only for older source contracts, never product execution or CI substitution.
 from pathlib import Path
 import hashlib
 import json
+import link_observation_role_contract as link_roles
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = json.loads(Path(__file__).with_name('recorded_storage_projection_extension.json').read_text(encoding='utf-8'))
@@ -17,6 +18,7 @@ def digest(text):
 
 
 def legacy_text(path, text):
+    text = link_roles.legacy_text(path, text)
     rule = SPEC['files'].get(path)
     if rule is None:
         return text
@@ -40,7 +42,7 @@ def legacy_text(path, text):
 def legacy_view(values):
     result = dict(values)
     for path, value in values.items():
-        if path not in SPEC['files']:
+        if path not in SPEC['files'] and path not in link_roles.SPEC['files']:
             continue
         binary = isinstance(value, bytes)
         old = legacy_text(path, value.decode('utf-8') if binary else value)

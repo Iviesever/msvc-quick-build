@@ -1,5 +1,6 @@
 #include <windows.h>
 
+#include <algorithm>
 #include <chrono>
 #include <expected>
 #include <filesystem>
@@ -11,6 +12,8 @@
 #include <utility>
 #include <vector>
 
+#include "mqb/core/LinkCacheFile.hpp"
+#include "mqb/platform/windows/PathIdentity.hpp"
 #include "mqb/platform/windows/WindowsProcessRunner.hpp"
 #include "mqb/process/Process.hpp"
 
@@ -138,6 +141,21 @@ int main(int argc, char* argv[]) {
     const fs::path import_library = tree.root / ".mqb" / "bin" / "plugin.lib";
     const fs::path export_file = tree.root / ".mqb" / "bin" / "plugin.exp";
 
+    const auto verify_library_roles = [&] {
+        const auto cache = mqb::LinkCacheFile::load(tree.root / ".mqb/cache/link/plugin.linkcache");
+        expect(cache && *cache, "DLL role audit loads the cache from the existing invocation");
+        if (!cache || !*cache) return;
+        const auto& value = **cache;
+        const auto key = mqb::platform::windows::path_identity_key(import_library);
+        const auto contains_import = [&](const auto& paths) {
+            return std::any_of(paths.begin(), paths.end(), [&](const auto& p) {
+                return mqb::platform::windows::path_identity_key(p) == key;
+            });
+        };
+        expect(!contains_import(value.file_inputs) && contains_import(value.side_outputs),
+               "clean DLL creation has no false import-library input, while side-output tracking remains");
+    };
+
     auto cold = run_mqb(
         runner,
         mqb_executable,
@@ -156,6 +174,7 @@ int main(int argc, char* argv[]) {
     expect(fs::is_regular_file(dll), "DLL output should exist at deterministic .mqb/bin path");
     expect(fs::is_regular_file(import_library), "exporting DLL should produce deterministic import library");
     expect(fs::is_regular_file(export_file), "exporting DLL should produce export side file");
+    verify_library_roles();
     auto answer = call_answer(dll);
     expect(answer.has_value() && *answer == 42,
            "LoadLibrary/GetProcAddress should call exported function from generated DLL");
@@ -176,6 +195,7 @@ int main(int argc, char* argv[]) {
                "unchanged DLL should reuse link cache");
     }
 
+    verify_library_roles();
     std::error_code error_code;
     fs::remove(import_library, error_code);
     expect(!error_code && !fs::exists(import_library),
@@ -198,6 +218,7 @@ int main(int argc, char* argv[]) {
     }
     expect(fs::is_regular_file(import_library), "repair relink should recreate import library");
 
+    verify_library_roles();
     write_text(tree.root / "plugin.cpp", R"cpp(extern "C" __declspec(dllexport) int mqb_answer() {
     return 43;
 }
@@ -217,6 +238,7 @@ int main(int argc, char* argv[]) {
         expect(mutated->stdout_text.find("[link] plugin.dll") != std::string::npos,
                "fresh DLL object should relink DLL");
     }
+    verify_library_roles();
     auto mutated_answer = call_answer(dll);
     expect(mutated_answer.has_value() && *mutated_answer == 43,
            "relinked DLL should expose mutated exported behavior");

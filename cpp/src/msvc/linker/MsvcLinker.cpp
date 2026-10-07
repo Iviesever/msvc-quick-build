@@ -164,6 +164,37 @@ void add_unique_path(std::vector<fs::path>& paths, const fs::path& path) {
     return std::nullopt;
 }
 
+// A creation notification is not a read/search observation. Match only this
+// complete, known LINK message; unknown/localized progress remains conservative.
+// Never remove a path observed on another line just because LINK also creates it.
+[[nodiscard]] bool is_library_creation_message(std::string_view line) noexcept {
+    const auto trim = [](std::string_view value) {
+        const auto first = value.find_first_not_of(" \t\r");
+        if (first == std::string_view::npos) return std::string_view{};
+        const auto last = value.find_last_not_of(" \t\r");
+        return value.substr(first, last - first + 1);
+    };
+    const auto output_token = [&](std::string_view token, std::string_view extension) {
+        token = trim(token);
+        if (token.size() >= 2 && token.front() == '"' && token.back() == '"') {
+            token.remove_prefix(1);
+            token.remove_suffix(1);
+        }
+        return token.size() > extension.size()
+            && token.find('"') == std::string_view::npos
+            && ascii_iequals(token.substr(token.size() - extension.size()), extension);
+    };
+    line = trim(line);
+    constexpr std::string_view prefix = "Creating library ";
+    constexpr std::string_view separator = " and object ";
+    if (line.size() <= prefix.size()
+        || !ascii_iequals(line.substr(0, prefix.size()), prefix)) return false;
+    const auto split = find_ascii_icase(line, separator, prefix.size());
+    return split != std::string_view::npos
+        && output_token(line.substr(prefix.size(), split - prefix.size()), ".lib")
+        && output_token(line.substr(split + separator.size()), ".exp");
+}
+
 [[nodiscard]] bool has_user_progress_output(const LinkOptions& options) {
     return std::any_of(
         options.additional_arguments.begin(),
@@ -381,7 +412,7 @@ std::vector<fs::path> MsvcLinker::observed_library_paths(
             : newline;
         const std::string_view line = stdout_text.substr(begin, end - begin);
 
-        std::size_t search_from = 0;
+        std::size_t search_from = is_library_creation_message(line) ? line.size() : 0;
         while (search_from < line.size()) {
             const std::size_t extension = find_ascii_icase(line, ".lib", search_from);
             if (extension == std::string_view::npos) {
