@@ -4,6 +4,7 @@ The real coordinator cases run in the existing 96-program Windows native graph.
 These portable checks do not substitute for those MSVC executions.
 """
 from pathlib import Path
+import recorded_storage_projection_contract as storage_projection_extension
 import accepted_target_wave_cache_extension as wave_extension
 import json
 import re
@@ -18,7 +19,7 @@ OLD_TU = 'c67f64a6efc12c5e17679b1862a58fd93dc48a55'
 
 
 def read(name):
-    return wave_extension.legacy_text(name, (ROOT / name).read_text(encoding='utf-8'))
+    return wave_extension.legacy_text(name, storage_projection_extension.legacy_text(name, (ROOT / name).read_text(encoding='utf-8')))
 
 
 def once(text, old, new=''):
@@ -209,7 +210,7 @@ class CompileCacheEvidenceContracts(unittest.TestCase):
             if path.suffix not in ('.cpp', '.hpp') or path.relative_to(ROOT).as_posix() in (TU, 'cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp',
                 'cpp/src/orchestration/modules/MsvcModuleCompileCoordinator.cpp'):
                 continue
-            self.assertNotIn('CompileCacheEvidence', wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), path.read_text(encoding='utf-8')), str(path))
+            self.assertNotIn('CompileCacheEvidence', wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), storage_projection_extension.legacy_text(path.relative_to(ROOT).as_posix(), path.read_text(encoding='utf-8'))), str(path))
 
     def test_native_counts_and_production_manifest_unchanged(self):
         self.assertEqual(96, len(list((ROOT / 'cpp/tests').rglob('*_tests.cpp'))))

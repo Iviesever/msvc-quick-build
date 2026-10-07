@@ -1,5 +1,6 @@
 """Selected-field model contracts; no filesystem or benchmark execution."""
 from pathlib import Path
+import recorded_storage_projection_contract as storage_projection_extension
 import hashlib
 import json
 import re
@@ -20,7 +21,7 @@ PINS = {
     'cpp/src/core/cache/ArtifactStorageAssociation.cpp': '4d97df5226f7daa1e84cd3fc5c67e668717d92e878c7237f5ebcd0cdaa1f394b',
 }
 
-def read(name): return (ROOT/name).read_text(encoding='utf-8')
+def read(name): return storage_projection_extension.legacy_text(name, (ROOT/name).read_text(encoding='utf-8'))
 def sha(data): return hashlib.sha256(data).hexdigest()
 def body(text): return re.sub(r'//[^\n]*|/\*.*?\*/', '', text, flags=re.S)
 def pure(text):

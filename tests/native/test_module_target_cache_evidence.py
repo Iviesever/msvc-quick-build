@@ -1,5 +1,6 @@
 """Owning same-call target evidence; portable contracts, not Windows execution."""
 from pathlib import Path
+import recorded_storage_projection_contract as storage_projection_extension
 import accepted_target_wave_cache_extension as wave_extension
 import unittest
 
@@ -11,7 +12,7 @@ HEADER = 'cpp/include/mqb/orchestration/MsvcModuleTargetCoordinator.hpp'
 
 
 def read(path):
-    return wave_extension.legacy_text(path, (ROOT / path).read_text(encoding='utf-8'))
+    return wave_extension.legacy_text(path, storage_projection_extension.legacy_text(path, (ROOT / path).read_text(encoding='utf-8')))
 
 
 def original_target(text):
@@ -175,7 +176,7 @@ class ModuleTargetCacheEvidenceContracts(unittest.TestCase):
         for path in (ROOT/'cpp/src').rglob('*'):
             if path.suffix not in ('.cpp', '.hpp') or path.relative_to(ROOT).as_posix() in allowed:
                 continue
-            text = wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), path.read_text(encoding='utf-8'))
+            text = wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), storage_projection_extension.legacy_text(path.relative_to(ROOT).as_posix(), path.read_text(encoding='utf-8')))
             self.assertNotIn('CompileCacheEvidence', text, str(path))
             self.assertNotIn('ModuleCompileWaveCacheEvidence', text, str(path))
         self.assertIn('return run_impl(request, nullptr);', read(TU))

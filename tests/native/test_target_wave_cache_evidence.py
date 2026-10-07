@@ -6,6 +6,7 @@ The existing native test TU exercises the new deterministic cases separately.
 import copy
 import json
 from pathlib import Path
+import recorded_storage_projection_contract as storage_projection_extension
 import re
 import shutil
 import subprocess
@@ -28,7 +29,7 @@ REGISTRATION = ",\n        'TargetWaveCacheEvidenceCases.hpp'"
 
 
 def read(path):
-    return (ROOT/path).read_text(encoding='utf-8')
+    return storage_projection_extension.legacy_text(path, (ROOT/path).read_text(encoding='utf-8'))
 
 
 def between(text, first, last):

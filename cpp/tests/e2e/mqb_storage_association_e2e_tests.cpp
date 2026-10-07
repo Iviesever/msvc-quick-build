@@ -14,6 +14,7 @@
 
 #include "mqb/orchestration/ArtifactStorageProjection.hpp"
 #include "mqb/orchestration/MsvcModuleTargetCoordinator.hpp"
+#include "mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp"
 #ifdef _WIN32
 #include "StorageReport.hpp"
 #include "mqb/platform/windows/CommandLine.hpp"
@@ -221,6 +222,231 @@ void projection_contracts() {
     require(m.stages[0].paths[0].path!=fs::path{"mutated"},"projection owns its values");
     std::cout<<"portable projection and association contracts passed\n";
 }
+// BEGIN recorded storage projection contracts
+RecordedTargetResult rich_target() {
+    const auto root = fs::absolute("recorded-projection-model");
+    RecordedTargetResult r{.record={.caller_label=ArtifactGenerationLabel{"target","historical"},
+        .compiler_options={}, .link=link_record(root/".mqb")}};
+    r.record.link.association.objects.clear();
+    r.result.link.linked = true; r.result.any_compiled = true;
+    r.record.compiler_options.defines = {"ONE=1", "TWO=2"};
+    r.record.compiler_options.additional_arguments = {"/W4", "/permissive-"};
+    for (int i = 0; i < 2; ++i) {
+        const auto name = std::string{i == 0 ? "a" : "b"};
+        const auto source = root/(name+".cpp");
+        const auto object = root/".mqb/obj"/(name+".obj");
+        const auto deps = root/".mqb/deps"/(name+".json");
+        const auto cache_file = root/".mqb/cache"/(name+".cache");
+        r.record.sources.push_back({source, object, deps, cache_file, ArtifactCompletion::executed, false});
+        TargetCompileResult result{.source=source}; result.result.compiled = true;
+        r.result.compiles.push_back(result);
+        ToolchainIdentity compiler{root/"compiler/cl.exe", "fixture compiler", "opaque-stamp"};
+        CompileCacheEvidence e{.request={.unit={.source=source,.outputs={{object,ArtifactKind::object}}},
+            .options=r.record.compiler_options, .cache_file=cache_file, .source_dependencies_file=deps,
+            .working_directory=root/"compile-context"},
+            .inspection_toolchain={.identity=compiler, .environment={{"SECRET_SENTINEL","not a projection field"}}},
+            .cache_entry={.source=source,.toolchain=compiler,.signature=BuildSignature::from_digest({7,static_cast<unsigned>(i)}),
+                .outputs={{object,ArtifactKind::object}}, .dependencies={root/"shared.hpp"},
+                .include_search_roots={root/"include"}},
+            .state=CompileCacheEvidenceState::saved};
+        r.cache_evidence.compiles.push_back(std::move(e));
+        r.record.link.association.objects.push_back(object);
+    }
+    return r;
+}
+RecordedStaticTargetResult rich_static() {
+    auto value = rich_target();
+    const auto root = fs::absolute("recorded-projection-model");
+    RecordedStaticTargetResult result{.record={.caller_label=value.record.caller_label,
+        .compiler_options=value.record.compiler_options, .sources=value.record.sources,
+        .archive={.completion=ArtifactCompletion::executed, .cache_state=ArtifactCacheState::saved,
+            .association={.signature=BuildSignature::from_digest({9,10}),
+                .objects=value.record.link.association.objects, .output=root/".mqb/bin/archive.lib"},
+            .architecture=Architecture::x64, .link_time_code_generation=false,
+            .cache_file=root/".mqb/cache/archive.cache", .working_directory=root}},
+        .cache_evidence=value.cache_evidence};
+    result.result.compiles=value.result.compiles; result.result.any_compiled=true;
+    result.result.archive.archived=true;
+    return result;
+}
+void recorded_projection_contracts() {
+    static_assert(!RecordedTargetStorageReferences::producer_identity_verified);
+    static_assert(!RecordedTargetStorageReferences::current_content_verified);
+    static_assert(!RecordedTargetStorageReferences::complete_producer_inventory);
+    static_assert(!RecordedTargetStorageReferences::deletion_authorized);
+    auto original=rich_target();
+    auto value=project_storage_references(original,key);
+    require(value && value->references.stages.size()==3 && value->compiles.size()==2,"rich source count and terminal retained");
+    const auto& stage=value->references.stages[0];
+    require(stage.working_directory==original.cache_evidence.compiles[0].request.working_directory &&
+        stage.working_directory!=original.record.link.working_directory && stage.cache_state==ArtifactCacheState::saved,
+        "compile cwd and cache state are not guessed from link");
+    require(stage.paths.size()==6 && stage.paths[1].path==original.cache_evidence.compiles[0].cache_entry.dependencies[0] &&
+        stage.paths[1].role==Role::input && stage.paths[2].role==Role::input &&
+        stage.paths[3].role==Role::declared_output && stage.paths[4].role==Role::metadata_reference &&
+        stage.paths[5].role==Role::metadata_reference,"captured dependency, namespace, output and metadata roles");
+    require(value->compiles[0].captured_signature==original.cache_evidence.compiles[0].cache_entry.signature &&
+        !value->compiles[0].toolchains_differ,"opaque captured signature and separate toolchain values retained");
+    auto old=project_storage_references(original.record);
+    require(!old.stages[0].cache_state && !old.stages[0].working_directory,"legacy unknown fields unchanged");
+    auto lib=rich_static();auto lib_value=project_storage_references(lib,key);
+    require(lib_value && lib_value->references.stages.back().kind==ArtifactStageKind::archive &&
+        !lib_value->references.stages.back().configuration,"static uses original archive projection without guessing config");
+    const auto signature=value->compiles[0].captured_signature;
+    original.cache_evidence.compiles[0].cache_entry.signature=BuildSignature::from_digest({88,99});
+    original.cache_evidence.compiles[0].cache_entry.dependencies[0]="changed";
+    original.record.caller_label->target="changed";
+    require(value->compiles[0].captured_signature==signature && stage.paths[1].path.filename()=="shared.hpp" &&
+        value->references.caller_label->target=="target","projection owns values after input mutation");
+    unsigned rejected=0;
+    auto reject=[&](const auto& mutate, RecordedStorageProjectionIssue expected) {
+        auto r=rich_target();mutate(r);const auto bad=project_storage_references(r,key);
+        require(!bad && bad.error().issue==expected,"precise whole-result projection refusal");++rejected;
+    };
+    using Issue=RecordedStorageProjectionIssue;
+    reject([](auto& r){r.cache_evidence.compiles.pop_back();},Issue::source_count);
+    reject([](auto& r){r.result.compiles.pop_back();},Issue::source_count);
+    reject([](auto& r){std::swap(r.cache_evidence.compiles[0],r.cache_evidence.compiles[1]);},Issue::source_mismatch);
+    reject([](auto& r){r.cache_evidence.compiles[0].cache_entry.source="wrong";},Issue::cache_mismatch);
+    reject([](auto& r){r.cache_evidence.compiles[0].cache_entry.outputs[0].path="wrong";},Issue::cache_mismatch);
+    reject([](auto& r){r.cache_evidence.compiles[0].cache_entry.outputs.clear();},Issue::cache_mismatch);
+    reject([](auto& r){r.cache_evidence.compiles[0].request.options.configuration=BuildConfiguration::release;},Issue::options_mismatch);
+    reject([](auto& r){std::swap(r.cache_evidence.compiles[0].request.options.defines[0],r.cache_evidence.compiles[0].request.options.defines[1]);},Issue::options_mismatch);
+    reject([](auto& r){r.cache_evidence.compiles[0].request.options.additional_arguments.push_back("/O2");},Issue::options_mismatch);
+    reject([](auto& r){r.cache_evidence.compiles[0].request.options.external_module_providers.push_back({"M","m.ifc"});},Issue::options_mismatch);
+    reject([](auto& r){r.cache_evidence.compiles[0].state=CompileCacheEvidenceState::reused;},Issue::outcome_mismatch);
+    reject([](auto& r){r.cache_evidence.compiles[0].state=CompileCacheEvidenceState::save_failed;},Issue::outcome_mismatch);
+    reject([](auto& r){r.result.any_compiled=false;},Issue::outcome_mismatch);
+    reject([](auto& r){r.record.link.cache_state=ArtifactCacheState::reused;},Issue::terminal_mismatch);
+    reject([](auto& r){std::swap(r.record.link.association.objects[0],r.record.link.association.objects[1]);},Issue::terminal_mismatch);
+    reject([](auto& r){r.cache_evidence.compiles[0].request.module_scan_output="unexpected";},Issue::cache_mismatch);
+    reject([](auto& r){r.record.sources[1]=r.record.sources[0];r.result.compiles[1]=r.result.compiles[0];
+        r.cache_evidence.compiles[1]=r.cache_evidence.compiles[0];},Issue::path_conflict);
+    reject([](auto& r){auto p=r.record.sources[0].source;r.record.sources[1].dependencies=p;
+        r.cache_evidence.compiles[1].request.source_dependencies_file=p;},Issue::path_conflict);
+    reject([](auto& r){auto p=r.record.sources[0].object;r.record.sources[1].object=p;
+        r.cache_evidence.compiles[1].request.unit.outputs[0].path=p;
+        r.cache_evidence.compiles[1].cache_entry.outputs[0].path=p;},Issue::path_conflict);
+    reject([](auto& r){r.record.link.association.output=r.record.sources[0].source;},Issue::path_conflict);
+    reject([](auto& r){r.record.additional_object_inputs={r.record.sources[0].object};
+        r.record.link.association.objects.insert(r.record.link.association.objects.begin(),r.record.sources[0].object);},Issue::path_conflict);
+    reject([](auto& r){r.record.sources[0].source=fs::path{std::string{"bad\0path",8}};
+        r.result.compiles[0].source=r.record.sources[0].source;
+        r.cache_evidence.compiles[0].request.unit.source=r.record.sources[0].source;
+        r.cache_evidence.compiles[0].cache_entry.source=r.record.sources[0].source;},Issue::invalid_path);
+    auto mixed=rich_target(); auto& e=mixed.cache_evidence.compiles[0];
+    e.state=CompileCacheEvidenceState::reused;mixed.result.compiles[0].result.compiled=false;
+    mixed.record.sources[0].completion=ArtifactCompletion::reused;
+    e.cache_entry.toolchain.version="original executor version";
+    auto m=project_storage_references(mixed,key);
+    require(m && m->compiles[0].toolchains_differ &&
+        m->compiles[0].cache_toolchain.version=="original executor version" &&
+        m->references.stages[0].completion==ArtifactCompletion::reused &&
+        m->references.caller_label->generation=="historical","mixed reuse and toolchains do not invent a new generation");
+    e.request.force_rebuild=true;
+    require(!project_storage_references(mixed,key),"force cannot masquerade as a cache hit");
+    auto failed_save=rich_target(); auto& saved=failed_save.cache_evidence.compiles[0];
+    saved.state=CompileCacheEvidenceState::save_failed;saved.request.force_rebuild=true;
+    saved.save_error=CompileCacheFileError{CompileCacheFileErrorCode::replace_failed,saved.request.cache_file,17,"KEEP original failure"};
+    failed_save.result.compiles[0].result.warnings.push_back({IncrementalCompileWarningCode::cache_save_failed,
+        saved.request.cache_file,"KEEP original failure"});failed_save.record.sources[0].has_warnings=true;
+    auto f=project_storage_references(failed_save,key);
+    require(f && f->references.stages[0].cache_state==ArtifactCacheState::save_failed && f->compiles[0].force_rebuild &&
+        f->compiles[0].save_error->offset==17 && f->compiles[0].warnings[0].message=="KEEP original failure",
+        "failed save is not converted to persistence success and exact diagnostics remain");
+    saved.save_error->message="mismatch";require(!project_storage_references(failed_save,key),"inconsistent save diagnostic refused");
+    require(f->compiles[0].save_error->message=="KEEP original failure","diagnostic storage is owned");
+    auto relative=rich_target();auto& rel=relative.cache_evidence.compiles[1];
+    relative.record.sources[1].object="relative.obj";rel.request.unit.outputs[0].path="relative.obj";
+    rel.cache_entry.outputs[0].path="relative.obj";relative.record.link.association.objects[1]="relative.obj";
+    rel.request.working_directory=relative.record.link.working_directory;
+    require(project_storage_references(relative,key).has_value(),"relative object uses its own recorded cwd");
+    rel.request.working_directory=fs::absolute("different-compile-context");
+    require(!project_storage_references(relative,key),"same relative spelling cannot hide different contexts");
+    rel.request.working_directory.reset();require(!project_storage_references(relative,key),"critical relative path without cwd refused");
+    auto upstream=rich_target();auto input=fs::absolute("upstream.obj");upstream.record.additional_object_inputs={input};
+    upstream.record.link.association.objects.insert(upstream.record.link.association.objects.begin(),input);
+    auto u=project_storage_references(upstream,key);
+    require(u && u->compiles.size()==2 && u->references.stages.back().paths[0].path==input &&
+        u->references.stages.back().paths[0].role==Role::input,"upstream object is input, never a fabricated producer");
+    auto missing_terminal=rich_target(); missing_terminal.record.link.association.output.clear();
+    require(!project_storage_references(missing_terminal,key),"missing terminal output cannot disappear from projection");
+    missing_terminal=rich_target(); missing_terminal.record.link.cache_file.clear();
+    require(!project_storage_references(missing_terminal,key),"missing terminal cache reference refused");
+    auto invalid_static=rich_static();invalid_static.record.archive.association.objects.pop_back();
+    require(!project_storage_references(invalid_static,key),"static terminal mismatches refused too");
+    for (const auto limits : {RecordedStorageProjectionLimits{1,1000000,64*1024*1024},
+        RecordedStorageProjectionLimits{100000,1,64*1024*1024},RecordedStorageProjectionLimits{100000,1000000,1}}) {
+        auto too_many=project_storage_references(rich_target(),key,limits);
+        require(!too_many && too_many.error().issue==Issue::limit_exceeded,"source/item/text budgets reject without truncation");
+    }
+    require(project_storage_references(rich_target(),key,{2,1000000,64*1024*1024}).has_value(),"exact source limit admitted");
+    require(!project_storage_references(rich_target(),{}),"missing path authority refused");
+    require(!project_storage_references(rich_target(),[](const fs::path&){return std::string{};}),"empty lexical key refused");
+    bool threw=false;try {(void)project_storage_references(rich_target(),[](const fs::path&)->std::string{throw std::runtime_error("key error");});}
+    catch(const std::runtime_error&){threw=true;}require(threw,"path authority exceptions propagate unchanged");
+    auto collision=rich_target();
+    require(!project_storage_references(collision,[](const fs::path&){return std::string{"colliding-platform-key"};}),
+        "platform aliases cannot silently choose a source/output");
+    // DLL completion alone does not resolve dual-role storage references.
+    // Keep the old 22 refusals and exercise both terminal completion states.
+    unsigned dll_admitted = 0, dll_refused = 0;
+    for (const bool reused : {false, true}) {
+        auto dll = rich_target();
+        auto& link = dll.record.link;
+        link.options.target_kind = TargetKind::dynamic_library;
+        link.association.output = fs::absolute("recorded-projection-model/.mqb/bin/component.dll");
+        const auto import_library = fs::absolute("recorded-projection-model/.mqb/bin/component.lib");
+        const auto export_file = fs::absolute("recorded-projection-model/.mqb/bin/component.exp");
+        link.association.side_outputs = {import_library, export_file};
+        if (reused) {
+            dll.result.link.linked = false;
+            link.completion = ArtifactCompletion::reused;
+            link.cache_state = ArtifactCacheState::reused;
+            dll.result.any_compiled = false;
+            for (std::size_t i = 0; i < dll.record.sources.size(); ++i) {
+                dll.record.sources[i].completion = ArtifactCompletion::reused;
+                dll.result.compiles[i].result.compiled = false;
+                dll.cache_evidence.compiles[i].state = CompileCacheEvidenceState::reused;
+            }
+        }
+        const auto accepted = project_storage_references(dll, key);
+        require(accepted.has_value(), "nonconflicting DLL projection is not blanket-refused");
+        ++dll_admitted;
+        for (const auto& overlap : {import_library, export_file}) {
+            auto ambiguous = dll;
+            ambiguous.record.link.association.file_inputs.push_back(overlap);
+            const auto original_inputs = ambiguous.record.link.association.file_inputs;
+            const auto original_outputs = ambiguous.record.link.association.side_outputs;
+            const auto refused = project_storage_references(ambiguous, key);
+            require(!refused && refused.error().issue == Issue::path_conflict &&
+                    !refused.error().source_index &&
+                    refused.error().message == "output or metadata aliases a protected input",
+                    "DLL self-input/output overlap has an exact terminal refusal");
+            require(ambiguous.record.link.association.file_inputs == original_inputs &&
+                    ambiguous.record.link.association.side_outputs == original_outputs,
+                    "refusal preserves both original DLL path roles");
+            const auto legacy = project_storage_references(ambiguous.record);
+            const auto& paths = legacy.stages.back().paths;
+            const auto has_role = [&](Role role) {
+                return std::any_of(paths.begin(), paths.end(), [&](const auto& path) {
+                    return path.path == overlap && path.role == role;
+                });
+            };
+            require(has_role(Role::input) && has_role(Role::declared_output),
+                    "legacy projection still preserves the conflicting DLL roles");
+            require(ambiguous.result.link.linked == dll.result.link.linked &&
+                    ambiguous.record.link.completion == link.completion,
+                    "projection refusal does not erase successful or reused link completion");
+            ++dll_refused;
+        }
+    }
+    require(dll_admitted == 2 && dll_refused == 4, "fixed DLL success/refusal controls completed");
+    std::cout << "recorded storage DLL controls: 2 admitted, 4 exact terminal refusals; original roles retained\n";
+    require(rejected==22,"all fixed negative mutation cases ran");
+    std::cout<<"recorded storage projection: 22 typed refusals; EXE/static, ownership, reuse, failed save, contexts and limits passed\n";
+}
+// END recorded storage projection contracts
 #ifdef _WIN32
 void write(const fs::path& path,std::string_view value) {
     fs::create_directories(path.parent_path()); std::ofstream out{path,std::ios::binary};
@@ -279,7 +505,14 @@ void native_contracts(const fs::path& root,const fs::path& evidence) {
         write(evidence/(std::string{phase}+".attempt.txt"),bytes(root/"main.cpp"));
         const auto r=target.run_recorded(request,ArtifactGenerationLabel{"same-label",phase});
         if(!r)write(evidence/(std::string{phase}+".error.txt"),r.error().message);
-        require(r.has_value(),"native recorded target success");records.push_back(project_storage_references(r->record));return r;
+        require(r.has_value(),"native recorded target success");
+        const auto rich = project_storage_references(*r, platform::windows::path_identity_key);
+        if (!rich) throw std::runtime_error("native rich storage projection: " + rich.error().message);
+        require(rich->compiles.size()==r->cache_evidence.compiles.size() &&
+            rich->references.stages[0].working_directory==r->cache_evidence.compiles[0].request.working_directory &&
+            rich->compiles[0].captured_signature==r->cache_evidence.compiles[0].cache_entry.signature,
+            "same native call rich storage evidence correspondence");
+        records.push_back(project_storage_references(r->record));return r;
     };
     auto observe=[&](const char* phase){
         require(++scans<=8,"eight inventory observations maximum");
@@ -385,6 +618,7 @@ void native_contracts(const fs::path& root,const fs::path& evidence) {
 int main() {
     try {
         association_contracts();alias_metadata_contracts();projection_contracts();
+        recorded_projection_contracts();
 #ifdef _WIN32
         const auto work=fs::current_path();require(!fs::exists(work/"storage-fixtures") && !fs::exists(work/"storage-evidence"),"fresh evidence required");
         native_contracts(work/"storage-fixtures"/fs::path{L"association space \u65e5"},work/"storage-evidence/association");
