@@ -6,6 +6,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp"
+
 namespace mqb::orchestration {
 namespace {
 struct Invalid { const char* message; };
@@ -26,9 +28,10 @@ struct Budget {
 struct Fields {
     Budget& budget;
     std::string bytes;
+    bool measure_only{false};
     void add(std::string_view s) {
         budget.check(s); budget.count(1);
-        bytes += std::to_string(s.size()); bytes += ':'; bytes += s;
+        if (!measure_only) { bytes += std::to_string(s.size()); bytes += ':'; bytes += s; }
     }
     void add(const std::string& s) { add(std::string_view{s}); }
     void add(const char* s) { add(std::string_view{s}); }
@@ -145,6 +148,110 @@ void generation_key(Budget& b, const ArtifactGenerationKey& k) {
 bool blocking(const ArtifactGenerationRecord& r) {
     return std::any_of(r.issues.begin(), r.issues.end(), [](auto i) { return i != ArtifactGenerationIssue::unresolved_path; });
 }
+std::expected<ArtifactGenerationModel, ArtifactGenerationError>
+finish_model(ArtifactGenerationModel out, const std::vector<ArtifactStorageReferences>& projected,
+             std::span<const ArtifactGenerationKey> retain,
+             const std::filesystem::path& lexical_root, const StoragePathKey& key, Budget& budget) {
+    using Issue = ArtifactGenerationIssue;
+    using State = ArtifactGenerationState;
+    StorageInventory empty;
+    empty.artifact_root = lexical_root;
+    auto joined = associate_artifact_storage(projected, empty, key);
+    if (!joined) return std::unexpected(ArtifactGenerationError{joined.error().message});
+    out.references = std::move(*joined);
+    for (const auto& m : out.references.matches)
+        if (!m.resolved_path) issue(out.records[m.record_index], Issue::unresolved_path);
+    // Duplicate provenance and duplicate executed claims never silently win.
+    for (std::size_t i = 0; i < out.records.size(); ++i) for (std::size_t j = i + 1; j < out.records.size(); ++j) {
+        auto& a = out.records[i]; auto& b = out.records[j];
+        if (a.source_id == b.source_id) { issue(a, Issue::duplicate_source); issue(b, Issue::duplicate_source); }
+        if (a.completion == ArtifactCompletion::executed && b.completion == ArtifactCompletion::executed &&
+            a.generation && b.generation && a.target == b.target && a.generation == b.generation) {
+            issue(a, Issue::duplicate_generation); issue(b, Issue::duplicate_generation);
+        }
+    }
+    for (std::size_t i = 0; i < out.records.size(); ++i) {
+        auto& r = out.records[i];
+        if (r.completion == ArtifactCompletion::executed && !blocking(r)) {
+            r.origin_record = i; r.state = State::executed_claim;
+        }
+    }
+    for (auto& r : out.records) {
+        if (r.completion != ArtifactCompletion::reused || !r.generation) continue;
+        std::vector<std::size_t> candidates;
+        for (std::size_t j = 0; j < out.records.size(); ++j)
+            if (out.records[j].completion == ArtifactCompletion::executed &&
+                same_key(out.records[j], {r.target, *r.generation})) candidates.push_back(j);
+        if (candidates.empty()) issue(r, Issue::missing_origin);
+        else if (candidates.size() != 1) issue(r, Issue::ambiguous_origin);
+        else {
+            const auto j = candidates.front();
+            if (r.recipe_evidence != out.records[j].recipe_evidence) issue(r, Issue::recipe_mismatch);
+            if (blocking(out.records[j])) issue(r, Issue::ambiguous_origin);
+            if (!blocking(r)) { r.origin_record = j; r.state = State::explicit_reuse; }
+        }
+    }
+    for (auto& r : out.records) if (blocking(r)) {
+        r.origin_record.reset(); r.state = State::unresolved;
+        for (const auto i : r.issues)
+            if (i == Issue::duplicate_source || i == Issue::duplicate_generation || i == Issue::ambiguous_origin ||
+                i == Issue::invalid_recipe || i == Issue::recipe_mismatch || i == Issue::snapshot_mismatch || i == Issue::invalid_completion || i == Issue::mixed_reuse)
+                r.state = State::conflicting;
+    }
+    std::set<std::size_t> retained;
+    for (const auto& requested : retain) {
+        generation_key(budget, requested);
+        ArtifactRetentionSelection s; s.request = requested;
+        bool mentioned = false;
+        for (std::size_t i = 0; i < out.records.size(); ++i) if (same_key(out.records[i], requested)) {
+            mentioned = true;
+            if (out.records[i].completion == ArtifactCompletion::executed) s.executed_candidates.push_back(i);
+        }
+        if (s.executed_candidates.size() > 1) s.state = ArtifactRetentionState::ambiguous;
+        else if (s.executed_candidates.size() == 1 && out.records[s.executed_candidates[0]].origin_record) {
+            s.state = ArtifactRetentionState::selected;
+            for (std::size_t i = 0; i < out.records.size(); ++i)
+                if (out.records[i].origin_record == s.executed_candidates[0]) { s.associated_records.push_back(i); retained.insert(i); }
+        } else if (mentioned) s.state = ArtifactRetentionState::unresolved;
+        out.retention.push_back(std::move(s));
+    }
+    std::map<std::string, std::vector<std::size_t>> groups;
+    for (std::size_t i = 0; i < out.references.matches.size(); ++i) {
+        const auto& m = out.references.matches[i];
+        if (!m.resolved_path) continue;
+        const auto k = key(*m.resolved_path);
+        if (k.empty()) throw Invalid{"empty path key"};
+        budget.check(k); groups[k].push_back(i);
+    }
+    for (auto& [k, matches] : groups) {
+        ArtifactGenerationPathGroup g; g.path_key = k; g.matches = std::move(matches);
+        std::set<std::size_t> members, output_records, origins;
+        bool input = false;
+        for (const auto n : g.matches) {
+            const auto& m = out.references.matches[n]; members.insert(m.record_index);
+            const auto& p = out.references.records[m.record_index].stages[m.stage_index].paths[m.path_index];
+            input |= p.role == ArtifactPathRole::input;
+            if (p.role == ArtifactPathRole::declared_output) {
+                output_records.insert(m.record_index);
+                if (out.records[m.record_index].origin_record) origins.insert(*out.records[m.record_index].origin_record);
+            }
+        }
+        g.records.assign(members.begin(), members.end());
+        g.shared_reference = input && members.size() > 1;
+        g.multiple_executed_generations = origins.size() > 1;
+        for (const auto i : members) {
+            if (retained.contains(i)) g.retained_records.push_back(i);
+            g.unresolved_members |= !out.records[i].origin_record.has_value() ||
+                std::find(out.records[i].issues.begin(), out.records[i].issues.end(), Issue::unresolved_path) != out.records[i].issues.end();
+        }
+        if (!output_records.empty()) for (const auto i : output_records) {
+            const auto& a = out.records[*output_records.begin()]; const auto& b = out.records[i];
+            g.different_target_or_recipe |= a.target != b.target || a.recipe_evidence != b.recipe_evidence;
+        }
+        out.paths.push_back(std::move(g));
+    }
+    return out;
+}
 } // namespace
 
 std::expected<ArtifactGenerationModel, ArtifactGenerationError>
@@ -152,7 +259,6 @@ model_artifact_generations(std::span<const ArtifactGenerationInput> inputs,
                            std::span<const ArtifactGenerationKey> retain,
                            const std::filesystem::path& lexical_root, const StoragePathKey& key) {
     using Issue = ArtifactGenerationIssue;
-    using State = ArtifactGenerationState;
     if (inputs.size() > ArtifactGenerationLimits::records || retain.size() > ArtifactGenerationLimits::records)
         return std::unexpected(ArtifactGenerationError{"record or retention limit exceeded"});
     try {
@@ -251,103 +357,236 @@ model_artifact_generations(std::span<const ArtifactGenerationInput> inputs,
             r.recipe_evidence = std::move(f.bytes);
             out.records.push_back(std::move(r));
         }
-        StorageInventory empty;
-        empty.artifact_root = lexical_root;
-        auto joined = associate_artifact_storage(projected, empty, key);
-        if (!joined) return std::unexpected(ArtifactGenerationError{joined.error().message});
-        out.references = std::move(*joined);
-        for (const auto& m : out.references.matches)
-            if (!m.resolved_path) issue(out.records[m.record_index], Issue::unresolved_path);
-        // Duplicate provenance and duplicate executed claims never silently win.
-        for (std::size_t i = 0; i < out.records.size(); ++i) for (std::size_t j = i + 1; j < out.records.size(); ++j) {
-            auto& a = out.records[i]; auto& b = out.records[j];
-            if (a.source_id == b.source_id) { issue(a, Issue::duplicate_source); issue(b, Issue::duplicate_source); }
-            if (a.completion == ArtifactCompletion::executed && b.completion == ArtifactCompletion::executed &&
-                a.generation && b.generation && a.target == b.target && a.generation == b.generation) {
-                issue(a, Issue::duplicate_generation); issue(b, Issue::duplicate_generation);
-            }
-        }
-        for (std::size_t i = 0; i < out.records.size(); ++i) {
-            auto& r = out.records[i];
-            if (r.completion == ArtifactCompletion::executed && !blocking(r)) {
-                r.origin_record = i; r.state = State::executed_claim;
-            }
-        }
-        for (auto& r : out.records) {
-            if (r.completion != ArtifactCompletion::reused || !r.generation) continue;
-            std::vector<std::size_t> candidates;
-            for (std::size_t j = 0; j < out.records.size(); ++j)
-                if (out.records[j].completion == ArtifactCompletion::executed &&
-                    same_key(out.records[j], {r.target, *r.generation})) candidates.push_back(j);
-            if (candidates.empty()) issue(r, Issue::missing_origin);
-            else if (candidates.size() != 1) issue(r, Issue::ambiguous_origin);
-            else {
-                const auto j = candidates.front();
-                if (r.recipe_evidence != out.records[j].recipe_evidence) issue(r, Issue::recipe_mismatch);
-                if (blocking(out.records[j])) issue(r, Issue::ambiguous_origin);
-                if (!blocking(r)) { r.origin_record = j; r.state = State::explicit_reuse; }
-            }
-        }
-        for (auto& r : out.records) if (blocking(r)) {
-            r.origin_record.reset(); r.state = State::unresolved;
-            for (const auto i : r.issues)
-                if (i == Issue::duplicate_source || i == Issue::duplicate_generation || i == Issue::ambiguous_origin ||
-                    i == Issue::invalid_recipe || i == Issue::recipe_mismatch || i == Issue::snapshot_mismatch || i == Issue::invalid_completion || i == Issue::mixed_reuse)
-                    r.state = State::conflicting;
-        }
-        std::set<std::size_t> retained;
-        for (const auto& requested : retain) {
-            generation_key(budget, requested);
-            ArtifactRetentionSelection s; s.request = requested;
-            bool mentioned = false;
-            for (std::size_t i = 0; i < out.records.size(); ++i) if (same_key(out.records[i], requested)) {
-                mentioned = true;
-                if (out.records[i].completion == ArtifactCompletion::executed) s.executed_candidates.push_back(i);
-            }
-            if (s.executed_candidates.size() > 1) s.state = ArtifactRetentionState::ambiguous;
-            else if (s.executed_candidates.size() == 1 && out.records[s.executed_candidates[0]].origin_record) {
-                s.state = ArtifactRetentionState::selected;
-                for (std::size_t i = 0; i < out.records.size(); ++i)
-                    if (out.records[i].origin_record == s.executed_candidates[0]) { s.associated_records.push_back(i); retained.insert(i); }
-            } else if (mentioned) s.state = ArtifactRetentionState::unresolved;
-            out.retention.push_back(std::move(s));
-        }
-        std::map<std::string, std::vector<std::size_t>> groups;
-        for (std::size_t i = 0; i < out.references.matches.size(); ++i) {
-            const auto& m = out.references.matches[i];
-            if (!m.resolved_path) continue;
-            const auto k = key(*m.resolved_path);
-            if (k.empty()) throw Invalid{"empty path key"};
-            budget.check(k); groups[k].push_back(i);
-        }
-        for (auto& [k, matches] : groups) {
-            ArtifactGenerationPathGroup g; g.path_key = k; g.matches = std::move(matches);
-            std::set<std::size_t> members, output_records, origins;
-            bool input = false;
-            for (const auto n : g.matches) {
-                const auto& m = out.references.matches[n]; members.insert(m.record_index);
-                const auto& p = out.references.records[m.record_index].stages[m.stage_index].paths[m.path_index];
-                input |= p.role == ArtifactPathRole::input;
-                if (p.role == ArtifactPathRole::declared_output) {
-                    output_records.insert(m.record_index);
-                    if (out.records[m.record_index].origin_record) origins.insert(*out.records[m.record_index].origin_record);
-                }
-            }
-            g.records.assign(members.begin(), members.end());
-            g.shared_reference = input && members.size() > 1;
-            g.multiple_executed_generations = origins.size() > 1;
-            for (const auto i : members) {
-                if (retained.contains(i)) g.retained_records.push_back(i);
-                g.unresolved_members |= !out.records[i].origin_record.has_value() ||
-                    std::find(out.records[i].issues.begin(), out.records[i].issues.end(), Issue::unresolved_path) != out.records[i].issues.end();
-            }
-            if (!output_records.empty()) for (const auto i : output_records) {
-                const auto& a = out.records[*output_records.begin()]; const auto& b = out.records[i];
-                g.different_target_or_recipe |= a.target != b.target || a.recipe_evidence != b.recipe_evidence;
-            }
-            out.paths.push_back(std::move(g));
-        }
-        return out;
+        return finish_model(std::move(out), projected, retain, lexical_root, key, budget);
     } catch (const Invalid& e) { return std::unexpected(ArtifactGenerationError{e.message}); }
 }
+
+// BEGIN recorded generation model implementation
+namespace {
+template<class Recorded>
+const auto& recorded_terminal(const Recorded& value) {
+    if constexpr (std::is_same_v<Recorded, RecordedStaticTargetResult>) return value.record.archive;
+    else return value.record.link;
+}
+void compiler_fields(Fields& f, const ToolchainIdentity& t) {
+    f.add(t.compiler); f.add(t.version); f.add(t.binary_stamp);
+}
+bool complete_compiler(const ToolchainIdentity& t) {
+    return !t.compiler.empty() && !t.version.empty() && !t.binary_stamp.empty();
+}
+// The same selected-field traversal is used in count-only admission and actual
+// encoding. ProcessResult, environment, timing and inspection plans are excluded.
+template<class Recorded>
+void recorded_recipe(Fields& f, const Recorded& value) {
+    const auto& target = value.record;
+    f.add(target.compiler_options); f.add(target.sources.size());
+    for (const auto& s : target.sources) {
+        f.add(s.source); f.add(s.object); f.add(s.dependencies); f.add(s.compile_cache);
+    }
+    f.add(target.additional_object_inputs);
+    f.add(value.cache_evidence.compiles.size());
+    for (const auto& e : value.cache_evidence.compiles) {
+        f.add(e.request.unit); f.add(e.request.options);
+        f.add(e.request.cache_file); f.add(e.request.source_dependencies_file);
+        f.add(e.request.module_scan_output); f.add(e.request.working_directory);
+        compiler_fields(f, e.inspection_toolchain.identity);
+        const auto& c = e.cache_entry;
+        compiler_fields(f, c.toolchain);
+        f.add(c.source); f.add(c.kind); f.add(c.signature.digest().high); f.add(c.signature.digest().low);
+        f.add(c.outputs); f.add(c.dependencies); f.add(c.include_search_roots);
+        // Ordinary rich projection rejects module_scan; do not walk or copy a
+        // module graph disguised as an ordinary input.
+        f.add(c.module_scan.has_value());
+    }
+    f.add(recorded_terminal(value));
+}
+void snapshot_budget(Fields& f, const LinkFactSnapshot& s) {
+    f.add(s.capture_label); f.add(s.output); f.add(s.cache_file); f.add(s.working_directory);
+    f.add(s.linker_path); f.add(s.linker_version); f.add(s.linker_stamp);
+    f.budget.count(s.warnings.size());
+    for (const auto& w : s.warnings) { f.add(w.path); f.add(w.message); }
+    const auto& o = s.observation;
+    f.add(o.requested_path); f.add(o.physical_id); f.budget.count(o.issues.size());
+    for (const auto& i : o.issues) { f.add(i.path); f.add(i.message); }
+}
+struct RecordedShapeBudget {
+    std::size_t stages{ArtifactGenerationLimits::stages};
+    std::size_t paths{ArtifactGenerationLimits::paths};
+    void take(std::size_t& left, std::size_t n) {
+        if (n > left) throw Invalid{"recorded generation shape limit exceeded"};
+        left -= n;
+    }
+    // This charges projected references and relative expansion BEFORE projection.
+    // A custom key's returned bytes are additionally bounded by that projector.
+    void path(Fields& f, const std::filesystem::path& p,
+              const std::optional<std::filesystem::path>& cwd) {
+        take(paths, 1); f.add(ArtifactPathRole::metadata_reference); f.add(p);
+        if (!p.is_absolute()) f.add(cwd);
+    }
+    template<class Recorded>
+    void check(Fields& f, const Recorded& value) {
+        const auto& target = value.record;
+        take(stages, target.sources.size()); take(stages, 1); f.add(target.sources.size()+1);
+        f.budget.count(target.sources.size());
+        f.budget.count(value.cache_evidence.compiles.size());
+        f.budget.count(value.result.compiles.size());
+        for (const auto& e : value.cache_evidence.compiles) {
+            const auto& cwd = e.request.working_directory;
+            f.add(ArtifactStageKind::compile); f.add(std::optional{e.request.options.configuration});
+            f.add(cwd); f.add(false);
+            f.add(e.cache_entry.dependencies.size() + e.cache_entry.include_search_roots.size() + 4 +
+                  (e.request.options.precompiled_header ? 2 : 0));
+            path(f, e.request.unit.source, cwd);
+            for (const auto& a : e.cache_entry.outputs) path(f, a.path, cwd);
+            path(f, e.request.source_dependencies_file, cwd); path(f, e.request.cache_file, cwd);
+            for (const auto& p : e.cache_entry.dependencies) path(f, p, cwd);
+            for (const auto& p : e.cache_entry.include_search_roots) path(f, p, cwd);
+            if (e.request.options.precompiled_header) {
+                path(f, e.request.options.precompiled_header->header, cwd);
+                path(f, e.request.options.precompiled_header->artifact, cwd);
+            }
+            if (e.save_error) { f.add(e.save_error->file); f.add(e.save_error->message); }
+        }
+        for (const auto& c : value.result.compiles) {
+            f.add(c.source); f.budget.count(c.result.warnings.size());
+            for (const auto& w : c.result.warnings) { f.add(w.path); f.add(w.message); }
+        }
+        if (target.caller_label) { f.add(target.caller_label->target); f.add(target.caller_label->generation); }
+        const auto& t = recorded_terminal(value);
+        const std::optional<std::filesystem::path> cwd = t.working_directory;
+        f.add(ArtifactStageKind::link); f.add(std::optional{target.compiler_options.configuration});
+        f.add(cwd); f.add(false); f.add(ArtifactGenerationLimits::paths);
+        for (const auto& p : t.association.objects) path(f, p, cwd);
+        path(f, t.association.output, cwd); path(f, t.cache_file, cwd);
+        if constexpr (!std::is_same_v<Recorded, RecordedStaticTargetResult>) {
+            for (const auto& p : t.association.libraries) path(f, p, cwd);
+            for (const auto& p : t.association.file_inputs) path(f, p, cwd);
+            for (const auto& p : t.association.side_outputs) path(f, p, cwd);
+        }
+    }
+};
+} // namespace
+
+std::expected<RecordedArtifactGenerationModel, RecordedArtifactGenerationError>
+model_recorded_artifact_generations(std::span<const RecordedArtifactGenerationInput> inputs,
+                                   std::span<const ArtifactGenerationKey> retain,
+                                   const std::filesystem::path& lexical_root, const StoragePathKey& key) {
+    using Issue = ArtifactGenerationIssue;
+    std::optional<std::size_t> current;
+    if (inputs.size() > ArtifactGenerationLimits::records || retain.size() > ArtifactGenerationLimits::records)
+        return std::unexpected(RecordedArtifactGenerationError{"record or retention limit exceeded", {}, {}});
+    if (!key) return std::unexpected(RecordedArtifactGenerationError{"a pure platform path key is required", {}, {}});
+    try {
+        // Whole-batch count-only pass. No owned target/cache/recipe/context copies
+        // and no path-key callback before every input passes this admission.
+        Budget preflight;
+        Fields count{preflight, {}, true};
+        count.add(lexical_root);
+        RecordedShapeBudget shape;
+        for (std::size_t i = 0; i < inputs.size(); ++i) {
+            current = i;
+            const auto& in = inputs[i];
+            identity_key(preflight, in.target); count.add(in.source_id);
+            if (in.source_id.empty()) throw Invalid{"empty historical source identifier"};
+            count.add(in.generation);
+            if (in.generation && in.generation->empty()) throw Invalid{"empty generation claim"};
+            if (in.snapshot) {
+                snapshot_budget(count, *in.snapshot);
+                // The existing codec has its own bounded temporary allocation.
+                // Budget its encoded bytes before copying any model snapshot.
+                const auto encoded = encode_link_fact_snapshot(*in.snapshot);
+                if (encoded) count.add(*encoded);
+            }
+            count.add("recorded-ordinary-v1"); count.add(in.record.index());
+            std::visit([&](const auto& borrowed) {
+                const auto& value = borrowed.get();
+                // Vector lengths are bounded before any per-element traversal.
+                if (value.record.sources.size() >= ArtifactGenerationLimits::stages ||
+                    value.cache_evidence.compiles.size() >= ArtifactGenerationLimits::stages ||
+                    value.result.compiles.size() >= ArtifactGenerationLimits::stages)
+                    throw Invalid{"recorded generation source limit exceeded"};
+                recorded_recipe(count, value);
+                shape.check(count, value);
+            }, in.record);
+        }
+        current.reset();
+        for (const auto& requested : retain) generation_key(preflight, requested);
+
+        ArtifactGenerationModel model;
+        std::vector<ArtifactStorageReferences> projected;
+        std::vector<std::vector<CompileStorageContext>> contexts;
+        Budget budget;
+        std::size_t stage_count = 0, path_count = 0;
+        for (std::size_t i = 0; i < inputs.size(); ++i) {
+            current = i;
+            const auto& in = inputs[i];
+            ArtifactGenerationRecord r;
+            identity_key(budget, in.target); budget.check(in.source_id);
+            if (in.generation) budget.check(*in.generation);
+            r.source_id = in.source_id; r.target = in.target; r.generation = in.generation;
+            if (!in.generation) issue(r, Issue::missing_generation);
+            Fields f{budget, {}};
+            f.add("recorded-ordinary-v1"); f.add(in.record.index());
+            auto projection = std::visit([&](const auto& borrowed) {
+                const auto& value = borrowed.get();
+                return project_storage_references(value, key, {
+                    ArtifactGenerationLimits::stages - 1, ArtifactGenerationLimits::items,
+                    ArtifactGenerationLimits::text_bytes});
+            }, in.record);
+            if (!projection) return std::unexpected(RecordedArtifactGenerationError{
+                projection.error().message, i, projection.error()});
+            std::visit([&](const auto& borrowed) {
+                const auto& value = borrowed.get();
+                const auto& target = value.record;
+                recorded_recipe(f, value);
+                r.caller_label = target.caller_label;
+                if (!options(target.compiler_options)) issue(r, Issue::invalid_recipe);
+                for (const auto& e : value.cache_evidence.compiles) {
+                    if (!complete_compiler(e.inspection_toolchain.identity) || !complete_compiler(e.cache_entry.toolchain))
+                        issue(r, Issue::missing_compiler);
+                    if (!options(e.request.options)) issue(r, Issue::invalid_recipe);
+                }
+                const auto& terminal = recorded_terminal(value);
+                r.completion = terminal.completion;
+                if (!terminal_valid(terminal)) issue(r, Issue::invalid_recipe);
+                using Recorded = std::remove_cvref_t<decltype(value)>;
+                if constexpr (std::is_same_v<Recorded, RecordedStaticTargetResult>) {
+                    if (target.compiler_options.architecture != terminal.architecture) issue(r, Issue::invalid_recipe);
+                } else if (target.compiler_options.architecture != terminal.options.architecture ||
+                           target.compiler_options.configuration != terminal.options.configuration)
+                    issue(r, Issue::invalid_recipe);
+                if (in.snapshot) {
+                    const auto checked = encode_link_fact_snapshot(*in.snapshot);
+                    if (!checked) issue(r, Issue::snapshot_mismatch);
+                    else { budget.check(*checked); r.snapshot = *in.snapshot; }
+                    if constexpr (std::is_same_v<Recorded, RecordedStaticTargetResult>) issue(r, Issue::snapshot_mismatch);
+                    else if (!snapshot_matches(*in.snapshot, terminal)) issue(r, Issue::snapshot_mismatch);
+                }
+            }, in.record);
+            const auto& refs = projection->references;
+            if (refs.stages.size() > ArtifactGenerationLimits::stages - stage_count) throw Invalid{"stage limit exceeded"};
+            stage_count += refs.stages.size(); f.add(refs.stages.size());
+            for (const auto& s : refs.stages) {
+                if (s.paths.size() > ArtifactGenerationLimits::paths - path_count) throw Invalid{"path limit exceeded"};
+                path_count += s.paths.size();
+                f.add(s.kind); f.add(s.configuration); f.add(s.working_directory); f.add(s.toolchain_source); f.add(s.paths.size());
+                for (const auto& p : s.paths) { f.add(p.role); f.add(p.path); }
+                if (!s.cache_state || !valid_completion(s.completion, *s.cache_state)) issue(r, Issue::invalid_completion);
+                if (r.completion == ArtifactCompletion::reused && s.completion == ArtifactCompletion::executed)
+                    issue(r, Issue::mixed_reuse);
+            }
+            r.recipe_evidence = std::move(f.bytes);
+            projected.push_back(std::move(projection->references));
+            contexts.push_back(std::move(projection->compiles));
+            model.records.push_back(std::move(r));
+        }
+        current.reset();
+        auto finished = finish_model(std::move(model), projected, retain, lexical_root, key, budget);
+        if (!finished) return std::unexpected(RecordedArtifactGenerationError{finished.error().message, {}, {}});
+        return RecordedArtifactGenerationModel{std::move(*finished), std::move(contexts)};
+    } catch (const Invalid& e) {
+        return std::unexpected(RecordedArtifactGenerationError{e.message, current, {}});
+    }
+}
+// END recorded generation model implementation
 } // namespace mqb::orchestration

@@ -42,7 +42,7 @@ def legacy_text(path, text):
 def legacy_view(values):
     result = dict(values)
     for path, value in values.items():
-        if path not in SPEC['files'] and path not in link_roles.SPEC['files']:
+        if path not in SPEC['files'] and path not in link_roles.SPEC['files'] and path not in link_roles.generation.SPEC['files']:
             continue
         binary = isinstance(value, bytes)
         old = legacy_text(path, value.decode('utf-8') if binary else value)

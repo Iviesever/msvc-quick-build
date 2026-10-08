@@ -96,3 +96,41 @@ across processes, commit/recover durable state, or revalidate file identities at
 cleanup time. Those mechanisms and Rium qualification remain separate required
 work. The existing performance evidence and adverse samples are unchanged; this
 non-default model is not evidence of zero cost or permission to publish v5.7.0.
+
+## Recorded ordinary-target entry
+
+`model_recorded_artifact_generations` consumes synchronous, borrowed references
+to completed `RecordedTargetResult` or `RecordedStaticTargetResult` values. The
+caller must keep them alive and unchanged during the call. The returned `model`
+and `compiles[record_index][source_index]` own all selected values; they never
+borrow a process environment, output buffer, timing collector or cache vector.
+
+This opt-in entry uses the strict recorded-storage projector and the **same**
+lineage, retention and lexical association implementation as the older entry.
+Each compiler's captured inspection identity and cache identity, signature,
+request options, own working directory, dependencies and include-root order
+participate in selected recipe comparison. Different identities are retained
+separately, not replaced by one global compiler. Missing compiler fields remain
+`missing_compiler`. Cache outcomes, `force_rebuild`, save errors and warnings are
+retained but do not define recipe identity. Whole-target reuse with an executed
+source remains `mixed_reuse`; a reused source inside an executed target stays
+visible and does not acquire a fictitious per-source generation.
+
+Inputs still need explicit source/project/target/generation claims. A standalone
+reuse cannot invent an origin. A genuine role conflict fails the strict projection;
+its issue, source slot and message survive inside the error together with the
+batch record index. Invalid claims or limits fail the whole call. Contradictory
+lineage/snapshot claims remain model issues; no partial result is published.
+
+The whole batch is preflighted against the intersection of the existing model
+and projector limits before owned result copies or lexical-key callbacks.
+Selected text and shape traversal are bounded; path conversion and the existing
+bounded snapshot codec can use temporary allocations. This is not a total
+allocation, peak-memory or resident-memory guarantee. No filesystem state is
+read and no signature is recomputed. The legacy entry and module path retain
+their previous unknown-context semantics and all original model tests.
+
+Native checks consume existing EXE/DLL/static invocation results **after**
+original evidence preservation, without adding compile/link/observer calls.
+The extra test-side model copies and log lines are not zero-cost claims. This
+entry is not wired into default CLI, persistence, writers, clean/prune or release.

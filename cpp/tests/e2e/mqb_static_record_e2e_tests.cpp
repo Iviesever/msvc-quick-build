@@ -318,6 +318,7 @@ void native_static_lifecycle(const fs::path& root, const fs::path& evidence) {
             write(evidence / (std::string{phase} + ".lib"), bytes(record.archive.association.output));
             require(fs::is_regular_file(record.archive.association.output), "recorded static output exists");
         }
+        if (result) target_wave_cache_checks::generation(*result, phase, root, platform::windows::path_identity_key);
         return result;
     };
     const auto cold = invoke("01-cold", request);
