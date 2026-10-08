@@ -1,7 +1,7 @@
 name: PR247 Link Boundary Diagnosis
 on:
   pull_request:
-    types: [opened]
+    types: [synchronize]
     paths:
       - 'tests/diagnostics/pr247_link/**'
       - '.github/workflows/pr247-link-boundaries.yml'
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   build-instruments:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'diag/pr247-link-boundaries-001' && github.event.pull_request.base.sha == '399e06fa43d2052ac0d452e1320438c015c65145' && github.run_attempt == 1
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'diag/pr247-link-boundaries-001' && github.event.pull_request.base.sha == '399e06fa43d2052ac0d452e1320438c015c65145' && github.run_attempt == 1 && github.event.pull_request.number == 248 && github.event.before == '6074de8e6f7e7946ac35933d093109f47ced118a'
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
@@ -21,6 +21,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+          fetch-depth: 2
       - name: Download the single immutable Performance919 archive
         shell: pwsh
         env:
@@ -33,8 +34,19 @@ jobs:
         env:
           PR247_TEST_ARCHIVE: original919.zip
         run: |
-          python -m unittest discover -s tests/diagnostics/pr247_link -p 'test_*.py' -v
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path diag-preflight -ErrorAction Stop | Out-Null
+          python -m unittest discover -s tests/diagnostics/pr247_link -p 'test_*.py' -v 1>diag-preflight/contracts.stdout 2>diag-preflight/contracts.stderr
+          $code = $LASTEXITCODE
+          Get-Content diag-preflight/contracts.stdout, diag-preflight/contracts.stderr | Write-Host
+          exit $code
+      - name: Preserve preflight output including failures
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr247-link-preflight-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: diag-preflight/**
+          if-no-files-found: warn
+          retention-days: 90
       - name: Preserve sources and build two separately identified diagnostic copies
         shell: pwsh
         run: |
@@ -52,7 +64,7 @@ jobs:
           retention-days: 90
   diagnose:
     needs: build-instruments
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'diag/pr247-link-boundaries-001' && github.event.pull_request.base.sha == '399e06fa43d2052ac0d452e1320438c015c65145' && github.run_attempt == 1
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'diag/pr247-link-boundaries-001' && github.event.pull_request.base.sha == '399e06fa43d2052ac0d452e1320438c015c65145' && github.run_attempt == 1 && github.event.pull_request.number == 248 && github.event.before == '6074de8e6f7e7946ac35933d093109f47ced118a'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -60,6 +72,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+          fetch-depth: 2
       - uses: actions/download-artifact@v8
         with:
           name: pr247-link-input-${{ github.run_id }}-attempt-${{ github.run_attempt }}

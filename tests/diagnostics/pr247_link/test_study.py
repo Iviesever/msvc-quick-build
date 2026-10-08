@@ -12,6 +12,19 @@ import zipfile
 import study as s
 
 
+def raw_name_zip(name):
+    """Keep test member bytes literal even on Windows (both ZIP headers)."""
+    encoded = name.encode("ascii")
+    placeholder = b"N" * len(encoded)
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as z:
+        z.writestr(placeholder.decode("ascii"), b"payload")
+    raw = data.getvalue()
+    if raw.count(placeholder) != 2:
+        raise AssertionError("ambiguous test ZIP name slots")
+    return io.BytesIO(raw.replace(placeholder, encoded))
+
+
 class Core(unittest.TestCase):
     def trace(self):
         return dict(schema=1, frequency=10000000, pid=7, child_pid=8,
@@ -100,8 +113,7 @@ class Core(unittest.TestCase):
     def test_zip_member_rejections(self):
         for name in ("../bad","/bad","C:/bad","a\\b","./bad","a//b"):
             with self.subTest(name=name):
-                data=io.BytesIO()
-                with zipfile.ZipFile(data,"w") as z:z.writestr(name,b"x")
+                data=raw_name_zip(name)
                 with zipfile.ZipFile(data) as z:
                     with self.assertRaises(ValueError):s.archive_members(z)
 
@@ -161,6 +173,52 @@ class Core(unittest.TestCase):
         self.assertIn("CREATE_NEW",text)
 
 
+    def test_literal_backslash_survives_windows_normalization(self):
+        with mock.patch.object(zipfile.os, "sep", "\\"):
+            with zipfile.ZipFile(raw_name_zip("a\\b")) as z:
+                info = z.infolist()[0]
+                self.assertEqual(info.orig_filename, "a\\b")
+                self.assertEqual(info.filename, "a/b")
+                with self.assertRaises(ValueError): s.archive_members(z)
+
+    def test_literal_nul_rejected_before_truncation(self):
+        with zipfile.ZipFile(raw_name_zip("a\0b")) as z:
+            self.assertEqual(z.infolist()[0].orig_filename, "a\0b")
+            with self.assertRaises(ValueError): s.archive_members(z)
+
+    def test_valid_nested_name_under_both_separator_modes(self):
+        for sep in ("/", "\\"):
+            with self.subTest(sep=sep), mock.patch.object(zipfile.os, "sep", sep):
+                with zipfile.ZipFile(raw_name_zip("a/b")) as z:
+                    self.assertEqual(s.archive_members(z), {"a/b": b"payload"})
+
+    def test_raw_names_do_not_pass_through_zip_writer(self):
+        for name in ("a\\b", "a\0b", "./bad", "a//b"):
+            with zipfile.ZipFile(raw_name_zip(name)) as z:
+                self.assertEqual(z.infolist()[0].orig_filename, name)
+
+    def admission_fixture(self, before=None, parent=None):
+        event = {"action": "synchronize", "before": before or s.FAILED_HARNESS,
+                 "pull_request": {"number": 248, "base": {"sha": s.BASE},
+                    "head": {"ref": s.BRANCH, "sha": "b"*40, "repo": {"full_name": s.REPO}}}}
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/"event.json"; path.write_text(json.dumps(event), encoding="utf-8")
+            env = {"GITHUB_REPOSITORY": s.REPO, "GITHUB_EVENT_NAME": "pull_request",
+                   "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "456", "GITHUB_EVENT_PATH": str(path)}
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
+                    s.subprocess, "check_output", side_effect=["b"*40, parent or s.FAILED_HARNESS]):
+                return s.admission()
+
+    def test_registered_correction_is_admitted(self):
+        self.assertEqual(self.admission_fixture()["allocation"], "pr247-link-boundaries-002")
+
+    def test_other_synchronize_transition_rejected(self):
+        with self.assertRaises(ValueError): self.admission_fixture(before="c"*40)
+
+    def test_wrong_correction_parent_rejected(self):
+        with self.assertRaises(ValueError): self.admission_fixture(parent="c"*40)
+
+
 @unittest.skipUnless(os.environ.get("PR247_TEST_ARCHIVE"),"pinned archive not supplied")
 class OriginalInputs(unittest.TestCase):
     @classmethod
@@ -203,7 +261,7 @@ class SyntheticEndToEnd(unittest.TestCase):
         root=Path(self.temp.name)
         self.inputs=root/"input";self.output=root/"output"
         s.prepare(Path(os.environ["PR247_TEST_ARCHIVE"]), self.inputs, False)
-        self.request={"harness_head":"a"*40,"run":"12345","allocation":"pr247-link-boundaries-001"}
+        self.request={"harness_head":"a"*40,"run":"12345","allocation":s.ALLOCATION}
         identities={}
         for side in ("baseline","candidate"):
             p=self.inputs/"instrumented"/side/"mqb.exe";p.parent.mkdir(parents=True)

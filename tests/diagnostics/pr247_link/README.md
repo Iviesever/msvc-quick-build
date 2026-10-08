@@ -8,7 +8,7 @@ benchmark. The independent development-integration HOLD in #247 remains in force
 
 ## Frozen inputs / 冻结输入
 
-- Allocation: `pr247-link-boundaries-001`; diagnostic branch: `diag/pr247-link-boundaries-001`.
+- Allocation: `pr247-link-boundaries-002`; diagnostic branch: `diag/pr247-link-boundaries-001`.
 - Original run: `37754575256 / attempt1`, artifact `11539029999`.
 - Original ZIP: 11,056,074 bytes, SHA256
   `1641d0d9b8af917fc1ea883f76b54056d7ae233af1754d2d6ce81e8aee106ce6`.
@@ -90,7 +90,8 @@ are preserved. A failure stops the study; a timeout records descendant quiescenc
 as unproven, not successful cancellation. No later sample is intentionally launched.
 Build-helper budgets are declared from its pinned implementation, not an OS trace.
 
-工作流只接收冻结base、同仓库指定分支的首次opened事件/attempt1，不设手动入口。
+工作流只接收#248冻结base、同仓库指定分支从6074de8e6f7e7946ac35933d093109f47ced118a
+直接前进的synchronize事件/attempt1，不设手动或重复运行入口。
 失败后保留附件、退出且不采到绿。原始失败、旧403/abandoned、819 HOLD、不利历史、
 依赖完整性/显式内存成本及持久化、writer、clean-prune、Rium/#164限制全部保留。
 
@@ -110,3 +111,23 @@ The portable tests use fake subprocesses and are not Windows/MSVC execution.
 - https://learn.microsoft.com/en-us/windows/win32/api/profileapi/nf-profileapi-queryperformancecounter
 - https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes
 - https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request
+
+## First-run failure and bounded correction / 首次失败与限定修订
+
+Run37767763007/attempt1 (harness6074de8e) stopped before instrument compilation:
+38 of39 contracts passed; the synthetic backslash-name rejection failed. On Windows,
+ZipInfo normalizes a backslash to a slash in both writing and reading paths. The old
+fixture could therefore contain a valid name rather than the intended invalid one.
+The corrected tests construct exact raw local/central ZIP filename bytes, and the
+reader validates orig_filename before accepting normalized filename. NUL truncation
+is rejected too; valid nested paths remain accepted on both separator models.
+
+首次39项中38通过、1项失败，仪器构建及真实诊断未开始（该诊断内真实MQB调用0）。
+原run/日志及旧测试完整保留；没有附件产生，因为失败发生在prepare之前。修订添加
+preflight原输出附件，不重写旧证据。原程序、标记位置、采样矩阵和21次上限均不变。
+
+Allocation002 is a new, explicitly registered corrected-harness run, not a retry of
+unchanged code or a new round of performance samples. It accepts only PR248's direct
+successor of the failed commit, checks the Git parent, and rejects other transitions
+or attempts. The repository's ordinary Native/Documentation workflows are separate
+CI work, not included in the21 diagnostic root-call ceiling. No result releases HOLD.

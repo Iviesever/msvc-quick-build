@@ -23,6 +23,8 @@ REPO = "Iviesever/msvc-quick-build"
 BRANCH = "diag/pr247-link-boundaries-001"
 BASE = "399e06fa43d2052ac0d452e1320438c015c65145"
 HEAD = "f0ef131321dc0720c83ce55766edde4b751495ad"
+FAILED_HARNESS = "6074de8e6f7e7946ac35933d093109f47ced118a"
+ALLOCATION = "pr247-link-boundaries-002"
 ARTIFACT_ID = 11539029999
 ARCHIVE_SHA = "1641d0d9b8af917fc1ea883f76b54056d7ae233af1754d2d6ce81e8aee106ce6"
 ARCHIVE_BYTES = 11056074
@@ -72,7 +74,9 @@ def load(path: Path) -> dict:
 def archive_members(z: zipfile.ZipFile) -> dict[str, bytes]:
     names, output, total = set(), {}, 0
     for info in z.infolist():
-        name = info.filename
+        # Validate the original archive spelling, before ZipInfo normalization.
+        name = info.orig_filename
+        require(name == info.filename and "\0" not in name, "normalized archive member rejected")
         p = PurePosixPath(name)
         require(not p.is_absolute() and ".." not in p.parts and "\\" not in name
                 and ":" not in name and name and p.as_posix() == name.rstrip("/")
@@ -153,15 +157,18 @@ def admission() -> dict:
     require(os.environ.get("GITHUB_RUN_ATTEMPT") == "1", "diagnosis cannot be retried")
     event = load(Path(os.environ["GITHUB_EVENT_PATH"]))
     pr = event["pull_request"]
-    require(event["action"] == "opened" and pr["head"]["ref"] == BRANCH,
-            "not the registered first opened event")
+    require(event["action"] == "synchronize" and event.get("before") == FAILED_HARNESS
+            and pr["number"] == 248 and pr["head"]["ref"] == BRANCH,
+            "not the registered correction transition")
     require(pr["base"]["sha"] == BASE and pr["head"]["repo"]["full_name"] == REPO,
             "unapproved base or fork")
     actual = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     require(actual == pr["head"]["sha"], "harness checkout mismatch")
-    return {"allocation": "pr247-link-boundaries-001", "harness_head": actual,
+    parent = subprocess.check_output(["git", "rev-parse", "HEAD^"], text=True).strip()
+    require(parent == FAILED_HARNESS, "correction is not a direct child of the failed harness")
+    return {"allocation": ALLOCATION, "harness_head": actual,
             "base": BASE, "candidate": HEAD, "run": os.environ["GITHUB_RUN_ID"],
-            "attempt": 1, "event": "opened", "image": os.environ.get("ImageVersion"),
+            "attempt": 1, "event": "synchronize", "before": FAILED_HARNESS, "image": os.environ.get("ImageVersion"),
             "max_root_mqb_calls": 21, "product_acceptance": False, "release_authorized": False}
 
 
