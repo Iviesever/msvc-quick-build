@@ -2,6 +2,13 @@
 
 [简体中文](ANALYSIS_SUBSTITUTE_DRIVER_ZH.md)
 
+This document preserves the PR252 format-1 qualification. The current
+format-2 extension, six additional fixed cost modes, semantic source binding
+and business checks are specified in [Cost-output semantics](ANALYSIS_COST_SEMANTICS.md).
+Use the exact PR252 source to audit archived format-1 bundles; do not rewrite
+their frozen protocols or seals. The supervision and storage limits below
+continue to apply to format 2.
+
 ## Purpose and inherited decisions
 
 This slice implements the next point in [handoff 6079598410](https://github.com/Iviesever/msvc-quick-build/issues/198#issuecomment-6079598410): connect the merged PR251 capture component to a new analysis driver, freeze its protocol before launch, and exercise dual-pipe reads, process termination, failed prefixes and final sealing with fixed substitutes.

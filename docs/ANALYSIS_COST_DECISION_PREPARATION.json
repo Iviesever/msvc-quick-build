@@ -1,0 +1,342 @@
+{
+  "format": 1,
+  "kind": "cost-decision-preparation",
+  "protocol_id": "pr250-cost-semantics-preparation-20261009",
+  "status": "PREPARATION_ONLY_BLOCKED",
+  "real_execution_authorized": false,
+  "decision_purpose": "Determine whether the cost-output adapter can enforce frozen prepared/observation semantics and final evidence integrity using fixed substitutes, and identify the prerequisites for a separately reviewed decision about whether any independently justified real-cost execution is needed. This preparation does not select or authorize that execution, replace study 002, or fill its five missing observations.",
+  "development_base": {
+    "role": "Analysis implementation origin; not the product comparator and not the commit identity of newly authored files.",
+    "commit": "bf5df76079f224ea9bb5e7822be683cb3a2e4d45",
+    "tree": "46007c773858dd50653db0a49ce6861b15733fb2"
+  },
+  "historical_reference": {
+    "role": "Preserved reference facts only. No reference identity, matrix, resource limit or consumed budget is selected again by this document.",
+    "candidate": {
+      "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+      "tree": "4e777bdfc33b7befaf5e3769e27eb4fe910f9f03"
+    },
+    "original_product_base": {
+      "commit": "2762749b27fc89156b724d19e89cce84e388ef52",
+      "tree": "0a4c2dd76c56309accf58d584a079b4bd483ee49"
+    },
+    "source_records": {
+      "current_handoff": "https://github.com/Iviesever/msvc-quick-build/issues/198#issuecomment-6081083173",
+      "driver_pr": "https://github.com/Iviesever/msvc-quick-build/pull/252",
+      "study_001_registration": "https://github.com/Iviesever/msvc-quick-build/issues/198#issuecomment-6078630647",
+      "study_002_registration": "https://github.com/Iviesever/msvc-quick-build/issues/198#issuecomment-6078685272",
+      "pr250_hold_review": "https://github.com/Iviesever/msvc-quick-build/pull/250#pullrequestreview-5468664960"
+    },
+    "file_identity_scope": "Names are relative to the preserved pr250-qualification evidence root. SHA-256 identifies the retained full bytes, not an executable entry point or a required checkout path.",
+    "files": {
+      "run_cost_study.py": {
+        "bytes": 10211,
+        "sha256": "c13b89f0ab5437986e17012af3a0879566a4c1b475d6d1c81f1c34976a5efaf7"
+      },
+      "cost_harness.cpp": {
+        "bytes": 16500,
+        "sha256": "d0b7d1025a2d2d010fc2df562977ca3ec96a478ae8960672503c9847d6ac3632"
+      },
+      "cost_fixture.inc": {
+        "bytes": 16015,
+        "sha256": "2774b498d1ba544c18ecc6fb08b7b48f818c0ec5ba6e7616240eda58647563c7"
+      },
+      "prepare_cost_harness.py": {
+        "bytes": 2043,
+        "sha256": "fe33f000e4b18b697764f63f937be153d4d56825594c49b0cecef32979124666"
+      },
+      "build_cost_harness.py": {
+        "bytes": 2370,
+        "sha256": "f9238b51f5c0ddeae9a569348f3db591a727febf77906ada937bcf90a0a41633"
+      },
+      "cost-fixture-source.json": {
+        "bytes": 782,
+        "sha256": "70c632ffec7113f38f2397c857ab381f917ea159996243b2a404e5fa1d3e8309"
+      },
+      "cost-final-build-manifest.json": {
+        "bytes": 4250,
+        "sha256": "3929fce949b7c57c29d90dbd682c6c5d89d238ee9473a2754f9f27183ff02fc6"
+      },
+      "cost-preparation/manifest.json": {
+        "bytes": 15338,
+        "sha256": "e6d5e0202e708290f63c4c6ca41d24a73d567d282bfc96653eacf237aa9bf6ea"
+      },
+      "independent-production-source-identity.json": {
+        "bytes": 56952,
+        "sha256": "223bd1ea0ae060e48a803f1bfd574a2a51eb7796a686a1b53c0da3c0219af0c3"
+      },
+      "run_cost_study_002.py": {
+        "bytes": 10219,
+        "sha256": "0a07fc21997cdf0b5d69b08cde290a2e7d9aad0cb7369bc9cabaa971f7705124"
+      },
+      "cost-study-frozen.json": {
+        "bytes": 6757,
+        "sha256": "41cdf32e1ee737efe176dde1c1155f68b0f81e542969687f475a546d645faa2d"
+      },
+      "cost-study-002-frozen.json": {
+        "bytes": 7126,
+        "sha256": "6632fafcb73fef3e5b1ab5e6c344d8eca05e81c5831e85aad95ee5389c53a766"
+      },
+      "cost-final-0": {
+        "bytes": 729752,
+        "sha256": "378be587c5b54fb7ba83fa04e0e3f9b4732d40e9af0ee2c6242a7fba5a571528"
+      },
+      "cost-final-1": {
+        "bytes": 731440,
+        "sha256": "544ea84717c7cec9d79c98ab83ad916b7e08cac94b21e1737f5aae746e652dd6"
+      }
+    },
+    "compiler": {
+      "reported_version": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+      "target": "x86_64-linux-gnu",
+      "common_flags": [
+        "-std=c++23",
+        "-O2",
+        "-DNDEBUG"
+      ],
+      "normal_definition": "COUNT_ALLOCS=0",
+      "instrumented_definition": "COUNT_ALLOCS=1",
+      "production_file_count": 232,
+      "production_header_count": 135,
+      "compiled_production_translation_units": 6,
+      "identity_limit": "System, GCC and STL headers were not preserved as a complete byte-identical runtime bundle. This is a historical Linux/GCC build, not Windows/MSVC qualification."
+    },
+    "input_identity_relation": "Each case has two preserved synthetic wire files, cost-preparation/CASE-0.wire and cost-preparation/CASE-1.wire. Both have the listed size and SHA-256. These files are synthetic prepared inputs, not real lifecycle persistence originals. Prepared does not carry operation or mode; those identities come from the frozen outer call contract.",
+    "prepared_common": {
+      "kind": "prepared",
+      "public_preparation_calls": 5,
+      "model_equal": true,
+      "instrumented_extra_checks": 3,
+      "bad_tail_model_equal_scope": "For bad_text_tail and bad_items_tail, model_equal checks the valid parent wire before appending '!'. It does not assert successful decoding of the bad wire."
+    },
+    "inputs": [
+      {
+        "case": "exe",
+        "records": 1,
+        "wire_bytes": 3405,
+        "wire_sha256": "cdfdcd07edceb308837bd115857dd76fc008a5c10af27dc4dd8ca7006a37225e",
+        "prepared_checks_normal": 115,
+        "prepared_checks_instrumented": 118
+      },
+      {
+        "case": "dll",
+        "records": 1,
+        "wire_bytes": 3429,
+        "wire_sha256": "b65d212ca2b21051ee03a086a16b0ddfe6cfd8a12b5279eb4de63ff30d1be473",
+        "prepared_checks_normal": 118,
+        "prepared_checks_instrumented": 121
+      },
+      {
+        "case": "static",
+        "records": 1,
+        "wire_bytes": 3174,
+        "wire_sha256": "b190a2fff3aadb75e509fe499553cff2e5f30f3a3c003c057bca07f7bd92c58f",
+        "prepared_checks_normal": 106,
+        "prepared_checks_instrumented": 109
+      },
+      {
+        "case": "reuse_save_failure",
+        "records": 2,
+        "wire_bytes": 6878,
+        "wire_sha256": "599fa256096913e4385240d88cde43da96b842ac98309d1dbb9d721cb8ef46a1",
+        "prepared_checks_normal": 203,
+        "prepared_checks_instrumented": 206
+      },
+      {
+        "case": "snapshot_128k",
+        "records": 1,
+        "wire_bytes": 135422,
+        "wire_sha256": "2d43cb09a00c115084c44d6144d2c46391ca3464b49082f7ffb12fd129f9fdfa",
+        "prepared_checks_normal": 115,
+        "prepared_checks_instrumented": 118
+      },
+      {
+        "case": "history_256",
+        "records": 256,
+        "wire_bytes": 304248,
+        "wire_sha256": "070f87a96a4c6f68e2e40a3706d127016a3276baab9222643620a20895f9899e",
+        "prepared_checks_normal": 8207,
+        "prepared_checks_instrumented": 8210
+      },
+      {
+        "case": "text_7m",
+        "records": 1,
+        "wire_bytes": 7343780,
+        "wire_sha256": "3db6c28c33f4ff9b9386ef1b740042927324e316be9be0fb07668c535f80ef94",
+        "prepared_checks_normal": 129,
+        "prepared_checks_instrumented": 132
+      },
+      {
+        "case": "items_60000",
+        "records": 1,
+        "wire_bytes": 363373,
+        "wire_sha256": "ae55e61087c39579b48703070f2c592128cb47dff01be47261c4b4bd3f41e8b5",
+        "prepared_checks_normal": 115,
+        "prepared_checks_instrumented": 118
+      },
+      {
+        "case": "bad_text_tail",
+        "records": 1,
+        "wire_bytes": 7343781,
+        "wire_sha256": "6af269bef4cd49836b4891149942d7c91798d39f468aacd2ed6797a0f417b0d1",
+        "prepared_checks_normal": 129,
+        "prepared_checks_instrumented": 132
+      },
+      {
+        "case": "bad_items_tail",
+        "records": 1,
+        "wire_bytes": 363374,
+        "wire_sha256": "471f9b987af3256900d9a778c46a8ee077affb972563ee429ffefae2c4bd8719",
+        "prepared_checks_normal": 115,
+        "prepared_checks_instrumented": 118
+      }
+    ],
+    "matrix_reference": {
+      "classification": "Already-consumed historical allocation; not a prospective matrix or execution plan.",
+      "ordered_cases": "The ten cases in inputs, in their listed order.",
+      "positive_operation_order": [
+        "live",
+        "project",
+        "encode",
+        "decode",
+        "model",
+        "chain"
+      ],
+      "bad_operation_order": [
+        "decode"
+      ],
+      "mode_order": [
+        0,
+        1
+      ],
+      "trial_order": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "nesting": "case, operation, mode; one process per cell, five warm trials per process",
+      "planned_measurement_processes": 100,
+      "planned_observations": 500,
+      "original_limits": {
+        "child_address_space_bytes": 1073741824,
+        "child_cpu_soft_seconds": 20,
+        "child_cpu_hard_seconds": 21,
+        "child_wall_seconds": 25,
+        "overall_wall_seconds": 600
+      }
+    },
+    "consumption": {
+      "study_001_status": "failed-preflight; closed, not restartable",
+      "study_001_measurement_processes": 0,
+      "study_001_observations": 0,
+      "prior_prepare_processes": 20,
+      "prior_prepare_top_level_api_calls": 100,
+      "study_002_status": "INVALID; closed, not restartable",
+      "study_002_processes_in_execution_ledger": 100,
+      "study_002_exit_zero_in_execution_ledger": 100,
+      "study_002_claimed_observations_in_execution_ledger": 500,
+      "measurement_process_preparation_top_level_api_calls": 500,
+      "observation_window_top_level_api_calls": 740,
+      "all_study_top_level_api_calls": 1340,
+      "independently_reconstructable_prepared_records": 99,
+      "independently_reconstructable_observations": 495,
+      "reconstructable_normal_observations": 245,
+      "reconstructable_instrumented_observations": 250,
+      "intact_original_streams_at_prior_audit": 199,
+      "planned_original_streams": 200,
+      "ledger_limit": "The process/API execution ledger and currently reconstructable records are different observations. Missing evidence does not refund consumed calls. Internal nested model/encode calls are not included in the top-level API total.",
+      "allocator_controls": "Each instrumented prepare or measurement process has a separate ordinary 257-byte and aligned 129-byte allocation control: two successful requests, 386 requested bytes/peak/live, largest 257, live zero after release. They are not public API calls or measurement observations.",
+      "missing_original": {
+        "path": "cost-execution-002/070-history_256-chain-0.stdout",
+        "expected_sha256_in_original_ledger": "ea375e03db244431e48f4764f5dc90035c6b6f7362c42643e16099428e327735",
+        "preserved_size_bytes": 0,
+        "preserved_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "case": "history_256",
+        "operation": "chain",
+        "instrumented": false,
+        "prepared_record": null,
+        "trial_0_ns": null,
+        "trial_1_ns": null,
+        "trial_2_ns": null,
+        "trial_3_ns": null,
+        "trial_4_ns": null,
+        "recovery_status": "Previously completed bounded faithful-copy search found no matching original. No reconstruction, replacement, interpolation or new search is authorized here."
+      }
+    },
+    "retained_decisions": [
+      "PR250 remains Draft/HOLD; default Windows Performance944 is only a limited existing default-path qualification and cannot repair study 002.",
+      "Retain all 819/886/897/907/919/937/944 holds, failures, adverse tails and block variation; equal counts do not establish a noise explanation.",
+      "Retain file_inputs 7-to-1/dependency gaps, dedicated DLL/LIB/PCH/HU/Windows/high-frequency/real-wire cost gaps, different-byte bootstrap, writer/atomicity/reparse/concurrency/recovery, clean-prune/Rium/#164, and #248 isolation.",
+      "VERSION remains 5.6.0; this preparation authorizes no v5.7.0 release."
+    ]
+  },
+  "authorized_real_budgets": {
+    "codec_compile_processes": 0,
+    "codec_preflight_processes": 0,
+    "codec_prepare_processes": 0,
+    "codec_measurement_processes": 0,
+    "codec_public_api_calls": 0,
+    "codec_warmup_calls": 0,
+    "codec_allocator_control_calls": 0,
+    "real_observations": 0,
+    "retries": 0,
+    "replacement_processes": 0,
+    "replacement_observations": 0,
+    "mqb_processes": 0,
+    "msvc_processes": 0,
+    "etw_sessions": 0,
+    "performance_studies": 0
+  },
+  "future_selection": {
+    "purpose": null,
+    "candidate": null,
+    "comparator": null,
+    "binaries": null,
+    "inputs": null,
+    "matrix": null,
+    "acceptance": null,
+    "observer": null,
+    "global_budgets": null,
+    "registration": null
+  },
+  "blockers": [
+    "No independently justified real-cost decision purpose beyond replacing study 002 or filling its missing five observations has been selected, and the need for a real execution has not been decided.",
+    "No future candidate/comparator, complete source/binary/compiler/runtime identities, fixed callback/input identities or exact invocation have been selected; historical references cannot select them implicitly.",
+    "No future product-cost acceptance criterion or numerical product budget has been fixed before new data. The historical registration had no numerical product threshold, so existing results cannot be used to invent one retrospectively.",
+    "No future complete global matrix, call/record order, process/API/warmup/control budget, resource/output/metadata/copy bounds or stop-accounting ledger has been selected. The closed driver allows at most 8 calls, 3 seconds active supervision per call and 20 seconds overall; it cannot silently run the historical 100-call, 25-second-child, 600-second study or reset its budget across batches.",
+    "No future observer-window and interference policy has been selected for output formatting, pipe backpressure, spool writes, copies, reads, parsing, hashing, flush/fsync/close and final sealing/audits. Being outside an API timing window does not establish zero cost or zero disturbance.",
+    "The current driver admits only fixed Python substitutes; real producer support, any needed global supervision, exact reap ownership and complete evidence binding for a real workload have not been qualified. Schema or fixed-byte validation cannot authenticate a producer.",
+    "No independent review and separate exact protocol registration/readback authorize a future real execution. This immutable preparation has no transition to an executable or approved state; later work requires a different reviewed artifact and decision."
+  ],
+  "windows": {
+    "normal_time": "ns is a nonnegative steady-clock nanosecond API/wrapper return latency. Include API-internal validation, temporary destruction and take/move packaging; exclude the final owned return object's caller destruction, result consume and stdout formatting. Never replace missing ns with whole-child wall or instrumented-mode output.",
+    "instrumented_allocation": "Instrumented ns is null. Count successful ordinary/array/aligned/nothrow C++ new requested payloads, calls, largest request, window-created live peak, live at return and key callbacks. Exclude preparation baseline, allocator headers/alignment/bookkeeping/arena, direct malloc/OS allocations. Requested bytes are neither copied bytes nor total heap/RSS.",
+    "positive_ownership": "The live, project, encode, decode and model windows retain their owned result until statistics are captured. Chain contains four top-level APIs and retains its projected archive, wire, decoded archive and modeled result together through return.",
+    "bad_tail": "The two bad-tail decode windows include refusal, exact invalid-document and zero-key-callback checks, plus destruction of the expected/error before returning its offset. requested_live_at_return=0 describes that wrapper and does not prove the public Error has no owned allocation.",
+    "preparation": "Each historical measurement process first performs five unobserved public preparation APIs. Live input, live model, projected archive, wire, decoded archive and modeled result stay alive across five warm trials. Model equality alone does not cover terminal warnings; preparation separately checks their full bytes/order and PRIVATE exclusion.",
+    "process_memory": "process_hwm_before_kib and process_hwm_after_kib are positive Linux ru_maxrss process-history high-water marks in KiB. They include preparation, retained inputs, earlier trials and startup history. The after read follows consume but precedes the current observation's stdout formatting. Their difference is not operation-exclusive peak RSS or Windows working set.",
+    "fixed_input_coverage": "history_256 is 256 executed single-source records and one retain, not all reuse/retain limits; text_7m contains terminal warnings not included in the live/model recipe; items_60000 contains short arguments; snapshot_128k is ASCII. These inputs do not qualify combined maxima, large Windows UTF-16 conversion, arbitrary callbacks or high-frequency use.",
+    "controller_active_time": "For the existing driver, nonblocking pipe reads and spool writes occur during active supervision. The call deadline begins before spool open/Popen; the overall deadline starts after CaptureSession creation. Source checks and handoff between calls consume overall elapsed time. Deadline checks at controller checkpoints do not guarantee an absolute return time for blocking OS operations.",
+    "controller_post_supervision": "Final spool flush/fsync/close occurs after active supervision; finished_monotonic_ns includes it. Subsequent bounded spool reads into BytesIO, raw/backup copying, parsing/hashing, call/result publication, capture/driver sealing and final read-only audits are not all covered by the active call/overall deadline gates.",
+    "controller_storage_and_interference": "Spool, raw and backup are three storage copies in the same fault domain. Admitted pipe bytes count input once, not total storage, temporary memory or metadata. Copy/read/parse/sync work, buffering and pipe backpressure can disturb scheduling/cache and later calls even outside the API timing window. No zero-overhead or disturbance-free claim is available.",
+    "identity_and_audit": "Externally retained expected hashes bind exact protocol and result bytes at sequential reads. On-disk source hashes do not attest loaded Python code, every runtime component, atomic check-to-exec behavior or producer authenticity. Final verification is a sequential read interval, not an atomic snapshot or permanent integrity guarantee."
+  },
+  "acceptance": {
+    "preparation_integrity": "An offline exact-byte/closed-state check can accept only this preparation artifact. It must require an independently supplied expected SHA-256, exact frozen bytes, strict zero real budgets, all future selections null, seven blockers and four false authorities; malformed or changed data is rejected.",
+    "fixed_substitute_scope": "Successful typed semantics, frozen identity/order and intact capture/transport/final-audit gates may qualify only the fixed-substitute adapter. Synthetic observations are literal test values, not performance samples or replacement records for study 002.",
+    "first_error_stop": "Any identity, schema/type/value/order, budget, stream EOF, exit/reap, timeout, unexpected stderr, I/O, publication or final-integrity failure locks INVALID and stops later calls. Preserve available bounded prefixes and observed consumption, retain unknown consumption as unknown, and do not retry, refund, interpolate or replace observations.",
+    "product_cost_decision": "HOLD",
+    "pr250_integration_decision": "HOLD",
+    "real_execution_decision": "BLOCKED",
+    "transition_policy": "There is no editable grant, approve/proceed transition, real runner entry point, study003 allocation, or mechanism that upgrades this artifact after filling fields. Any independently justified future work needs a new reviewed artifact, exact frozen identities/budgets/criteria, and separate registration/readback before a launch.",
+    "forbidden_inferences": "Neither a successful static check nor VERIFIED substitute evidence makes the real experiment valid, supplies absent cost criteria, proves Windows/default/high-frequency suitability, authenticates a producer, permits PR250 integration, reopens 001/002 or clears historical holds."
+  },
+  "authority": {
+    "producer_identity_verified": false,
+    "current_content_verified": false,
+    "complete_producer_inventory": false,
+    "deletion_authorized": false
+  }
+}

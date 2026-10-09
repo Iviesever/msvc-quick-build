@@ -10,13 +10,16 @@ import time
 
 from analysis_evidence_capture import CaptureSession, Limits as CaptureLimits, audit_existing
 from analysis_fixed_substitute import fixture_spec
+import analysis_cost_semantics as cost_semantics
 import analysis_substitute_transport as transport
 
 
-_BASE = {"commit": "d4c0d5f143ea52862329180512caa1cf5ffd0244",
-         "tree": "e4cbc65ea1db62d3735397417656b155eff89bf7"}
+_BASE = {"commit": "bf5df76079f224ea9bb5e7822be683cb3a2e4d45",
+         "tree": "46007c773858dd50653db0a49ce6861b15733fb2"}
 _MODES = ("normal", "empty_stderr", "dual", "nonzero", "timeout",
-          "ignore_term", "closed_pipes", "busy")
+          "ignore_term", "closed_pipes", "busy", "cost_time", "cost_allocation",
+          "cost_bad_tail_time", "cost_bad_tail_allocation", "cost_invalid_time",
+          "cost_invalid_allocation")
 _ROLES = ("stdout", "stderr")
 _METADATA_BYTES = 256 * 1024
 _SOURCE_BYTES = 16 * 1024 * 1024
@@ -79,6 +82,7 @@ def _source_identities():
     paths = {"driver": here / "analysis_substitute_driver.py",
              "transport": here / "analysis_substitute_transport.py",
              "fixture": here / "analysis_fixed_substitute.py",
+             "cost_semantics": here / "analysis_cost_semantics.py",
              "capture": here / "analysis_evidence_capture.py",
              "python": Path(sys.executable).resolve()}
     result = {}
@@ -106,12 +110,28 @@ def _capture_limits(limits):
 
 def _call_spec(call_id, mode, sources):
     fixed = fixture_spec(mode)
-    return {"call_id": call_id, "mode": mode,
+    call = {"call_id": call_id, "mode": mode,
             "argv": [sources["python"]["path"], "-I", "-B", "-u",
                      sources["fixture"]["path"], mode],
             "expected": {role: transport.stream_stats(fixed[role]) for role in _ROLES},
             "capture": {"call_id": call_id, "stdout_records": fixed["records"],
                         "stderr_empty": not fixed["stderr"]}}
+    if "cost" in fixed:
+        call["semantic_contract"] = cost_semantics.freeze_cost_contract(
+            call_id=call_id, **fixed["cost"]).document()
+    return call
+
+
+def _validate_cost_output(call, raw):
+    if "semantic_contract" not in call:
+        return None
+    contract = cost_semantics.FrozenCostContract(
+        transport.canonical_bytes(call["semantic_contract"]))
+    try:
+        return cost_semantics.validate_cost_output(raw, contract=contract,
+                                                   expected_contract_sha256=contract.sha256)
+    except (ValueError, cost_semantics.CostSemanticError) as error:
+        raise DriverError(f"cost_semantics:{call['call_id']}:{error}") from error
 
 
 def freeze_protocol(*, protocol_id, calls, limits=DriverLimits()):
@@ -140,7 +160,7 @@ def freeze_protocol(*, protocol_id, calls, limits=DriverLimits()):
         selected.append((call["call_id"], call["mode"]))
     sources = _source_identities()
     document = {
-        "format": 1, "kind": "fixed-substitute-contract", "protocol_id": protocol_id,
+        "format": 2, "kind": "fixed-substitute-contract", "protocol_id": protocol_id,
         "development_base": dict(_BASE), "sources": sources,
         "identity_limits": dict(_IDENTITY_LIMITS),
         "runtime": {"executable": sources["python"]["path"], "version": sys.version,
@@ -168,7 +188,7 @@ def _thaw(protocol, expected_sha256):
         keys = {"format", "kind", "protocol_id", "development_base", "sources", "runtime", "identity_limits",
                 "limits", "capture_limits", "calls", "launch_budget", "real_measurement_budget"}
         if (type(document) is not dict or set(document) != keys or
-                type(document["format"]) is not int or document["format"] != 1 or
+                type(document["format"]) is not int or document["format"] != 2 or
                 document["kind"] != "fixed-substitute-contract" or not _text(document["protocol_id"]) or
                 document["development_base"] != _BASE or document["real_measurement_budget"] != _REAL_BUDGET or
                 document["identity_limits"] != _IDENTITY_LIMITS):
@@ -177,7 +197,8 @@ def _thaw(protocol, expected_sha256):
         if document["capture_limits"] != asdict(_capture_limits(limits)):
             raise ValueError("capture policy differs from transport policy")
         sources = document["sources"]
-        if type(sources) is not dict or set(sources) != {"driver", "transport", "fixture", "capture", "python"}:
+        if type(sources) is not dict or set(sources) != {
+                "driver", "transport", "fixture", "capture", "cost_semantics", "python"}:
             raise ValueError("invalid source identities")
         for role, source in sources.items():
             maximum = _IDENTITY_LIMITS["python_bytes"] if role == "python" else _SOURCE_BYTES
@@ -205,7 +226,8 @@ def _thaw(protocol, expected_sha256):
         for call in calls:
             if (type(call) is not dict or not _text(call.get("call_id")) or
                     call["call_id"] in names or call.get("mode") not in _MODES or
-                    call != _call_spec(call["call_id"], call["mode"], sources)):
+                    transport.canonical_bytes(call) != transport.canonical_bytes(
+                        _call_spec(call["call_id"], call["mode"], sources))):
                 raise ValueError("invalid frozen call specification")
             names.add(call["call_id"])
         return document
@@ -316,8 +338,11 @@ def _inspect(root, protocol, document, anchors, capture_seal, *, allow_result, i
         problems.add(error)
     attempts = launched = reaped = total = 0
     verified_attempts = verified_launched = verified_reaped = verified_bytes = 0
+    verified_semantic_calls = verified_cost_observations = 0
     observations_available = True
     for index, anchor in enumerate(anchors):
+        call_problem_count = problems.count
+        cost_stdout = None
         try:
             if not _valid_anchor(anchor, index, limits):
                 observations_available = False
@@ -353,6 +378,8 @@ def _inspect(root, protocol, document, anchors, capture_seal, *, allow_result, i
                     problems.add(f"incomplete_original_pipe:{index}:{role}")
                 try:
                     spool = transport.read_regular(root / "spool" / f"{index:06d}.{role}.bin", limits.max_stream_bytes)
+                    if role == "stdout":
+                        cost_stdout = spool
                     stats = transport.stream_stats(spool)
                     if any(receipt[key] != value for key, value in stats.items()):
                         problems.add(f"received_spool_mismatch:{index}:{role}")
@@ -365,6 +392,11 @@ def _inspect(root, protocol, document, anchors, capture_seal, *, allow_result, i
                             problems.add(f"spool_capture_mismatch:{name}:{index}:{role}")
                 except Exception as error:
                     problems.add(error)
+            if cost_stdout is not None:
+                semantic = _validate_cost_output(document["calls"][index], cost_stdout)
+                if semantic is not None and problems.count == call_problem_count:
+                    verified_semantic_calls += 1
+                    verified_cost_observations += semantic["verified_observations"]
         except Exception as error:
             problems.add(error)
     if total > limits.max_total_bytes:
@@ -386,7 +418,7 @@ def _inspect(root, protocol, document, anchors, capture_seal, *, allow_result, i
     except Exception as error:
         problems.add(error)
     complete = problems.count == 0
-    return {"format": 1, "kind": "fixed-substitute-wiring-verdict",
+    return {"format": 2, "kind": "fixed-substitute-wiring-verdict",
             "protocol_sha256": protocol.sha256, "capture_seal_sha256": capture_seal,
             "call_records": anchors, "planned_calls": count,
             "lifecycle_counts_available": observations_available,
@@ -396,6 +428,9 @@ def _inspect(root, protocol, document, anchors, capture_seal, *, allow_result, i
             "admitted_bytes": total if observations_available else None,
             "verified_launch_attempts": verified_attempts, "verified_launched_calls": verified_launched,
             "verified_reaped_calls": verified_reaped, "verified_admitted_bytes": verified_bytes,
+            "planned_semantic_calls": sum("semantic_contract" in call for call in document["calls"]),
+            "verified_semantic_calls": verified_semantic_calls,
+            "verified_cost_observations": verified_cost_observations,
             "execution_finished": execution_finished, "capture_complete": capture_complete,
             "complete": complete, "integrity_status": "VERIFIED" if complete else "INVALID",
             "first_failure": problems.items[0] if problems.items else None,
@@ -419,7 +454,7 @@ def audit_driver_evidence(root, *, protocol, expected_protocol_sha256, expected_
         if _sha(raw) != expected_driver_seal_sha256:
             raise DriverError("driver_seal_mismatch")
         seal = json.loads(raw)
-        if (type(seal) is not dict or type(seal.get("format")) is not int or seal["format"] != 1 or
+        if (type(seal) is not dict or type(seal.get("format")) is not int or seal["format"] != 2 or
                 seal.get("kind") != "fixed-substitute-wiring-verdict" or
                 seal.get("protocol_sha256") != protocol.sha256 or
                 not _is_sha(seal.get("capture_seal_sha256")) or
@@ -516,9 +551,12 @@ def run_frozen_substitutes(root, *, protocol, expected_protocol_sha256, seal_pat
                 problems.add(record["first_failure"] or "unsuccessful_transport")
         except Exception as error:
             problems.add(error)
+        cost_stdout = None
         for role in _ROLES:
             try:
                 raw = transport.read_regular(root / "spool" / f"{index:06d}.{role}.bin", limits.max_stream_bytes)
+                if role == "stdout":
+                    cost_stdout = raw
                 stats = transport.stream_stats(raw)
                 if record is None or any(record["streams"][role][key] != value for key, value in stats.items()):
                     problems.add(f"received_spool_mismatch:{index}:{role}")
@@ -530,6 +568,11 @@ def run_frozen_substitutes(root, *, protocol, expected_protocol_sha256, seal_pat
                 reader = _FailedReader(str(error)[:256])
             try:
                 session.preserve_stream(index, role, reader)
+            except Exception as error:
+                problems.add(error)
+        if cost_stdout is not None:
+            try:
+                _validate_cost_output(call, cost_stdout)
             except Exception as error:
                 problems.add(error)
         try:

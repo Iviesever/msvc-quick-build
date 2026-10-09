@@ -2,6 +2,11 @@
 
 [English](ANALYSIS_SUBSTITUTE_DRIVER.md)
 
+本文保留 PR252 的 format-1 资格记录。当前 format-2 扩展、新增六种固定成本模式、
+语义源码绑定及业务校验见[成本输出语义](ANALYSIS_COST_SEMANTICS_ZH.md)。
+审计已归档的 format-1 bundle 须使用准确的 PR252 源码，不得改写其冻结协议或 seal。
+下述监督与存储限制继续适用于 format 2。
+
 ## 目标与继承的决定
 
 本切片实施[接手记录6079598410](https://github.com/Iviesever/msvc-quick-build/issues/198#issuecomment-6079598410)的下一点：将已合并PR251的采集组件接入新的分析驱动，在启动前冻结协议，并用固定替身检验双管道读取、进程终止、失败前缀和最终封存。
