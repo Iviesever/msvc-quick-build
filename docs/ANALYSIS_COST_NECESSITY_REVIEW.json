@@ -1,0 +1,884 @@
+{
+  "format": 1,
+  "kind": "static-cost-necessity-review",
+  "review_id": "pr250-cost-necessity-review-20261009",
+  "review_status": "COMPLETE",
+  "decision": "NO_JUSTIFIED_REAL_EXECUTION_NOW",
+  "decision_scope": "The current independently reviewed records do not select a new product or explicit library-use decision with a pre-data outcome rule that another real-cost observation could change. Future measurement may be useful after a concrete use/lifetime/resource requirement exists. No default CLI caller is required in principle.",
+  "not_an_execution_protocol_or_grant": true,
+  "real_execution_authorized": false,
+  "product_cost_decision": "HOLD",
+  "pr250_integration_decision": "HOLD",
+  "real_execution_decision": "BLOCKED",
+  "development_base": {
+    "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+    "tree": "a1bd31e779b3423a6993ede5ef575df127fb66b2"
+  },
+  "historical_candidate": {
+    "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+    "tree": "4e777bdfc33b7befaf5e3769e27eb4fe910f9f03"
+  },
+  "original_product_base": {
+    "commit": "2762749b27fc89156b724d19e89cce84e388ef52",
+    "tree": "0a4c2dd76c56309accf58d584a079b4bd483ee49"
+  },
+  "frozen_preparation_reference": {
+    "path": "docs/ANALYSIS_COST_DECISION_PREPARATION.json",
+    "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+    "bytes": 21000,
+    "sha256": "f3c978a791f5797d62739dde24759003e231eb58892f7eaf689852ef62a0e1ae",
+    "status": "PREPARATION_ONLY_BLOCKED",
+    "policy": "Exact original bytes remain unchanged. This review cannot fill, replace, approve or transition that preparation."
+  },
+  "preserved_closed_state": {
+    "authorized_real_budgets": {
+      "codec_compile_processes": 0,
+      "codec_preflight_processes": 0,
+      "codec_prepare_processes": 0,
+      "codec_measurement_processes": 0,
+      "codec_public_api_calls": 0,
+      "codec_warmup_calls": 0,
+      "codec_allocator_control_calls": 0,
+      "real_observations": 0,
+      "retries": 0,
+      "replacement_processes": 0,
+      "replacement_observations": 0,
+      "mqb_processes": 0,
+      "msvc_processes": 0,
+      "etw_sessions": 0,
+      "performance_studies": 0
+    },
+    "future_selection": {
+      "purpose": null,
+      "candidate": null,
+      "comparator": null,
+      "binaries": null,
+      "inputs": null,
+      "matrix": null,
+      "acceptance": null,
+      "observer": null,
+      "global_budgets": null,
+      "registration": null
+    },
+    "authority": {
+      "producer_identity_verified": false,
+      "current_content_verified": false,
+      "complete_producer_inventory": false,
+      "deletion_authorized": false
+    },
+    "original_blockers": [
+      "No independently justified real-cost decision purpose beyond replacing study 002 or filling its missing five observations has been selected, and the need for a real execution has not been decided.",
+      "No future candidate/comparator, complete source/binary/compiler/runtime identities, fixed callback/input identities or exact invocation have been selected; historical references cannot select them implicitly.",
+      "No future product-cost acceptance criterion or numerical product budget has been fixed before new data. The historical registration had no numerical product threshold, so existing results cannot be used to invent one retrospectively.",
+      "No future complete global matrix, call/record order, process/API/warmup/control budget, resource/output/metadata/copy bounds or stop-accounting ledger has been selected. The closed driver allows at most 8 calls, 3 seconds active supervision per call and 20 seconds overall; it cannot silently run the historical 100-call, 25-second-child, 600-second study or reset its budget across batches.",
+      "No future observer-window and interference policy has been selected for output formatting, pipe backpressure, spool writes, copies, reads, parsing, hashing, flush/fsync/close and final sealing/audits. Being outside an API timing window does not establish zero cost or zero disturbance.",
+      "The current driver admits only fixed Python substitutes; real producer support, any needed global supervision, exact reap ownership and complete evidence binding for a real workload have not been qualified. Schema or fixed-byte validation cannot authenticate a producer.",
+      "No independent review and separate exact protocol registration/readback authorize a future real execution. This immutable preparation has no transition to an executable or approved state; later work requires a different reviewed artifact and decision."
+    ],
+    "interpretation": "Copied refusal-state facts, not editable permission. A change or new hash cannot grant execution."
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "kind": "source_fact",
+      "source_ids": [
+        "issue"
+      ],
+      "finding": "#198 independently justifies useful inventory and explicit safe clean/prune with current/shared/historical/unknown attribution. Its motivating report values are unverified, not product cost thresholds."
+    },
+    {
+      "id": "F2",
+      "kind": "source_fact",
+      "source_ids": [
+        "registration",
+        "registration2",
+        "pr250"
+      ],
+      "finding": "The historical allocation legitimately described fixed Linux/GCC explicit nondefault pure-value API costs and live-model comparison for limited development integration. Closed allocations are not renewed by repeating their purpose."
+    },
+    {
+      "id": "F3",
+      "kind": "scoped_source_fact",
+      "source_ids": [
+        "main-model-api",
+        "main-model",
+        "main-helper",
+        "ordinary-fixture",
+        "static-fixture",
+        "storage"
+      ],
+      "finding": "Main production symbol occurrences are two declarations and two definitions. Direct model callers are tests and the E2E helper. StorageCommand uses scanning, legacy association and reporting without generation-model or archive consumption."
+    },
+    {
+      "id": "F4",
+      "kind": "scoped_source_fact",
+      "source_ids": [
+        "archive",
+        "archive-api",
+        "archive-model",
+        "archive-codec",
+        "archive-helper",
+        "link-archive"
+      ],
+      "finding": "Frozen PR250 production archive/model calls are internal implementation composition; external direct archive calls are the E2E round-trip helper and archive tests. Separate LINK completion file archiving already exists and does not select ordinary-generation persistence."
+    },
+    {
+      "id": "F5",
+      "kind": "review_inference",
+      "source_ids": [
+        "handoff",
+        "issue",
+        "registration",
+        "archive",
+        "generations"
+      ],
+      "finding": "Neither broad #198 need nor unresolved historical qualification identifies a newly selected use/ownership/resource tradeoff or data-dependent outcome rule. Default-call absence alone is not a reason to deny library qualification. The current supported action is HOLD without another execution."
+    },
+    {
+      "id": "F6",
+      "kind": "source_fact_and_scope_assessment",
+      "source_ids": [
+        "registration",
+        "governance",
+        "semantics",
+        "preparation"
+      ],
+      "finding": "The historical registration states no numerical product budget. Existing semantic, integrity, logical-shape and research-containment rules are not explicit-codec product acceptance. The external-no-op gate is real but applies to its own registered metric/profile."
+    }
+  ],
+  "negative_search_scope": {
+    "kind": "static lexical reference search of exact tracked trees",
+    "symbols": [
+      "model_artifact_generations",
+      "model_recorded_artifact_generations",
+      "project_artifact_generation_archive",
+      "encode_artifact_generation_archive",
+      "decode_artifact_generation_archive",
+      "model_archived_artifact_generations",
+      "ArtifactGenerationArchive"
+    ],
+    "trees": [
+      {
+        "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+        "tracked_paths": 711,
+        "symbol_occurrences": 28,
+        "production_paths": 229,
+        "matching_lines": 28,
+        "production_matching_lines": 4,
+        "production_symbol_occurrences": 4
+      },
+      {
+        "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+        "tracked_paths": 693,
+        "symbol_occurrences": 187,
+        "production_paths": 232,
+        "matching_lines": 156,
+        "production_matching_lines": 42,
+        "production_symbol_occurrences": 49
+      }
+    ],
+    "production_roots": [
+      "cpp/src",
+      "cpp/include"
+    ],
+    "full_scope_and_hits": "product-necessity-audit-002.json:/searches",
+    "limit": "Not a runtime trace or a claim about external, generated, untracked or indirect consumers. No zero default-path overhead inference.",
+    "count_units": "matching_lines counts git grep -n output rows; symbol_occurrences counts git grep -n -o output rows for the same frozen seven-symbol regex and tree/scope."
+  },
+  "pre_data_acceptance": {
+    "preparation": "Exact identity and closed refusal state only.",
+    "semantics_and_integrity": "Frozen identity/order/type/unit/window/ownership relationships and complete retained evidence are necessary within their contract, not sufficient for product-cost acceptance or producer authenticity.",
+    "product": "No new criterion selected. Need the concrete use/operation/lifetime/resource decision and an accountable requirement, metric/unit/window/workload/environment/rationale and acceptable/adverse/invalid consequence before new data. A nonnumeric rule must actually decide the cost question.",
+    "existing_external_noop": {
+      "delta_ms_operator": ">",
+      "delta_ms": 1,
+      "paired_percentage_operator": ">",
+      "paired_percentage": 10,
+      "combination": "AND",
+      "delta_metric": "median paired candidate-minus-baseline external_stopwatch delta",
+      "percentage_metric": "median of individual paired percentage changes",
+      "profile": "registered schema-v3, 19 scenarios, four pairs",
+      "codec_criterion": false,
+      "non_crossing_is_complete_product_approval": false
+    },
+    "numeric_provenance_catalog": {
+      "entries": 17,
+      "source": "acceptance-prerequisites-audit-001.json:/numeric_bound_catalog",
+      "classes": [
+        "closed_authority_state",
+        "descriptive_historical_observation",
+        "driver_limit",
+        "fixture_literal",
+        "old_consumed_research_budget",
+        "product_criterion_absent",
+        "product_criterion_other_scope",
+        "wire_schema_cap"
+      ],
+      "rule": "No old cap, fixture literal, consumed allocation, historical observation or different-scope product rule becomes a new explicit-codec acceptance threshold."
+    }
+  },
+  "blocking_prerequisites_reference_namespace": "acceptance-prerequisites-audit-001.json:/sources; S-prefixed evidence references below resolve there.",
+  "blocking_prerequisites": [
+    {
+      "number": 1,
+      "title": "Independent decision purpose and necessity",
+      "status": "NOT_SATISFIED_FOR_FUTURE_EXECUTION",
+      "evidence": [
+        "S19:7-9",
+        "S20:13-15",
+        "S01:305-305",
+        "S16:7-11",
+        "S27:/body"
+      ],
+      "decided": "The original allocation had a legitimate stated purpose: describe fixed Linux/GCC explicit API costs for a limited integration decision. That historical allocation is closed. Current evidence supports withholding any new execution.",
+      "not_decided": "No new concrete adoption decision, alternative or datum-dependent action has been established beyond revisiting the same qualification or repairing missing evidence. General relevance to eventual persistence does not select a present experiment.",
+      "finite_prerequisite": "One bounded #198 consumer/operation/lifetime contract must name the already intended consumer across invocation boundaries, caller, trigger, frequency, input and retained owned values, concrete decision and alternatives, why a new observation could change it, and why source/retained evidence cannot answer it. If no consumer is selected, record DEFER and stop; do not create a use case to justify a run."
+    },
+    {
+      "number": 2,
+      "title": "Exact selected identities and comparison meaning",
+      "status": "UNSELECTED",
+      "evidence": [
+        "S01:8-22",
+        "S01:89-104",
+        "S01:306-306",
+        "S02:25-35"
+      ],
+      "decided": "Current analysis origin and historical candidate/original-base roles are distinct and identified. The old base has no equivalent old codec; candidate live-model versus chain is not old-codec A/B regression or isolated serialization cost.",
+      "not_decided": "No future candidate/comparator, complete runnable source/compiler/runtime/binary bundle, callback, input, ownership pattern or invocation is selected. Retained GCC identities are not Windows/MSVC qualification.",
+      "finite_prerequisite": "Only if blocker 1 gains an independent purpose, produce one separate identity/comparison specification tied to that decision, including exact operations and ownership, input/callback identities and environment requirements. Mark unavailable future binary/runtime identities pending; no compilation or execution is granted here."
+    },
+    {
+      "number": 3,
+      "title": "Product-cost acceptance before new data",
+      "status": "MISSING_PRODUCT_CRITERION",
+      "evidence": [
+        "S19:52-56",
+        "S01:307-307",
+        "S01:326-334",
+        "S04:69-73",
+        "S16:126-152"
+      ],
+      "decided": "Typed semantics, integrity refusal, pure/owning behavior and conservative nondefault HOLD can be stated before new data. None is a positive numerical product-cost acceptance rule. The external no-op rule has a different metric and workload.",
+      "not_decided": "The reviewed records do not specify an actual consumer call frequency, supported workload/lifetime envelope, response-time tolerance, total memory tolerance or acceptable tradeoff from which a codec acceptance rule can be justified.",
+      "finite_prerequisite": "Use that exact consumer/operation/lifetime contract to locate or obtain the accountable product requirement, then express its cost metric, unit, window/lifetime, workload/environment and accept/HOLD/INVALID consequence with rationale independent of measured values. A nonnumeric rule is sufficient only if it actually decides the stated cost question. If no defensible requirement exists, record absence rather than picking a threshold or measuring first."
+    },
+    {
+      "number": 4,
+      "title": "Whole-allocation matrix, containment and stop accounting",
+      "status": "UNSELECTED_AND_DRIVER_INCOMPATIBLE",
+      "evidence": [
+        "S01:194-250",
+        "S01:308-308",
+        "S08:35-51",
+        "S09:71-107"
+      ],
+      "decided": "The old 100-call/25-second-child/600-second allocation is consumed and incompatible with the closed 8-call/3-second-active/20-second-active driver. Research resource caps do not imply useful product cost.",
+      "not_decided": "No future complete ordered allocation counts compiles, preflight, preparation, observations, warmups, controls, failures, output, metadata, copies and post-supervision work under one global ledger.",
+      "finite_prerequisite": "After purpose and criterion exist, one separately reviewed whole-allocation specification must enumerate every process/API/control and record order, total all resources across phases/batches, define bounded output/storage/metadata/copies, and define first-error/prefix/unknown-consumption accounting. Select no matrix or positive budget in this audit."
+    },
+    {
+      "number": 5,
+      "title": "Metric windows and observer interference",
+      "status": "FUTURE_POLICY_UNSELECTED",
+      "evidence": [
+        "S01:313-324",
+        "S19:52-58",
+        "S09:91-103",
+        "S09:123-170",
+        "S10:111-113"
+      ],
+      "decided": "Normal time excludes caller destruction of the positive owned result; instrumented requested payload is not copied bytes/heap/RSS; process HWM is historical. Output/capture/postwork can disturb subsequent calls. Active limits omit final flush/fsync/close/sealing/audits.",
+      "not_decided": "No future observer-window/interference policy maps the contemplated product decision to those partial metrics or defines acceptable disturbance and full-lifecycle accounting.",
+      "finite_prerequisite": "For the selected consumer only, produce one window/ownership/observer map covering preparation, API return, caller destruction, formatting/pipes, copies/reads/parsing/hashing, flush/fsync/close and final audits; state which decision each metric can support and how unexplained interference blocks inference. Do not subtract assumed overhead or substitute whole-child wall for missing API time."
+    },
+    {
+      "number": 6,
+      "title": "Real producer, supervision and evidence binding",
+      "status": "NOT_QUALIFIED",
+      "evidence": [
+        "S08:111-158",
+        "S09:24-28",
+        "S09:99-107",
+        "S09:158-170",
+        "S06:182-187",
+        "S01:310-310"
+      ],
+      "decided": "The implemented launch interface admits only bundled Python modes and exact fixed output. It has source checks and explicit exact-child wait-status rules under default SIGCHLD/exclusive reaper assumptions; those assumptions are not authenticated or enforced for arbitrary real workloads.",
+      "not_decided": "Real producer admission, descendant behavior, continued exclusive reap ownership, complete real-input/output provenance and whole-runtime identity have not been qualified. A semantically valid stream cannot authenticate the producer.",
+      "finite_prerequisite": "If a real workload is later justified, first produce a separate producer/supervision design and qualification plan stating supported platform, executable/input binding, ownership of each child/reap, expected EOF/exit behavior and complete evidence/anchor retention. Any implementation or qualification run requires its own authorized slice; neither is implied by this static audit."
+    },
+    {
+      "number": 7,
+      "title": "Independent review and separate exact registration/readback",
+      "status": "NOT_AUTHORIZED",
+      "evidence": [
+        "S01:311-311",
+        "S01:330-340",
+        "S11:1-5",
+        "S11:20-58",
+        "S27:/body"
+      ],
+      "decided": "The current preparation has no approve/proceed transition; this separate static audit is also not an execution grant. Existing 001/002 registrations and PR253 delivery do not authorize a new study.",
+      "not_decided": "No fully specified future protocol with a reviewed decision, exact identities, criterion, complete budgets and observer/producer qualification has been independently approved and registered/read back.",
+      "finite_prerequisite": "Only after the substantive blockers are closed, independently review the exact separate protocol bytes and retain the authorized registration and complete readback binding those bytes before any launch. Do not register an incomplete protocol, allocate study003, or edit the frozen preparation to stage permission."
+    }
+  ],
+  "all_seven_unsatisfied_for_future_positive_execution": true,
+  "historical_preservation": {
+    "study001": "failed-preflight; closed",
+    "study002": "INVALID; closed",
+    "process_ledger": 100,
+    "total_top_level_api_calls": 1340,
+    "api_components": {
+      "prior_preparation": 100,
+      "measurement_process_preparation": 500,
+      "observation_windows": 740
+    },
+    "intact_streams_at_prior_audit": 199,
+    "planned_original_streams": 200,
+    "prepared": 99,
+    "observations": 495,
+    "time_observations": 245,
+    "allocation_observations": 250,
+    "missing_original": {
+      "path": "cost-execution-002/070-history_256-chain-0.stdout",
+      "expected_sha256_in_original_ledger": "ea375e03db244431e48f4764f5dc90035c6b6f7362c42643e16099428e327735",
+      "preserved_size_bytes": 0,
+      "preserved_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "case": "history_256",
+      "operation": "chain",
+      "instrumented": false,
+      "prepared_record": null,
+      "trial_0_ns": null,
+      "trial_1_ns": null,
+      "trial_2_ns": null,
+      "trial_3_ns": null,
+      "trial_4_ns": null,
+      "recovery_status": "Previously completed bounded faithful-copy search found no matching original. No reconstruction, replacement, interpolation or new search is authorized here."
+    },
+    "scope": "Preserved historical findings, not a fresh reconstruction or recovery search. Missing evidence never refunds consumption.",
+    "retained_decisions": [
+      "PR250 remains Draft/HOLD; default Windows Performance944 is only a limited existing default-path qualification and cannot repair study 002.",
+      "Retain all 819/886/897/907/919/937/944 holds, failures, adverse tails and block variation; equal counts do not establish a noise explanation.",
+      "Retain file_inputs 7-to-1/dependency gaps, dedicated DLL/LIB/PCH/HU/Windows/high-frequency/real-wire cost gaps, different-byte bootstrap, writer/atomicity/reparse/concurrency/recovery, clean-prune/Rium/#164, and #248 isolation.",
+      "VERSION remains 5.6.0; this preparation authorizes no v5.7.0 release."
+    ]
+  },
+  "next_static_handoff": {
+    "count": 1,
+    "title": "One #198 ordinary-generation consumer, operation and owned-result lifetime decision",
+    "purpose": "Decide whether/how selected historical claims and retention must cross invocation boundaries; resolve a concrete product design prerequisite after this completed necessity review.",
+    "required_fields": [
+      "intended caller or explicit library-use contract and trigger",
+      "consumed result and invocation frequency",
+      "supported input shape/platform and exact API composition",
+      "borrowed inputs and coexisting owned live/archive/wire/decoded/model values with release points",
+      "what crosses invocation boundaries and missing writer/persistence guarantees",
+      "alternatives and information that could change the choice",
+      "accountable cost requirement with metric/window/decision consequence or explicit absence"
+    ],
+    "outcomes": [
+      "CONSUMER_SELECTED: one reviewed use/lifetime contract; any later measurement remains separately conditional on all seven blockers.",
+      "DEFER: no consumer or defensible requirement selected; close the design choice as deferred, retain HOLD/BLOCKED and stop this measurement path."
+    ],
+    "revisit_rule": "No automatic repetition of this necessity review. Revisit only on materially new consumer or decision evidence.",
+    "decision_owner_clarification": "One narrow clarification only if available records cannot resolve the concrete caller/lifetime/requirement question.",
+    "not_selected": [
+      "numeric criterion",
+      "study matrix",
+      "protocol registration",
+      "study number",
+      "implementation",
+      "launch"
+    ],
+    "authority": "Recommendation for the authorized continuation workflow; this document grants no executable or product authority."
+  },
+  "review_activity": {
+    "local_project_test_runs": 0,
+    "fixed_substitute_launches": 0,
+    "real_workload_launches": 0,
+    "project_module_imports": 0,
+    "new_study_registrations": 0,
+    "recovery_searches": 0,
+    "scope": "Issued actions by this review team, not a system-wide process census. Static Git/text/JSON/hash reads and administrative Connector/CI verification have ordinary cost and are not performance samples."
+  },
+  "independent_audits": [
+    {
+      "file": "product-necessity-audit-002.json",
+      "bytes": 277057,
+      "sha256": "dd7040b8c77d9bf1f15d8593cf9668c252fa6851ba5c4a50404749210a5dd7b6"
+    },
+    {
+      "file": "product-necessity-audit-002.md",
+      "bytes": 22589,
+      "sha256": "95f30a4f6c6129067cf9f5e63e9e0e625d7bed5850d665c8213b3fcdc8f7f9e4"
+    },
+    {
+      "file": "acceptance-prerequisites-audit-001.json",
+      "bytes": 45668,
+      "sha256": "5186254586dff859148c3487ad26df32edd7818816f1009085de4c7073b7317f"
+    },
+    {
+      "file": "acceptance-prerequisites-audit-001.md",
+      "bytes": 31168,
+      "sha256": "638d286e9ef68269e2a426c31f8d89d8a9bf2711fd5fd6b2dd1ed862f2356b2b"
+    }
+  ],
+  "source_identities": [
+    {
+      "id": "preparation",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "docs/ANALYSIS_COST_DECISION_PREPARATION.json",
+      "mode": "100644",
+      "git_blob": "d0b7d369e3e4cd1d365a8ee07140fbff3b491ea6",
+      "bytes": 21000,
+      "sha256": "f3c978a791f5797d62739dde24759003e231eb58892f7eaf689852ef62a0e1ae",
+      "line_ranges": [
+        [
+          275,
+          341
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/docs/ANALYSIS_COST_DECISION_PREPARATION.json"
+    },
+    {
+      "id": "preparation-notes",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "docs/ANALYSIS_COST_DECISION_PREPARATION.md",
+      "mode": "100644",
+      "git_blob": "484a5f5e3c7bced4492078e6f6a48020f64dff24",
+      "bytes": 19822,
+      "sha256": "aa87bb68138419da7e78d016e275f86f4ca2f1c497fc826f4e3a2fe45573dc5a",
+      "line_ranges": [
+        [
+          25,
+          35
+        ],
+        [
+          112,
+          173
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/docs/ANALYSIS_COST_DECISION_PREPARATION.md"
+    },
+    {
+      "id": "generations",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "docs/ARTIFACT_GENERATIONS.md",
+      "mode": "100644",
+      "git_blob": "14d41219e2f22a0e3fe9aae482eb99470be98829",
+      "bytes": 8503,
+      "sha256": "e03d63b1bb9cfe08aec665a729ee9fa41e87728f10c90fac2a642b95da2335e4",
+      "line_ranges": [
+        [
+          7,
+          17
+        ],
+        [
+          48,
+          78
+        ],
+        [
+          119,
+          136
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/docs/ARTIFACT_GENERATIONS.md"
+    },
+    {
+      "id": "main-model-api",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "cpp/include/mqb/orchestration/ArtifactGenerationModel.hpp",
+      "mode": "100644",
+      "git_blob": "920d25c14a9b5427b0e0c541dffd794f6592f9cc",
+      "bytes": 7777,
+      "sha256": "bf36a31842a8aff7f6f88c563632ca39d94b35f497c340f539ef6050c201d467",
+      "line_ranges": [
+        [
+          80,
+          106
+        ],
+        [
+          138,
+          153
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/cpp/include/mqb/orchestration/ArtifactGenerationModel.hpp"
+    },
+    {
+      "id": "main-model",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp",
+      "mode": "100644",
+      "git_blob": "d9fb445bb0a2da9c0f88e7510e44ea37b86ea045",
+      "bytes": 36181,
+      "sha256": "591df98ff8597847adaf681529828eac0e5644ba795ce42ec08e550b44c5d490",
+      "line_ranges": [
+        [
+          151,
+          163
+        ],
+        [
+          201,
+          216
+        ],
+        [
+          258,
+          266
+        ],
+        [
+          471,
+          480
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp"
+    },
+    {
+      "id": "main-helper",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "cpp/tests/e2e/TargetWaveCacheEvidenceChecks.hpp",
+      "mode": "100644",
+      "git_blob": "6a95f15dfab390d61b10fc86d6ca542ef6171f05",
+      "bytes": 8426,
+      "sha256": "0d10711257a2c95f8f9416518ccb92caa008e0072751d6383eb5cf6a0c5d4a56",
+      "line_ranges": [
+        [
+          116,
+          148
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/cpp/tests/e2e/TargetWaveCacheEvidenceChecks.hpp"
+    },
+    {
+      "id": "ordinary-fixture",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp",
+      "mode": "100644",
+      "git_blob": "ed6b555bcc7ed4fba7004faa8a446cda634bd0fd",
+      "bytes": 35892,
+      "sha256": "632f8240dee8d7e79acf496d0cf67cd95335a439187aa7983c91c3d56b24f391",
+      "line_ranges": [
+        [
+          526,
+          531
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp"
+    },
+    {
+      "id": "static-fixture",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "cpp/tests/e2e/mqb_static_record_e2e_tests.cpp",
+      "mode": "100644",
+      "git_blob": "a6a55f66a009f6540f745ae0dbe09ee59dff8a70",
+      "bytes": 25379,
+      "sha256": "ee74c3dffb66448da07d64060b5acdd9bab4a68205c059853ed336909c1b93e1",
+      "line_ranges": [
+        [
+          314,
+          322
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/cpp/tests/e2e/mqb_static_record_e2e_tests.cpp"
+    },
+    {
+      "id": "storage",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "cpp/src/app/targets/StorageCommand.cpp",
+      "mode": "100644",
+      "git_blob": "f0abe886995839f709b7b7b2f4cfb474399fcfb1",
+      "bytes": 3275,
+      "sha256": "4a71412dabe4a47c294b99daa63a8ea30970bc0d16496fc5a531b0192ef91729",
+      "line_ranges": [
+        [
+          13,
+          56
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/cpp/src/app/targets/StorageCommand.cpp"
+    },
+    {
+      "id": "archive",
+      "kind": "git_blob",
+      "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+      "path": "docs/ARTIFACT_GENERATION_ARCHIVE.md",
+      "mode": "100644",
+      "git_blob": "372191d13ee696d73493c144fd77c6d58daf7e75",
+      "bytes": 11351,
+      "sha256": "a95c7305f7bf578f2af4d7873a1c7f83ff76e593ea88847995ab9793b58976a6",
+      "line_ranges": [
+        [
+          7,
+          26
+        ],
+        [
+          126,
+          178
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/a26b103685589ab8a5b4df60d1b760ec445efdf5/docs/ARTIFACT_GENERATION_ARCHIVE.md"
+    },
+    {
+      "id": "archive-api",
+      "kind": "git_blob",
+      "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+      "path": "cpp/include/mqb/orchestration/ArtifactGenerationArchive.hpp",
+      "mode": "100644",
+      "git_blob": "5f5b648563e4b9065c1a25df41c2c851e09381e3",
+      "bytes": 6860,
+      "sha256": "7a1c745a22e197b9ff25f63cdc827a291ce9bcc04d101e37c445bfb9782183de",
+      "line_ranges": [
+        [
+          82,
+          137
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/a26b103685589ab8a5b4df60d1b760ec445efdf5/cpp/include/mqb/orchestration/ArtifactGenerationArchive.hpp"
+    },
+    {
+      "id": "archive-model",
+      "kind": "git_blob",
+      "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+      "path": "cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp",
+      "mode": "100644",
+      "git_blob": "157bcdc280a8b401fc8d1d4ed0a69adbfadbf801",
+      "bytes": 40617,
+      "sha256": "a1cc6338a8be3cc48b5a4f0cf4db9ea1ccf1d33a67360aa2f4c91270746be7c8",
+      "line_ranges": [
+        [
+          632,
+          668
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/a26b103685589ab8a5b4df60d1b760ec445efdf5/cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp"
+    },
+    {
+      "id": "archive-codec",
+      "kind": "git_blob",
+      "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+      "path": "cpp/src/orchestration/incremental/ArtifactGenerationArchive.cpp",
+      "mode": "100644",
+      "git_blob": "34561d4d2023bc3bef7df4592ff67e387c566e6b",
+      "bytes": 26074,
+      "sha256": "b56f6165096c7262fa55a0c1dde5f7da22613abc8b4711b78ed3f1a3e46e527d",
+      "line_ranges": [
+        [
+          419,
+          441
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/a26b103685589ab8a5b4df60d1b760ec445efdf5/cpp/src/orchestration/incremental/ArtifactGenerationArchive.cpp"
+    },
+    {
+      "id": "archive-helper",
+      "kind": "git_blob",
+      "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+      "path": "cpp/tests/e2e/TargetWaveCacheEvidenceChecks.hpp",
+      "mode": "100644",
+      "git_blob": "20a2c129c182892973c3ae1d5f823ae242729eb2",
+      "bytes": 17289,
+      "sha256": "c631a78e0061bacbf07ac1c870e703eb097814874ac8d3957ac8da2ee46b38a6",
+      "line_ranges": [
+        [
+          220,
+          240
+        ],
+        [
+          267,
+          275
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/a26b103685589ab8a5b4df60d1b760ec445efdf5/cpp/tests/e2e/TargetWaveCacheEvidenceChecks.hpp"
+    },
+    {
+      "id": "link-archive",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "docs/LINK_COMPLETION_ARCHIVE.md",
+      "mode": "100644",
+      "git_blob": "e2279213ed53844d87dc2d32a7b3dfd3511928a3",
+      "bytes": 3757,
+      "sha256": "d67e38104140b9fb9e991ee7d8ae3d93b6a6158b10a4f98c97f234ab60588c2b",
+      "line_ranges": [
+        [
+          7,
+          22
+        ],
+        [
+          35,
+          48
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/docs/LINK_COMPLETION_ARCHIVE.md"
+    },
+    {
+      "id": "governance",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "docs/PERFORMANCE_GOVERNANCE.md",
+      "mode": "100644",
+      "git_blob": "61e739cc515a0e3334eb320531a4089c97ae6f29",
+      "bytes": 9664,
+      "sha256": "409b9e152a90f2dfa7cd9fdd6af9c8d773743ef142589bceb0cf1ea855f44905",
+      "line_ranges": [
+        [
+          63,
+          73
+        ],
+        [
+          90,
+          110
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/docs/PERFORMANCE_GOVERNANCE.md"
+    },
+    {
+      "id": "semantics",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "docs/ANALYSIS_COST_SEMANTICS.md",
+      "mode": "100644",
+      "git_blob": "6446d28f9bff9d2d0092a1f768c2d9b1421f9735",
+      "bytes": 11785,
+      "sha256": "111d6adf530a9e3ee7ea95d5617377c6f0af80cdcb1d5364e6f4ffb3478844d1",
+      "line_ranges": [
+        [
+          13,
+          62
+        ],
+        [
+          80,
+          115
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/docs/ANALYSIS_COST_SEMANTICS.md"
+    },
+    {
+      "id": "projection",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "docs/RECORDED_STORAGE_PROJECTION.md",
+      "mode": "100644",
+      "git_blob": "7cbe1d944d25c6989bbbf754032b32682ef8656f",
+      "bytes": 6683,
+      "sha256": "bab50a50b99f0e7f33ed1e10a99ef36dc42eab35ecc2b312367adb022bd93bf8",
+      "line_ranges": [
+        [
+          75,
+          94
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/docs/RECORDED_STORAGE_PROJECTION.md"
+    },
+    {
+      "id": "inventory",
+      "kind": "git_blob",
+      "commit": "36d5219b5274221bfa6688d100bd5eb6cc70409d",
+      "path": "docs/STORAGE_INVENTORY.md",
+      "mode": "100644",
+      "git_blob": "402a2b9c9d505448d9d366ac0b11faa05437524e",
+      "bytes": 30889,
+      "sha256": "c3355324954332eca2d1c7cccab0b83a1a049d601cbf62f96ed94438597d1d4e",
+      "line_ranges": [
+        [
+          29,
+          35
+        ]
+      ],
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/36d5219b5274221bfa6688d100bd5eb6cc70409d/docs/STORAGE_INVENTORY.md"
+    },
+    {
+      "id": "handoff",
+      "kind": "retained_github_readback",
+      "file": "remote-initial-handoff-001.json",
+      "bytes": 14767,
+      "sha256": "983f94fc32708e63ef930e4d9e179aae31977ba7a8a24d71b1dbd323b943f9f9",
+      "url": "https://github.com/Iviesever/msvc-quick-build/issues/198#issuecomment-6083356927",
+      "remote_updated_at": "2026-10-09T14:52:53Z",
+      "body_json_pointer": "/body",
+      "body_bytes": 10685,
+      "body_sha256": "5141327f7771d9a51b2b131621e1d8dead95a1730deafdcab6eb1c39c27aa4e1"
+    },
+    {
+      "id": "issue",
+      "kind": "retained_github_readback",
+      "file": "remote-initial-issue198-001.json",
+      "bytes": 18526,
+      "sha256": "2db759481497e1e88953de2e4138e0b093149fb2c1f3e04af177091e3054c5fb",
+      "url": "https://github.com/Iviesever/msvc-quick-build/issues/198",
+      "remote_updated_at": "2026-10-09T14:58:53Z",
+      "body_json_pointer": "/body",
+      "body_bytes": 13542,
+      "body_sha256": "54abd3e2bdfe85766ff025017c412851d5aa8c4f231d78aafdf62cce43a56ac9"
+    },
+    {
+      "id": "pr250",
+      "kind": "retained_github_readback",
+      "file": "remote-initial-pr250-001.json",
+      "bytes": 25402,
+      "sha256": "1d69a7d52cab79677ceaeac9199d698864af354518ad9cf7cce3c3ce32a80d40",
+      "url": "https://github.com/Iviesever/msvc-quick-build/pull/250",
+      "remote_updated_at": "2026-10-09T10:09:03Z",
+      "body_json_pointer": "/body",
+      "body_bytes": 5500,
+      "body_sha256": "e1b8ddb6a3070be2314d085c6d1cc69f91d8e2991927f8112946a029dd30c12b"
+    },
+    {
+      "id": "registration",
+      "kind": "retained_github_readback",
+      "file": "remote-study001-registration-001.json",
+      "bytes": 13438,
+      "sha256": "910640407a5b0718ad87f807c89eae942ff20465874666c0ee5b08d719c20273",
+      "url": "https://github.com/Iviesever/msvc-quick-build/issues/198#issuecomment-6078630647",
+      "remote_updated_at": "2026-10-09T09:57:08Z",
+      "body_json_pointer": "/body",
+      "body_bytes": 9367,
+      "body_sha256": "83394cdea2e4a3927d9886694d9709b78420316cc57866d4079fc036b44539cd"
+    },
+    {
+      "id": "registration2",
+      "kind": "retained_github_readback",
+      "file": "remote-study002-registration-001.json",
+      "bytes": 8454,
+      "sha256": "ddbb89d887dc1316b9165a55e037e9738cee7327e20eab1933c9b38e51cc3df5",
+      "url": "https://github.com/Iviesever/msvc-quick-build/issues/198#issuecomment-6078685272",
+      "remote_updated_at": "2026-10-09T10:00:54Z",
+      "body_json_pointer": "/body",
+      "body_bytes": 4417,
+      "body_sha256": "533cc40e1072e9f6e00f766f9c43cc470e6500e0dfb7e7ad74816cbeba490b53"
+    }
+  ],
+  "review_revision": {
+    "number": 2,
+    "reason": "Independent review identified a Minor count-unit label mismatch: PR250 production has 42 matching lines and 49 symbol occurrences. Raw search evidence and the scoped caller/necessity conclusions are unchanged.",
+    "initial_unpublished_json_sha256": "db56587ac617087093b88d628ac1e09cb20f8aa8e4aefb1a044135def6a3bb3a",
+    "initial_unpublished_json_retained_path": "intermediate-initial-review/ANALYSIS_COST_NECESSITY_REVIEW.json",
+    "independent_count_proof": {
+      "file": "search-count-correction-001.json",
+      "bytes": 101596,
+      "sha256": "b3c113dada9a593090fc3aa59ea5d7563175c134e311b8a71c0d7c89332b63f9"
+    },
+    "original_audit_retained": [
+      {
+        "file": "product-necessity-audit-001.json",
+        "bytes": 207484,
+        "sha256": "b828fd83cd6994914be3d742c35b9ebab42626ee21d251ff4d92d36aae4192bc"
+      },
+      {
+        "file": "product-necessity-audit-001.md",
+        "bytes": 19959,
+        "sha256": "61ed9f74420c965ed977c781780eff8bf715394c64294d912a0f460d6d498ce8"
+      }
+    ]
+  }
+}
