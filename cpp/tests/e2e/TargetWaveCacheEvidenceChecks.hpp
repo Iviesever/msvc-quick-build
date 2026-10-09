@@ -3,12 +3,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 #include "mqb/core/PerformanceEvidence.hpp"
+#include "mqb/orchestration/ArtifactGenerationModel.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 
 // Test-side persistence only. This is outside the measured product invocation;
@@ -110,4 +112,38 @@ void history(const fs::path& prefix, const Recorded& recorded) {
         require(bytes(file)==bytes(after), "owned cache evidence survives later overwrites and failures");
     }
 }
+
+// BEGIN recorded generation consumer checks
+template<class Recorded>
+void generation(const Recorded& recorded, const char* phase, const fs::path& root,
+                const mqb::StoragePathKey& key) {
+    const std::vector<RecordedArtifactGenerationInput> inputs{
+        {phase, {"native-fixture", "ordinary-target"}, "explicit-generation",
+         std::cref(recorded), std::nullopt}};
+    auto value = model_recorded_artifact_generations(inputs, {}, root, key);
+    if (!value) throw std::runtime_error("native recorded generation: " + value.error().message);
+    require(value->model.records.size()==1 && value->compiles.size()==1 &&
+            value->compiles[0].size()==recorded.cache_evidence.compiles.size(),
+            "native generation owns every source context");
+    for (std::size_t i=0; i<value->compiles[0].size(); ++i) {
+        const auto& context=value->compiles[0][i];
+        const auto& evidence=recorded.cache_evidence.compiles[i];
+        require(context.captured_signature==evidence.cache_entry.signature &&
+                context.inspection_toolchain.compiler==evidence.inspection_toolchain.identity.compiler &&
+                context.cache_toolchain.compiler==evidence.cache_entry.toolchain.compiler &&
+                context.cache_toolchain.version==evidence.cache_entry.toolchain.version &&
+                context.cache_toolchain.binary_stamp==evidence.cache_entry.toolchain.binary_stamp &&
+                value->model.references.records[0].stages[i].working_directory==evidence.request.working_directory,
+                "native generation preserves exact captured identity and compile cwd");
+    }
+    const auto& claim=value->model.records[0];
+    if (claim.completion==mqb::ArtifactCompletion::executed)
+        require(claim.state==ArtifactGenerationState::executed_claim, "native executed claim remains unverified but resolvable");
+    else
+        require(claim.state==ArtifactGenerationState::unresolved && !claim.origin_record,
+                "standalone native reuse cannot invent its absent producer");
+    std::cout << "recorded-generation phase=" << phase << " source_contexts=" << value->compiles[0].size()
+              << " accepted=true deletion_authorized=false\n";
+}
+// END recorded generation consumer checks
 } // namespace target_wave_cache_checks

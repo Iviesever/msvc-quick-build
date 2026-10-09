@@ -526,6 +526,7 @@ void recorded_target_lifecycle(const fs::path& root, const fs::path& evidence) {
             require(result->record.link.association.file_inputs == file_inputs &&
                     result->record.link.association.side_outputs == side_outputs,
                     "pure projection never removes conflicting historical input or output roles");
+            target_wave_cache_checks::generation(*result, phase, root, platform::windows::path_identity_key);
         }
         return result;
     };

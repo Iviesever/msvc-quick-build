@@ -1,0 +1,35 @@
+{
+  "base": "33c57a10fc77cbe28da5487710e94ca8e5a83c55",
+  "files": {
+    "cpp/tests/e2e/TargetWaveCacheEvidenceChecks.hpp": {
+      "current": "0d10711257a2c95f8f9416518ccb92caa008e0072751d6383eb5cf6a0c5d4a56",
+      "prior": "a23bdfd2cfaebddc8eea1c6db3b70df4c9859fe5911a96873a1872e9f4d778be",
+      "cuts": [
+        [
+          "\n// BEGIN recorded generation consumer checks\n",
+          "// END recorded generation consumer checks\n"
+        ]
+      ],
+      "additions": [
+        "#include <iostream>\n",
+        "#include \"mqb/orchestration/ArtifactGenerationModel.hpp\"\n"
+      ]
+    },
+    "cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp": {
+      "current": "632f8240dee8d7e79acf496d0cf67cd95335a439187aa7983c91c3d56b24f391",
+      "prior": "a6f9b228600acc5650cfc486ea7e881ec8f5a9612f40dd9e3ffe3ea3a8546222",
+      "cuts": [],
+      "additions": [
+        "            target_wave_cache_checks::generation(*result, phase, root, platform::windows::path_identity_key);\n"
+      ]
+    },
+    "cpp/tests/e2e/mqb_static_record_e2e_tests.cpp": {
+      "current": "ee74c3dffb66448da07d64060b5acdd9bab4a68205c059853ed336909c1b93e1",
+      "prior": "cfd0f113f24fab013e938293f3c1fcdf507d382060419901e1ca0d5a0a4a2c39",
+      "cuts": [],
+      "additions": [
+        "        if (result) target_wave_cache_checks::generation(*result, phase, root, platform::windows::path_identity_key);\n"
+      ]
+    }
+  }
+}

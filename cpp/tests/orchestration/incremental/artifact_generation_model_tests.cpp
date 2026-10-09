@@ -1,4 +1,5 @@
 #include "mqb/orchestration/ArtifactGenerationModel.hpp"
+#include "mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -217,5 +218,254 @@ void run() {
     check(out.records[0].source_id=="owned-copy" && out.references.records[0].stages.back().paths[1].path==root()/"app.exe","results own their historical source and paths");
 }
 }
-int main(){try{run();std::cout<<checks<<" generation-model checks passed\n";return 0;}
+
+// BEGIN recorded generation model contracts
+namespace recorded_generation_contracts {
+unsigned count{};
+void expect(bool ok, const char* message) {
+    ++count; if (!ok) throw std::runtime_error(message);
+}
+RecordedTargetResult fixture(bool dll = false) {
+    RecordedTargetResult r{.record={.link=link_record(ArtifactCompletion::executed)}};
+    r.record.caller_label = ArtifactGenerationLabel{"annotation", "not-an-origin"};
+    r.record.link = link_record(ArtifactCompletion::executed);
+    r.record.link.association.objects.clear();
+    r.record.link.options.target_kind = dll ? TargetKind::dynamic_library : TargetKind::executable;
+    if (dll) {
+        r.record.link.association.output = root()/"plugin.dll";
+        r.record.link.association.side_outputs = {root()/"plugin.lib", root()/"plugin.exp"};
+    }
+    r.result.link.linked = true; r.result.any_compiled = true;
+    r.record.compiler_options.defines = {"ONE=1", "TWO=2"};
+    for (unsigned i = 0; i < 2; ++i) {
+        const auto name = std::to_string(i);
+        const auto source = root()/(name+".cpp"), object = root()/(name+".obj");
+        const auto deps = root()/(name+".json"), cache = root()/(name+".cache");
+        r.record.sources.push_back({source, object, deps, cache, ArtifactCompletion::executed, false});
+        TargetCompileResult result{.source=source}; result.result.compiled = true;
+        r.result.compiles.push_back(std::move(result));
+        ToolchainIdentity compiler{root()/"cl.exe", "v1", "compiler-"+name};
+        r.cache_evidence.compiles.push_back({
+            .request={.unit={.source=source, .outputs={{object,ArtifactKind::object}}},
+                .options=r.record.compiler_options, .cache_file=cache, .source_dependencies_file=deps,
+                .working_directory=root()/("cwd-"+name)},
+            .inspection_toolchain={.identity=compiler, .environment={{"PRIVATE","do-not-copy-environment"}}},
+            .cache_entry={.source=source, .toolchain=compiler, .signature=BuildSignature::from_digest({11,i}),
+                .outputs={{object,ArtifactKind::object}}, .dependencies={root()/"shared.hpp"},
+                .include_search_roots={root()/"include"}},
+            .state=CompileCacheEvidenceState::saved});
+        r.record.link.association.objects.push_back(object);
+    }
+    return r;
+}
+void reuse_source(RecordedTargetResult& r, std::size_t i) {
+    r.record.sources[i].completion = ArtifactCompletion::reused;
+    r.result.compiles[i].result.compiled = false;
+    r.cache_evidence.compiles[i].state = CompileCacheEvidenceState::reused;
+}
+void reuse(RecordedTargetResult& r) {
+    for (std::size_t i=0; i<r.record.sources.size(); ++i) reuse_source(r,i);
+    r.result.any_compiled = false; r.result.link.linked = false;
+    r.record.link.completion = ArtifactCompletion::reused; r.record.link.cache_state = ArtifactCacheState::reused;
+}
+RecordedStaticTargetResult static_fixture() {
+    const auto r = fixture();
+    RecordedStaticTargetResult s{.record={.archive={.association={.signature=BuildSignature::from_digest({0,0})}}}};
+    s.record.compiler_options = r.record.compiler_options; s.record.sources = r.record.sources;
+    s.cache_evidence = r.cache_evidence;
+    s.result.compiles = r.result.compiles; s.result.any_compiled = true; s.result.archive.archived = true;
+    s.record.archive = {.completion=ArtifactCompletion::executed, .cache_state=ArtifactCacheState::saved,
+        .association={.librarian={root()/"lib.exe","v1","stamp"}, .signature=BuildSignature::from_digest({3,4}),
+            .objects=r.record.link.association.objects, .output=root()/"output.lib"},
+        .architecture=Architecture::x64, .cache_file=root()/"output.archivecache", .working_directory=root()};
+    return s;
+}
+template<class T>
+RecordedArtifactGenerationInput in(const T& r, std::string id="origin", std::string gen="g1") {
+    return {std::move(id), {"project","app"}, std::move(gen), std::cref(r), std::nullopt};
+}
+auto model(std::vector<RecordedArtifactGenerationInput> records, std::vector<ArtifactGenerationKey> retains = {}) {
+    auto result = model_recorded_artifact_generations(records, retains, root(), lexical_key);
+    if (!result) throw std::runtime_error("rich model: "+result.error().message);
+    return std::move(*result);
+}
+void run() {
+    static_assert(!RecordedArtifactGenerationModel::producer_identity_verified &&
+                  !RecordedArtifactGenerationModel::current_content_verified &&
+                  !RecordedArtifactGenerationModel::complete_producer_inventory &&
+                  !RecordedArtifactGenerationModel::deletion_authorized);
+    auto a=fixture(), b=a; reuse(b);
+    auto result=model({in(a),in(b,"reuse")},{retain()});
+    expect(result.model.records[0].state==State::executed_claim && result.model.records[1].state==State::explicit_reuse,
+           "rich cold/warm have a single explicit origin");
+    expect(result.model.retention[0].state==ArtifactRetentionState::selected &&
+           result.model.retention[0].associated_records==std::vector<std::size_t>{0,1}, "rich retention follows origin");
+    expect(result.compiles.size()==2 && result.compiles[0].size()==2, "context indices match records and sources");
+    expect(result.compiles[0][0].inspection_toolchain.binary_stamp=="compiler-0" &&
+           result.compiles[0][1].inspection_toolchain.binary_stamp=="compiler-1", "per-source identities not collapsed");
+    expect(result.model.references.records[0].stages[0].working_directory==root()/"cwd-0" &&
+           result.model.references.records[0].stages[1].working_directory==root()/"cwd-1", "each compile retains its own cwd");
+    expect(result.model.references.records[1].stages[0].cache_state==ArtifactCacheState::reused, "warm is not saved");
+    expect(result.model.records[0].recipe_evidence.find("do-not-copy-environment")==std::string::npos, "environment excluded");
+    expect(result.model.records[0].caller_label->generation=="not-an-origin", "annotation not inferred as generation");
+    expect(result.model.references.observation.entries.empty(), "no filesystem observation");
+    expect(model({in(b,"reuse"),in(a)}).model.records[0].origin_record==1, "reverse input order retains explicit origin");
+    expect(has(model({in(b)}).model.records[0],Issue::missing_origin), "reuse-only history does not manufacture origin");
+    auto no_gen=in(a); no_gen.generation.reset();
+    expect(has(model({no_gen}).model.records[0],Issue::missing_generation), "generation must be explicit");
+    auto duplicated=in(a,"other");
+    auto duplicate=model({in(a),duplicated,in(b,"reuse")},{retain()});
+    expect(duplicate.model.retention[0].state==ArtifactRetentionState::ambiguous &&
+           has(duplicate.model.records[2],Issue::ambiguous_origin), "duplicate producer claims are never deduplicated");
+    expect(has(model({in(a),in(a)}).model.records[0],Issue::duplicate_source), "duplicate historical source IDs retained");
+    expect(model({in(a)},{retain("absent")}).model.retention[0].state==ArtifactRetentionState::missing, "absent is not retired");
+    const auto differing=[&](auto edit) {
+        auto other=b; edit(other);
+        expect(has(model({in(a),in(other,"reuse")}).model.records[1],Issue::recipe_mismatch), "selected rich field mismatch");
+    };
+    differing([](auto& r){r.cache_evidence.compiles[1].inspection_toolchain.identity.version="v2";});
+    differing([](auto& r){r.cache_evidence.compiles[1].cache_entry.toolchain.version="executor-v2";});
+    differing([](auto& r){r.cache_evidence.compiles[1].cache_entry.signature=BuildSignature::from_digest({9,9});});
+    differing([](auto& r){r.cache_evidence.compiles[1].request.working_directory=root()/"other-cwd";});
+    differing([](auto& r){r.cache_evidence.compiles[1].cache_entry.dependencies.push_back(root()/"another.hpp");});
+    differing([](auto& r){r.cache_evidence.compiles[1].cache_entry.include_search_roots.push_back(root()/"other-include");});
+    differing([](auto& r){
+        std::swap(r.record.compiler_options.defines[0],r.record.compiler_options.defines[1]);
+        for(auto& e:r.cache_evidence.compiles)e.request.options=r.record.compiler_options;
+    });
+    auto different=a; different.cache_evidence.compiles[0].cache_entry.toolchain.version="original executor";
+    auto distinct=model({in(different)});
+    expect(distinct.compiles[0][0].toolchains_differ &&
+           distinct.compiles[0][0].cache_toolchain.version=="original executor", "inspection/cache difference retained");
+    auto missing=a; missing.cache_evidence.compiles[1].inspection_toolchain.identity.binary_stamp.clear();
+    expect(has(model({in(missing)}).model.records[0],Issue::missing_compiler), "incomplete inspection compiler stays unknown");
+    missing=a; missing.cache_evidence.compiles[1].cache_entry.toolchain.compiler.clear();
+    expect(has(model({in(missing)}).model.records[0],Issue::missing_compiler), "incomplete cache compiler stays unknown");
+    auto partial=a; reuse_source(partial,0);
+    auto p=model({in(partial)});
+    expect(p.model.records[0].state==State::executed_claim &&
+           p.model.references.records[0].stages[0].completion==ArtifactCompletion::reused, "partial source reuse remains visible");
+    partial.record.link.completion=ArtifactCompletion::reused; partial.record.link.cache_state=ArtifactCacheState::reused;
+    partial.result.link.linked=false;
+    expect(has(model({in(partial)}).model.records[0],Issue::mixed_reuse), "executed source inside reused target conflicts");
+    auto failed=a;
+    auto& e=failed.cache_evidence.compiles[0];
+    e.state=CompileCacheEvidenceState::save_failed;
+    e.save_error=CompileCacheFileError{.code=CompileCacheFileErrorCode::replace_failed,.file=e.request.cache_file,.message="locked"};
+    failed.result.compiles[0].result.warnings.push_back({IncrementalCompileWarningCode::cache_save_failed,e.request.cache_file,"locked"});
+    failed.record.sources[0].has_warnings=true;
+    auto failure=model({in(failed),in(b,"reuse")});
+    expect(failure.compiles[0][0].save_error && failure.compiles[0][0].warnings[0].message=="locked" &&
+           failure.model.references.records[0].stages[0].cache_state==ArtifactCacheState::save_failed, "failed save retained independently");
+    expect(failure.model.records[1].state==State::explicit_reuse, "save outcome does not alter recipe identity");
+    auto forced=a; forced.cache_evidence.compiles[0].request.force_rebuild=true;
+    expect(model({in(forced),in(b,"reuse")}).compiles[0][0].force_rebuild, "force metadata retained but not identity");
+    auto dll=fixture(true);
+    expect(model({in(dll)}).model.records[0].state==State::executed_claim, "clean DLL admitted");
+    auto lib=static_fixture(); auto warm_lib=lib;
+    warm_lib.result.any_compiled=false; warm_lib.result.archive.archived=false;
+    warm_lib.record.archive.completion=ArtifactCompletion::reused; warm_lib.record.archive.cache_state=ArtifactCacheState::reused;
+    for(std::size_t i=0;i<2;++i){
+        warm_lib.record.sources[i].completion=ArtifactCompletion::reused;
+        warm_lib.result.compiles[i].result.compiled=false; warm_lib.cache_evidence.compiles[i].state=CompileCacheEvidenceState::reused;
+    }
+    auto statics=model({in(lib),in(warm_lib,"reuse")});
+    expect(statics.model.records[1].state==State::explicit_reuse &&
+           statics.model.references.records[0].stages.back().kind==ArtifactStageKind::archive, "static cold/reuse uses same lineage");
+    expect(!statics.model.references.records[0].stages.back().configuration, "LIB stage configuration remains unknown");
+    // Strict errors retain both the record slot and the original source slot.
+    const auto reject=[&](auto edit, RecordedStorageProjectionIssue code, std::optional<std::size_t> slot) {
+        auto damaged=a; edit(damaged);
+        auto value=model_recorded_artifact_generations(std::vector{in(a),in(damaged,"bad")},{},root(),lexical_key);
+        expect(!value && value.error().record_index==1 && value.error().projection_error &&
+               value.error().projection_error->issue==code && value.error().projection_error->source_index==slot,
+               "nested projector error identity retained");
+    };
+    using PI=RecordedStorageProjectionIssue;
+    reject([](auto& r){r.cache_evidence.compiles.pop_back();},PI::source_count,{});
+    reject([](auto& r){std::swap(r.cache_evidence.compiles[0],r.cache_evidence.compiles[1]);},PI::source_mismatch,0);
+    reject([](auto& r){r.cache_evidence.compiles[0].cache_entry.source="wrong";},PI::cache_mismatch,0);
+    reject([](auto& r){r.cache_evidence.compiles[0].request.options.defines={"different"};},PI::options_mismatch,0);
+    reject([](auto& r){r.result.any_compiled=false;},PI::outcome_mismatch,{});
+    reject([](auto& r){std::swap(r.record.link.association.objects[0],r.record.link.association.objects[1]);},PI::terminal_mismatch,{});
+    reject([](auto& r){r.record.link.association.side_outputs={r.record.sources[0].source};},PI::path_conflict,{});
+    reject([](auto& r){r.record.link.association.objects[0]="other.obj";},PI::terminal_mismatch,{});
+    auto both=dll; both.record.link.association.file_inputs.push_back(root()/"plugin.lib");
+    auto conflict=model_recorded_artifact_generations(std::vector{in(both)},{},root(),lexical_key);
+    expect(!conflict && conflict.error().projection_error->issue==PI::path_conflict, "genuine DLL role conflict not waived");
+    // Borrowed inputs produce an owned result; old values cannot be overwritten.
+    auto owned=model({in(failed)});
+    const auto signature=owned.compiles[0][0].captured_signature;
+    failed.cache_evidence.compiles[0].cache_entry.signature=BuildSignature::from_digest({999,999});
+    failed.cache_evidence.compiles[0].save_error->message="changed";
+    expect(owned.compiles[0][0].captured_signature==signature && owned.compiles[0][0].save_error->message=="locked",
+           "owning context survives caller mutation");
+    // Optional snapshots corroborate only the terminal link and remain owned.
+    auto with_snapshot=in(a);
+    LinkFactSnapshot snap;
+    snap.completion=ArtifactCompletion::executed; snap.cache_state=ArtifactCacheState::saved; snap.linked=true;
+    auto text_path=[](const fs::path& path){const auto u=path.u8string();return std::string{reinterpret_cast<const char*>(u.data()),u.size()};};
+    snap.output=text_path(a.record.link.association.output);snap.cache_file=text_path(a.record.link.cache_file);
+    snap.working_directory=text_path(*a.record.link.working_directory);snap.signature=a.record.link.association.signature.digest();
+    snap.linker_path=text_path(a.record.link.association.linker.linker);snap.linker_version="v1";snap.linker_stamp="stamp";
+    with_snapshot.snapshot=snap;
+    auto snapshot_model=model({with_snapshot});
+    expect(snapshot_model.model.records[0].snapshot==snap && snapshot_model.model.records[0].state==State::executed_claim,
+           "matching historical snapshot remains separate corroboration");
+    with_snapshot.snapshot->signature.high=88;
+    expect(has(model({with_snapshot}).model.records[0],Issue::snapshot_mismatch), "snapshot cannot override terminal identity");
+    auto wrong_static=in(lib);wrong_static.snapshot=snap;
+    expect(has(model({wrong_static}).model.records[0],Issue::snapshot_mismatch), "link snapshot does not attest a static archive");
+    auto relative=a;
+    for(std::size_t i=0;i<2;++i){
+        auto& s=relative.record.sources[i];auto& v=relative.cache_evidence.compiles[i];
+        s.source=s.source.filename();s.object=s.object.filename();s.dependencies=s.dependencies.filename();s.compile_cache=s.compile_cache.filename();
+        relative.result.compiles[i].source=s.source;v.request.unit.source=s.source;v.cache_entry.source=s.source;
+        v.request.unit.outputs[0].path=s.object;v.cache_entry.outputs[0].path=s.object;
+        v.request.cache_file=s.compile_cache;v.request.source_dependencies_file=s.dependencies;v.request.working_directory=root();
+        relative.record.link.association.objects[i]=s.object;
+    }
+    auto resolved=model({in(relative)});
+    expect(!has(resolved.model.records[0],Issue::unresolved_path), "own cwd resolves relative source paths");
+    relative.cache_evidence.compiles[1].request.working_directory=root()/"conflict";
+    auto cwd_conflict=model_recorded_artifact_generations(std::vector{in(relative)},{},root(),lexical_key);
+    expect(!cwd_conflict && cwd_conflict.error().projection_error &&
+           cwd_conflict.error().projection_error->issue==PI::terminal_mismatch, "different terminal cwd cannot supply a compile object");
+    auto generations=model({in(a),in(a,"second","g2")},{retain()});
+    expect(std::any_of(generations.model.paths.begin(),generations.model.paths.end(),[](const auto& path){
+        return path.multiple_executed_generations && path.retained_records==std::vector<std::size_t>{0};
+    }),"shared path across generations remains a potential overwrite, not garbage");
+    auto expired=[]{
+        auto temporary=fixture();
+        return model({in(temporary)});
+    }();
+    expect(expired.compiles[0][1].cache_toolchain.binary_stamp=="compiler-1", "owned result survives borrowed invocation destruction");
+    const auto bounded=[&](auto records, auto retention) {
+        unsigned keys=0;
+        auto value=model_recorded_artifact_generations(records,retention,root(),[&](const fs::path& path){
+            ++keys; return lexical_key(path);
+        });
+        expect(!value && keys==0,"whole-batch limit failure precedes projection callbacks and result copies");
+    };
+    auto long_id=in(a,"late"); long_id.source_id.assign(ArtifactGenerationLimits::text_bytes+1,'x');
+    bounded(std::vector{in(a),long_id},std::vector<ArtifactGenerationKey>{});
+    auto many=a; many.cache_evidence.compiles[0].cache_entry.dependencies.resize(ArtifactGenerationLimits::paths+1,root()/"h.hpp");
+    bounded(std::vector{in(a),in(many,"late")},std::vector<ArtifactGenerationKey>{});
+    auto too_many=a; too_many.record.sources.resize(ArtifactGenerationLimits::stages,too_many.record.sources[0]);
+    bounded(std::vector{in(a),in(too_many,"late")},std::vector<ArtifactGenerationKey>{});
+    bounded(std::vector(ArtifactGenerationLimits::records+1,in(a)),std::vector<ArtifactGenerationKey>{});
+    auto bad_retention=retain();bad_retention.generation.assign(ArtifactGenerationLimits::text_bytes+1,'x');
+    bounded(std::vector{in(a)},std::vector{bad_retention});
+    expect(!model_recorded_artifact_generations(std::vector{in(a)},{},root(),{}), "missing key refused");
+    bool propagated=false;
+    try{(void)model_recorded_artifact_generations(std::vector{in(a)},{},root(),[](const fs::path&)->std::string{
+        throw std::runtime_error("rich-key");});}catch(const std::runtime_error& ex){propagated=std::string_view(ex.what())=="rich-key";}
+    expect(propagated,"callback exceptions propagate");
+    expect(model({}).model.records.empty(), "empty rich input creates nothing");
+    std::cout<<count<<" recorded generation checks passed\n";
+}
+} // namespace recorded_generation_contracts
+// END recorded generation model contracts
+
+int main(){try{run();std::cout<<checks<<" generation-model checks passed\n";recorded_generation_contracts::run();return 0;}
 catch(const std::exception& e){std::cerr<<"check "<<checks<<": "<<e.what()<<'\n';return 1;}}

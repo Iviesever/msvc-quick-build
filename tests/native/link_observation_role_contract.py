@@ -6,6 +6,7 @@ The existing recorded-storage spec and its earlier fingerprints remain unchanged
 from pathlib import Path
 import hashlib
 import json
+import recorded_generation_extension as generation
 
 SPEC = json.loads(Path(__file__).with_name('link_observation_role_extension.json').read_text(encoding='utf-8'))
 
@@ -13,6 +14,7 @@ def digest(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 def legacy_text(path, text):
+    text = generation.legacy_text(path, text)
     rule = SPEC['files'].get(path)
     if rule is None:
         return text

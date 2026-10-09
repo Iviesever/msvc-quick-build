@@ -7,6 +7,7 @@ not a wildcard exemption for new or old assertions. New helpers are pinned too.
 from pathlib import Path
 import hashlib
 import json
+import recorded_generation_extension as generation
 ROOT=Path(__file__).resolve().parents[2]
 SPEC=json.loads((Path(__file__).with_name('target_wave_cache_extension.json')).read_text(encoding='utf-8'))
 
@@ -26,7 +27,7 @@ def legacy_text(path,text):
 
 def verify_helpers():
     for path,pin in SPEC['new_helpers'].items():
-        if git_blob((ROOT/path).read_text(encoding='utf-8'))!=pin:
+        if git_blob(generation.legacy_text(path, (ROOT/path).read_text(encoding='utf-8')))!=pin:
             raise ValueError('target-wave helper assertions changed: '+path)
 
 def legacy_view(values):

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <expected>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -106,4 +107,48 @@ model_artifact_generations(std::span<const ArtifactGenerationInput> records,
                            std::span<const ArtifactGenerationKey> retain,
                            const std::filesystem::path& lexical_root,
                            const StoragePathKey& key);
+
+// BEGIN recorded generation model interface
+// This short-lived input borrows a completed invocation so that admission does
+// not copy its process output, environment, or cache vectors before budgeting.
+// Keep each referenced invocation alive and unchanged for the synchronous call.
+struct RecordedArtifactGenerationInput {
+    std::string source_id;
+    ArtifactTargetKey target;
+    std::optional<std::string> generation;
+    std::variant<std::reference_wrapper<const RecordedTargetResult>,
+                 std::reference_wrapper<const RecordedStaticTargetResult>> record;
+    std::optional<LinkFactSnapshot> snapshot;
+};
+struct RecordedArtifactGenerationModel {
+    ArtifactGenerationModel model;
+    // compiles[record_index][source_index] owns the strictly projected context.
+    // Its corresponding compile stage is model.references.records[i].stages[j].
+    std::vector<std::vector<CompileStorageContext>> compiles;
+    static constexpr bool producer_identity_verified = false;
+    static constexpr bool current_content_verified = false;
+    static constexpr bool complete_producer_inventory = false;
+    static constexpr bool deletion_authorized = false;
+};
+struct RecordedArtifactGenerationError {
+    std::string message;
+    std::optional<std::size_t> record_index;
+    // Preserve the strict projector's issue, source slot and diagnostic.
+    std::optional<RecordedStorageProjectionError> projection_error;
+};
+
+// Ordinary EXE/DLL/static only. All selected input fields and projected shape
+// are preflighted for the whole batch against the model/projection intersection
+// before owning result copies. These are traversal/copy bounds, not an RSS cap.
+// Uses captured per-source inspection AND cache identities/signatures, never a
+// caller-wide replacement compiler. Outcomes, force and warnings are retained,
+// but are not recipe identity. Old APIs/module unknown semantics are unchanged.
+// No IO, current-toolchain lookup, callback observer, recompile or authority gain.
+// Exceptions (including allocation and the pure lexical key) propagate.
+[[nodiscard]] std::expected<RecordedArtifactGenerationModel, RecordedArtifactGenerationError>
+model_recorded_artifact_generations(std::span<const RecordedArtifactGenerationInput> records,
+                                   std::span<const ArtifactGenerationKey> retain,
+                                   const std::filesystem::path& lexical_root,
+                                   const StoragePathKey& key);
+// END recorded generation model interface
 } // namespace mqb::orchestration
