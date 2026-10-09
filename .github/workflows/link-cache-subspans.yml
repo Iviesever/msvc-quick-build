@@ -1,0 +1,92 @@
+name: Link Cache Write Subspan Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'cpp/include/mqb/core/PerformanceEvidence.hpp'
+      - 'cpp/src/core/cache/LinkCacheFile.cpp'
+      - 'cpp/src/app/diagnostics/PerformanceTimings.cpp'
+      - 'cpp/tests/core/cache/link_cache_file_tests.cpp'
+      - 'tests/native/collect_link_cache_subspans.ps1'
+      - '.github/workflows/link-cache-subspans.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: link-cache-subspans-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Link cache subspan evidence contracts
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Validate positive and damaged subspan records
+        shell: pwsh
+        run: |
+          & ./tests/native/collect_link_cache_subspans.ps1 -SelfTest `
+            -OutputRoot (Join-Path $PWD '.mqb/link-cache-subspan-contracts')
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: link-cache-subspan-contracts
+          path: .mqb/link-cache-subspan-contracts/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  study:
+    name: Fixed eight-report link cache subspan study
+    needs: contract
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Preserve source and build exact candidate with MQB
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $PWD 'native-out/link-cache-subspans'
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          & git archive --format=zip --output="$root/head-source.zip" HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & git archive --format=zip --output="$root/base-source.zip" c8c8c0172850ff11351b63d5bd1507a7f57ac01e
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Start-Transcript -LiteralPath (Join-Path $root 'build-transcript.txt') | Out-Null
+          try {
+              $seed = & ./tests/native/acquire_seed.ps1 -RepoRoot $PWD -OutputRoot (Join-Path $PWD 'native-seed')
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $mqb = & ./tests/native/build_mqb.ps1 -BuilderMqbPath $seed -RepoRoot $PWD `
+                -Version '5.5.0' -Configuration Release -Clean -OutputPath (Join-Path $root 'mqb.exe')
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              @{ head = (& git rev-parse HEAD).Trim(); version = '5.5.0'; configuration = 'Release'
+                 binary_sha256 = (Get-FileHash -LiteralPath $mqb).Hash
+                 seed_sha256 = (Get-FileHash -LiteralPath $seed).Hash
+              } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'build-identity.json') -Encoding utf8
+          } finally { Stop-Transcript | Out-Null }
+      - name: Run declared four same-binary pairs without adaptive retries
+        shell: pwsh
+        run: |
+          & ./tests/native/collect_link_cache_subspans.ps1 `
+            -MqbPath (Join-Path $PWD 'native-out/link-cache-subspans/mqb.exe') -RepoRoot $PWD `
+            -OutputRoot (Join-Path $PWD 'native-out/link-cache-subspans/study')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: link-cache-subspan-evidence
+          path: native-out/link-cache-subspans/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
