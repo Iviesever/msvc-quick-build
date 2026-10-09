@@ -1,5 +1,6 @@
 """Registered file-layer boundaries. Static checks, not native IO/performance proof."""
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import hashlib
 import json
 import re
@@ -18,7 +19,7 @@ TU = 'cpp/src/platform/windows/LinkFactSnapshotFile.cpp'
 TRANSFER = 'cpp/src/platform/windows/LinkFactFileTransfer.hpp'
 
 def sha(data): return hashlib.sha256(data).hexdigest()
-def read(name): return (ROOT/name).read_text(encoding='utf-8')
+def read(name): return archive_extension.read_text(ROOT, name)
 def canonical(name): return read(name).encode('utf-8')
 def old_tests(values):
     old = {n:v for n,v in values.items() if n not in NEW_TESTS and n not in ARCHIVE_TESTS and n not in MODEL_TESTS}
@@ -36,7 +37,7 @@ def no_destructive_policy(text):
 
 class FileContracts(unittest.TestCase):
     def test_previous_91_native_programs_exact(self):
-        values={p.relative_to(ROOT).as_posix():p.read_text(encoding='utf-8').encode() for p in (ROOT/'cpp/tests').rglob('*_tests.cpp')}
+        values={p.relative_to(ROOT).as_posix():p.read_text(encoding='utf-8').encode() for p in archive_extension.legacy_native_paths(ROOT)}
         self.assertEqual(len(values),96); old_tests(values)
         values['cpp/tests/core/cache/link_fact_snapshot_tests.cpp'] += b'// changed'
         with self.assertRaises(ValueError): old_tests(values)
@@ -47,7 +48,7 @@ class FileContracts(unittest.TestCase):
         actual=legacy_workflow_view(actual)
         self.assertEqual(sha(''.join(f'{k}\0{v}\n' for k,v in sorted(actual.items())).encode()),WORKFLOW_SHA)
     def test_exact_product_manifest(self):
-        actual={p.relative_to(ROOT/'cpp').as_posix() for p in (ROOT/'cpp/src').rglob('*.cpp')}
+        actual={p.relative_to(ROOT/'cpp').as_posix() for p in archive_extension.legacy_product_paths(ROOT)}
         declared=['src/app/main.cpp']+json.loads(read('cpp/mqb.json'))['discovery']['extra_sources']
         self.assertEqual(len(declared),96); self.assertEqual(len(set(declared)),96); self.assertEqual(set(declared),actual)
     def test_create_new_no_destructive_fallback(self):
@@ -75,7 +76,7 @@ class FileContracts(unittest.TestCase):
         self.assertLess(body.index('LinkFactSnapshotLimits::document_bytes',body.index('read_document')),body.index('std::string text('))
         self.assertIn('if (*tail) return fail(Code::changed',body)
     def test_no_default_adoption(self):
-        for p in (ROOT/'cpp/src').rglob('*.cpp'):
+        for p in archive_extension.legacy_product_paths(ROOT):
             if p.relative_to(ROOT).as_posix()==TU: continue
             self.assertNotRegex(p.read_text(encoding='utf-8'),r'\b(?:create|read)_link_fact_snapshot_file\s*\(')
     def test_documents_have_matching_sections(self):

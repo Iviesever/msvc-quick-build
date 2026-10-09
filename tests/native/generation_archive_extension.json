@@ -1,0 +1,2046 @@
+{
+  "base": "2762749b27fc89156b724d19e89cce84e388ef52",
+  "source_representation": "UTF-8 text with checkout newlines normalized by text reads; original source and runtime files are never rewritten by this adapter",
+  "added": {
+    "cpp/include/mqb/orchestration/ArtifactGenerationArchive.hpp": "7a1c745a22e197b9ff25f63cdc827a291ce9bcc04d101e37c445bfb9782183de",
+    "cpp/src/orchestration/incremental/ArtifactGenerationArchive.cpp": "b56f6165096c7262fa55a0c1dde5f7da22613abc8b4711b78ed3f1a3e46e527d",
+    "cpp/src/orchestration/incremental/ArtifactGenerationArchiveInternal.hpp": "f93add75d64d64fd6305ce16bad05f30b8cd482d52ff7d4c3e1d26d13879eada",
+    "cpp/tests/orchestration/incremental/artifact_generation_archive_tests.cpp": "cce3e6329a6ee738aaf3ca506a0ddc31deac73f6c8aaec29082abaaece292948"
+  },
+  "modified": {
+    "cpp/include/mqb/orchestration/ArtifactStorageProjection.hpp": {
+      "current": "8704e88fb588ccbf3969f0a2810e05e71a24077fa15edeea04e58ed72e480c8b",
+      "prior": "ad881a98eb7ddc85740de73a31c6a479b7a7fff0957736c220902572ca2d7a9f",
+      "edits": [
+        {
+          "offset": 1824,
+          "before": "",
+          "after": ";\nstruct ArchivedTargetClaim;\nstruct ArchivedStaticTargetClaim"
+        },
+        {
+          "offset": 4537,
+          "before": "",
+          "after": "Unauthenticated owned claims use the same strict selected-field validator.\n// This does not recreate a successful invocation or authenticate archived data.\n[[nodiscard]] std::expected<RecordedTargetStorageReferences, RecordedStorageProjectionError>\nproject_storage_references(const ArchivedTargetClaim&, const StoragePathKey&,\n                           RecordedStorageProjectionLimits = {});\n[[nodiscard]] std::expected<RecordedTargetStorageReferences, RecordedStorageProjectionError>\nproject_storage_references(const ArchivedStaticTargetClaim&, const StoragePathKey&,\n                           RecordedStorageProjectionLimits = {});\n// "
+        }
+      ]
+    },
+    "cpp/mqb.json": {
+      "current": "0d14ee5aaecbfa245ff940f09d85318bc47c5931bb5fcdb44108fe5153814d5a",
+      "prior": "43dd14648d84f734415825d99cbe643e649938028f99b6ab2b6cc001d8828b7f",
+      "edits": [
+        {
+          "offset": 1072,
+          "before": "",
+          "after": ".cpp\",\n      \"src/orchestration/incremental/ArtifactGenerationArchive"
+        }
+      ]
+    },
+    "cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp": {
+      "current": "a1cc6338a8be3cc48b5a4f0cf4db9ea1ccf1d33a67360aa2f4c91270746be7c8",
+      "prior": "591df98ff8597847adaf681529828eac0e5644ba795ce42ec08e550b44c5d490",
+      "edits": [
+        {
+          "offset": 218,
+          "before": "",
+          "after": ".hpp\"\n#include \"mqb/orchestration/ArtifactGenerationArchive.hpp\"\n#include \"ArtifactGenerationArchiveInternal"
+        },
+        {
+          "offset": 22724,
+          "before": "",
+          "after": "inline constexpr bool recorded_static_target = std::is_same_v<\n    std::remove_cvref_t<decltype(std::declval<const Recorded&>().record)>, StaticTargetArtifactRecord>;\ntemplate<class Recorded>\n"
+        },
+        {
+          "offset": 22989,
+          "before": "",
+          "after": "recorded_"
+        },
+        {
+          "offset": 23000,
+          "before": "d::",
+          "after": "at"
+        },
+        {
+          "offset": 23003,
+          "before": "s",
+          "after": "c"
+        },
+        {
+          "offset": 23005,
+          "before": "s",
+          "after": "t"
+        },
+        {
+          "offset": 23007,
+          "before": "m",
+          "after": "rg"
+        },
+        {
+          "offset": 23010,
+          "before": "_v",
+          "after": "t"
+        },
+        {
+          "offset": 23020,
+          "before": ", RecordedStaticTargetResult",
+          "after": ""
+        },
+        {
+          "offset": 23087,
+          "before": "",
+          "after": "}\ntemplate<class Recorded>\nconst Recorded& generation_record_value(const std::reference_wrapper<const Recorded>& value) {\n    return value.get();\n}\nconst ArchivedTargetClaim& generation_record_value(const ArchivedTargetClaim& value) { return value; }\nconst ArchivedStaticTargetClaim& generation_record_value(const ArchivedStaticTargetClaim& value) { return value; "
+        },
+        {
+          "offset": 28699,
+          "before": "",
+          "after": "recorded_"
+        },
+        {
+          "offset": 28710,
+          "before": "d::",
+          "after": "at"
+        },
+        {
+          "offset": 28713,
+          "before": "s",
+          "after": "c"
+        },
+        {
+          "offset": 28715,
+          "before": "s",
+          "after": "t"
+        },
+        {
+          "offset": 28717,
+          "before": "m",
+          "after": "rg"
+        },
+        {
+          "offset": 28720,
+          "before": "_v",
+          "after": "t"
+        },
+        {
+          "offset": 28730,
+          "before": ", RecordedStaticTargetResult",
+          "after": ""
+        },
+        {
+          "offset": 28984,
+          "before": "} ",
+          "after": ""
+        },
+        {
+          "offset": 28987,
+          "before": "",
+          "after": "Live refere"
+        },
+        {
+          "offset": 28999,
+          "before": "",
+          "after": "ce wr"
+        },
+        {
+          "offset": 29005,
+          "before": "",
+          "after": "ppers and owned archived claims share this entire admission,\n// projection, recipe and lineage body. No inter"
+        },
+        {
+          "offset": 29116,
+          "before": "",
+          "after": "diate invocation i"
+        },
+        {
+          "offset": 29135,
+          "before": "",
+          "after": " fabricated.\ntem"
+        },
+        {
+          "offset": 29152,
+          "before": "",
+          "after": "l"
+        },
+        {
+          "offset": 29154,
+          "before": "",
+          "after": "te<"
+        },
+        {
+          "offset": 29158,
+          "before": "e\n",
+          "after": "lass Input>"
+        },
+        {
+          "offset": 29265,
+          "before": "artifact_",
+          "after": ""
+        },
+        {
+          "offset": 29275,
+          "before": "",
+          "after": "_input"
+        },
+        {
+          "offset": 29299,
+          "before": "RecordedArtifactGeneration",
+          "after": ""
+        },
+        {
+          "offset": 29314,
+          "before": "  ",
+          "after": ""
+        },
+        {
+          "offset": 29394,
+          "before": "  ",
+          "after": ""
+        },
+        {
+          "offset": 31206,
+          "before": "",
+          "after": "generation_record_value("
+        },
+        {
+          "offset": 31238,
+          "before": ".get(",
+          "after": ""
+        },
+        {
+          "offset": 32811,
+          "before": "",
+          "after": "generation_record_value("
+        },
+        {
+          "offset": 32843,
+          "before": ".get(",
+          "after": ""
+        },
+        {
+          "offset": 33329,
+          "before": "",
+          "after": "generation_record_value("
+        },
+        {
+          "offset": 33361,
+          "before": ".get(",
+          "after": ""
+        },
+        {
+          "offset": 34255,
+          "before": "",
+          "after": "recorded_"
+        },
+        {
+          "offset": 34266,
+          "before": "d::",
+          "after": "at"
+        },
+        {
+          "offset": 34269,
+          "before": "s",
+          "after": "c"
+        },
+        {
+          "offset": 34271,
+          "before": "s",
+          "after": "t"
+        },
+        {
+          "offset": 34273,
+          "before": "m",
+          "after": "rg"
+        },
+        {
+          "offset": 34276,
+          "before": "_v",
+          "after": "t"
+        },
+        {
+          "offset": 34286,
+          "before": ", RecordedStaticTargetResult",
+          "after": ""
+        },
+        {
+          "offset": 34965,
+          "before": "",
+          "after": "recorded_"
+        },
+        {
+          "offset": 34976,
+          "before": "d::",
+          "after": "at"
+        },
+        {
+          "offset": 34979,
+          "before": "s",
+          "after": "c"
+        },
+        {
+          "offset": 34981,
+          "before": "s",
+          "after": "t"
+        },
+        {
+          "offset": 34983,
+          "before": "m",
+          "after": "rg"
+        },
+        {
+          "offset": 34986,
+          "before": "_v",
+          "after": "t"
+        },
+        {
+          "offset": 34996,
+          "before": ", RecordedStaticTargetResult",
+          "after": ""
+        },
+        {
+          "offset": 36877,
+          "before": "",
+          "after": "\ntemplate<class Recorded>\nauto archive_recorded_claim(const Recorded& value) {\n    using Claim = std::conditional_t<recorded_static_target<Recorded>,\n        ArchivedStaticTargetClaim, ArchivedTargetClaim>;\n    Claim out;\n    out.record = value.record;\n    out.result.any_compiled = value.result.any_compiled;\n    if constexpr (recorded_static_target<Recorded>) {\n        out.result.archive.archived = value.result.archive.archived;\n        out.result.archive.warnings = value.result.archive.warnings;\n    } else {\n        out.result.link.linked = value.result.link.linked;\n        out.result.link.warnings = value.result.link.warnings;\n    }\n    out.result.compiles.reserve(value.result.compiles.size());\n    for (const auto& c : value.result.compiles)\n        out.result.compiles.push_back({c.source, {c.result.compiled, c.result.warnings}});\n    out.cache_evidence.compiles.reserve(value.cache_evidence.compiles.size());\n    for (const auto& e : value.cache_evidence.compiles) {\n        // The common strict projector has already rejected module/scan graphs.\n        // This selected identity wrapper cannot copy MsvcToolchain::environment.\n        out.cache_evidence.compiles.push_back({e.request, {e.inspection_toolchain.identity},\n            e.cache_entry, e.state, e.save_error});\n    }\n    return out;\n}\n} // namespace\n\nstd::expected<RecordedArtifactGenerationModel, RecordedArtifactGenerationError>\nmodel_recorded_artifact_generations(std::span<const RecordedArtifactGenerationInput> inputs,\n                                   std::span<const ArtifactGenerationKey> retain,\n                                   const std::filesystem::path& lexical_root, const StoragePathKey& key) {\n    return model_recorded_generation_inputs(inputs, retain, lexical_root, key);\n}\n\nstd::expected<RecordedArtifactGenerationModel, RecordedArtifactGenerationError>\nmodel_archived_artifact_generations(const ArtifactGenerationArchive& archive, const StoragePathKey& key) {\n    return model_recorded_generation_inputs(std::span<const ArchivedArtifactGenerationInput>{archive.records},\n        archive.retain, archive.lexical_root, key);\n}\n\nstd::expected<ArtifactGenerationArchive, ArtifactGenerationArchiveError>\nproject_artifact_generation_archive(std::span<const RecordedArtifactGenerationInput> inputs,\n                                    std::span<const ArtifactGenerationKey> retain,\n                                    const std::filesystem::path& lexical_root, const StoragePathKey& key) {\n    const auto admitted = detail::preflight_recorded_generation_archive(inputs, retain, lexical_root);\n    if (!admitted) return std::unexpected(admitted.error());\n    // Strict model admission validates the original independent source/result/\n    // request/cache facts before the first owning archived claim is copied.\n    const auto validated = model_recorded_artifact_generations(inputs, retain, lexical_root, key);\n    if (!validated) return std::unexpected(ArtifactGenerationArchiveError{\n        ArtifactGenerationArchiveErrorCode::invalid_evidence, validated.error().message, 0, validated.error()});\n\n    ArtifactGenerationArchive out;\n    out.lexical_root = lexical_root;\n    out.retain.assign(retain.begin(), retain.end());\n    out.records.reserve(inputs.size());\n    for (const auto& in : inputs) {\n        using Claims = std::variant<ArchivedTargetClaim, ArchivedStaticTargetClaim>;\n        auto claim = std::visit([](const auto& borrowed) -> Claims {\n            return archive_recorded_claim(borrowed.get());\n        }, in.record);\n        out.records.push_back({in.source_id, in.target, in.generation, std::move(claim), in.snapshot});\n    }\n    return out;\n}\n"
+        }
+      ]
+    },
+    "cpp/src/orchestration/incremental/ArtifactStorageProjection.cpp": {
+      "current": "9b97cab342c99078bdc8d1d1b2d1a1e4759a2032b19d6b5b82947faa6ef6a6f9",
+      "prior": "cb3a8686e63f0c8860da7b49f70e5f1f77562c24e6322c19f5c851468489ee87",
+      "edits": [
+        {
+          "offset": 138,
+          "before": "",
+          "after": "\n#include \"mqb/orchestration/ArtifactGenerationArchive.hpp\""
+        },
+        {
+          "offset": 13939,
+          "before": "",
+          "after": "template<class Evidence, class Result>\n"
+        },
+        {
+          "offset": 14023,
+          "before": "CompileCache",
+          "after": ""
+        },
+        {
+          "offset": 14081,
+          "before": "IncrementalCompile",
+          "after": ""
+        },
+        {
+          "offset": 26593,
+          "before": "",
+          "after": "std::expected<RecordedTargetStorageReferences, RecordedStorageProjectionError>\nproject_storage_references(const ArchivedTargetClaim& value, const StoragePathKey& key,\n                           RecordedStorageProjectionLimits limits) {\n    return project_recorded_target(value, value.record.link, value.result.link.linked, key, limits);\n}\nstd::expected<RecordedTargetStorageReferences, RecordedStorageProjectionError>\nproject_storage_references(const ArchivedStaticTargetClaim& value, const StoragePathKey& key,\n                           RecordedStorageProjectionLimits limits) {\n    return project_recorded_target(value, value.record.archive, value.result.archive.archived, key, limits);\n}\n"
+        }
+      ]
+    },
+    "cpp/tests/e2e/TargetWaveCacheEvidenceChecks.hpp": {
+      "current": "c631a78e0061bacbf07ac1c870e703eb097814874ac8d3957ac8da2ee46b38a6",
+      "prior": "0d10711257a2c95f8f9416518ccb92caa008e0072751d6383eb5cf6a0c5d4a56",
+      "edits": [
+        {
+          "offset": 172,
+          "before": "",
+          "after": "#include <tuple>\n"
+        },
+        {
+          "offset": 285,
+          "before": "",
+          "after": ".hpp\"\n#include \"mqb/orchestration/ArtifactGenerationArchive"
+        },
+        {
+          "offset": 6203,
+          "before": "",
+          "after": "generation archive round-trip checks\ninline void require_same_generation_model(const RecordedArtifactGenerationModel& before,\n                                          const RecordedArtifactGenerationModel& after) {\n    const auto label = [](const auto& a, const auto& b) {\n        require(a.has_value()==b.has_value(), \"archive model label presence\");\n        if (a) require(a->target==b->target && a->generation==b->generation,\n                       \"archive model label bytes\");\n    };\n    const auto snapshot = [](const auto& a, const auto& b) {\n        require(a.has_value()==b.has_value(), \"archive model snapshot presence\");\n        if (a) {\n            const auto x=mqb::encode_link_fact_snapshot(*a), y=mqb::encode_link_fact_snapshot(*b);\n            require(x.has_value() && y.has_value() && *x==*y, \"archive model complete snapshot\");\n        }\n    };\n    const auto identity = [](const auto& a, const auto& b) {\n        require(std::tie(a.compiler,a.version,a.binary_stamp)==std::tie(b.compiler,b.version,b.binary_stamp),\n                \"archive model original toolchain identity\");\n    };\n    const auto& a=before.model; const auto& b=after.model;\n    require(a.records.size()==b.records.size(), \"archive model record count\");\n    for (std::size_t i=0; i<a.records.size(); ++i) {\n        const auto& x=a.records[i]; const auto& y=b.records[i];\n        require(std::tie(x.source_id,x.target,x.generation,x.completion,x.recipe_evidence,x.state,x.origin_record,x.issues)==\n                std::tie(y.source_id,y.target,y.generation,y.completion,y.recipe_evidence,y.state,y.origin_record,y.issues),\n                \"archive model complete record and provenance diagnostics\");\n        label(x.caller_label,y.caller_label); snapshot(x.snapshot,y.snapshot);\n    }\n    require(before.compiles.size()==after.compiles.size(), \"archive model compile-record count\");\n    for (std::size_t i=0; i<before.compiles.size(); ++i) {\n        require(before.compiles[i].size()==after.compiles[i].size(), \"archive model source count\");\n        for (std::size_t j=0; j<before.compiles[i].size(); ++j) {\n            const auto& x=before.compiles[i][j]; const auto& y=after.compiles[i][j];\n            identity(x.inspection_toolchain,y.inspection_toolchain);\n            identity(x.cache_toolchain,y.cache_toolchain);\n            require(x.captured_signature==y.captured_signature && x.toolchains_differ==y.toolchains_differ &&\n                    x.force_rebuild==y.force_rebuild && x.save_error.has_value()==y.save_error.has_value() &&\n                    x.warnings.size()==y.warnings.size(), \"archive model compile outcomes\");\n            if (x.save_error) {\n                const auto& u=*x.save_error; const auto& v=*y.save_error;\n                require(std::tie(u.code,u.file,u.offset,u.message)==std::tie(v.code,v.file,v.offset,v.message),\n                        \"archive model complete save failure\");\n            }\n            for (std::size_t k=0; k<x.warnings.size(); ++k) {\n                const auto& u=x.warnings[k]; const auto& v=y.warnings[k];\n                require(std::tie(u.code,u.path,u.message)==std::tie(v.code,v.path,v.message),\n                        \"archive model warning order and bytes\");\n            }\n        }\n    }\n    const auto& ar=a.references; const auto& br=b.references;\n    require(ar.records.size()==br.records.size() && ar.matches.size()==br.matches.size() &&\n            ar.row_matches==br.row_matches, \"archive model reference collection sizes\");\n    for (std::size_t i=0; i<ar.records.size(); ++i) {\n        const auto& x=ar.records[i]; const auto& y=br.records[i];\n        label(x.caller_label,y.caller_label);\n        require(x.stages.size()==y.stages.size(), \"archive model stage count\");\n        for (std::size_t j=0; j<x.stages.size(); ++j) {\n            const auto& u=x.stages[j]; const auto& v=y.stages[j];\n            require(std::tie(u.kind,u.completion,u.cache_state,u.source_has_warnings,u.configuration,\n                             u.working_directory,u.toolchain_source)==\n                    std::tie(v.kind,v.completion,v.cache_state,v.source_has_warnings,v.configuration,\n                             v.working_directory,v.toolchain_source) && u.paths.size()==v.paths.size(),\n                    \"archive model complete stage and own cwd\");\n            for (std::size_t k=0; k<u.paths.size(); ++k)\n                require(u.paths[k].path==v.paths[k].path && u.paths[k].role==v.paths[k].role,\n                        \"archive model literal ordered path and role\");\n        }\n    }\n    for (std::size_t i=0; i<ar.matches.size(); ++i) {\n        const auto& x=ar.matches[i]; const auto& y=br.matches[i];\n        require(std::tie(x.record_index,x.stage_index,x.path_index,x.resolved_path,x.state,x.observed_rows,\n                         x.same_observed_file_rows,x.observed_identity_metadata_conflict)==\n                std::tie(y.record_index,y.stage_index,y.path_index,y.resolved_path,y.state,y.observed_rows,\n                         y.same_observed_file_rows,y.observed_identity_metadata_conflict),\n                \"archive model complete lexical match\");\n    }\n    // Both model entry points deliberately associate an empty observation set.\n    // A readback must not manufacture a current filesystem observation.\n    require(ar.observation.artifact_root==br.observation.artifact_root &&\n            !ar.observation.root_exists && !br.observation.root_exists &&\n            ar.observation.entries.empty() && br.observation.entries.empty() &&\n            ar.observation.references.empty() && br.observation.references.empty() &&\n            ar.observation.issues.empty() && br.observation.issues.empty(),\n            \"archive model retains empty unverified observation\");\n    require(a.retention.size()==b.retention.size() && a.paths.size()==b.paths.size(),\n            \"archive model retention and path-group sizes\");\n    for (std::size_t i=0; i<a.retention.size(); ++i) {\n        const auto& x=a.retention[i]; const auto& y=b.retention[i];\n        require(std::tie(x.request,x.state,x.executed_candidates,x.associated_records)==\n                std::tie(y.request,y.state,y.executed_candidates,y.associated_records),\n                \"archive model retention requests and decisions\");\n    }\n    for (std::size_t i=0; i<a.paths.size(); ++i) {\n        const auto& x=a.paths[i]; const auto& y=b.paths[i];\n        require(std::tie(x.path_key,x.matches,x.records,x.retained_records,x.shared_reference,\n                         x.multiple_executed_generations,x.different_target_or_recipe,x.unresolved_members)==\n                std::tie(y.path_key,y.matches,y.records,y.retained_records,y.shared_reference,\n                         y.multiple_executed_generations,y.different_target_or_recipe,y.unresolved_members),\n                \"archive model complete path-group diagnostics\");\n    }\n}\ninline void generation_archive_round_trip(std::span<const RecordedArtifactGenerationInput> inputs,\n                                         const RecordedArtifactGenerationModel& original,\n                                         const fs::path& root, const mqb::StoragePathKey& key) {\n    auto selected=project_artifact_generation_archive(inputs, {}, root, key);\n    if (!selected) throw std::runtime_error(\"native generation archive projection: \"+selected.error().message);\n    auto encoded=encode_artifact_generation_archive(*selected,key);\n    if (!encoded) throw std::runtime_error(\"native generation archive encode: \"+encoded.error().message);\n    auto decoded=decode_artifact_generation_archive(*encoded,key);\n    if (!decoded) throw std::runtime_error(\"native generation archive decode: \"+decoded.error().message);\n    auto repeated=encode_artifact_generation_archive(*decoded,key);\n    require(repeated.has_value() && *repeated==*encoded, \"native archive deterministic complete wire round trip\");\n    auto modeled=model_archived_artifact_generations(*decoded,key);\n    if (!modeled) throw std::runtime_error(\"native generation archive model: \"+modeled.error().message);\n    require_same_generation_model(original,*modeled);\n    static_assert(!ArtifactGenerationArchive::producer_identity_verified &&\n                  !ArtifactGenerationArchive::current_content_verified &&\n                  !ArtifactGenerationArchive::complete_producer_inventory &&\n                  !ArtifactGenerationArchive::deletion_authorized);\n    std::cout << \"generation-archive phase=\" << inputs.front().source_id << \" bytes=\" << encoded->size()\n              << \" complete_model_equal=true producer_identity_verified=false current_content_verified=false\"\n              << \" complete_producer_inventory=false deletion_authorized=false\\n\";\n}\n// END generation archive round-trip checks\n\n// BEGIN "
+        },
+        {
+          "offset": 17142,
+          "before": "",
+          "after": "    generation_archive_round_trip(inputs, *value, root, key);\n"
+        }
+      ]
+    },
+    "tests/native/accepted_target_wave_cache_extension.py": {
+      "current": "50a0a4cf871e49ccff998c04aaf2d2a27cce6f3aa174f4093ef06c0de67cea2f",
+      "prior": "dc66dad88806d1cdf393d26a1cf72d2c4f90ec61e97287da6319194f7c433639",
+      "edits": [
+        {
+          "offset": 410,
+          "before": "",
+          "after": "ion\nimport generation_archive_extension as archive_extens"
+        },
+        {
+          "offset": 1372,
+          "before": "(ROOT/p",
+          "after": ""
+        },
+        {
+          "offset": 1373,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 1383,
+          "before": "h)",
+          "after": "ension"
+        },
+        {
+          "offset": 1400,
+          "before": "encoding='u",
+          "after": "ROOT, pa"
+        },
+        {
+          "offset": 1409,
+          "before": "f-8'",
+          "after": "h"
+        }
+      ]
+    },
+    "tests/native/assert_cpp_layout.ps1": {
+      "current": "da746e2584ab52319e361e0b88b29f497ec9c1d7b57acce7a6f0e7ba3ee73787",
+      "prior": "a2cb3508a17c64d623f4ab332eb39fef92c2e777e10dd750e9ab8f37628620c2",
+      "edits": [
+        {
+          "offset": 11201,
+          "before": "",
+          "after": "ArtifactGenerationArchive.cpp',\n        'ArtifactGenerationArchiveInternal.hpp',\n        '"
+        },
+        {
+          "offset": 12883,
+          "before": "",
+          "after": "artifact_generation_archive_tests.cpp',\n        '"
+        }
+      ]
+    },
+    "tests/native/run_native_tests.ps1": {
+      "current": "a4e8aaf48c0450a9dca5d014f3eb6fc00ed57fde67bb0bf6a45ecb2d23ad1f98",
+      "prior": "61dbf8ece5a3f1c9ab98a9959469fb68114df4b462cdbc4d8b19fdcf8b4fec16",
+      "edits": [
+        {
+          "offset": 3700,
+          "before": "6",
+          "after": "7"
+        },
+        {
+          "offset": 3754,
+          "before": "6",
+          "after": "7"
+        },
+        {
+          "offset": 5835,
+          "before": "6",
+          "after": "7"
+        }
+      ]
+    },
+    "tests/native/test_artifact_generation_model.py": {
+      "current": "24e0d50de14797697f80a0dcda7386a257322a1b67e1bd0e253673fda56902f3",
+      "prior": "5ba56e9e302d6cf283c01205b6696513cbd1ade4c714719f1fb4129150bb8fe5",
+      "edits": [
+        {
+          "offset": 100,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 1490,
+          "before": "(ROOT/",
+          "after": "archive_exte"
+        },
+        {
+          "offset": 1503,
+          "before": "ame)",
+          "after": "sion"
+        },
+        {
+          "offset": 1518,
+          "before": "",
+          "after": "ROOT, nam"
+        },
+        {
+          "offset": 1528,
+          "before": "ncoding='utf-8'",
+          "after": ""
+        },
+        {
+          "offset": 2468,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 2510,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 4015,
+          "before": "",
+          "after": "archive_extension.legacy_source_paths"
+        },
+        {
+          "offset": 4057,
+          "before": "/'cpp/src').rglob('*'",
+          "after": ""
+        },
+        {
+          "offset": 4177,
+          "before": "p",
+          "after": "archive_extension"
+        },
+        {
+          "offset": 4205,
+          "before": "",
+          "after": "ROOT, p.r"
+        },
+        {
+          "offset": 4215,
+          "before": "nc",
+          "after": "lative_t"
+        },
+        {
+          "offset": 4224,
+          "before": "d",
+          "after": "(ROOT).as_pos"
+        },
+        {
+          "offset": 4238,
+          "before": "ng='utf-8'",
+          "after": "x()"
+        },
+        {
+          "offset": 5638,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 5681,
+          "before": "/'cpp/src').rglob('*.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 5722,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 5764,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        }
+      ]
+    },
+    "tests/native/test_compile_cache_evidence.py": {
+      "current": "f194fadd16ff15d0d247509691bccff8d23d882dbb48d1f70e2f93c67e24adae",
+      "prior": "2077455e10d85080b17a500e5af1d0de2a65c95178b78f67acd2fa01ce813e33",
+      "edits": [
+        {
+          "offset": 258,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 912,
+          "before": "(ROOT / ",
+          "after": "archive_exte"
+        },
+        {
+          "offset": 925,
+          "before": "ame)",
+          "after": "sion"
+        },
+        {
+          "offset": 940,
+          "before": "",
+          "after": "ROOT, nam"
+        },
+        {
+          "offset": 950,
+          "before": "ncoding='utf-8'",
+          "after": ""
+        },
+        {
+          "offset": 11224,
+          "before": "",
+          "after": "archive_extension.legacy_source_paths"
+        },
+        {
+          "offset": 11266,
+          "before": " / 'cpp/src').rglob('*'",
+          "after": ""
+        },
+        {
+          "offset": 11735,
+          "before": "p",
+          "after": ""
+        },
+        {
+          "offset": 11736,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 11746,
+          "before": "h",
+          "after": "ension"
+        },
+        {
+          "offset": 11763,
+          "before": "",
+          "after": "ROOT, path.r"
+        },
+        {
+          "offset": 11776,
+          "before": "nc",
+          "after": "lative_t"
+        },
+        {
+          "offset": 11785,
+          "before": "d",
+          "after": "(ROOT).as_pos"
+        },
+        {
+          "offset": 11799,
+          "before": "ng='utf-8'",
+          "after": "x()"
+        },
+        {
+          "offset": 11925,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 11967,
+          "before": " / 'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 12365,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 12408,
+          "before": " / 'cpp/src').rglob('*.cpp'",
+          "after": ""
+        }
+      ]
+    },
+    "tests/native/test_generation_main_integration.py": {
+      "current": "4a520ce17ad20e358fb0dda09b14dc31f9c14daf8697560348b412cf8852b9ed",
+      "prior": "6478c3ed44e060866344c528d2bda5de19ab70560c17035034f539c3167d5b8e",
+      "edits": [
+        {
+          "offset": 248,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 3699,
+          "before": "6",
+          "after": "7"
+        }
+      ]
+    },
+    "tests/native/test_link_completion_archive_contract.py": {
+      "current": "3fccced1a7846d1c927d7d004d99d3c58126bb3e5afc30499a43484628a39e04",
+      "prior": "1d7a5367b8d2d236ef43d1b6b192e08debba7e8e13f371203173843474587f1a",
+      "edits": [
+        {
+          "offset": 105,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 1954,
+          "before": "(ROOT/",
+          "after": "archive_exte"
+        },
+        {
+          "offset": 1967,
+          "before": ")",
+          "after": "sion"
+        },
+        {
+          "offset": 1982,
+          "before": "e",
+          "after": "ROOT, "
+        },
+        {
+          "offset": 1989,
+          "before": "coding=\"utf-8\"",
+          "after": ""
+        },
+        {
+          "offset": 2725,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 2767,
+          "before": "/\"cpp/tests\").rglob(\"*_tests.cpp\"",
+          "after": ""
+        },
+        {
+          "offset": 4371,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 4414,
+          "before": "/\"cpp/src\").rglob(\"*.cpp\"",
+          "after": ""
+        },
+        {
+          "offset": 4999,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 5042,
+          "before": "/\"cpp/src\").rglob(\"*.cpp\"",
+          "after": ""
+        },
+        {
+          "offset": 5083,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 5125,
+          "before": "/\"cpp/tests\").rglob(\"*_tests.cpp\"",
+          "after": ""
+        }
+      ]
+    },
+    "tests/native/test_link_fact_file_contract.py": {
+      "current": "9362388a2f36ff7bcaee7aade134de999106593ee27dee923b7c8ecb26193d67",
+      "prior": "9ba1d8bf82d5e92f8d725053fef04859dd287efb6ec7ce8d1a9e689e53754a23",
+      "edits": [
+        {
+          "offset": 112,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 2064,
+          "before": "(ROOT/",
+          "after": "archive_exte"
+        },
+        {
+          "offset": 2077,
+          "before": "ame)",
+          "after": "sion"
+        },
+        {
+          "offset": 2092,
+          "before": "",
+          "after": "ROOT, nam"
+        },
+        {
+          "offset": 2102,
+          "before": "ncoding='utf-8'",
+          "after": ""
+        },
+        {
+          "offset": 3283,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 3325,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 4141,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 4184,
+          "before": "/'cpp/src').rglob('*.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 6272,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 6315,
+          "before": "/'cpp/src').rglob('*.cpp'",
+          "after": ""
+        }
+      ]
+    },
+    "tests/native/test_link_fact_snapshot_contract.py": {
+      "current": "0c269c7f43177a3c623786f482fa26614a2b6f362c524d204175b5f16c20dd06",
+      "prior": "42f15d6e121b44a9d1afa702cab1058a27af9761a4da6cb08a0a7ed10251beec",
+      "edits": [
+        {
+          "offset": 334,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 2752,
+          "before": "(ROOT / ",
+          "after": "archive_exte"
+        },
+        {
+          "offset": 2765,
+          "before": "ame)",
+          "after": "sion"
+        },
+        {
+          "offset": 2780,
+          "before": "",
+          "after": "ROOT, nam"
+        },
+        {
+          "offset": 2790,
+          "before": "ncoding=\"utf-8\"",
+          "after": ""
+        },
+        {
+          "offset": 5874,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 5916,
+          "before": " / \"cpp/tests\").rglob(\"*_tests.cpp\"",
+          "after": ""
+        },
+        {
+          "offset": 6199,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 6241,
+          "before": " / \"cpp/tests\").rglob(\"*_tests.cpp\"",
+          "after": ""
+        },
+        {
+          "offset": 6687,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 6730,
+          "before": "/\"cpp/src\").rglob(\"*.cpp\"",
+          "after": ""
+        },
+        {
+          "offset": 8672,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 8715,
+          "before": "/\"cpp/src\").rglob(\"*.cpp\"",
+          "after": ""
+        },
+        {
+          "offset": 8842,
+          "before": "p",
+          "after": "archive_extension"
+        },
+        {
+          "offset": 8870,
+          "before": "",
+          "after": "ROOT, p.r"
+        },
+        {
+          "offset": 8880,
+          "before": "nc",
+          "after": "lative_t"
+        },
+        {
+          "offset": 8889,
+          "before": "d",
+          "after": "(ROOT).as_pos"
+        },
+        {
+          "offset": 8903,
+          "before": "ng=\"utf-8\"",
+          "after": "x()"
+        }
+      ]
+    },
+    "tests/native/test_link_observation_roles.py": {
+      "current": "c668908d1a7f3cdda2fa18c9ef4cb97d4b417ac3415bf23a816017ee9c7e27b2",
+      "prior": "94a791295bb0cf16f576a58dbc788903e9ac0d67630410a077feb8ba058b4be4",
+      "edits": [
+        {
+          "offset": 115,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 498,
+          "before": "(ROOT/p",
+          "after": ""
+        },
+        {
+          "offset": 499,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 509,
+          "before": "h)",
+          "after": "ension"
+        },
+        {
+          "offset": 526,
+          "before": "encoding='u",
+          "after": "ROOT, pa"
+        },
+        {
+          "offset": 535,
+          "before": "f-8'",
+          "after": "h"
+        },
+        {
+          "offset": 6006,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 6048,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 6090,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 6133,
+          "before": "/'cpp/src').rglob('*.cpp'",
+          "after": ""
+        }
+      ]
+    },
+    "tests/native/test_module_cache_evidence.py": {
+      "current": "ccedc70ccea3baebc762ec6b8791234ecea36a346fe97e6a28c34c188cc09713",
+      "prior": "89ce7fc52191a3668b25a9f8a89761cf9bf2dcaf60da8400f7dbb40aeb13ff66",
+      "edits": [
+        {
+          "offset": 122,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 672,
+          "before": "(ROOT / ",
+          "after": "archive_exte"
+        },
+        {
+          "offset": 685,
+          "before": "ame)",
+          "after": "sion"
+        },
+        {
+          "offset": 700,
+          "before": "",
+          "after": "ROOT, nam"
+        },
+        {
+          "offset": 710,
+          "before": "ncoding='utf-8'",
+          "after": ""
+        },
+        {
+          "offset": 8100,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 8142,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 9045,
+          "before": "",
+          "after": "archive_extension.legacy_source_paths"
+        },
+        {
+          "offset": 9087,
+          "before": "/'cpp/src').rglob('*'",
+          "after": ""
+        },
+        {
+          "offset": 9349,
+          "before": "p",
+          "after": ""
+        },
+        {
+          "offset": 9350,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 9360,
+          "before": "h",
+          "after": "ension"
+        },
+        {
+          "offset": 9377,
+          "before": "",
+          "after": "ROOT, path.relative_to(ROOT).as_posix()"
+        }
+      ]
+    },
+    "tests/native/test_module_target_cache_evidence.py": {
+      "current": "f61ac1389edd78fa0d49d00b7b7781f9897f02a3b6c7895289d6e9aab878e275",
+      "prior": "7cec4604451ced166466b589f3bf1fedbfff7582aac1d5add0f578696fe84993",
+      "edits": [
+        {
+          "offset": 107,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 666,
+          "before": "(ROOT / p",
+          "after": ""
+        },
+        {
+          "offset": 667,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 677,
+          "before": "h)",
+          "after": "ension"
+        },
+        {
+          "offset": 694,
+          "before": "encoding='u",
+          "after": "ROOT, pa"
+        },
+        {
+          "offset": 703,
+          "before": "f-8'",
+          "after": "h"
+        },
+        {
+          "offset": 10652,
+          "before": "",
+          "after": "archive_extension.legacy_source_paths"
+        },
+        {
+          "offset": 10694,
+          "before": "/'cpp/src').rglob('*'",
+          "after": ""
+        },
+        {
+          "offset": 10979,
+          "before": "p",
+          "after": ""
+        },
+        {
+          "offset": 10980,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 10990,
+          "before": "h",
+          "after": "ension"
+        },
+        {
+          "offset": 11007,
+          "before": "",
+          "after": "ROOT, path.r"
+        },
+        {
+          "offset": 11020,
+          "before": "nc",
+          "after": "lative_t"
+        },
+        {
+          "offset": 11029,
+          "before": "d",
+          "after": "(ROOT).as_pos"
+        },
+        {
+          "offset": 11043,
+          "before": "ng='utf-8'",
+          "after": "x()"
+        },
+        {
+          "offset": 11308,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 11350,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        }
+      ]
+    },
+    "tests/native/test_observed_link_isolation.py": {
+      "current": "036223fcf2e1ea8e2380d1897c4edbd562774cd88c92962913835d971f52e710",
+      "prior": "975d0b1f5e6f73d4c8c111788b3ccd0a0b3eefb667d75cd1bdcdbcc8c4097394",
+      "edits": [
+        {
+          "offset": 306,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 4024,
+          "before": "",
+          "after": "\n    files = archive_extension.historical_tree(files)"
+        },
+        {
+          "offset": 12485,
+          "before": "",
+          "after": "source_view='exact_pre_archive', current_native_programs=97, current_production_tus=97,\n                "
+        }
+      ]
+    },
+    "tests/native/test_pch_cache_evidence.py": {
+      "current": "3f05f4383c9f73b6c63de0667782d01084420ed7aa2d2f16c83e24a90c1a1fb8",
+      "prior": "1385ed3c469832519bae4aada8fe3711ada589a3f5470ac42f53f683437d21b1",
+      "edits": [
+        {
+          "offset": 123,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 763,
+          "before": "(ROOT / p",
+          "after": ""
+        },
+        {
+          "offset": 764,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 774,
+          "before": "h)",
+          "after": "ension"
+        },
+        {
+          "offset": 791,
+          "before": "encoding='u",
+          "after": "ROOT, pa"
+        },
+        {
+          "offset": 800,
+          "before": "f-8'",
+          "after": "h"
+        },
+        {
+          "offset": 6119,
+          "before": "",
+          "after": "archive_extension.legacy_source_paths"
+        },
+        {
+          "offset": 6161,
+          "before": "/'cpp/src').rglob('*'",
+          "after": ""
+        },
+        {
+          "offset": 6514,
+          "before": "p",
+          "after": ""
+        },
+        {
+          "offset": 6515,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 6525,
+          "before": "h",
+          "after": "ension"
+        },
+        {
+          "offset": 6542,
+          "before": "",
+          "after": "ROOT, path.relative_to(ROOT).as_posix()"
+        },
+        {
+          "offset": 7996,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 8038,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        }
+      ]
+    },
+    "tests/native/test_recorded_generation_model.py": {
+      "current": "09af6c72b2de67f46446241d3033370dca2d98cec2afaed96f91695a025f8c17",
+      "prior": "e538823d43f7f093b252477ba17aed8787406218a68bd2bf38c8ca21a04721fe",
+      "edits": [
+        {
+          "offset": 129,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 701,
+          "before": "(ROOT/p",
+          "after": ""
+        },
+        {
+          "offset": 702,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 712,
+          "before": "h)",
+          "after": "ension"
+        },
+        {
+          "offset": 729,
+          "before": "encoding=\"u",
+          "after": "ROOT, pa"
+        },
+        {
+          "offset": 738,
+          "before": "f-8\"",
+          "after": "h"
+        },
+        {
+          "offset": 4917,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 4960,
+          "before": "/\"cpp/src\").rglob(\"*.cpp\"",
+          "after": ""
+        },
+        {
+          "offset": 5098,
+          "before": "p",
+          "after": ""
+        },
+        {
+          "offset": 5099,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 5109,
+          "before": "h",
+          "after": "ension"
+        },
+        {
+          "offset": 5126,
+          "before": "",
+          "after": "ROOT, path.relative_to(ROOT).as_posix()"
+        },
+        {
+          "offset": 5205,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 5248,
+          "before": "/\"cpp/src\").rglob(\"*.cpp\"",
+          "after": ""
+        },
+        {
+          "offset": 5290,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 5332,
+          "before": "/\"cpp/tests\").rglob(\"*_tests.cpp\"",
+          "after": ""
+        }
+      ]
+    },
+    "tests/native/test_recorded_storage_projection.py": {
+      "current": "329378eae8d7f6b4412d4972f0e00360e027bb0fb994fb4b591bec20e7f3b7c9",
+      "prior": "152cd06af97eaaa4c365241461eec84c3653628e3b7fe2b95e7cc342c018f1af",
+      "edits": [
+        {
+          "offset": 116,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 559,
+          "before": "(ROOT/p",
+          "after": ""
+        },
+        {
+          "offset": 560,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 570,
+          "before": "h)",
+          "after": "ension"
+        },
+        {
+          "offset": 587,
+          "before": "encoding='u",
+          "after": "ROOT, pa"
+        },
+        {
+          "offset": 596,
+          "before": "f-8'",
+          "after": "h"
+        },
+        {
+          "offset": 3676,
+          "before": "",
+          "after": "archive_extension.legacy_text(path.relative_to(ROOT).as_posix(), "
+        },
+        {
+          "offset": 3772,
+          "before": "",
+          "after": ")"
+        },
+        {
+          "offset": 6684,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 6726,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 6769,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 6812,
+          "before": "/'cpp/src').rglob('*.cpp'",
+          "after": ""
+        }
+      ]
+    },
+    "tests/native/test_target_wave_cache_evidence.py": {
+      "current": "6c4a62037dd0c70ea9455137679be7772beb077b7b080a2ff0bde5614e230414",
+      "prior": "8f6ab6b4ff51ded6947f782d84d7fa9a1a5d7ea0d1b633053adfadae49c735d1",
+      "edits": [
+        {
+          "offset": 292,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 1345,
+          "before": "(ROOT/p",
+          "after": ""
+        },
+        {
+          "offset": 1346,
+          "before": "",
+          "after": "rchive_ex"
+        },
+        {
+          "offset": 1356,
+          "before": "h)",
+          "after": "ension"
+        },
+        {
+          "offset": 1373,
+          "before": "encoding='u",
+          "after": "ROOT, pa"
+        },
+        {
+          "offset": 1382,
+          "before": "f-8'",
+          "after": "h"
+        },
+        {
+          "offset": 11981,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 12023,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 12065,
+          "before": "",
+          "after": "archive_extension.legacy_product_paths"
+        },
+        {
+          "offset": 12108,
+          "before": "/'cpp/src').rglob('*.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 13311,
+          "before": "read",
+          "after": ""
+        },
+        {
+          "offset": 13312,
+          "before": "",
+          "after": "ROOT/"
+        },
+        {
+          "offset": 13323,
+          "before": "",
+          "after": ").read_text(encoding='utf-8'"
+        },
+        {
+          "offset": 13387,
+          "before": "read",
+          "after": ""
+        },
+        {
+          "offset": 13388,
+          "before": "",
+          "after": "ROOT/"
+        },
+        {
+          "offset": 13399,
+          "before": "",
+          "after": ").read_text(encoding='utf-8'"
+        },
+        {
+          "offset": 13552,
+          "before": "read",
+          "after": ""
+        },
+        {
+          "offset": 13553,
+          "before": "",
+          "after": "ROOT/"
+        },
+        {
+          "offset": 13564,
+          "before": "",
+          "after": ").read_text(encoding='utf-8'"
+        }
+      ]
+    },
+    "tests/native/test_v9_reader_oracle.py": {
+      "current": "06130d4dbff50521fa8786db96c0cce60999fc3a5a05558d68685f2cb44315d7",
+      "prior": "ea17a46ec57f1bcf29c5385691b9ee6b4dc069f331e5fe93f1ecc89411128714",
+      "edits": [
+        {
+          "offset": 112,
+          "before": "",
+          "after": "\nimport generation_archive_extension as archive_extension"
+        },
+        {
+          "offset": 6914,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 6956,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        },
+        {
+          "offset": 10506,
+          "before": "",
+          "after": "archive_extension.read_text"
+        },
+        {
+          "offset": 10538,
+          "before": "/",
+          "after": ", "
+        },
+        {
+          "offset": 10575,
+          "before": ").read_text(",
+          "after": ""
+        },
+        {
+          "offset": 10909,
+          "before": "",
+          "after": "archive_extension.legacy_native_paths"
+        },
+        {
+          "offset": 10951,
+          "before": "/'cpp/tests').rglob('*_tests.cpp'",
+          "after": ""
+        }
+      ]
+    }
+  },
+  "cpp_files": [
+    "cpp/include/mqb/config/ProjectConfig.hpp",
+    "cpp/include/mqb/config/ProjectOptions.hpp",
+    "cpp/include/mqb/core/ArchiveCache.hpp",
+    "cpp/include/mqb/core/ArchiveCacheFile.hpp",
+    "cpp/include/mqb/core/Artifact.hpp",
+    "cpp/include/mqb/core/ArtifactStorageAssociation.hpp",
+    "cpp/include/mqb/core/BoundedCacheReader.hpp",
+    "cpp/include/mqb/core/BuildAction.hpp",
+    "cpp/include/mqb/core/BuildArtifactRecord.hpp",
+    "cpp/include/mqb/core/BuildPlan.hpp",
+    "cpp/include/mqb/core/BuildPlanner.hpp",
+    "cpp/include/mqb/core/BuildRequest.hpp",
+    "cpp/include/mqb/core/BuildSignature.hpp",
+    "cpp/include/mqb/core/BuildTypes.hpp",
+    "cpp/include/mqb/core/CompileCache.hpp",
+    "cpp/include/mqb/core/CompileCacheFile.hpp",
+    "cpp/include/mqb/core/CompilerOptions.hpp",
+    "cpp/include/mqb/core/DependencyGraph.hpp",
+    "cpp/include/mqb/core/FileSnapshot.hpp",
+    "cpp/include/mqb/core/LibrarianIdentity.hpp",
+    "cpp/include/mqb/core/LinkCache.hpp",
+    "cpp/include/mqb/core/LinkCacheFile.hpp",
+    "cpp/include/mqb/core/LinkFactSnapshot.hpp",
+    "cpp/include/mqb/core/LinkOptions.hpp",
+    "cpp/include/mqb/core/LinkerIdentity.hpp",
+    "cpp/include/mqb/core/PerformanceEvidence.hpp",
+    "cpp/include/mqb/core/ProjectArtifactLayout.hpp",
+    "cpp/include/mqb/core/StorageFileObservation.hpp",
+    "cpp/include/mqb/core/StorageInventory.hpp",
+    "cpp/include/mqb/core/ToolchainIdentity.hpp",
+    "cpp/include/mqb/core/TranslationUnit.hpp",
+    "cpp/include/mqb/core/TranslationUnitClassifier.hpp",
+    "cpp/include/mqb/core/WriteInventory.hpp",
+    "cpp/include/mqb/discovery/ModuleSyntax.hpp",
+    "cpp/include/mqb/discovery/SourceDiscovery.hpp",
+    "cpp/include/mqb/json/Json.hpp",
+    "cpp/include/mqb/modules/ModuleDependencyGraph.hpp",
+    "cpp/include/mqb/modules/P1689.hpp",
+    "cpp/include/mqb/msvc/MsvcAddressSanitizerPolicy.hpp",
+    "cpp/include/mqb/msvc/MsvcBaseAddressPolicy.hpp",
+    "cpp/include/mqb/msvc/MsvcCompileExecutor.hpp",
+    "cpp/include/mqb/msvc/MsvcCompiler.hpp",
+    "cpp/include/mqb/msvc/MsvcDefaultLibraryPolicy.hpp",
+    "cpp/include/mqb/msvc/MsvcFuzzerPolicy.hpp",
+    "cpp/include/mqb/msvc/MsvcIncludeSearchFreshness.hpp",
+    "cpp/include/mqb/msvc/MsvcLibrarian.hpp",
+    "cpp/include/mqb/msvc/MsvcLibraryResolver.hpp",
+    "cpp/include/mqb/msvc/MsvcLinker.hpp",
+    "cpp/include/mqb/msvc/MsvcModuleDependencyScanner.hpp",
+    "cpp/include/mqb/msvc/MsvcOpenMpPolicy.hpp",
+    "cpp/include/mqb/msvc/MsvcParameterCapabilities.hpp",
+    "cpp/include/mqb/msvc/MsvcParameterEngine.hpp",
+    "cpp/include/mqb/msvc/MsvcSourceDependenciesReader.hpp",
+    "cpp/include/mqb/msvc/MsvcToolchainEnvironmentIdentity.hpp",
+    "cpp/include/mqb/msvc/MsvcToolchainLocator.hpp",
+    "cpp/include/mqb/msvc/MsvcWholeArchivePolicy.hpp",
+    "cpp/include/mqb/msvc/MsvcWriteInventory.hpp",
+    "cpp/include/mqb/orchestration/ArtifactGenerationModel.hpp",
+    "cpp/include/mqb/orchestration/ArtifactStorageProjection.hpp",
+    "cpp/include/mqb/orchestration/BoundedWorkBatch.hpp",
+    "cpp/include/mqb/orchestration/BoundedWorkScheduler.hpp",
+    "cpp/include/mqb/orchestration/LinkCompletionArchive.hpp",
+    "cpp/include/mqb/orchestration/LinkFactSnapshotProjection.hpp",
+    "cpp/include/mqb/orchestration/MsvcIncrementalArchiveCoordinator.hpp",
+    "cpp/include/mqb/orchestration/MsvcIncrementalCompileCoordinator.hpp",
+    "cpp/include/mqb/orchestration/MsvcIncrementalLinkCoordinator.hpp",
+    "cpp/include/mqb/orchestration/MsvcIncrementalModuleScanCoordinator.hpp",
+    "cpp/include/mqb/orchestration/MsvcIncrementalPchCoordinator.hpp",
+    "cpp/include/mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp",
+    "cpp/include/mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp",
+    "cpp/include/mqb/orchestration/MsvcModuleCompileCoordinator.hpp",
+    "cpp/include/mqb/orchestration/MsvcModuleTargetCoordinator.hpp",
+    "cpp/include/mqb/orchestration/MsvcTargetRouter.hpp",
+    "cpp/include/mqb/orchestration/ObservedLinkCompletion.hpp",
+    "cpp/include/mqb/orchestration/ParallelismPolicy.hpp",
+    "cpp/include/mqb/orchestration/ParallelismResources.hpp",
+    "cpp/include/mqb/orchestration/TargetTimings.hpp",
+    "cpp/include/mqb/platform/windows/CommandLine.hpp",
+    "cpp/include/mqb/platform/windows/LinkFactSnapshotFile.hpp",
+    "cpp/include/mqb/platform/windows/PathIdentity.hpp",
+    "cpp/include/mqb/platform/windows/StorageFileObservation.hpp",
+    "cpp/include/mqb/platform/windows/StorageInventory.hpp",
+    "cpp/include/mqb/platform/windows/WindowsProcessRunner.hpp",
+    "cpp/include/mqb/platform/windows/WindowsWriteDomain.hpp",
+    "cpp/include/mqb/platform/windows/WindowsWriteInventory.hpp",
+    "cpp/include/mqb/process/Process.hpp",
+    "cpp/mqb.json",
+    "cpp/src/app/Application.cpp",
+    "cpp/src/app/Application.hpp",
+    "cpp/src/app/cli/Cli.cpp",
+    "cpp/src/app/cli/Cli.hpp",
+    "cpp/src/app/cli/Invocation.cpp",
+    "cpp/src/app/cli/Invocation.hpp",
+    "cpp/src/app/diagnostics/Diagnostics.cpp",
+    "cpp/src/app/diagnostics/Diagnostics.hpp",
+    "cpp/src/app/diagnostics/PerformanceTimings.cpp",
+    "cpp/src/app/diagnostics/PerformanceTimings.hpp",
+    "cpp/src/app/diagnostics/ReportBuffer.hpp",
+    "cpp/src/app/diagnostics/StorageReport.cpp",
+    "cpp/src/app/diagnostics/StorageReport.hpp",
+    "cpp/src/app/main.cpp",
+    "cpp/src/app/project/ProjectSetup.cpp",
+    "cpp/src/app/project/ProjectSetup.hpp",
+    "cpp/src/app/targets/BuildCompletion.cpp",
+    "cpp/src/app/targets/BuildCompletion.hpp",
+    "cpp/src/app/targets/BuildIntrospectionSetup.cpp",
+    "cpp/src/app/targets/BuildIntrospectionSetup.hpp",
+    "cpp/src/app/targets/CompdbCommand.cpp",
+    "cpp/src/app/targets/CompdbCommand.hpp",
+    "cpp/src/app/targets/ModuleCliTarget.cpp",
+    "cpp/src/app/targets/ModuleCliTarget.hpp",
+    "cpp/src/app/targets/ModulePlanCommand.cpp",
+    "cpp/src/app/targets/ModulePlanCommand.hpp",
+    "cpp/src/app/targets/PlanCommand.cpp",
+    "cpp/src/app/targets/PlanCommand.hpp",
+    "cpp/src/app/targets/PlanOutput.cpp",
+    "cpp/src/app/targets/PlanOutput.hpp",
+    "cpp/src/app/targets/PlanSupport.hpp",
+    "cpp/src/app/targets/StaticCliTarget.cpp",
+    "cpp/src/app/targets/StaticCliTarget.hpp",
+    "cpp/src/app/targets/StorageCommand.cpp",
+    "cpp/src/app/targets/StorageCommand.hpp",
+    "cpp/src/config/loading/ProjectConfig.cpp",
+    "cpp/src/config/resolution/ProjectOptions.cpp",
+    "cpp/src/config/schema/ProjectConfigSchema.cpp",
+    "cpp/src/config/schema/ProjectConfigSchema.hpp",
+    "cpp/src/core/cache/ArchiveCache.cpp",
+    "cpp/src/core/cache/ArchiveCacheFile.cpp",
+    "cpp/src/core/cache/ArtifactStorageAssociation.cpp",
+    "cpp/src/core/cache/CompileCache.cpp",
+    "cpp/src/core/cache/CompileCacheFile.cpp",
+    "cpp/src/core/cache/LinkCache.cpp",
+    "cpp/src/core/cache/LinkCacheFile.cpp",
+    "cpp/src/core/cache/LinkFactSnapshot.cpp",
+    "cpp/src/core/cache/StorageInventory.cpp",
+    "cpp/src/core/model/BuildSignature.cpp",
+    "cpp/src/core/model/BuildTypes.cpp",
+    "cpp/src/core/model/TranslationUnitClassifier.cpp",
+    "cpp/src/core/planning/BuildPlanner.cpp",
+    "cpp/src/core/planning/DependencyGraph.cpp",
+    "cpp/src/core/planning/ProjectArtifactLayout.cpp",
+    "cpp/src/discovery/SourceDiscovery.cpp",
+    "cpp/src/discovery/analysis/ModuleSyntax.cpp",
+    "cpp/src/discovery/analysis/SourceTextAnalysis.cpp",
+    "cpp/src/discovery/analysis/SourceTextAnalysis.hpp",
+    "cpp/src/discovery/cache/DiscoveryCache.cpp",
+    "cpp/src/discovery/cache/DiscoveryCache.hpp",
+    "cpp/src/discovery/indexing/DiscoveryPath.hpp",
+    "cpp/src/discovery/indexing/SourceIndex.cpp",
+    "cpp/src/discovery/indexing/SourceIndex.hpp",
+    "cpp/src/discovery/selection/SourceSelectionGraph.cpp",
+    "cpp/src/discovery/selection/SourceSelectionGraph.hpp",
+    "cpp/src/json/Json.cpp",
+    "cpp/src/modules/ModuleDependencyGraph.cpp",
+    "cpp/src/modules/P1689.cpp",
+    "cpp/src/msvc/compiler/CompilerArgumentBuilder.cpp",
+    "cpp/src/msvc/compiler/CompilerArgumentBuilder.hpp",
+    "cpp/src/msvc/compiler/CompilerExecution.cpp",
+    "cpp/src/msvc/compiler/CompilerExecution.hpp",
+    "cpp/src/msvc/compiler/CompilerInvocationValidation.cpp",
+    "cpp/src/msvc/compiler/CompilerInvocationValidation.hpp",
+    "cpp/src/msvc/compiler/MsvcCompileExecutor.cpp",
+    "cpp/src/msvc/compiler/MsvcCompiler.cpp",
+    "cpp/src/msvc/compiler/MsvcSourceDependenciesReader.cpp",
+    "cpp/src/msvc/compiler/MsvcWriteInventory.cpp",
+    "cpp/src/msvc/librarian/MsvcLibrarian.cpp",
+    "cpp/src/msvc/linker/MsvcDefaultLibraryPolicy.cpp",
+    "cpp/src/msvc/linker/MsvcLibraryResolver.cpp",
+    "cpp/src/msvc/linker/MsvcLinkRecipe.cpp",
+    "cpp/src/msvc/linker/MsvcLinker.cpp",
+    "cpp/src/msvc/modules/MsvcModuleDependencyScanner.cpp",
+    "cpp/src/msvc/parameters/MsvcParameterCapabilities.cpp",
+    "cpp/src/msvc/parameters/MsvcParameterEngine.cpp",
+    "cpp/src/msvc/parameters/MsvcParameterRegistry.cpp",
+    "cpp/src/msvc/parameters/MsvcParameterRegistry.hpp",
+    "cpp/src/msvc/toolchain/MsvcToolchainLocator.cpp",
+    "cpp/src/msvc/toolchain/PortableToolchainDiscovery.cpp",
+    "cpp/src/msvc/toolchain/PortableToolchainDiscovery.hpp",
+    "cpp/src/msvc/toolchain/ToolchainDiscoveryPrimitives.cpp",
+    "cpp/src/msvc/toolchain/ToolchainDiscoveryPrimitives.hpp",
+    "cpp/src/msvc/toolchain/VisualStudioEnvironment.cpp",
+    "cpp/src/msvc/toolchain/VisualStudioEnvironment.hpp",
+    "cpp/src/msvc/toolchain/VisualStudioToolchainCache.cpp",
+    "cpp/src/msvc/toolchain/VisualStudioToolchainCache.hpp",
+    "cpp/src/msvc/toolchain/VisualStudioToolchainCacheReader.hpp",
+    "cpp/src/msvc/toolchain/VisualStudioToolchainDiscovery.cpp",
+    "cpp/src/msvc/toolchain/VisualStudioToolchainDiscovery.hpp",
+    "cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp",
+    "cpp/src/orchestration/incremental/ArtifactStorageProjection.cpp",
+    "cpp/src/orchestration/incremental/IncrementalFileSnapshot.hpp",
+    "cpp/src/orchestration/incremental/LinkCompletionArchive.cpp",
+    "cpp/src/orchestration/incremental/LinkCompletionArchiveOperation.hpp",
+    "cpp/src/orchestration/incremental/LinkFactSnapshotProjection.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalArchiveCoordinator.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalLinkCoordinator.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalStaticTargetCoordinator.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalTargetCoordinator.cpp",
+    "cpp/src/orchestration/incremental/ObservedLinkCompletion.cpp",
+    "cpp/src/orchestration/incremental/TargetCompileWave.hpp",
+    "cpp/src/orchestration/modules/ModuleCompilePlan.cpp",
+    "cpp/src/orchestration/modules/ModuleCompilePlan.hpp",
+    "cpp/src/orchestration/modules/ModuleCompileRequestFactory.cpp",
+    "cpp/src/orchestration/modules/ModuleCompileRequestFactory.hpp",
+    "cpp/src/orchestration/modules/ModuleTargetArtifactRegistry.cpp",
+    "cpp/src/orchestration/modules/ModuleTargetArtifactRegistry.hpp",
+    "cpp/src/orchestration/modules/ModuleTargetLinkRequestFactory.cpp",
+    "cpp/src/orchestration/modules/ModuleTargetLinkRequestFactory.hpp",
+    "cpp/src/orchestration/modules/ModuleTargetPreparation.cpp",
+    "cpp/src/orchestration/modules/ModuleTargetPreparation.hpp",
+    "cpp/src/orchestration/modules/ModuleTargetScanner.cpp",
+    "cpp/src/orchestration/modules/ModuleTargetScanner.hpp",
+    "cpp/src/orchestration/modules/MsvcIncrementalModuleScanCoordinator.cpp",
+    "cpp/src/orchestration/modules/MsvcModuleCompileCoordinator.cpp",
+    "cpp/src/orchestration/modules/MsvcModuleTargetCoordinator.cpp",
+    "cpp/src/orchestration/modules/StandardLibraryModuleProvider.cpp",
+    "cpp/src/orchestration/modules/StandardLibraryModuleProvider.hpp",
+    "cpp/src/orchestration/routing/MsvcTargetRouter.cpp",
+    "cpp/src/orchestration/scheduling/BoundedWorkScheduler.cpp",
+    "cpp/src/platform/windows/CommandLine.cpp",
+    "cpp/src/platform/windows/LinkFactFileTransfer.hpp",
+    "cpp/src/platform/windows/LinkFactSnapshotFile.cpp",
+    "cpp/src/platform/windows/PhysicalPath.hpp",
+    "cpp/src/platform/windows/StorageFileObservation.cpp",
+    "cpp/src/platform/windows/StorageInventory.cpp",
+    "cpp/src/platform/windows/StorageReadPrimitives.hpp",
+    "cpp/src/platform/windows/WindowsParallelismResources.cpp",
+    "cpp/src/platform/windows/WindowsProcessRunner.cpp",
+    "cpp/src/platform/windows/WindowsWriteDomain.cpp",
+    "cpp/tests/app/cli/build_policy_cli_tests.cpp",
+    "cpp/tests/app/cli/cli_argument_tests.cpp",
+    "cpp/tests/app/cli/mqb_native_msvc_cli_e2e_tests.cpp",
+    "cpp/tests/app/diagnostics/reporting_tests.cpp",
+    "cpp/tests/app/diagnostics/storage_report_format_cases.hpp",
+    "cpp/tests/config/integration/build_policy_config_tests.cpp",
+    "cpp/tests/config/integration/project_config_tests.cpp",
+    "cpp/tests/config/resolution/project_options_tests.cpp",
+    "cpp/tests/core/cache/archive_cache_file_tests.cpp",
+    "cpp/tests/core/cache/compile_cache_file_tests.cpp",
+    "cpp/tests/core/cache/compile_cache_tests.cpp",
+    "cpp/tests/core/cache/link_cache_file_tests.cpp",
+    "cpp/tests/core/cache/link_fact_snapshot_tests.cpp",
+    "cpp/tests/core/cache/link_state_tests.cpp",
+    "cpp/tests/core/cache/module_scan_cache_tests.cpp",
+    "cpp/tests/core/model/build_request_tests.cpp",
+    "cpp/tests/core/model/build_signature_tests.cpp",
+    "cpp/tests/core/model/c_compile_signature_tests.cpp",
+    "cpp/tests/core/model/c_source_recipe_tests.cpp",
+    "cpp/tests/core/model/translation_unit_classifier_tests.cpp",
+    "cpp/tests/core/planning/build_plan_tests.cpp",
+    "cpp/tests/core/planning/build_planner_tests.cpp",
+    "cpp/tests/core/planning/dependency_graph_tests.cpp",
+    "cpp/tests/core/planning/project_artifact_layout_tests.cpp",
+    "cpp/tests/discovery/c_source_discovery_tests.cpp",
+    "cpp/tests/discovery/module_source_discovery_tests.cpp",
+    "cpp/tests/discovery/module_syntax_tests.cpp",
+    "cpp/tests/discovery/source_discovery_cache_tests.cpp",
+    "cpp/tests/discovery/source_discovery_corrections_tests.cpp",
+    "cpp/tests/discovery/source_discovery_tests.cpp",
+    "cpp/tests/e2e/TargetWaveCacheEvidenceChecks.hpp",
+    "cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_build_policy_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_c_source_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_cli_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_default_library_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_file_observation_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_link_completion_archive_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_manifest_input_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_module_cli_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_module_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_module_target_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_parallel_cli_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_pch_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_pch_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_project_config_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_runtime_subsystem_config_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_scan_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_snapshot_file_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_static_library_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_static_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_storage_association_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_storage_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_stub_linker_e2e_tests.cpp",
+    "cpp/tests/json/json_tests.cpp",
+    "cpp/tests/modules/module_dependency_graph_tests.cpp",
+    "cpp/tests/modules/module_dependency_resolution_tests.cpp",
+    "cpp/tests/modules/p1689_tests.cpp",
+    "cpp/tests/msvc/compiler/compile_executor_tests.cpp",
+    "cpp/tests/msvc/compiler/compile_integration_tests.cpp",
+    "cpp/tests/msvc/compiler/compiler_arguments_tests.cpp",
+    "cpp/tests/msvc/compiler/incremental_loop_tests.cpp",
+    "cpp/tests/msvc/compiler/source_dependencies_tests.cpp",
+    "cpp/tests/msvc/compiler/write_inventory_cases.hpp",
+    "cpp/tests/msvc/librarian/librarian_arguments_tests.cpp",
+    "cpp/tests/msvc/linker/library_resolver_tests.cpp",
+    "cpp/tests/msvc/linker/link_integration_tests.cpp",
+    "cpp/tests/msvc/linker/linker_arguments_tests.cpp",
+    "cpp/tests/msvc/modules/header_unit_compile_integration_tests.cpp",
+    "cpp/tests/msvc/modules/header_unit_compiler_tests.cpp",
+    "cpp/tests/msvc/modules/module_compile_integration_tests.cpp",
+    "cpp/tests/msvc/modules/module_dependency_scanner_integration_tests.cpp",
+    "cpp/tests/msvc/modules/module_dependency_scanner_tests.cpp",
+    "cpp/tests/msvc/parameters/msvc_parameter_capabilities_tests.cpp",
+    "cpp/tests/msvc/parameters/msvc_parameter_engine_tests.cpp",
+    "cpp/tests/msvc/toolchain/portable_tests.cpp",
+    "cpp/tests/msvc/toolchain/v9_reader_adoption_tests.cpp",
+    "cpp/tests/msvc/toolchain/v9_reader_probe.cpp",
+    "cpp/tests/msvc/toolchain/v9_reader_prototype.hpp",
+    "cpp/tests/msvc/toolchain/visual_studio_tests.cpp",
+    "cpp/tests/orchestration/incremental/TargetWaveCacheEvidenceCases.hpp",
+    "cpp/tests/orchestration/incremental/artifact_generation_model_tests.cpp",
+    "cpp/tests/orchestration/incremental/incremental_archive_coordinator_tests.cpp",
+    "cpp/tests/orchestration/incremental/incremental_compile_coordinator_tests.cpp",
+    "cpp/tests/orchestration/incremental/incremental_link_coordinator_tests.cpp",
+    "cpp/tests/orchestration/incremental/incremental_target_coordinator_tests.cpp",
+    "cpp/tests/orchestration/incremental/link_completion_archive_tests.cpp",
+    "cpp/tests/orchestration/incremental/link_fact_snapshot_projection_tests.cpp",
+    "cpp/tests/orchestration/incremental/prewrite_inventory_cases.hpp",
+    "cpp/tests/orchestration/modules/header_unit_incremental_integration_tests.cpp",
+    "cpp/tests/orchestration/modules/header_unit_target_integration_tests.cpp",
+    "cpp/tests/orchestration/modules/header_unit_wave_integration_tests.cpp",
+    "cpp/tests/orchestration/modules/module_compile_coordinator_tests.cpp",
+    "cpp/tests/orchestration/modules/module_target_coordinator_tests.cpp",
+    "cpp/tests/orchestration/modules/module_target_integration_tests.cpp",
+    "cpp/tests/orchestration/modules/module_target_validation_tests.cpp",
+    "cpp/tests/orchestration/routing/target_router_tests.cpp",
+    "cpp/tests/orchestration/scheduling/bounded_work_admission_cases.hpp",
+    "cpp/tests/orchestration/scheduling/bounded_work_batch_cases.hpp",
+    "cpp/tests/orchestration/scheduling/bounded_work_scheduler_tests.cpp",
+    "cpp/tests/platform/windows/link_fact_file_transfer_tests.cpp",
+    "cpp/tests/platform/windows/msvc_service_ownership_probe.cpp",
+    "cpp/tests/platform/windows/msvc_target_admission_probe.cpp",
+    "cpp/tests/platform/windows/msvc_work_batch_probe.cpp",
+    "cpp/tests/platform/windows/pdb_file_event_probe.cpp",
+    "cpp/tests/platform/windows/windows_command_line_tests.cpp",
+    "cpp/tests/platform/windows/windows_process_runner_tests.cpp",
+    "cpp/tests/platform/windows/windows_write_domain_cases.hpp",
+    "cpp/tests/platform/windows/windows_write_inventory_cases.hpp",
+    "cpp/tests/process/process_echo_helper.cpp",
+    "cpp/tests/process/process_model_tests.cpp"
+  ],
+  "product_tus": [
+    "cpp/src/app/Application.cpp",
+    "cpp/src/app/cli/Cli.cpp",
+    "cpp/src/app/cli/Invocation.cpp",
+    "cpp/src/app/diagnostics/Diagnostics.cpp",
+    "cpp/src/app/diagnostics/PerformanceTimings.cpp",
+    "cpp/src/app/diagnostics/StorageReport.cpp",
+    "cpp/src/app/main.cpp",
+    "cpp/src/app/project/ProjectSetup.cpp",
+    "cpp/src/app/targets/BuildCompletion.cpp",
+    "cpp/src/app/targets/BuildIntrospectionSetup.cpp",
+    "cpp/src/app/targets/CompdbCommand.cpp",
+    "cpp/src/app/targets/ModuleCliTarget.cpp",
+    "cpp/src/app/targets/ModulePlanCommand.cpp",
+    "cpp/src/app/targets/PlanCommand.cpp",
+    "cpp/src/app/targets/PlanOutput.cpp",
+    "cpp/src/app/targets/StaticCliTarget.cpp",
+    "cpp/src/app/targets/StorageCommand.cpp",
+    "cpp/src/config/loading/ProjectConfig.cpp",
+    "cpp/src/config/resolution/ProjectOptions.cpp",
+    "cpp/src/config/schema/ProjectConfigSchema.cpp",
+    "cpp/src/core/cache/ArchiveCache.cpp",
+    "cpp/src/core/cache/ArchiveCacheFile.cpp",
+    "cpp/src/core/cache/ArtifactStorageAssociation.cpp",
+    "cpp/src/core/cache/CompileCache.cpp",
+    "cpp/src/core/cache/CompileCacheFile.cpp",
+    "cpp/src/core/cache/LinkCache.cpp",
+    "cpp/src/core/cache/LinkCacheFile.cpp",
+    "cpp/src/core/cache/LinkFactSnapshot.cpp",
+    "cpp/src/core/cache/StorageInventory.cpp",
+    "cpp/src/core/model/BuildSignature.cpp",
+    "cpp/src/core/model/BuildTypes.cpp",
+    "cpp/src/core/model/TranslationUnitClassifier.cpp",
+    "cpp/src/core/planning/BuildPlanner.cpp",
+    "cpp/src/core/planning/DependencyGraph.cpp",
+    "cpp/src/core/planning/ProjectArtifactLayout.cpp",
+    "cpp/src/discovery/SourceDiscovery.cpp",
+    "cpp/src/discovery/analysis/ModuleSyntax.cpp",
+    "cpp/src/discovery/analysis/SourceTextAnalysis.cpp",
+    "cpp/src/discovery/cache/DiscoveryCache.cpp",
+    "cpp/src/discovery/indexing/SourceIndex.cpp",
+    "cpp/src/discovery/selection/SourceSelectionGraph.cpp",
+    "cpp/src/json/Json.cpp",
+    "cpp/src/modules/ModuleDependencyGraph.cpp",
+    "cpp/src/modules/P1689.cpp",
+    "cpp/src/msvc/compiler/CompilerArgumentBuilder.cpp",
+    "cpp/src/msvc/compiler/CompilerExecution.cpp",
+    "cpp/src/msvc/compiler/CompilerInvocationValidation.cpp",
+    "cpp/src/msvc/compiler/MsvcCompileExecutor.cpp",
+    "cpp/src/msvc/compiler/MsvcCompiler.cpp",
+    "cpp/src/msvc/compiler/MsvcSourceDependenciesReader.cpp",
+    "cpp/src/msvc/compiler/MsvcWriteInventory.cpp",
+    "cpp/src/msvc/librarian/MsvcLibrarian.cpp",
+    "cpp/src/msvc/linker/MsvcDefaultLibraryPolicy.cpp",
+    "cpp/src/msvc/linker/MsvcLibraryResolver.cpp",
+    "cpp/src/msvc/linker/MsvcLinkRecipe.cpp",
+    "cpp/src/msvc/linker/MsvcLinker.cpp",
+    "cpp/src/msvc/modules/MsvcModuleDependencyScanner.cpp",
+    "cpp/src/msvc/parameters/MsvcParameterCapabilities.cpp",
+    "cpp/src/msvc/parameters/MsvcParameterEngine.cpp",
+    "cpp/src/msvc/parameters/MsvcParameterRegistry.cpp",
+    "cpp/src/msvc/toolchain/MsvcToolchainLocator.cpp",
+    "cpp/src/msvc/toolchain/PortableToolchainDiscovery.cpp",
+    "cpp/src/msvc/toolchain/ToolchainDiscoveryPrimitives.cpp",
+    "cpp/src/msvc/toolchain/VisualStudioEnvironment.cpp",
+    "cpp/src/msvc/toolchain/VisualStudioToolchainCache.cpp",
+    "cpp/src/msvc/toolchain/VisualStudioToolchainDiscovery.cpp",
+    "cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp",
+    "cpp/src/orchestration/incremental/ArtifactStorageProjection.cpp",
+    "cpp/src/orchestration/incremental/LinkCompletionArchive.cpp",
+    "cpp/src/orchestration/incremental/LinkFactSnapshotProjection.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalArchiveCoordinator.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalLinkCoordinator.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalStaticTargetCoordinator.cpp",
+    "cpp/src/orchestration/incremental/MsvcIncrementalTargetCoordinator.cpp",
+    "cpp/src/orchestration/incremental/ObservedLinkCompletion.cpp",
+    "cpp/src/orchestration/modules/ModuleCompilePlan.cpp",
+    "cpp/src/orchestration/modules/ModuleCompileRequestFactory.cpp",
+    "cpp/src/orchestration/modules/ModuleTargetArtifactRegistry.cpp",
+    "cpp/src/orchestration/modules/ModuleTargetLinkRequestFactory.cpp",
+    "cpp/src/orchestration/modules/ModuleTargetPreparation.cpp",
+    "cpp/src/orchestration/modules/ModuleTargetScanner.cpp",
+    "cpp/src/orchestration/modules/MsvcIncrementalModuleScanCoordinator.cpp",
+    "cpp/src/orchestration/modules/MsvcModuleCompileCoordinator.cpp",
+    "cpp/src/orchestration/modules/MsvcModuleTargetCoordinator.cpp",
+    "cpp/src/orchestration/modules/StandardLibraryModuleProvider.cpp",
+    "cpp/src/orchestration/routing/MsvcTargetRouter.cpp",
+    "cpp/src/orchestration/scheduling/BoundedWorkScheduler.cpp",
+    "cpp/src/platform/windows/CommandLine.cpp",
+    "cpp/src/platform/windows/LinkFactSnapshotFile.cpp",
+    "cpp/src/platform/windows/StorageFileObservation.cpp",
+    "cpp/src/platform/windows/StorageInventory.cpp",
+    "cpp/src/platform/windows/WindowsParallelismResources.cpp",
+    "cpp/src/platform/windows/WindowsProcessRunner.cpp",
+    "cpp/src/platform/windows/WindowsWriteDomain.cpp"
+  ],
+  "native_tests": [
+    "cpp/tests/app/cli/build_policy_cli_tests.cpp",
+    "cpp/tests/app/cli/cli_argument_tests.cpp",
+    "cpp/tests/app/cli/mqb_native_msvc_cli_e2e_tests.cpp",
+    "cpp/tests/app/diagnostics/reporting_tests.cpp",
+    "cpp/tests/config/integration/build_policy_config_tests.cpp",
+    "cpp/tests/config/integration/project_config_tests.cpp",
+    "cpp/tests/config/resolution/project_options_tests.cpp",
+    "cpp/tests/core/cache/archive_cache_file_tests.cpp",
+    "cpp/tests/core/cache/compile_cache_file_tests.cpp",
+    "cpp/tests/core/cache/compile_cache_tests.cpp",
+    "cpp/tests/core/cache/link_cache_file_tests.cpp",
+    "cpp/tests/core/cache/link_fact_snapshot_tests.cpp",
+    "cpp/tests/core/cache/link_state_tests.cpp",
+    "cpp/tests/core/cache/module_scan_cache_tests.cpp",
+    "cpp/tests/core/model/build_request_tests.cpp",
+    "cpp/tests/core/model/build_signature_tests.cpp",
+    "cpp/tests/core/model/c_compile_signature_tests.cpp",
+    "cpp/tests/core/model/c_source_recipe_tests.cpp",
+    "cpp/tests/core/model/translation_unit_classifier_tests.cpp",
+    "cpp/tests/core/planning/build_plan_tests.cpp",
+    "cpp/tests/core/planning/build_planner_tests.cpp",
+    "cpp/tests/core/planning/dependency_graph_tests.cpp",
+    "cpp/tests/core/planning/project_artifact_layout_tests.cpp",
+    "cpp/tests/discovery/c_source_discovery_tests.cpp",
+    "cpp/tests/discovery/module_source_discovery_tests.cpp",
+    "cpp/tests/discovery/module_syntax_tests.cpp",
+    "cpp/tests/discovery/source_discovery_cache_tests.cpp",
+    "cpp/tests/discovery/source_discovery_corrections_tests.cpp",
+    "cpp/tests/discovery/source_discovery_tests.cpp",
+    "cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_build_policy_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_c_source_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_cli_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_default_library_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_file_observation_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_link_completion_archive_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_manifest_input_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_module_cli_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_module_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_module_target_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_parallel_cli_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_pch_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_pch_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_project_config_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_runtime_subsystem_config_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_scan_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_snapshot_file_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_static_library_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_static_record_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_storage_association_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_storage_e2e_tests.cpp",
+    "cpp/tests/e2e/mqb_stub_linker_e2e_tests.cpp",
+    "cpp/tests/json/json_tests.cpp",
+    "cpp/tests/modules/module_dependency_graph_tests.cpp",
+    "cpp/tests/modules/module_dependency_resolution_tests.cpp",
+    "cpp/tests/modules/p1689_tests.cpp",
+    "cpp/tests/msvc/compiler/compile_executor_tests.cpp",
+    "cpp/tests/msvc/compiler/compile_integration_tests.cpp",
+    "cpp/tests/msvc/compiler/compiler_arguments_tests.cpp",
+    "cpp/tests/msvc/compiler/incremental_loop_tests.cpp",
+    "cpp/tests/msvc/compiler/source_dependencies_tests.cpp",
+    "cpp/tests/msvc/librarian/librarian_arguments_tests.cpp",
+    "cpp/tests/msvc/linker/library_resolver_tests.cpp",
+    "cpp/tests/msvc/linker/link_integration_tests.cpp",
+    "cpp/tests/msvc/linker/linker_arguments_tests.cpp",
+    "cpp/tests/msvc/modules/header_unit_compile_integration_tests.cpp",
+    "cpp/tests/msvc/modules/header_unit_compiler_tests.cpp",
+    "cpp/tests/msvc/modules/module_compile_integration_tests.cpp",
+    "cpp/tests/msvc/modules/module_dependency_scanner_integration_tests.cpp",
+    "cpp/tests/msvc/modules/module_dependency_scanner_tests.cpp",
+    "cpp/tests/msvc/parameters/msvc_parameter_capabilities_tests.cpp",
+    "cpp/tests/msvc/parameters/msvc_parameter_engine_tests.cpp",
+    "cpp/tests/msvc/toolchain/portable_tests.cpp",
+    "cpp/tests/msvc/toolchain/v9_reader_adoption_tests.cpp",
+    "cpp/tests/msvc/toolchain/visual_studio_tests.cpp",
+    "cpp/tests/orchestration/incremental/artifact_generation_model_tests.cpp",
+    "cpp/tests/orchestration/incremental/incremental_archive_coordinator_tests.cpp",
+    "cpp/tests/orchestration/incremental/incremental_compile_coordinator_tests.cpp",
+    "cpp/tests/orchestration/incremental/incremental_link_coordinator_tests.cpp",
+    "cpp/tests/orchestration/incremental/incremental_target_coordinator_tests.cpp",
+    "cpp/tests/orchestration/incremental/link_completion_archive_tests.cpp",
+    "cpp/tests/orchestration/incremental/link_fact_snapshot_projection_tests.cpp",
+    "cpp/tests/orchestration/modules/header_unit_incremental_integration_tests.cpp",
+    "cpp/tests/orchestration/modules/header_unit_target_integration_tests.cpp",
+    "cpp/tests/orchestration/modules/header_unit_wave_integration_tests.cpp",
+    "cpp/tests/orchestration/modules/module_compile_coordinator_tests.cpp",
+    "cpp/tests/orchestration/modules/module_target_coordinator_tests.cpp",
+    "cpp/tests/orchestration/modules/module_target_integration_tests.cpp",
+    "cpp/tests/orchestration/modules/module_target_validation_tests.cpp",
+    "cpp/tests/orchestration/routing/target_router_tests.cpp",
+    "cpp/tests/orchestration/scheduling/bounded_work_scheduler_tests.cpp",
+    "cpp/tests/platform/windows/link_fact_file_transfer_tests.cpp",
+    "cpp/tests/platform/windows/windows_command_line_tests.cpp",
+    "cpp/tests/platform/windows/windows_process_runner_tests.cpp",
+    "cpp/tests/process/process_model_tests.cpp"
+  ],
+  "python_contracts": [
+    "tests/native/test_artifact_generation_model.py",
+    "tests/native/test_compile_cache_evidence.py",
+    "tests/native/test_generation_main_integration.py",
+    "tests/native/test_link_completion_archive_contract.py",
+    "tests/native/test_link_fact_file_contract.py",
+    "tests/native/test_link_fact_snapshot_contract.py",
+    "tests/native/test_link_observation_roles.py",
+    "tests/native/test_module_cache_evidence.py",
+    "tests/native/test_module_target_cache_evidence.py",
+    "tests/native/test_observed_link_isolation.py",
+    "tests/native/test_pch_cache_evidence.py",
+    "tests/native/test_recorded_generation_model.py",
+    "tests/native/test_recorded_storage_projection.py",
+    "tests/native/test_target_wave_cache_evidence.py",
+    "tests/native/test_v9_reader_oracle.py"
+  ],
+  "unchanged_e2e": {
+    "cpp/tests/e2e/mqb_artifact_record_e2e_tests.cpp": "632f8240dee8d7e79acf496d0cf67cd95335a439187aa7983c91c3d56b24f391",
+    "cpp/tests/e2e/mqb_static_record_e2e_tests.cpp": "ee74c3dffb66448da07d64060b5acdd9bab4a68205c059853ed336909c1b93e1"
+  }
+}

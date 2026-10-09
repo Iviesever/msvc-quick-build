@@ -5,6 +5,7 @@ programs and the existing public/JSON/observation boundaries retain their bytes.
 Actual schema/negative tests live in the two new C++ test programs.
 """
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import hashlib
 import json
 import re
@@ -30,7 +31,7 @@ FILE_TU = "cpp/src/platform/windows/LinkFactSnapshotFile.cpp"
 OLD_TESTS_SHA = "cb9bb48dc68b6c27a0e2154d33ac66132cf850bd5239b0701647c46c1185084f"
 
 def read(name):
-    return (ROOT / name).read_text(encoding="utf-8")
+    return archive_extension.read_text(ROOT, name)
 
 def digest(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -90,14 +91,14 @@ class SnapshotContracts(unittest.TestCase):
 
     def test_all_previous_native_programs_preserved(self):
         values = {p.relative_to(ROOT).as_posix(): p.read_text(encoding="utf-8")
-                  for p in (ROOT / "cpp/tests").rglob("*_tests.cpp")}
+                  for p in archive_extension.legacy_native_paths(ROOT)}
         self.assertEqual(len(values), 96)
         self.assertTrue(NEW_TESTS <= values.keys())
         legacy_tests(values)
 
     def test_legacy_test_mutation_refused(self):
         values = {p.relative_to(ROOT).as_posix(): p.read_text(encoding="utf-8")
-                  for p in (ROOT / "cpp/tests").rglob("*_tests.cpp")}
+                  for p in archive_extension.legacy_native_paths(ROOT)}
         name = "cpp/tests/e2e/mqb_file_observation_e2e_tests.cpp"
         values[name] += "// changed"
         with self.assertRaises(ValueError):
@@ -106,7 +107,7 @@ class SnapshotContracts(unittest.TestCase):
     def test_exact_production_inventory(self):
         manifest = json.loads(read("cpp/mqb.json"))
         declared = ["cpp/src/app/main.cpp"] + ["cpp/"+n for n in manifest["discovery"]["extra_sources"]]
-        actual = {p.relative_to(ROOT).as_posix() for p in (ROOT/"cpp/src").rglob("*.cpp")}
+        actual = {p.relative_to(ROOT).as_posix() for p in archive_extension.legacy_product_paths(ROOT)}
         self.assertEqual(len(declared), 96)
         self.assertEqual(len(declared), len(set(declared)))
         self.assertEqual(set(declared), actual)
@@ -145,10 +146,10 @@ class SnapshotContracts(unittest.TestCase):
         self.assertNotRegex(codec, r"\b(?:stod|strtod|atof)\s*\(")
 
     def test_default_production_has_no_snapshot_adoption(self):
-        for p in (ROOT/"cpp/src").rglob("*.cpp"):
+        for p in archive_extension.legacy_product_paths(ROOT):
             if p.relative_to(ROOT).as_posix() in NEW_TUS | {FILE_TU, MODEL_TU}:
                 continue
-            text = p.read_text(encoding="utf-8")
+            text = archive_extension.read_text(ROOT, p.relative_to(ROOT).as_posix())
             self.assertNotRegex(text, r"(?:capture|encode|decode)_link_fact_snapshot\s*\(", str(p))
             self.assertNotIn('LinkFactSnapshot.hpp', text, str(p))
             self.assertNotIn('LinkFactSnapshotProjection.hpp', text, str(p))

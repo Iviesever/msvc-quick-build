@@ -27,6 +27,8 @@ struct ModuleTargetArtifactRecord;
 // reject inconsistent supplied values instead of inventing missing evidence.
 struct RecordedTargetResult;
 struct RecordedStaticTargetResult;
+struct ArchivedTargetClaim;
+struct ArchivedStaticTargetClaim;
 struct RecordedStorageProjectionLimits {
     std::size_t sources{100000};
     std::size_t items{1000000};
@@ -75,6 +77,14 @@ project_storage_references(const RecordedTargetResult&, const StoragePathKey&,
                            RecordedStorageProjectionLimits = {});
 [[nodiscard]] std::expected<RecordedTargetStorageReferences, RecordedStorageProjectionError>
 project_storage_references(const RecordedStaticTargetResult&, const StoragePathKey&,
+                           RecordedStorageProjectionLimits = {});
+// Unauthenticated owned claims use the same strict selected-field validator.
+// This does not recreate a successful invocation or authenticate archived data.
+[[nodiscard]] std::expected<RecordedTargetStorageReferences, RecordedStorageProjectionError>
+project_storage_references(const ArchivedTargetClaim&, const StoragePathKey&,
+                           RecordedStorageProjectionLimits = {});
+[[nodiscard]] std::expected<RecordedTargetStorageReferences, RecordedStorageProjectionError>
+project_storage_references(const ArchivedStaticTargetClaim&, const StoragePathKey&,
                            RecordedStorageProjectionLimits = {});
 // END recorded storage projection interface
 } // namespace mqb::orchestration

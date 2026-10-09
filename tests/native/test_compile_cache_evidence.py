@@ -4,6 +4,7 @@ The real coordinator cases run in the existing 96-program Windows native graph.
 These portable checks do not substitute for those MSVC executions.
 """
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import recorded_storage_projection_contract as storage_projection_extension
 import accepted_target_wave_cache_extension as wave_extension
 import json
@@ -19,7 +20,7 @@ OLD_TU = 'c67f64a6efc12c5e17679b1862a58fd93dc48a55'
 
 
 def read(name):
-    return wave_extension.legacy_text(name, storage_projection_extension.legacy_text(name, (ROOT / name).read_text(encoding='utf-8')))
+    return wave_extension.legacy_text(name, storage_projection_extension.legacy_text(name, archive_extension.read_text(ROOT, name)))
 
 
 def once(text, old, new=''):
@@ -206,19 +207,19 @@ class CompileCacheEvidenceContracts(unittest.TestCase):
         text = read(PUBLIC)
         for name in ('producer_identity_verified', 'current_content_verified', 'complete_producer_inventory', 'deletion_authorized'):
             self.assertIn(f'static constexpr bool {name} = false;', text)
-        for path in (ROOT / 'cpp/src').rglob('*'):
+        for path in archive_extension.legacy_source_paths(ROOT):
             if path.suffix not in ('.cpp', '.hpp') or path.relative_to(ROOT).as_posix() in (TU, 'cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp',
                 'cpp/src/orchestration/modules/MsvcModuleCompileCoordinator.cpp'):
                 continue
-            self.assertNotIn('CompileCacheEvidence', wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), storage_projection_extension.legacy_text(path.relative_to(ROOT).as_posix(), path.read_text(encoding='utf-8'))), str(path))
+            self.assertNotIn('CompileCacheEvidence', wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), storage_projection_extension.legacy_text(path.relative_to(ROOT).as_posix(), archive_extension.read_text(ROOT, path.relative_to(ROOT).as_posix()))), str(path))
 
     def test_native_counts_and_production_manifest_unchanged(self):
-        self.assertEqual(96, len(list((ROOT / 'cpp/tests').rglob('*_tests.cpp'))))
+        self.assertEqual(96, len(list(archive_extension.legacy_native_paths(ROOT))))
         self.assertIn('$allTestFiles.Count -ne 96', read('tests/native/run_native_tests.ps1'))
         declared = ['src/app/main.cpp'] + json.loads(read('cpp/mqb.json'))['discovery']['extra_sources']
         self.assertEqual(96, len(declared))
         self.assertEqual(len(declared), len(set(declared)))
-        self.assertEqual(set(declared), {p.relative_to(ROOT / 'cpp').as_posix() for p in (ROOT / 'cpp/src').rglob('*.cpp')})
+        self.assertEqual(set(declared), {p.relative_to(ROOT / 'cpp').as_posix() for p in archive_extension.legacy_product_paths(ROOT)})
         self.assertEqual(51, len(list((ROOT / '.github/workflows').glob('*.yml'))))
 
     def test_bilingual_scope_and_version(self):

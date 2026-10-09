@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp"
+#include "mqb/orchestration/ArtifactGenerationArchive.hpp"
+#include "ArtifactGenerationArchiveInternal.hpp"
 
 namespace mqb::orchestration {
 namespace {
@@ -364,10 +366,19 @@ model_artifact_generations(std::span<const ArtifactGenerationInput> inputs,
 // BEGIN recorded generation model implementation
 namespace {
 template<class Recorded>
+inline constexpr bool recorded_static_target = std::is_same_v<
+    std::remove_cvref_t<decltype(std::declval<const Recorded&>().record)>, StaticTargetArtifactRecord>;
+template<class Recorded>
 const auto& recorded_terminal(const Recorded& value) {
-    if constexpr (std::is_same_v<Recorded, RecordedStaticTargetResult>) return value.record.archive;
+    if constexpr (recorded_static_target<Recorded>) return value.record.archive;
     else return value.record.link;
 }
+template<class Recorded>
+const Recorded& generation_record_value(const std::reference_wrapper<const Recorded>& value) {
+    return value.get();
+}
+const ArchivedTargetClaim& generation_record_value(const ArchivedTargetClaim& value) { return value; }
+const ArchivedStaticTargetClaim& generation_record_value(const ArchivedStaticTargetClaim& value) { return value; }
 void compiler_fields(Fields& f, const ToolchainIdentity& t) {
     f.add(t.compiler); f.add(t.version); f.add(t.binary_stamp);
 }
@@ -458,19 +469,20 @@ struct RecordedShapeBudget {
         f.add(cwd); f.add(false); f.add(ArtifactGenerationLimits::paths);
         for (const auto& p : t.association.objects) path(f, p, cwd);
         path(f, t.association.output, cwd); path(f, t.cache_file, cwd);
-        if constexpr (!std::is_same_v<Recorded, RecordedStaticTargetResult>) {
+        if constexpr (!recorded_static_target<Recorded>) {
             for (const auto& p : t.association.libraries) path(f, p, cwd);
             for (const auto& p : t.association.file_inputs) path(f, p, cwd);
             for (const auto& p : t.association.side_outputs) path(f, p, cwd);
         }
     }
 };
-} // namespace
-
+// Live reference wrappers and owned archived claims share this entire admission,
+// projection, recipe and lineage body. No intermediate invocation is fabricated.
+template<class Input>
 std::expected<RecordedArtifactGenerationModel, RecordedArtifactGenerationError>
-model_recorded_artifact_generations(std::span<const RecordedArtifactGenerationInput> inputs,
-                                   std::span<const ArtifactGenerationKey> retain,
-                                   const std::filesystem::path& lexical_root, const StoragePathKey& key) {
+model_recorded_generation_inputs(std::span<const Input> inputs,
+                                 std::span<const ArtifactGenerationKey> retain,
+                                 const std::filesystem::path& lexical_root, const StoragePathKey& key) {
     using Issue = ArtifactGenerationIssue;
     std::optional<std::size_t> current;
     if (inputs.size() > ArtifactGenerationLimits::records || retain.size() > ArtifactGenerationLimits::records)
@@ -499,7 +511,7 @@ model_recorded_artifact_generations(std::span<const RecordedArtifactGenerationIn
             }
             count.add("recorded-ordinary-v1"); count.add(in.record.index());
             std::visit([&](const auto& borrowed) {
-                const auto& value = borrowed.get();
+                const auto& value = generation_record_value(borrowed);
                 // Vector lengths are bounded before any per-element traversal.
                 if (value.record.sources.size() >= ArtifactGenerationLimits::stages ||
                     value.cache_evidence.compiles.size() >= ArtifactGenerationLimits::stages ||
@@ -528,7 +540,7 @@ model_recorded_artifact_generations(std::span<const RecordedArtifactGenerationIn
             Fields f{budget, {}};
             f.add("recorded-ordinary-v1"); f.add(in.record.index());
             auto projection = std::visit([&](const auto& borrowed) {
-                const auto& value = borrowed.get();
+                const auto& value = generation_record_value(borrowed);
                 return project_storage_references(value, key, {
                     ArtifactGenerationLimits::stages - 1, ArtifactGenerationLimits::items,
                     ArtifactGenerationLimits::text_bytes});
@@ -536,7 +548,7 @@ model_recorded_artifact_generations(std::span<const RecordedArtifactGenerationIn
             if (!projection) return std::unexpected(RecordedArtifactGenerationError{
                 projection.error().message, i, projection.error()});
             std::visit([&](const auto& borrowed) {
-                const auto& value = borrowed.get();
+                const auto& value = generation_record_value(borrowed);
                 const auto& target = value.record;
                 recorded_recipe(f, value);
                 r.caller_label = target.caller_label;
@@ -550,7 +562,7 @@ model_recorded_artifact_generations(std::span<const RecordedArtifactGenerationIn
                 r.completion = terminal.completion;
                 if (!terminal_valid(terminal)) issue(r, Issue::invalid_recipe);
                 using Recorded = std::remove_cvref_t<decltype(value)>;
-                if constexpr (std::is_same_v<Recorded, RecordedStaticTargetResult>) {
+                if constexpr (recorded_static_target<Recorded>) {
                     if (target.compiler_options.architecture != terminal.architecture) issue(r, Issue::invalid_recipe);
                 } else if (target.compiler_options.architecture != terminal.options.architecture ||
                            target.compiler_options.configuration != terminal.options.configuration)
@@ -559,7 +571,7 @@ model_recorded_artifact_generations(std::span<const RecordedArtifactGenerationIn
                     const auto checked = encode_link_fact_snapshot(*in.snapshot);
                     if (!checked) issue(r, Issue::snapshot_mismatch);
                     else { budget.check(*checked); r.snapshot = *in.snapshot; }
-                    if constexpr (std::is_same_v<Recorded, RecordedStaticTargetResult>) issue(r, Issue::snapshot_mismatch);
+                    if constexpr (recorded_static_target<Recorded>) issue(r, Issue::snapshot_mismatch);
                     else if (!snapshot_matches(*in.snapshot, terminal)) issue(r, Issue::snapshot_mismatch);
                 }
             }, in.record);
@@ -587,6 +599,73 @@ model_recorded_artifact_generations(std::span<const RecordedArtifactGenerationIn
     } catch (const Invalid& e) {
         return std::unexpected(RecordedArtifactGenerationError{e.message, current, {}});
     }
+}
+
+template<class Recorded>
+auto archive_recorded_claim(const Recorded& value) {
+    using Claim = std::conditional_t<recorded_static_target<Recorded>,
+        ArchivedStaticTargetClaim, ArchivedTargetClaim>;
+    Claim out;
+    out.record = value.record;
+    out.result.any_compiled = value.result.any_compiled;
+    if constexpr (recorded_static_target<Recorded>) {
+        out.result.archive.archived = value.result.archive.archived;
+        out.result.archive.warnings = value.result.archive.warnings;
+    } else {
+        out.result.link.linked = value.result.link.linked;
+        out.result.link.warnings = value.result.link.warnings;
+    }
+    out.result.compiles.reserve(value.result.compiles.size());
+    for (const auto& c : value.result.compiles)
+        out.result.compiles.push_back({c.source, {c.result.compiled, c.result.warnings}});
+    out.cache_evidence.compiles.reserve(value.cache_evidence.compiles.size());
+    for (const auto& e : value.cache_evidence.compiles) {
+        // The common strict projector has already rejected module/scan graphs.
+        // This selected identity wrapper cannot copy MsvcToolchain::environment.
+        out.cache_evidence.compiles.push_back({e.request, {e.inspection_toolchain.identity},
+            e.cache_entry, e.state, e.save_error});
+    }
+    return out;
+}
+} // namespace
+
+std::expected<RecordedArtifactGenerationModel, RecordedArtifactGenerationError>
+model_recorded_artifact_generations(std::span<const RecordedArtifactGenerationInput> inputs,
+                                   std::span<const ArtifactGenerationKey> retain,
+                                   const std::filesystem::path& lexical_root, const StoragePathKey& key) {
+    return model_recorded_generation_inputs(inputs, retain, lexical_root, key);
+}
+
+std::expected<RecordedArtifactGenerationModel, RecordedArtifactGenerationError>
+model_archived_artifact_generations(const ArtifactGenerationArchive& archive, const StoragePathKey& key) {
+    return model_recorded_generation_inputs(std::span<const ArchivedArtifactGenerationInput>{archive.records},
+        archive.retain, archive.lexical_root, key);
+}
+
+std::expected<ArtifactGenerationArchive, ArtifactGenerationArchiveError>
+project_artifact_generation_archive(std::span<const RecordedArtifactGenerationInput> inputs,
+                                    std::span<const ArtifactGenerationKey> retain,
+                                    const std::filesystem::path& lexical_root, const StoragePathKey& key) {
+    const auto admitted = detail::preflight_recorded_generation_archive(inputs, retain, lexical_root);
+    if (!admitted) return std::unexpected(admitted.error());
+    // Strict model admission validates the original independent source/result/
+    // request/cache facts before the first owning archived claim is copied.
+    const auto validated = model_recorded_artifact_generations(inputs, retain, lexical_root, key);
+    if (!validated) return std::unexpected(ArtifactGenerationArchiveError{
+        ArtifactGenerationArchiveErrorCode::invalid_evidence, validated.error().message, 0, validated.error()});
+
+    ArtifactGenerationArchive out;
+    out.lexical_root = lexical_root;
+    out.retain.assign(retain.begin(), retain.end());
+    out.records.reserve(inputs.size());
+    for (const auto& in : inputs) {
+        using Claims = std::variant<ArchivedTargetClaim, ArchivedStaticTargetClaim>;
+        auto claim = std::visit([](const auto& borrowed) -> Claims {
+            return archive_recorded_claim(borrowed.get());
+        }, in.record);
+        out.records.push_back({in.source_id, in.target, in.generation, std::move(claim), in.snapshot});
+    }
+    return out;
 }
 // END recorded generation model implementation
 } // namespace mqb::orchestration

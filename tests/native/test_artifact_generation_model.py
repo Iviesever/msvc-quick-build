@@ -1,5 +1,6 @@
 """Selected-field model contracts; no filesystem or benchmark execution."""
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import recorded_storage_projection_contract as storage_projection_extension
 import hashlib
 import json
@@ -21,7 +22,7 @@ PINS = {
     'cpp/src/core/cache/ArtifactStorageAssociation.cpp': '4d97df5226f7daa1e84cd3fc5c67e668717d92e878c7237f5ebcd0cdaa1f394b',
 }
 
-def read(name): return storage_projection_extension.legacy_text(name, (ROOT/name).read_text(encoding='utf-8'))
+def read(name): return storage_projection_extension.legacy_text(name, archive_extension.read_text(ROOT, name))
 def sha(data): return hashlib.sha256(data).hexdigest()
 def body(text): return re.sub(r'//[^\n]*|/\*.*?\*/', '', text, flags=re.S)
 def pure(text):
@@ -37,7 +38,7 @@ def pure(text):
 class GenerationContracts(unittest.TestCase):
     def test_all_previous_95_native_programs_remain(self):
         files = {p.relative_to(ROOT).as_posix():p.read_text(encoding='utf-8')
-                 for p in (ROOT/'cpp/tests').rglob('*_tests.cpp') if p.relative_to(ROOT).as_posix()!=TEST}
+                 for p in archive_extension.legacy_native_paths(ROOT) if p.relative_to(ROOT).as_posix()!=TEST}
         files = reporting_extension.legacy_view(files, read(reporting_extension.HELPER))
         values = {name:sha(text.encode('utf-8')) for name,text in files.items()}
         self.assertEqual(95,len(values))
@@ -59,9 +60,9 @@ class GenerationContracts(unittest.TestCase):
         self.assertNotIn('BuildSignature::for_',text)
         self.assertNotIn('json::parse',text)
     def test_no_default_caller_or_transitive_model_include(self):
-        for p in (ROOT/'cpp/src').rglob('*'):
+        for p in archive_extension.legacy_source_paths(ROOT):
             if p.suffix not in ('.cpp','.hpp') or p.relative_to(ROOT).as_posix()==TU: continue
-            text=body(p.read_text(encoding='utf-8'))
+            text=body(archive_extension.read_text(ROOT, p.relative_to(ROOT).as_posix()))
             self.assertNotIn('ArtifactGenerationModel',text,str(p))
             self.assertNotIn('model_artifact_generations(',text,str(p))
     def test_authority_remains_false(self):
@@ -80,8 +81,8 @@ class GenerationContracts(unittest.TestCase):
     def test_new_product_and_test_registered_once(self):
         declared=['src/app/main.cpp']+json.loads(read('cpp/mqb.json'))['discovery']['extra_sources']
         self.assertEqual(96,len(declared)); self.assertEqual(len(declared),len(set(declared)))
-        self.assertEqual(set(declared),{p.relative_to(ROOT/'cpp').as_posix() for p in (ROOT/'cpp/src').rglob('*.cpp')})
-        self.assertEqual(96,len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))))
+        self.assertEqual(set(declared),{p.relative_to(ROOT/'cpp').as_posix() for p in archive_extension.legacy_product_paths(ROOT)})
+        self.assertEqual(96,len(list(archive_extension.legacy_native_paths(ROOT))))
         driver=read('tests/native/run_native_tests.ps1')
         self.assertIn('$allTestFiles.Count -ne 96',driver); self.assertEqual(3,driver.count('96'))
         for n in (Path(TU).name,Path(TEST).name): self.assertEqual(1,read('tests/native/assert_cpp_layout.ps1').count("'"+n+"'"))

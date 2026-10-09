@@ -1,6 +1,7 @@
 """Read-only source and exact-history controls, not Windows/MSVC execution."""
 import copy
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import unittest
 from unittest.mock import patch
 import link_observation_role_contract as roles
@@ -12,7 +13,7 @@ LINKER = 'cpp/src/msvc/linker/MsvcLinker.cpp'
 
 
 def read(path):
-    return (ROOT/path).read_text(encoding='utf-8')
+    return archive_extension.read_text(ROOT, path)
 
 
 class LinkObservationRoleContracts(unittest.TestCase):
@@ -100,8 +101,8 @@ class LinkObservationRoleContracts(unittest.TestCase):
         s=read('cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp')
         self.assertEqual(s.count('verify_library_roles();'),4)
         self.assertIn('!contains_import(value.file_inputs) && contains_import(value.side_outputs)',s)
-        self.assertEqual(len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))),96)
-        self.assertEqual(len(list((ROOT/'cpp/src').rglob('*.cpp'))),96)
+        self.assertEqual(len(list(archive_extension.legacy_native_paths(ROOT))),96)
+        self.assertEqual(len(list(archive_extension.legacy_product_paths(ROOT))),96)
 
     def test_cli_fixture_canonicalizes_before_deriving_outputs(self):
         s=read('cpp/tests/e2e/mqb_dll_target_e2e_tests.cpp')

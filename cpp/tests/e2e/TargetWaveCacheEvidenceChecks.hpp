@@ -8,9 +8,11 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <tuple>
 
 #include "mqb/core/PerformanceEvidence.hpp"
 #include "mqb/orchestration/ArtifactGenerationModel.hpp"
+#include "mqb/orchestration/ArtifactGenerationArchive.hpp"
 #include "mqb/orchestration/MsvcIncrementalTargetCoordinator.hpp"
 
 // Test-side persistence only. This is outside the measured product invocation;
@@ -113,6 +115,132 @@ void history(const fs::path& prefix, const Recorded& recorded) {
     }
 }
 
+// BEGIN generation archive round-trip checks
+inline void require_same_generation_model(const RecordedArtifactGenerationModel& before,
+                                          const RecordedArtifactGenerationModel& after) {
+    const auto label = [](const auto& a, const auto& b) {
+        require(a.has_value()==b.has_value(), "archive model label presence");
+        if (a) require(a->target==b->target && a->generation==b->generation,
+                       "archive model label bytes");
+    };
+    const auto snapshot = [](const auto& a, const auto& b) {
+        require(a.has_value()==b.has_value(), "archive model snapshot presence");
+        if (a) {
+            const auto x=mqb::encode_link_fact_snapshot(*a), y=mqb::encode_link_fact_snapshot(*b);
+            require(x.has_value() && y.has_value() && *x==*y, "archive model complete snapshot");
+        }
+    };
+    const auto identity = [](const auto& a, const auto& b) {
+        require(std::tie(a.compiler,a.version,a.binary_stamp)==std::tie(b.compiler,b.version,b.binary_stamp),
+                "archive model original toolchain identity");
+    };
+    const auto& a=before.model; const auto& b=after.model;
+    require(a.records.size()==b.records.size(), "archive model record count");
+    for (std::size_t i=0; i<a.records.size(); ++i) {
+        const auto& x=a.records[i]; const auto& y=b.records[i];
+        require(std::tie(x.source_id,x.target,x.generation,x.completion,x.recipe_evidence,x.state,x.origin_record,x.issues)==
+                std::tie(y.source_id,y.target,y.generation,y.completion,y.recipe_evidence,y.state,y.origin_record,y.issues),
+                "archive model complete record and provenance diagnostics");
+        label(x.caller_label,y.caller_label); snapshot(x.snapshot,y.snapshot);
+    }
+    require(before.compiles.size()==after.compiles.size(), "archive model compile-record count");
+    for (std::size_t i=0; i<before.compiles.size(); ++i) {
+        require(before.compiles[i].size()==after.compiles[i].size(), "archive model source count");
+        for (std::size_t j=0; j<before.compiles[i].size(); ++j) {
+            const auto& x=before.compiles[i][j]; const auto& y=after.compiles[i][j];
+            identity(x.inspection_toolchain,y.inspection_toolchain);
+            identity(x.cache_toolchain,y.cache_toolchain);
+            require(x.captured_signature==y.captured_signature && x.toolchains_differ==y.toolchains_differ &&
+                    x.force_rebuild==y.force_rebuild && x.save_error.has_value()==y.save_error.has_value() &&
+                    x.warnings.size()==y.warnings.size(), "archive model compile outcomes");
+            if (x.save_error) {
+                const auto& u=*x.save_error; const auto& v=*y.save_error;
+                require(std::tie(u.code,u.file,u.offset,u.message)==std::tie(v.code,v.file,v.offset,v.message),
+                        "archive model complete save failure");
+            }
+            for (std::size_t k=0; k<x.warnings.size(); ++k) {
+                const auto& u=x.warnings[k]; const auto& v=y.warnings[k];
+                require(std::tie(u.code,u.path,u.message)==std::tie(v.code,v.path,v.message),
+                        "archive model warning order and bytes");
+            }
+        }
+    }
+    const auto& ar=a.references; const auto& br=b.references;
+    require(ar.records.size()==br.records.size() && ar.matches.size()==br.matches.size() &&
+            ar.row_matches==br.row_matches, "archive model reference collection sizes");
+    for (std::size_t i=0; i<ar.records.size(); ++i) {
+        const auto& x=ar.records[i]; const auto& y=br.records[i];
+        label(x.caller_label,y.caller_label);
+        require(x.stages.size()==y.stages.size(), "archive model stage count");
+        for (std::size_t j=0; j<x.stages.size(); ++j) {
+            const auto& u=x.stages[j]; const auto& v=y.stages[j];
+            require(std::tie(u.kind,u.completion,u.cache_state,u.source_has_warnings,u.configuration,
+                             u.working_directory,u.toolchain_source)==
+                    std::tie(v.kind,v.completion,v.cache_state,v.source_has_warnings,v.configuration,
+                             v.working_directory,v.toolchain_source) && u.paths.size()==v.paths.size(),
+                    "archive model complete stage and own cwd");
+            for (std::size_t k=0; k<u.paths.size(); ++k)
+                require(u.paths[k].path==v.paths[k].path && u.paths[k].role==v.paths[k].role,
+                        "archive model literal ordered path and role");
+        }
+    }
+    for (std::size_t i=0; i<ar.matches.size(); ++i) {
+        const auto& x=ar.matches[i]; const auto& y=br.matches[i];
+        require(std::tie(x.record_index,x.stage_index,x.path_index,x.resolved_path,x.state,x.observed_rows,
+                         x.same_observed_file_rows,x.observed_identity_metadata_conflict)==
+                std::tie(y.record_index,y.stage_index,y.path_index,y.resolved_path,y.state,y.observed_rows,
+                         y.same_observed_file_rows,y.observed_identity_metadata_conflict),
+                "archive model complete lexical match");
+    }
+    // Both model entry points deliberately associate an empty observation set.
+    // A readback must not manufacture a current filesystem observation.
+    require(ar.observation.artifact_root==br.observation.artifact_root &&
+            !ar.observation.root_exists && !br.observation.root_exists &&
+            ar.observation.entries.empty() && br.observation.entries.empty() &&
+            ar.observation.references.empty() && br.observation.references.empty() &&
+            ar.observation.issues.empty() && br.observation.issues.empty(),
+            "archive model retains empty unverified observation");
+    require(a.retention.size()==b.retention.size() && a.paths.size()==b.paths.size(),
+            "archive model retention and path-group sizes");
+    for (std::size_t i=0; i<a.retention.size(); ++i) {
+        const auto& x=a.retention[i]; const auto& y=b.retention[i];
+        require(std::tie(x.request,x.state,x.executed_candidates,x.associated_records)==
+                std::tie(y.request,y.state,y.executed_candidates,y.associated_records),
+                "archive model retention requests and decisions");
+    }
+    for (std::size_t i=0; i<a.paths.size(); ++i) {
+        const auto& x=a.paths[i]; const auto& y=b.paths[i];
+        require(std::tie(x.path_key,x.matches,x.records,x.retained_records,x.shared_reference,
+                         x.multiple_executed_generations,x.different_target_or_recipe,x.unresolved_members)==
+                std::tie(y.path_key,y.matches,y.records,y.retained_records,y.shared_reference,
+                         y.multiple_executed_generations,y.different_target_or_recipe,y.unresolved_members),
+                "archive model complete path-group diagnostics");
+    }
+}
+inline void generation_archive_round_trip(std::span<const RecordedArtifactGenerationInput> inputs,
+                                         const RecordedArtifactGenerationModel& original,
+                                         const fs::path& root, const mqb::StoragePathKey& key) {
+    auto selected=project_artifact_generation_archive(inputs, {}, root, key);
+    if (!selected) throw std::runtime_error("native generation archive projection: "+selected.error().message);
+    auto encoded=encode_artifact_generation_archive(*selected,key);
+    if (!encoded) throw std::runtime_error("native generation archive encode: "+encoded.error().message);
+    auto decoded=decode_artifact_generation_archive(*encoded,key);
+    if (!decoded) throw std::runtime_error("native generation archive decode: "+decoded.error().message);
+    auto repeated=encode_artifact_generation_archive(*decoded,key);
+    require(repeated.has_value() && *repeated==*encoded, "native archive deterministic complete wire round trip");
+    auto modeled=model_archived_artifact_generations(*decoded,key);
+    if (!modeled) throw std::runtime_error("native generation archive model: "+modeled.error().message);
+    require_same_generation_model(original,*modeled);
+    static_assert(!ArtifactGenerationArchive::producer_identity_verified &&
+                  !ArtifactGenerationArchive::current_content_verified &&
+                  !ArtifactGenerationArchive::complete_producer_inventory &&
+                  !ArtifactGenerationArchive::deletion_authorized);
+    std::cout << "generation-archive phase=" << inputs.front().source_id << " bytes=" << encoded->size()
+              << " complete_model_equal=true producer_identity_verified=false current_content_verified=false"
+              << " complete_producer_inventory=false deletion_authorized=false\n";
+}
+// END generation archive round-trip checks
+
 // BEGIN recorded generation consumer checks
 template<class Recorded>
 void generation(const Recorded& recorded, const char* phase, const fs::path& root,
@@ -144,6 +272,7 @@ void generation(const Recorded& recorded, const char* phase, const fs::path& roo
                 "standalone native reuse cannot invent its absent producer");
     std::cout << "recorded-generation phase=" << phase << " source_contexts=" << value->compiles[0].size()
               << " accepted=true deletion_authorized=false\n";
+    generation_archive_round_trip(inputs, *value, root, key);
 }
 // END recorded generation consumer checks
 } // namespace target_wave_cache_checks

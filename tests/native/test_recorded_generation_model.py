@@ -2,6 +2,7 @@
 import copy
 import hashlib
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import unittest
 from unittest.mock import patch
 import recorded_generation_extension as ext
@@ -14,7 +15,7 @@ NATIVE = "cpp/tests/orchestration/incremental/artifact_generation_model_tests.cp
 OLD_NATIVE = "d5a617248f26f2c6ed37951ac9a93a981ddbda61822847adaa5027ce8c34a29c"
 
 def read(path):
-    return (ROOT/path).read_text(encoding="utf-8")
+    return archive_extension.read_text(ROOT, path)
 
 class RecordedGenerationContracts(unittest.TestCase):
     def test_all_78_old_model_assertions_remain(self):
@@ -87,11 +88,11 @@ class RecordedGenerationContracts(unittest.TestCase):
             self.assertNotIn(token,text)
 
     def test_default_product_paths_and_counts_unchanged(self):
-        for path in (ROOT/"cpp/src").rglob("*.cpp"):
+        for path in archive_extension.legacy_product_paths(ROOT):
             if path.relative_to(ROOT).as_posix()==SOURCE: continue
-            self.assertNotIn("model_recorded_artifact_generations(",path.read_text())
-        self.assertEqual(96,len(list((ROOT/"cpp/src").rglob("*.cpp"))))
-        self.assertEqual(96,len(list((ROOT/"cpp/tests").rglob("*_tests.cpp"))))
+            self.assertNotIn("model_recorded_artifact_generations(",archive_extension.read_text(ROOT, path.relative_to(ROOT).as_posix()))
+        self.assertEqual(96,len(list(archive_extension.legacy_product_paths(ROOT))))
+        self.assertEqual(96,len(list(archive_extension.legacy_native_paths(ROOT))))
         self.assertEqual("5.6.0",read("VERSION").strip())
 
     def test_scope_docs_and_false_authority(self):

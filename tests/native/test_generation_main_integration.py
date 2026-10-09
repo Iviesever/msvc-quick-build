@@ -4,6 +4,7 @@ Use the actual combined historical guard on isolated source-map copies. No
 native executable, benchmark, workflow or filesystem mutation is performed.
 """
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import unittest
 
 import accepted_reporting_extension as reporting
@@ -77,7 +78,7 @@ class GenerationMainIntegration(unittest.TestCase):
 
     def test_driver_cannot_silently_drop_the_model_program(self):
         changed = dict(self.source)
-        changed[DRIVER] = changed[DRIVER].replace('96', '95')
+        changed[DRIVER] = changed[DRIVER].replace('97', '95')
         with self.assertRaisesRegex(ValueError, 'native driver policy'):
             isolation.audit(changed)
 
