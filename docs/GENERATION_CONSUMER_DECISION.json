@@ -1,0 +1,622 @@
+{
+  "schema_version": 1,
+  "kind": "ordinary-generation-consumer-result-lifetime-decision",
+  "decision_id": "generation-consumer-20261010",
+  "status": "DEFER",
+  "repository": "Iviesever/msvc-quick-build",
+  "reviewed_identity": {
+    "main_commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+    "main_tree": "838071cea6120c99e3fd264dd407f9fb67ef716c",
+    "pr250_commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+    "pr250_tree": "4e777bdfc33b7befaf5e3769e27eb4fe910f9f03",
+    "pr250_state": "Draft/open/unmerged; product-cost and integration HOLD",
+    "pr248_state": "Separate Draft/open/unmerged; not integrated"
+  },
+  "completion": {
+    "finite_consumer_design_complete": true,
+    "ordinary_generation_consumer_selected": false,
+    "continue_cost_proposal_design_now": false,
+    "queue_measurement_proposal": false,
+    "product_cost": "HOLD",
+    "pr250_integration": "HOLD",
+    "real_execution": "BLOCKED",
+    "reason": "No accountable requirement selects an ordinary-generation consumer, actual invocation/result ownership contract, or cost rule. Keep current product surfaces and stop this measurement path.",
+    "default_cli_caller_is_a_universal_prerequisite": false,
+    "same_evidence_automatically_repeats_necessity_or_consumer_review": false
+  },
+  "latest_handoff": {
+    "url": "https://github.com/Iviesever/msvc-quick-build/issues/198#issuecomment-6084515239",
+    "previous_delivery": "https://github.com/Iviesever/msvc-quick-build/issues/198#issuecomment-6084622741",
+    "issue_comment_count_at_read": 324,
+    "tail_page": 162,
+    "per_page": 2,
+    "tail_comment_ids": [
+      6084515239,
+      6084622741
+    ],
+    "following_page_empty": true,
+    "limit": "Exact retained read interval; later external updates are not ruled out."
+  },
+  "lifetime_boundaries": [
+    {
+      "id": "synchronous-return",
+      "owned_values_can_survive_return": true,
+      "caller_obligation": "Borrowed completed input, root/key and spans remain valid and unchanged during their synchronous use; the caller owns returned success/error release."
+    },
+    {
+      "id": "same-process-multiple-invocations",
+      "wire_required": false,
+      "caller_obligation": "Retain completed owning results or selected owning model as needed; select the actual consumer, population, frequency, release points and maximum retained state."
+    },
+    {
+      "id": "another-process-or-restart",
+      "ordinary_generation_persistence_selected": false,
+      "caller_obligation": "Select a carrier, producer/publication/reader, path environment, provenance, atomicity, concurrency and interruption/durability contract."
+    }
+  ],
+  "alternatives": [
+    {
+      "id": "A",
+      "status": "KEEP_EXISTING_BEHAVIOR",
+      "consumer": "Current explicit mqb storage scan / legacy-reference association / report",
+      "ordinary_generation_adoption": false,
+      "sources": [
+        "storage-command",
+        "inventory"
+      ]
+    },
+    {
+      "id": "B",
+      "status": "UNSELECTED_CANDIDATE",
+      "consumer": "A named explicit same-process C++ caller retaining completed ordinary/static invocation results and consuming model_recorded_artifact_generations owning output",
+      "trigger": null,
+      "frequency": null,
+      "retained_lifetime": null,
+      "accountable_cost_requirement": null,
+      "sources": [
+        "model-api",
+        "model",
+        "model-source"
+      ]
+    },
+    {
+      "id": "C",
+      "status": "UNSELECTED_CANDIDATE",
+      "consumer": "A named archive-value or byte consumer using selected historical claims; cross-process use only with a separate chosen carrier/publication/read contract",
+      "trigger": null,
+      "frequency": null,
+      "retained_lifetime": null,
+      "accountable_cost_requirement": null,
+      "sources": [
+        "archive-api",
+        "archive-model-source",
+        "codec-source"
+      ]
+    }
+  ],
+  "operation_ownership_ledger": [
+    {
+      "operation": "mqb storage",
+      "input": "Parsed arguments/path",
+      "owned_work": "StorageInventory through scan, legacy association, report",
+      "returned_or_released": "Inventory ends with command scope; report goes to output stream; no generation model/journal",
+      "sources": [
+        "storage-command",
+        "inventory"
+      ]
+    },
+    {
+      "operation": "strict recorded projection",
+      "input": "Borrowed completed ordinary/static result and key",
+      "owned_work": "Selected references and per-source compile context",
+      "returned_or_released": "Owning selected projection, not full original process output/environment; caller release independent of input",
+      "sources": [
+        "projection"
+      ]
+    },
+    {
+      "operation": "model_recorded_artifact_generations",
+      "input": "Reference wrappers borrowing live records; retention/root/key",
+      "owned_work": "Projected refs, recipe/model, contexts; finish_model association copies projected refs",
+      "returned_or_released": "Owned model and compiles; locals release at end; inputs retain their caller owners",
+      "sources": [
+        "model-api",
+        "model-source",
+        "association",
+        "association-source"
+      ]
+    },
+    {
+      "operation": "project_artifact_generation_archive",
+      "input": "Borrowed live batch/retention/root/key",
+      "owned_work": "Full validation model coexists with live input and newly copied archive",
+      "returned_or_released": "Archive returned; local model releases at call end; live input remains caller-owned",
+      "sources": [
+        "archive-model-source"
+      ]
+    },
+    {
+      "operation": "encode_artifact_generation_archive",
+      "input": "Const archive reference and key",
+      "owned_work": "Full validation model and owning output wire; source archive remains alive",
+      "returned_or_released": "Wire returned; model releases at call end; archive/wire releases separately selected by caller",
+      "sources": [
+        "codec-source"
+      ]
+    },
+    {
+      "operation": "decode_artifact_generation_archive",
+      "input": "Borrowed string_view backing wire and key",
+      "owned_work": "Non-owning structural scan, decoded owning archive, full validation model",
+      "returned_or_released": "Returned archive does not borrow wire; model releases at call end; caller chooses coexistence of wire/archive",
+      "sources": [
+        "codec-source"
+      ]
+    },
+    {
+      "operation": "model_archived_artifact_generations",
+      "input": "Const archive reference and key",
+      "owned_work": "Strict model over archived claims, owning projection/model temporaries; no reconstruction of a successful Recorded*Result",
+      "returned_or_released": "Owned model/compile contexts separate from archive owner",
+      "sources": [
+        "archive-model-source",
+        "archive-api"
+      ]
+    },
+    {
+      "operation": "public errors/exceptions",
+      "input": "Unchanged input ownership obligations",
+      "owned_work": "Owned strings and potentially nested typed diagnostics; conversion/allocation/key exceptions can propagate",
+      "returned_or_released": "Returned errors belong to caller; completed locals unwind; scalar wrappers are not full public-error cost",
+      "sources": [
+        "archive-api",
+        "codec-source",
+        "model-api"
+      ]
+    }
+  ],
+  "cost_requirement": {
+    "selected_consumer": null,
+    "trigger_frequency": null,
+    "operation_owned_result_lifetime": null,
+    "input_population_platform": null,
+    "accountable_requirement_source": null,
+    "metric_unit_window": null,
+    "acceptable_adverse_invalid_consequence": null,
+    "absence_is_a_finite_decision_output": true,
+    "not_substitutes": [
+      "test scopes/phase names/empty retention and historical all-values-retained chain",
+      "schema/output/traversal caps",
+      "historical failed/INVALID observations or consumed budgets",
+      "external-no-op >1 ms AND >10% rule",
+      "a decorative nonnumeric threshold without a decision consequence"
+    ],
+    "scope_notes": [
+      "API-return time is not the full operation/caller-result destruction window.",
+      "Semantic coexistence is not measured peak allocation/RSS/time.",
+      "Carrier buffering/output/copies/parsing/hashing/flush/fsync/close can add outside-window work."
+    ],
+    "sources": [
+      "necessity",
+      "preparation",
+      "model",
+      "archive-api"
+    ]
+  },
+  "claims_and_persistence": {
+    "retention": "Explicit selection of unverified supplied claims; no keep-N/age policy, disk existence, automatic retirement or deletion list",
+    "legacy_link_file_facility": "Existing separate explicit single-snapshot LINK archive; does not publish ordinary generations or complete a record-set transaction",
+    "ordinary_generation_writer_reader_contract_selected": false,
+    "full_live_process_or_executable_recovery_serialized": false,
+    "sources": [
+      "model",
+      "link-archive",
+      "archive-api"
+    ]
+  },
+  "frozen_preparation": {
+    "path": "docs/ANALYSIS_COST_DECISION_PREPARATION.json",
+    "status": "PREPARATION_ONLY_BLOCKED",
+    "bytes": 21000,
+    "sha256": "f3c978a791f5797d62739dde24759003e231eb58892f7eaf689852ef62a0e1ae",
+    "authorized_real_budgets": {
+      "codec_compile_processes": 0,
+      "codec_preflight_processes": 0,
+      "codec_prepare_processes": 0,
+      "codec_measurement_processes": 0,
+      "codec_public_api_calls": 0,
+      "codec_warmup_calls": 0,
+      "codec_allocator_control_calls": 0,
+      "real_observations": 0,
+      "retries": 0,
+      "replacement_processes": 0,
+      "replacement_observations": 0,
+      "mqb_processes": 0,
+      "msvc_processes": 0,
+      "etw_sessions": 0,
+      "performance_studies": 0
+    },
+    "future_selection": {
+      "purpose": null,
+      "candidate": null,
+      "comparator": null,
+      "binaries": null,
+      "inputs": null,
+      "matrix": null,
+      "acceptance": null,
+      "observer": null,
+      "global_budgets": null,
+      "registration": null
+    },
+    "blockers": [
+      "No independently justified real-cost decision purpose beyond replacing study 002 or filling its missing five observations has been selected, and the need for a real execution has not been decided.",
+      "No future candidate/comparator, complete source/binary/compiler/runtime identities, fixed callback/input identities or exact invocation have been selected; historical references cannot select them implicitly.",
+      "No future product-cost acceptance criterion or numerical product budget has been fixed before new data. The historical registration had no numerical product threshold, so existing results cannot be used to invent one retrospectively.",
+      "No future complete global matrix, call/record order, process/API/warmup/control budget, resource/output/metadata/copy bounds or stop-accounting ledger has been selected. The closed driver allows at most 8 calls, 3 seconds active supervision per call and 20 seconds overall; it cannot silently run the historical 100-call, 25-second-child, 600-second study or reset its budget across batches.",
+      "No future observer-window and interference policy has been selected for output formatting, pipe backpressure, spool writes, copies, reads, parsing, hashing, flush/fsync/close and final sealing/audits. Being outside an API timing window does not establish zero cost or zero disturbance.",
+      "The current driver admits only fixed Python substitutes; real producer support, any needed global supervision, exact reap ownership and complete evidence binding for a real workload have not been qualified. Schema or fixed-byte validation cannot authenticate a producer.",
+      "No independent review and separate exact protocol registration/readback authorize a future real execution. This immutable preparation has no transition to an executable or approved state; later work requires a different reviewed artifact and decision."
+    ],
+    "authority": {
+      "producer_identity_verified": false,
+      "current_content_verified": false,
+      "complete_producer_inventory": false,
+      "deletion_authorized": false
+    },
+    "has_transition_to_executable_state": false
+  },
+  "preserved_history": {
+    "source": "preparation",
+    "study001": "failed-preflight; closed; not restarted",
+    "study002": "INVALID; closed; not restarted",
+    "consumed_processes": 100,
+    "consumed_top_level_api_calls": 1340,
+    "reconstructable_prepared": 99,
+    "reconstructable_observations": 495,
+    "normal_observations": 245,
+    "instrumented_observations": 250,
+    "intact_original_streams": 199,
+    "planned_original_streams": 200,
+    "missing_original": {
+      "path": "cost-execution-002/070-history_256-chain-0.stdout",
+      "expected_sha256_in_original_ledger": "ea375e03db244431e48f4764f5dc90035c6b6f7362c42643e16099428e327735",
+      "preserved_size_bytes": 0,
+      "preserved_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "case": "history_256",
+      "operation": "chain",
+      "instrumented": false,
+      "prepared_record": null,
+      "trial_0_ns": null,
+      "trial_1_ns": null,
+      "trial_2_ns": null,
+      "trial_3_ns": null,
+      "trial_4_ns": null,
+      "recovery_status": "Previously completed bounded faithful-copy search found no matching original. No reconstruction, replacement, interpolation or new search is authorized here."
+    },
+    "retained_decisions": [
+      "PR250 remains Draft/HOLD; default Windows Performance944 is only a limited existing default-path qualification and cannot repair study 002.",
+      "Retain all 819/886/897/907/919/937/944 holds, failures, adverse tails and block variation; equal counts do not establish a noise explanation.",
+      "Retain file_inputs 7-to-1/dependency gaps, dedicated DLL/LIB/PCH/HU/Windows/high-frequency/real-wire cost gaps, different-byte bootstrap, writer/atomicity/reparse/concurrency/recovery, clean-prune/Rium/#164, and #248 isolation.",
+      "VERSION remains 5.6.0; this preparation authorizes no v5.7.0 release."
+    ],
+    "no_raw_stream_recovery_search_or_new_measurement": true
+  },
+  "next_product_handoff": {
+    "issue": "https://github.com/Iviesever/msvc-quick-build/issues/198",
+    "task": "Explicit-clean eligibility and refusal contract for user-selected known-rebuildable target outputs",
+    "required_outcome": "Identify one supportable positive path and its exact evidence, or state the concrete missing authority; do not ship an always-refusing command.",
+    "contract_elements": [
+      "Known-rebuildable output eligibility grounded in current typed producer/layout and physical identities",
+      "Protected/shared/unknown exclusions",
+      "Preview-to-execution identity/staleness/reparse/hardlink checks and actual per-file outcomes",
+      "Supported participating builder/tool and running-product boundary; cleaner-only lock is insufficient"
+    ],
+    "existing_groundwork_limit": "Known-write collection and conservative admission already exist; begin_writes has no completion/reset. Empty gap vectors, scope exit or a cleaner-only marker do not prove writer quiescence.",
+    "broader_route": "#164 retains broader single-writer/session/recovery ownership; not assumed complete or implemented here",
+    "not_selected": [
+      "automatic prune",
+      "keep-N/age retention policy",
+      "ordinary-generation codec adoption",
+      "new writer/cleaner implementation",
+      "new execution budget or launch",
+      "VERSION/release change"
+    ],
+    "sources": [
+      "write-domain",
+      "write-domain-api",
+      "model",
+      "inventory"
+    ],
+    "issue198_complete": false
+  },
+  "verification_scope": {
+    "changed_repository_files": 6,
+    "preexisting_blob_mode_pairs_to_preserve": 717,
+    "workflow_blob_mode_pairs_to_preserve": 51,
+    "local_project_imports_tests_analyzers_runners": 0,
+    "fixed_substitute_launches": 0,
+    "codec_compiler_mqb_msvc_etw_or_real_workload_launches": 0,
+    "source_text_git_json_hash_and_administrative_delivery_checks_only": true,
+    "new_bilingual_pair_requires_direct_review": true,
+    "actual_automatic_ci_and_merge_receipts": "Recorded with delivery; no future result is assumed by this index.",
+    "not_a_native_or_product_cost_qualification": true
+  },
+  "git_sources": [
+    {
+      "id": "model",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "docs/ARTIFACT_GENERATIONS.md",
+      "blob": "14d41219e2f22a0e3fe9aae482eb99470be98829",
+      "mode": "100644",
+      "bytes": 8503,
+      "sha256": "e03d63b1bb9cfe08aec665a729ee9fa41e87728f10c90fac2a642b95da2335e4",
+      "role": "Pure model, explicit identity/retention claims, owning results, absence of default consumer/persistence",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/docs/ARTIFACT_GENERATIONS.md"
+    },
+    {
+      "id": "model-source",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp",
+      "blob": "d9fb445bb0a2da9c0f88e7510e44ea37b86ea045",
+      "mode": "100644",
+      "bytes": 36181,
+      "sha256": "591df98ff8597847adaf681529828eac0e5644ba795ce42ec08e550b44c5d490",
+      "role": "main 纯模型、保留选择、拥有复制与返回",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp"
+    },
+    {
+      "id": "projection",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "docs/RECORDED_STORAGE_PROJECTION.md",
+      "blob": "7cbe1d944d25c6989bbbf754032b32682ef8656f",
+      "mode": "100644",
+      "bytes": 6683,
+      "sha256": "bab50a50b99f0e7f33ed1e10a99ef36dc42eab35ecc2b312367adb022bd93bf8",
+      "role": "Owning selected projection, path coherence, bounds and explicit-use performance limits",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/docs/RECORDED_STORAGE_PROJECTION.md"
+    },
+    {
+      "id": "association",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "docs/ARTIFACT_STORAGE_ASSOCIATION.md",
+      "blob": "20b4bb982627a4e8e06b4e4662910012d65186c5",
+      "mode": "100644",
+      "bytes": 4673,
+      "sha256": "1255353e2fab89932976718f09c7b5bf8be05925231afe4a3bb27a4b19e25637",
+      "role": "Pure join of historical path references to observations; separate authority and uncertainty",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/docs/ARTIFACT_STORAGE_ASSOCIATION.md"
+    },
+    {
+      "id": "association-source",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "cpp/src/core/cache/ArtifactStorageAssociation.cpp",
+      "blob": "6cc1dbae7992691ca82768c6e76115ab63d14299",
+      "mode": "100644",
+      "bytes": 6749,
+      "sha256": "4d97df5226f7daa1e84cd3fc5c67e668717d92e878c7237f5ebcd0cdaa1f394b",
+      "role": "references 与 observation 的明确复制",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/cpp/src/core/cache/ArtifactStorageAssociation.cpp"
+    },
+    {
+      "id": "inventory",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "docs/STORAGE_INVENTORY.md",
+      "blob": "402a2b9c9d505448d9d366ac0b11faa05437524e",
+      "mode": "100644",
+      "bytes": 30889,
+      "sha256": "c3355324954332eca2d1c7cccab0b83a1a049d601cbf62f96ed94438597d1d4e",
+      "role": "Current read-only product operation and ordinary/static recorded API scope; old fixture descriptions are historical documentation, not rerun evidence",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/docs/STORAGE_INVENTORY.md"
+    },
+    {
+      "id": "storage-command",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "cpp/src/app/targets/StorageCommand.cpp",
+      "blob": "f0abe886995839f709b7b7b2f4cfb474399fcfb1",
+      "mode": "100644",
+      "bytes": 3275,
+      "sha256": "4a71412dabe4a47c294b99daa63a8ea30970bc0d16496fc5a531b0192ef91729",
+      "role": "Actual scan -> associate legacy references -> report call composition",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/cpp/src/app/targets/StorageCommand.cpp"
+    },
+    {
+      "id": "archive-api",
+      "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+      "path": "cpp/include/mqb/orchestration/ArtifactGenerationArchive.hpp",
+      "blob": "5f5b648563e4b9065c1a25df41c2c851e09381e3",
+      "mode": "100644",
+      "bytes": 6860,
+      "sha256": "7a1c745a22e197b9ff25f63cdc827a291ce9bcc04d101e37c445bfb9782183de",
+      "role": "PR250 archive 拥有类型与四个纯 API",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/a26b103685589ab8a5b4df60d1b760ec445efdf5/cpp/include/mqb/orchestration/ArtifactGenerationArchive.hpp"
+    },
+    {
+      "id": "archive-model-source",
+      "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+      "path": "cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp",
+      "blob": "157bcdc280a8b401fc8d1d4ed0a69adbfadbf801",
+      "mode": "100644",
+      "bytes": 40617,
+      "sha256": "a1cc6338a8be3cc48b5a4f0cf4db9ea1ccf1d33a67360aa2f4c91270746be7c8",
+      "role": "PR250 共用模型、archive 选择、复制／移动",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/a26b103685589ab8a5b4df60d1b760ec445efdf5/cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp"
+    },
+    {
+      "id": "codec-source",
+      "commit": "a26b103685589ab8a5b4df60d1b760ec445efdf5",
+      "path": "cpp/src/orchestration/incremental/ArtifactGenerationArchive.cpp",
+      "blob": "34561d4d2023bc3bef7df4592ff67e387c566e6b",
+      "mode": "100644",
+      "bytes": 26074,
+      "sha256": "b56f6165096c7262fa55a0c1dde5f7da22613abc8b4711b78ed3f1a3e46e527d",
+      "role": "wire 扫描、分配、内部 rich model 生命周期",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/a26b103685589ab8a5b4df60d1b760ec445efdf5/cpp/src/orchestration/incremental/ArtifactGenerationArchive.cpp"
+    },
+    {
+      "id": "link-archive",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "docs/LINK_COMPLETION_ARCHIVE.md",
+      "blob": "e2279213ed53844d87dc2d32a7b3dfd3511928a3",
+      "mode": "100644",
+      "bytes": 3757,
+      "sha256": "d67e38104140b9fb9e991ee7d8ae3d93b6a6158b10a4f98c97f234ab60588c2b",
+      "role": "Distinct explicit completed-LINK file adapter and synchronous IO boundary",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/docs/LINK_COMPLETION_ARCHIVE.md"
+    },
+    {
+      "id": "necessity",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "docs/ANALYSIS_COST_NECESSITY_REVIEW.md",
+      "blob": "226e8c55bab993963373a756229ccbab94c93dcf",
+      "mode": "100644",
+      "bytes": 17947,
+      "sha256": "0b55ce9849bf4efe48e80256445d1cb417e2b1f9d009b3710b669cac343cb95d",
+      "role": "Existing completed necessity review, finite next handoff and seven preserved blockers",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/docs/ANALYSIS_COST_NECESSITY_REVIEW.md"
+    },
+    {
+      "id": "preparation",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "docs/ANALYSIS_COST_DECISION_PREPARATION.json",
+      "blob": "d0b7d369e3e4cd1d365a8ee07140fbff3b491ea6",
+      "mode": "100644",
+      "bytes": 21000,
+      "sha256": "f3c978a791f5797d62739dde24759003e231eb58892f7eaf689852ef62a0e1ae",
+      "role": "Frozen zero/null/false preparation, historical windows and retained HOLD/BLOCKED",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/docs/ANALYSIS_COST_DECISION_PREPARATION.json"
+    },
+    {
+      "id": "write-domain",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "docs/WRITE_DOMAIN_ADMISSION.md",
+      "blob": "ec30fff3aba2ee334c3a54aad2e551d64498752c",
+      "mode": "100644",
+      "bytes": 11474,
+      "sha256": "d02e8f38195d41056fcfeb2300effe823d70cd8880a6dde4a64bf6489d1e4153",
+      "role": "Existing physical admission/write-inventory groundwork; no reusable completion/reset or whole builder/cleaner protocol",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/docs/WRITE_DOMAIN_ADMISSION.md"
+    },
+    {
+      "id": "write-domain-api",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "cpp/include/mqb/platform/windows/WindowsWriteDomain.hpp",
+      "blob": "adbd704fbf8d47d11bcd79ce07199474d59f5931",
+      "mode": "100644",
+      "bytes": 3153,
+      "sha256": "6252a5e4a2a42fec8579a7d4673865ce3dbd2f71b480af860929497c1e5c523c",
+      "role": "Exact implementation or public API used in the lifetime/next-handoff decision",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/cpp/include/mqb/platform/windows/WindowsWriteDomain.hpp"
+    },
+    {
+      "id": "model-api",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "cpp/include/mqb/orchestration/ArtifactGenerationModel.hpp",
+      "blob": "920d25c14a9b5427b0e0c541dffd794f6592f9cc",
+      "mode": "100644",
+      "bytes": 7777,
+      "sha256": "bf36a31842a8aff7f6f88c563632ca39d94b35f497c340f539ef6050c201d467",
+      "role": "Borrowed synchronous ordinary inputs and owned generation/model result interfaces",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/cpp/include/mqb/orchestration/ArtifactGenerationModel.hpp"
+    },
+    {
+      "id": "version",
+      "commit": "7dea446ea63c180e0af4a5ab5b499c244fbeaea6",
+      "path": "VERSION",
+      "blob": "1bc788d3b6da91224f56824b297a85ea3f9574c2",
+      "mode": "100644",
+      "bytes": 6,
+      "sha256": "e51f139763c0958d77e9454ad75fc927c601dad6512842bdf94a79a8e755374c",
+      "role": "Current version remains 5.6.0",
+      "url": "https://github.com/Iviesever/msvc-quick-build/blob/7dea446ea63c180e0af4a5ab5b499c244fbeaea6/VERSION"
+    }
+  ],
+  "independent_audits": [
+    {
+      "role": "lifetime",
+      "verdict": "DEFER",
+      "json": {
+        "file": "consumer-lifetime-audit-001.json",
+        "bytes": 63041,
+        "sha256": "39bd496b3a0bf1c3d12f1e69f43361c8b0891bb0af5b1eb589a2c0ee497d8423"
+      },
+      "explanation": {
+        "file": "consumer-lifetime-audit-001.md",
+        "bytes": 41855,
+        "sha256": "1fabb35d1f447d26df9b41ac0c8731e7eb1e700ad84d9564bbfc690375473fa2"
+      },
+      "location": "These immutable evidence files are in the delivered evidence archive, not duplicated as repository source."
+    },
+    {
+      "role": "requirement",
+      "verdict": "DEFER",
+      "json": {
+        "file": "consumer-requirement-audit-001.json",
+        "bytes": 43662,
+        "sha256": "1e4a1fdfb929f5b10e33b12d8a20291a282f3fdfc24e1abe1f357d59e9c0220b"
+      },
+      "explanation": {
+        "file": "consumer-requirement-audit-001.md",
+        "bytes": 22388,
+        "sha256": "4fb0d115f4f31692399ee4bcea418cbebb7d2e3378585987b90adaeed388abf7"
+      },
+      "location": "These immutable evidence files are in the delivered evidence archive, not duplicated as repository source."
+    }
+  ],
+  "remote_evidence_receipts": [
+    {
+      "file": "remote-initial-main-001.json",
+      "bytes": 389,
+      "sha256": "14c7731c6f79ad4cdbf3e54e2a992a427d650e94a1beb7f27082db85510bc8a8"
+    },
+    {
+      "file": "remote-base-commit-001.json",
+      "bytes": 2952,
+      "sha256": "07c22c1f089f4d7d4fb24e3e2c49b326fc2850ab0d4a102326ffdbb553b43f09"
+    },
+    {
+      "file": "remote-initial-pr254-001.json",
+      "bytes": 23694,
+      "sha256": "6de8407d1bd7285b85c79357fb4cbc0cff7be6a9b94906cffc7a67bda6da89a3"
+    },
+    {
+      "file": "remote-initial-issue198-001.json",
+      "bytes": 18526,
+      "sha256": "6b0afa0ef741bc304ba4b2991e65148f155fdf1217311e2d51ce32b4ac051d1c"
+    },
+    {
+      "file": "remote-initial-handoff-001.json",
+      "bytes": 14644,
+      "sha256": "06c2c7f224865db6b6b74ff430d6df5cb0ff181f3290790019d904a66ee2b4b5"
+    },
+    {
+      "file": "remote-initial-delivery-001.json",
+      "bytes": 6661,
+      "sha256": "e3bdef8270d2a529949c9410d670d05b0ff459c2df339d430ad7448440d28921"
+    },
+    {
+      "file": "remote-issue198-last-comments-001.json",
+      "bytes": 21722,
+      "sha256": "15515160fe53bd2cf67530b93bd6e00dc8a3ea2bf3a9f678a5975d0a733be6ef"
+    },
+    {
+      "file": "remote-issue198-after-last-comments-001.json",
+      "bytes": 3,
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "file": "remote-initial-pr250-001.json",
+      "bytes": 25402,
+      "sha256": "dff84dedbcc4ab4019152fe91839e906872b6dcd36cc066cded2d65db4d6a75b"
+    },
+    {
+      "file": "remote-initial-pr248-001.json",
+      "bytes": 24637,
+      "sha256": "43d74ef0da6ad4a7b50365521eed807cd4f475afef560c1720b4c3ee640c04cf"
+    },
+    {
+      "file": "remote-issue164-001.json",
+      "bytes": 17215,
+      "sha256": "b7defe75e2308707233a8290de8ba4ee97a9e9d6c9a60d1821b9de592cbcb40d"
+    }
+  ]
+}
