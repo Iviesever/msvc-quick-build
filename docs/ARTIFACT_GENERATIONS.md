@@ -10,6 +10,11 @@ historical associations, conflicts and selected references. It performs no build
 scan, clock read, file IO, registry update, deletion, migration or automatic GC.
 There is no default build/CLI integration and no persistent model format.
 
+Completed ordinary EXE/DLL/static evidence also has a separate, explicit
+[versioned archive API](ARTIFACT_GENERATION_ARCHIVE.md). It selects owning claims
+and uses this model's strict association after bounded v1 read-back. It does not
+serialize `recipe_evidence` or turn the model into a persistence writer.
+
 Each input supplies a unique historical `source_id`, explicit project/target keys,
 an optional generation key, the original compiler context (or unknown), its typed
 target record, and optionally a link-main-output snapshot. Caller annotations stay

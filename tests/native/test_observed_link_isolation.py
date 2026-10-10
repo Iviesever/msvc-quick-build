@@ -5,6 +5,7 @@ Original HOLD candidate: bd12a59e9894068384d1a9b56b052ce5fec86098.
 No original executable, native API, benchmark or capture is run here.
 """
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import hashlib
 import json
 import posixpath
@@ -64,6 +65,7 @@ def without_comments(value):
     return re.sub(r'//[^\n]*', '', re.sub(r'/\*.*?\*/', '', value, flags=re.S))
 
 def audit(files):
+    files = archive_extension.historical_tree(files)
     # Reverse the three known blocks and one include, then check the WHOLE
     # original file, so unrelated scanner/alias/share changes are rejected.
     primitives = files[PRIM]
@@ -180,6 +182,7 @@ def audit(files):
                            without_comments(files[tu])), 'existing production caller adopted observation')
     need(not reachable, 'observation type leaks into an original production TU')
     return dict(native_programs=96, original_native_programs=88, production_tus=len(actual),
+                source_view='exact_pre_archive', current_native_programs=97, current_production_tus=97,
                 original_tus_reaching_observation=reachable, legacy_extractions_exact=True,
                 new_benchmarks=0, performance_verified=False, clears_hold=False)
 

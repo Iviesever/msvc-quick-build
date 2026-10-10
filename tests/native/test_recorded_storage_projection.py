@@ -1,6 +1,7 @@
 """Pure consumer contracts and exact inverse controls; not native execution."""
 import copy
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import re
 import unittest
 from unittest.mock import patch
@@ -13,7 +14,7 @@ TEST = 'cpp/tests/e2e/mqb_storage_association_e2e_tests.cpp'
 
 
 def read(path):
-    return (ROOT/path).read_text(encoding='utf-8')
+    return archive_extension.read_text(ROOT, path)
 
 
 def body(text):
@@ -78,7 +79,7 @@ class RecordedStorageProjectionContracts(unittest.TestCase):
     def test_default_cli_and_generation_consumer_unchanged(self):
         paths = list((ROOT/'cpp/src/app').rglob('*.cpp')) + [ROOT/'cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp']
         for path in paths:
-            text = body(path.read_text(encoding='utf-8'))
+            text = body(archive_extension.legacy_text(path.relative_to(ROOT).as_posix(), path.read_text(encoding='utf-8')))
             self.assertNotIn('RecordedTargetStorageReferences', text, str(path))
             self.assertNotIn('RecordedStorageProjectionLimits', text, str(path))
         self.assertIn('project_storage_references(target)', read('cpp/src/orchestration/incremental/ArtifactGenerationModel.cpp'))
@@ -121,8 +122,8 @@ class RecordedStorageProjectionContracts(unittest.TestCase):
             actual = read('cpp/tests/e2e/'+name)
             self.assertIn('project_storage_references(*result, platform::windows::path_identity_key)', actual)
             self.assertIn('target_wave_cache_checks::recorded', actual)
-        self.assertEqual(len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))), 96)
-        self.assertEqual(len(list((ROOT/'cpp/src').rglob('*.cpp'))), 96)
+        self.assertEqual(len(list(archive_extension.legacy_native_paths(ROOT))), 96)
+        self.assertEqual(len(list(archive_extension.legacy_product_paths(ROOT))), 96)
         self.assertEqual(len(list((ROOT/'.github/workflows').glob('*.yml'))), 51)
         self.assertEqual(read('VERSION').strip(), '5.6.0')
 

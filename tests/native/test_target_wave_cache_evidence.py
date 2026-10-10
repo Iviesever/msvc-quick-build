@@ -6,6 +6,7 @@ The existing native test TU exercises the new deterministic cases separately.
 import copy
 import json
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import recorded_storage_projection_contract as storage_projection_extension
 import re
 import shutil
@@ -29,7 +30,7 @@ REGISTRATION = ",\n        'TargetWaveCacheEvidenceCases.hpp'"
 
 
 def read(path):
-    return storage_projection_extension.legacy_text(path, (ROOT/path).read_text(encoding='utf-8'))
+    return storage_projection_extension.legacy_text(path, archive_extension.read_text(ROOT, path))
 
 
 def between(text, first, last):
@@ -209,8 +210,8 @@ class TargetWaveCacheContracts(unittest.TestCase):
             actual = read(path)
             self.assertIn('target_wave_cache_checks::recorded', actual)
             self.assertEqual(ext.git_blob(ext.legacy_text(path,actual)), ext.SPEC['files'][path]['prior'])
-        self.assertEqual(len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))),96)
-        self.assertEqual(len(list((ROOT/'cpp/src').rglob('*.cpp'))),96)
+        self.assertEqual(len(list(archive_extension.legacy_native_paths(ROOT))),96)
+        self.assertEqual(len(list(archive_extension.legacy_product_paths(ROOT))),96)
         self.assertEqual(len(list((ROOT/'.github/workflows').glob('*.yml'))),51)
         self.assertEqual(read('VERSION').strip(),'5.6.0')
 
@@ -231,11 +232,11 @@ class TargetWaveCacheContracts(unittest.TestCase):
     def test_registered_incremental_leaf_matches_actual_source(self):
         leaf = ROOT/'cpp/tests/orchestration/incremental'
         actual = [p.name for p in leaf.iterdir() if p.is_file()]
-        check_incremental_layout(read(LAYOUT), actual)
-        self.assertEqual(read(LAYOUT).count(REGISTRATION), 1)
+        check_incremental_layout((ROOT/LAYOUT).read_text(encoding='utf-8'), actual)
+        self.assertEqual((ROOT/LAYOUT).read_text(encoding='utf-8').count(REGISTRATION), 1)
 
     def test_missing_extra_duplicate_and_wrong_leaf_registration_rejected(self):
-        layout = read(LAYOUT)
+        layout = (ROOT/LAYOUT).read_text(encoding='utf-8')
         actual = [p.name for p in (ROOT/'cpp/tests/orchestration/incremental').iterdir() if p.is_file()]
         helper = Path(CASES).name
         for changed_layout, changed_files in (

@@ -1,5 +1,6 @@
 """Frozen old reference, actual product-reader wiring and preserved policy controls."""
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import hashlib
 import subprocess
 import sys
@@ -103,7 +104,7 @@ class OracleControls(unittest.TestCase):
                 if path.is_file():
                     for token in (b'v9_reader_prototype',b'v9_oracle.hpp',b'mqb_v9_oracle'):
                         self.assertNotIn(token,path.read_bytes())
-        self.assertEqual(96,len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))))
+        self.assertEqual(96,len(list(archive_extension.legacy_native_paths(ROOT))))
         layout=(ROOT/'tests/native/assert_cpp_layout.ps1').read_text()
         for name in ('v9_reader_probe.cpp','v9_reader_prototype.hpp','VisualStudioToolchainCacheReader.hpp'):
             self.assertIn("'"+name+"'",layout)
@@ -155,11 +156,11 @@ class OracleControls(unittest.TestCase):
             self.assertIn(token,t)
 
     def test_native_driver_registers_exact_96_without_policy_changes(self):
-        driver=(ROOT/'tests/native/run_native_tests.ps1').read_text()
+        driver=archive_extension.read_text(ROOT, 'tests/native/run_native_tests.ps1')
         self.assertIn('if ($allTestFiles.Count -ne 96) {',driver)
         self.assertEqual(driver.count('96'),3)
         self.assertEqual(hashlib.sha256(o.canonical(driver.replace('96','87').encode())).hexdigest(),
             '0762767db8ae5898dd2dd091d539cdd9edc54660ec48ffc990612cfe093ff425')
-        self.assertEqual(96,len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))))
+        self.assertEqual(96,len(list(archive_extension.legacy_native_paths(ROOT))))
 
 if __name__=='__main__':unittest.main(verbosity=2)

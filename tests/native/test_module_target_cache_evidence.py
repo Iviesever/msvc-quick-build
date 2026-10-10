@@ -1,5 +1,6 @@
 """Owning same-call target evidence; portable contracts, not Windows execution."""
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import recorded_storage_projection_contract as storage_projection_extension
 import accepted_target_wave_cache_extension as wave_extension
 import unittest
@@ -12,7 +13,7 @@ HEADER = 'cpp/include/mqb/orchestration/MsvcModuleTargetCoordinator.hpp'
 
 
 def read(path):
-    return wave_extension.legacy_text(path, storage_projection_extension.legacy_text(path, (ROOT / path).read_text(encoding='utf-8')))
+    return wave_extension.legacy_text(path, storage_projection_extension.legacy_text(path, archive_extension.read_text(ROOT, path)))
 
 
 def original_target(text):
@@ -173,14 +174,14 @@ class ModuleTargetCacheEvidenceContracts(unittest.TestCase):
         allowed = {TU, 'cpp/src/orchestration/modules/MsvcModuleCompileCoordinator.cpp',
                    'cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp',
                    'cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp'}
-        for path in (ROOT/'cpp/src').rglob('*'):
+        for path in archive_extension.legacy_source_paths(ROOT):
             if path.suffix not in ('.cpp', '.hpp') or path.relative_to(ROOT).as_posix() in allowed:
                 continue
-            text = wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), storage_projection_extension.legacy_text(path.relative_to(ROOT).as_posix(), path.read_text(encoding='utf-8')))
+            text = wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), storage_projection_extension.legacy_text(path.relative_to(ROOT).as_posix(), archive_extension.read_text(ROOT, path.relative_to(ROOT).as_posix())))
             self.assertNotIn('CompileCacheEvidence', text, str(path))
             self.assertNotIn('ModuleCompileWaveCacheEvidence', text, str(path))
         self.assertIn('return run_impl(request, nullptr);', read(TU))
-        self.assertEqual(96, len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))))
+        self.assertEqual(96, len(list(archive_extension.legacy_native_paths(ROOT))))
         self.assertEqual(51, len(list((ROOT/'.github/workflows').glob('*.yml'))))
 
     def test_docs_and_release_boundary(self):

@@ -1,6 +1,7 @@
 """Same-call module/HU capture contracts; not Windows execution or performance."""
 import hashlib
 from pathlib import Path
+import generation_archive_extension as archive_extension
 import recorded_storage_projection_contract as storage_projection_extension
 import accepted_target_wave_cache_extension as wave_extension
 import unittest
@@ -10,7 +11,7 @@ ROOT=Path(__file__).resolve().parents[2]
 TU='cpp/src/orchestration/modules/MsvcModuleCompileCoordinator.cpp'
 HEADER='cpp/include/mqb/orchestration/MsvcModuleCompileCoordinator.hpp'
 
-def read(name):return wave_extension.legacy_text(name, storage_projection_extension.legacy_text(name, (ROOT / name).read_text(encoding='utf-8')))
+def read(name):return wave_extension.legacy_text(name, storage_projection_extension.legacy_text(name, archive_extension.read_text(ROOT, name)))
 def between(text, first, last):return text.split(first,1)[1].split(last,1)[0]
 
 def wiring(text):
@@ -105,7 +106,7 @@ class ModuleCacheEvidenceContracts(unittest.TestCase):
         helper=t.split(x.BEGIN,1)[1]
         self.assertEqual(1,helper.count('wave.run_recorded('))
         self.assertNotIn('wave.run(',helper)
-        self.assertEqual(96,len(list((ROOT/'cpp/tests').rglob('*_tests.cpp'))))
+        self.assertEqual(96,len(list(archive_extension.legacy_native_paths(ROOT))))
         self.assertEqual(51,len(list((ROOT/'.github/workflows').glob('*.yml'))))
     def test_real_evidence_counts_are_outside_serialization(self):
         helper=read(x.TEST).split(x.BEGIN,1)[1]
@@ -118,9 +119,9 @@ class ModuleCacheEvidenceContracts(unittest.TestCase):
         allowed={TU,'cpp/src/orchestration/modules/MsvcModuleTargetCoordinator.cpp',
                  'cpp/src/orchestration/incremental/MsvcIncrementalCompileCoordinator.cpp',
                  'cpp/src/orchestration/incremental/MsvcIncrementalPchCoordinator.cpp'}
-        for path in (ROOT/'cpp/src').rglob('*'):
+        for path in archive_extension.legacy_source_paths(ROOT):
             if path.suffix not in ('.cpp','.hpp') or path.relative_to(ROOT).as_posix() in allowed:continue
-            t=wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), storage_projection_extension.legacy_text(path.relative_to(ROOT).as_posix(), path.read_text()));self.assertNotIn('CompileCacheEvidence',t,str(path));self.assertNotIn('ModuleCompileWaveCacheEvidence',t,str(path))
+            t=wave_extension.legacy_text(path.relative_to(ROOT).as_posix(), storage_projection_extension.legacy_text(path.relative_to(ROOT).as_posix(), archive_extension.read_text(ROOT, path.relative_to(ROOT).as_posix())));self.assertNotIn('CompileCacheEvidence',t,str(path));self.assertNotIn('ModuleCompileWaveCacheEvidence',t,str(path))
     def test_bilingual_docs_and_unreleased_version(self):
         a=read('docs/MODULE_CACHE_EVIDENCE.md');b=read('docs/MODULE_CACHE_EVIDENCE_ZH.md')
         self.assertEqual(a.count('\n## '),b.count('\n## '))

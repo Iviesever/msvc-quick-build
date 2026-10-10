@@ -5,6 +5,7 @@
 #include <set>
 #include <type_traits>
 
+#include "mqb/orchestration/ArtifactGenerationArchive.hpp"
 #include "mqb/orchestration/MsvcIncrementalStaticTargetCoordinator.hpp"
 
 #include "mqb/orchestration/MsvcModuleTargetCoordinator.hpp"
@@ -244,8 +245,9 @@ struct ProjectionPaths {
                          "output or metadata aliases a protected input");
     }
 };
-ArtifactCacheState checked_cache_state(const CompileCacheEvidence& e,
-                                       const IncrementalCompileResult& result, ProjectionBudget& budget) {
+template<class Evidence, class Result>
+ArtifactCacheState checked_cache_state(const Evidence& e,
+                                       const Result& result, ProjectionBudget& budget) {
     std::size_t save_warnings = 0;
     budget.count(result.warnings.size());
     for (const auto& w : result.warnings) {
@@ -417,6 +419,16 @@ project_storage_references(const RecordedTargetResult& value, const StoragePathK
 }
 std::expected<RecordedTargetStorageReferences, RecordedStorageProjectionError>
 project_storage_references(const RecordedStaticTargetResult& value, const StoragePathKey& key,
+                           RecordedStorageProjectionLimits limits) {
+    return project_recorded_target(value, value.record.archive, value.result.archive.archived, key, limits);
+}
+std::expected<RecordedTargetStorageReferences, RecordedStorageProjectionError>
+project_storage_references(const ArchivedTargetClaim& value, const StoragePathKey& key,
+                           RecordedStorageProjectionLimits limits) {
+    return project_recorded_target(value, value.record.link, value.result.link.linked, key, limits);
+}
+std::expected<RecordedTargetStorageReferences, RecordedStorageProjectionError>
+project_storage_references(const ArchivedStaticTargetClaim& value, const StoragePathKey& key,
                            RecordedStorageProjectionLimits limits) {
     return project_recorded_target(value, value.record.archive, value.result.archive.archived, key, limits);
 }

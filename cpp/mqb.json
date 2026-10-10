@@ -36,6 +36,7 @@
       "src/orchestration/incremental/LinkFactSnapshotProjection.cpp",
       "src/orchestration/incremental/LinkCompletionArchive.cpp",
       "src/orchestration/incremental/ArtifactGenerationModel.cpp",
+      "src/orchestration/incremental/ArtifactGenerationArchive.cpp",
       "src/platform/windows/StorageFileObservation.cpp",
       "src/platform/windows/LinkFactSnapshotFile.cpp",
       "src/platform/windows/StorageInventory.cpp",
