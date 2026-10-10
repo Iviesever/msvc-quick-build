@@ -1,0 +1,68 @@
+name: PR247 Remaining Scenario Evidence
+on:
+  pull_request:
+    types: [synchronize]
+    paths:
+      - 'tests/diagnostics/pr247_link/remaining.py'
+      - 'tests/diagnostics/pr247_link/test_remaining.py'
+      - 'tests/diagnostics/pr247_link/REMAINING.md'
+      - '.github/workflows/pr247-remaining-scenarios.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pr247-remaining-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  remaining:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.number == 248 && github.event.pull_request.head.ref == 'diag/pr247-link-boundaries-001' && github.event.pull_request.base.sha == '399e06fa43d2052ac0d452e1320438c015c65145' && github.event.before == '625e70b1a68e476fd07a7e581846b1a557b27ba3' && github.run_attempt == 1
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Preserve request and harness before any preparation
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path remaining-preflight -ErrorAction Stop | Out-Null
+          Copy-Item $env:GITHUB_EVENT_PATH remaining-preflight/event.json
+          git archive --format=zip --output=remaining-preflight/harness-source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Download the frozen Performance919 archive
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Invoke-WebRequest -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/artifacts/11539029999/zip" `
+            -Headers @{Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json'} -OutFile original919.zip
+      - name: Portable contracts before real MQB calls
+        shell: pwsh
+        env:
+          PR247_TEST_ARCHIVE: original919.zip
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python -m unittest discover -s tests/diagnostics/pr247_link -p 'test_remaining.py' -v 1>remaining-preflight/contracts.stdout 2>remaining-preflight/contracts.stderr
+          $code = $LASTEXITCODE
+          Get-Content remaining-preflight/contracts.stdout, remaining-preflight/contracts.stderr | Write-Host
+          exit $code
+      - name: Two preparations and twenty-four frozen-original-binary calls
+        shell: pwsh
+        run: |
+          python tests/diagnostics/pr247_link/remaining.py measure --archive original919.zip --out remaining-output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/diagnostics/pr247_link/remaining.py audit --out remaining-output
+          exit $LASTEXITCODE
+      - name: Preserve all first results and failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr247-remaining-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            remaining-output/**
+            remaining-preflight/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
