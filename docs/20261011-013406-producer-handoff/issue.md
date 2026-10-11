@@ -1,16 +1,18 @@
 # Current-session producer handoff: implementation entry gate
 
-Status: `REPLACEMENT_IPC_PREREQUISITE_SOURCE_READY`. Attempt 005 ran
+Status: `IPC_STARTUP_DIAGNOSTIC_SOURCE_PREPARATION`. Attempt 005 ran
 the necessary native primitive checks and demonstrated an attribute-writer
 counterexample. See [the closed result and next gate](native_probe_result_005.md).
 Product implementation, full native qualification, and C01 positive handoff
 are not complete.
 
-The next concrete source is now prepared: [prerequisite 006](native_delegation_plan_006.md)
-tests WRITE_RESTRICTED with actual named-pipe delegation and retained WA use
-after client Job completion and ACL revocation. It has four fixed cases and
-independent controls. Review and immutable registration precede its single
-new execution; the completed 001-005 records are not rerun or reclassified.
+[Prerequisite 006 closed before IPC](native_delegation_result_006.md): its
+compiler passed, the first child-report ReadFile failed with error 109, and
+the outer Job total was 3 instead of 2. The actual child exit was not queried.
+The next concrete source is [007 startup diagnostics](native_delegation_plan_007.md),
+which preserves all original conditions while observing the actual child and
+its Job before cleanup. Review and immutable registration precede its single
+new execution; the completed 001-006 records are not rerun or reclassified.
 
 ## Intended outcome
 
@@ -31,9 +33,11 @@ moving prior worktrees or making any remote Git mutation.
 Three separate initial source audits examined the actual production path, Windows
 completion/physical boundaries, and verification scope. No product, project
 test, analyzer, compiler, MSVC, MQB or workload was executed in those initial
-audits. Subsequent attempts 001-005 are distinct: five prerequisite workflow
-runs, four compiler-driver invocations, eleven observed compiler Job processes,
-and one native primitive invocation. No ordinary MQB producer ran.
+audits. Subsequent attempts 001-006 are distinct: six prerequisite workflow
+runs, five compiler-driver invocations, thirteen observed compiler Job
+total-count units, and two native fixture invocations. The 006 native outer
+Job total of 3 is an incomplete result with no third process identity.
+No ordinary MQB producer ran.
 
 ## Concrete implementation blocker
 

@@ -1,15 +1,18 @@
 # Implementation plan: actual producer-to-cleaner handoff
 
-Status: `REPLACEMENT_IPC_PREREQUISITE_SOURCE_READY`.
+Status: `IPC_STARTUP_DIAGNOSTIC_SOURCE_PREPARATION`.
 Prepared against main `87f86770cfc7e1941603074ace914e0c7faf10d3`.
 No product implementation has been performed. The bounded prerequisite fixture
 ran in attempt 005 and disqualified the metadata-seal dependency below. See
 [the exact result, limits and next gate](native_probe_result_005.md).
 This plan preserves PR256's accepted scope and does not reclassify its
 unexecuted C01-C28 scenarios as passed.
-The next source is the fixed [006 IPC prerequisite](native_delegation_plan_006.md),
-pending independent source review and immutable one-shot registration. No
-qualified replacement owner or product receipt is implied by preparing it.
+The [006 IPC prerequisite closed before its first case](native_delegation_result_006.md).
+The fixture compiled, but the report pipe broke before any child report and
+outer Job total 3 exceeded 2. The actual child exit was not observed.
+The next source is [007 startup/exit diagnostics](native_delegation_plan_007.md),
+pending independent source review and immutable one-shot registration. The
+candidate remains unqualified; the diagnostic preserves its original gates.
 
 ## 1. Decision required before product changes
 
@@ -99,7 +102,10 @@ retained-handle use after revocation. An explicitly R-admitted duplex route
 provides an end-to-end positive control; ordinary write and read-only routes do
 not grant R. NULL-DACL endpoints and relevant ALPC mapping are outside this
 finite test. A refusal of its fixed routes cannot qualify a complete owner.
-Independent source review and immutable registration still precede activation.
+006 did not reach any IPC case, so it supplies no result for these routes.
+007 adds only fixed startup/first-command observations and actual child/Job
+failure snapshots before cleanup. Independent source review and immutable
+registration still precede the new activation.
 
 Do not replace this work with a generic owner class, another PID census, a
 candidate-recipe collector, an always-refusing CLI, or a repetition of consumer

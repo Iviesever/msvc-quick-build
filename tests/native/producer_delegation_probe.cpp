@@ -29,8 +29,9 @@ unsigned sequence = 0;
 constexpr std::uint64_t baseline_time = 132537600000000000ULL;
 constexpr DWORD all_sharing = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 constexpr DWORD protocol_magic = 0x4d514236;
-constexpr DWORD protocol_leaf = 1, protocol_open = 2, protocol_close = 3, protocol_exit = 4;
+constexpr DWORD protocol_startup = 0, protocol_leaf = 1, protocol_open = 2, protocol_close = 3, protocol_exit = 4;
 constexpr DWORD phase_open = 1, phase_payload = 2, phase_close = 3, phase_exit = 4;
+constexpr DWORD startup_handles = 1, startup_first_command = 2;
 
 std::string escaped(const std::string& value) {
     static constexpr char hex[] = "0123456789abcdef";
@@ -405,8 +406,75 @@ struct Report {
     DWORD attempted; DWORD success; DWORD error; DWORD transferred;
     std::uint64_t handle; std::uint64_t time;
 };
+struct StartupSnapshot {
+    DWORD magic; DWORD command; DWORD phase; DWORD argc;
+    std::uint64_t input; std::uint64_t output;
+    DWORD input_ok; DWORD input_error; DWORD input_flags;
+    DWORD output_ok; DWORD output_error; DWORD output_flags;
+};
+struct FirstCommandSnapshot {
+    DWORD magic; DWORD command; DWORD phase;
+    DWORD read_ok; DWORD read_error; DWORD transferred;
+    Command observed;
+};
 static_assert(sizeof(Command) == 16);
 static_assert(sizeof(Report) == 48);
+static_assert(sizeof(StartupSnapshot) == 56);
+static_assert(sizeof(FirstCommandSnapshot) == 40);
+
+bool send_snapshot(HANDLE handle, const void* value, DWORD bytes) {
+    DWORD written = 0;
+    return WriteFile(handle, value, bytes, &written, nullptr) && written == bytes;
+}
+
+void receive_startup_snapshot(HANDLE handle, HANDLE expected_input, HANDLE expected_output) {
+    StartupSnapshot snapshot{}; DWORD read = 0;
+    const BOOL ok = ReadFile(handle, &snapshot, sizeof(snapshot), &read, nullptr);
+    const DWORD error = ok ? 0 : GetLastError();
+    Record("startup_transport").number("phase", startup_handles).boolean("ok", ok != FALSE)
+        .number("error", error).number("bytes_read_raw", read);
+    require(ok && read == sizeof(snapshot), "complete first startup snapshot");
+    const bool input_valid = valid(reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(snapshot.input)));
+    const bool output_valid = valid(reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(snapshot.output)));
+    Record("client_startup").number("magic", snapshot.magic).number("command", snapshot.command)
+        .number("phase", snapshot.phase).number("argc", snapshot.argc)
+        .text("input_handle_decimal", std::to_string(snapshot.input))
+        .text("output_handle_decimal", std::to_string(snapshot.output))
+        .boolean("input_parse_valid", input_valid).boolean("output_parse_valid", output_valid)
+        .boolean("handles_distinct", snapshot.input != snapshot.output)
+        .boolean("input_query_ok", snapshot.input_ok != 0).number("input_query_error", snapshot.input_error)
+        .number("input_flags_raw", snapshot.input_flags).boolean("input_flags_observed", snapshot.input_ok != 0)
+        .boolean("output_query_ok", snapshot.output_ok != 0).number("output_query_error", snapshot.output_error)
+        .number("output_flags_raw", snapshot.output_flags).boolean("output_flags_observed", snapshot.output_ok != 0);
+    require(snapshot.magic == protocol_magic && snapshot.command == protocol_startup && snapshot.phase == startup_handles &&
+        snapshot.argc == 6 && snapshot.input_ok <= 1 && snapshot.output_ok <= 1 &&
+        snapshot.input == reinterpret_cast<std::uintptr_t>(expected_input) &&
+        snapshot.output == reinterpret_cast<std::uintptr_t>(expected_output), "exact startup identity and framing");
+    require(input_valid && output_valid && snapshot.input != snapshot.output &&
+        snapshot.input_ok && snapshot.input_error == 0 && (snapshot.input_flags & HANDLE_FLAG_INHERIT) &&
+        snapshot.output_ok && snapshot.output_error == 0 && (snapshot.output_flags & HANDLE_FLAG_INHERIT),
+        "original child handle predicates remain required");
+}
+
+void receive_first_command_snapshot(HANDLE handle) {
+    FirstCommandSnapshot snapshot{}; DWORD read = 0;
+    const BOOL ok = ReadFile(handle, &snapshot, sizeof(snapshot), &read, nullptr);
+    const DWORD error = ok ? 0 : GetLastError();
+    Record("startup_transport").number("phase", startup_first_command).boolean("ok", ok != FALSE)
+        .number("error", error).number("bytes_read_raw", read);
+    require(ok && read == sizeof(snapshot), "complete first command snapshot");
+    Record("client_first_command").number("magic", snapshot.magic).number("command", snapshot.command)
+        .number("phase", snapshot.phase).boolean("read_ok", snapshot.read_ok != 0)
+        .number("read_error", snapshot.read_error).number("bytes_read_raw", snapshot.transferred)
+        .number("observed_magic", snapshot.observed.magic).number("observed_command", snapshot.observed.command)
+        .number("observed_index", snapshot.observed.index).number("observed_reserved", snapshot.observed.reserved);
+    require(snapshot.magic == protocol_magic && snapshot.command == protocol_startup &&
+        snapshot.phase == startup_first_command && snapshot.read_ok <= 1, "exact first command snapshot framing");
+    require(snapshot.read_ok && snapshot.read_error == 0 && snapshot.transferred == sizeof(Command) &&
+        snapshot.observed.magic == protocol_magic && snapshot.observed.reserved == 0 &&
+        snapshot.observed.command == protocol_leaf && snapshot.observed.index == 0,
+        "original first command predicates remain required");
+}
 
 void send_command(HANDLE handle, DWORD command, DWORD index) {
     const Command value{protocol_magic, command, index, 0}; DWORD written = 0;
@@ -455,17 +523,34 @@ HANDLE parsed_handle(const wchar_t* text) {
     return reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(value));
 }
 
-int run_client(const std::wstring& leaf, const std::wstring& stem, HANDLE input, HANDLE output) {
+int run_client(int argc, const wchar_t* leaf_argument, const wchar_t* stem_argument, HANDLE input, HANDLE output) {
+    DWORD input_flags = 0, output_flags = 0;
+    const BOOL input_ok = GetHandleInformation(input, &input_flags);
+    const DWORD input_error = input_ok ? 0 : GetLastError();
+    const BOOL output_ok = GetHandleInformation(output, &output_flags);
+    const DWORD output_error = output_ok ? 0 : GetLastError();
+    const StartupSnapshot startup{protocol_magic, protocol_startup, startup_handles, static_cast<DWORD>(argc),
+        reinterpret_cast<std::uintptr_t>(input), reinterpret_cast<std::uintptr_t>(output),
+        input_ok ? 1UL : 0UL, input_error, input_flags, output_ok ? 1UL : 0UL, output_error, output_flags};
+    // Only the original parsed output is used; an invalid channel has no fallback.
+    if (!send_snapshot(output, &startup, sizeof(startup))) return 3;
     if (!valid(input) || !valid(output) || input == output) return 3;
     Handle input_owner(input, "client-command"), output_owner(output, "client-report");
-    DWORD flags = 0;
-    if (!GetHandleInformation(input, &flags) || !(flags & HANDLE_FLAG_INHERIT) ||
-        !GetHandleInformation(output, &flags) || !(flags & HANDLE_FLAG_INHERIT)) return 3;
+    if (!input_ok || !(input_flags & HANDLE_FLAG_INHERIT) ||
+        !output_ok || !(output_flags & HANDLE_FLAG_INHERIT)) return 3;
+    const std::wstring leaf(leaf_argument), stem(stem_argument);
     Handle connection;
     DWORD current = 0;
     for (unsigned step = 0; step < 10; ++step) {
         Command command{}; DWORD read = 0;
-        if (!ReadFile(input, &command, sizeof(command), &read, nullptr) || read != sizeof(command) ||
+        const BOOL read_ok = ReadFile(input, &command, sizeof(command), &read, nullptr);
+        const DWORD read_error = read_ok ? 0 : GetLastError();
+        if (step == 0) {
+            const FirstCommandSnapshot snapshot{protocol_magic, protocol_startup, startup_first_command,
+                read_ok ? 1UL : 0UL, read_error, read, command};
+            if (!send_snapshot(output, &snapshot, sizeof(snapshot))) return 3;
+        }
+        if (!read_ok || read != sizeof(command) ||
             command.magic != protocol_magic || command.reserved != 0) return 3;
         if (command.command == protocol_leaf && step == 0 && command.index == 0) {
             const HANDLE handle = CreateFileW(leaf.c_str(), FILE_WRITE_ATTRIBUTES, all_sharing, nullptr,
@@ -573,6 +658,76 @@ struct Summary {
     bool disqualified = false;
     bool write_connection_refused = false;
     std::array<CaseResult, 4> cases;
+};
+
+void record_client_job_snapshot(HANDLE job, const char* label) {
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+    const BOOL ok = QueryInformationJobObject(job, JobObjectBasicAccountingInformation,
+        &accounting, sizeof(accounting), nullptr);
+    const DWORD error = ok ? 0 : GetLastError();
+    Record record("client_job_snapshot");
+    record.text("label", label).boolean("ok", ok != FALSE).number("error", error)
+        .text("job_handle_decimal", handle_decimal(job));
+    if (ok) {
+        record.number("total_processes", accounting.TotalProcesses).number("active_processes", accounting.ActiveProcesses)
+            .number("total_terminated_processes", accounting.TotalTerminatedProcesses);
+    } else { ++errors; }
+}
+
+std::uint64_t filetime_value(const FILETIME& value) {
+    return (static_cast<std::uint64_t>(value.dwHighDateTime) << 32) | value.dwLowDateTime;
+}
+
+class ClientUnwindDiagnostic {
+    HANDLE process;
+    HANDLE job;
+    bool armed = true;
+public:
+    ClientUnwindDiagnostic(HANDLE actual_process, HANDLE owned_job) : process(actual_process), job(owned_job) {}
+    ClientUnwindDiagnostic(const ClientUnwindDiagnostic&) = delete;
+    ~ClientUnwindDiagnostic() noexcept {
+        if (!armed) return;
+        try {
+            const DWORD waited = WaitForSingleObject(process, 1000);
+            const DWORD wait_error = waited == WAIT_FAILED ? GetLastError() : 0;
+            Record("client_unwind_wait").text("process_handle_decimal", handle_decimal(process))
+                .number("maximum_wait_ms", 1000).number("result", waited).number("error", wait_error)
+                .boolean("signaled", waited == WAIT_OBJECT_0);
+            if (waited != WAIT_OBJECT_0) ++errors;
+
+            DWORD exit_code = 0;
+            const BOOL exit_ok = GetExitCodeProcess(process, &exit_code);
+            const DWORD exit_error = exit_ok ? 0 : GetLastError();
+            {
+                Record record("client_unwind_exit");
+                record.boolean("ok", exit_ok != FALSE).number("error", exit_error)
+                    .boolean("process_signaled", waited == WAIT_OBJECT_0);
+                if (exit_ok) record.number("exit_code", exit_code);
+                else ++errors;
+            }
+
+            FILETIME created{}, exited{}, kernel{}, user{};
+            const BOOL times_ok = GetProcessTimes(process, &created, &exited, &kernel, &user);
+            const DWORD times_error = times_ok ? 0 : GetLastError();
+            {
+                Record record("client_unwind_times");
+                record.boolean("ok", times_ok != FALSE).number("error", times_error)
+                    .boolean("exit_time_observed", times_ok && waited == WAIT_OBJECT_0);
+                if (times_ok) {
+                    record.text("creation_time_decimal", std::to_string(filetime_value(created)))
+                        .text("kernel_time_decimal", std::to_string(filetime_value(kernel)))
+                        .text("user_time_decimal", std::to_string(filetime_value(user)));
+                    if (waited == WAIT_OBJECT_0)
+                        record.text("exit_time_decimal", std::to_string(filetime_value(exited)));
+                } else { ++errors; }
+            }
+            record_client_job_snapshot(job, "before-abnormal-owned-handle-cleanup");
+        } catch (...) {
+            // Diagnostics must not prevent the original process/Job RAII cleanup.
+            ++errors;
+        }
+    }
+    void cancel_after_success() noexcept { armed = false; }
 };
 
 Handle named_server(const std::wstring& name, DWORD index, Security& security, const char* label) {
@@ -761,7 +916,7 @@ void run_server(const std::wstring& root, Summary& summary) {
     const DWORD image_length = GetModuleFileNameW(nullptr, image_buffer.data(), static_cast<DWORD>(image_buffer.size()));
     require(image_length > 0 && image_length < image_buffer.size(), "exact current fixture image path");
     const std::wstring image(image_buffer.data(), image_length);
-    const auto stem = L"\\\\.\\pipe\\mqb-delegation-006-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+    const auto stem = L"\\\\.\\pipe\\mqb-delegation-007-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
         std::to_wstring(static_cast<DWORD>(unique.HighPart)) + L"-" + std::to_wstring(unique.LowPart);
     auto command_line = quote_argument(image) + L" --client " + quote_argument(leaf) + L" " + quote_argument(stem) + L" " +
         std::to_wstring(reinterpret_cast<std::uintptr_t>(command_read.get())) + L" " +
@@ -773,6 +928,7 @@ void run_server(const std::wstring& root, Summary& summary) {
         &process_security.attributes, TRUE, creation_flags, nullptr, root.c_str(),
         &startup.StartupInfo, &process_info), "CreateProcessAsUserW", "one suspended restricted client");
     Handle process(process_info.hProcess, "actual-client-process"), thread(process_info.hThread, "actual-client-thread");
+    ClientUnwindDiagnostic child_diagnostic(process.get(), job.get());
     Record("client_created").number("pid", process_info.dwProcessId).number("tid", process_info.dwThreadId)
         .number("flags", creation_flags).number("inherited_handle_count", inherited.size()).wide("image", image)
         .wide("command_line", command_line).boolean("resumed", false);
@@ -824,13 +980,16 @@ void run_server(const std::wstring& root, Summary& summary) {
     require(enabled_privileges(host_token.get(), "server-before-IPC") == 0, "no server privilege enabled for IPC");
     require(actual_claim(host_token.get(), "server-after-disabling-privileges") == host_claim, "server claim unchanged by privilege disable");
     no_thread_token("server before client resume");
+    record_client_job_snapshot(job.get(), "before-client-resume");
     const DWORD suspend_count = ResumeThread(thread.get());
     const DWORD resume_error = suspend_count == static_cast<DWORD>(-1) ? GetLastError() : 0;
     Record("client_resume").number("previous_suspend_count", suspend_count).number("error", resume_error);
     require(suspend_count == 1, "single admitted client resume");
     require(thread.close(), "parent closes client thread handle after resume");
 
+    receive_startup_snapshot(report_read.get(), inherited[0], inherited[1]);
     send_command(command_write.get(), protocol_leaf, 0);
+    receive_first_command_snapshot(report_read.get());
     const auto leaf_open = receive_report(report_read.get(), protocol_leaf, 0, phase_open);
     const auto leaf_write = receive_report(report_read.get(), protocol_leaf, 0, phase_payload);
     const auto leaf_close = receive_report(report_read.get(), protocol_leaf, 0, phase_close);
@@ -953,6 +1112,7 @@ void run_server(const std::wstring& root, Summary& summary) {
     require(summary.write_connection_refused || summary.cases[0].mutation_verified,
         "ordinary write-connection control refused or yielded its complete counterexample");
     // No refusal claim about other transports, other SQOS or actual cl/link.
+    child_diagnostic.cancel_after_success();
     require(command_write.close() && report_read.close() && process.close() && job.close() && host_token.close(),
         "all remaining server-owned handles close");
 }
@@ -960,7 +1120,7 @@ void run_server(const std::wstring& root, Summary& summary) {
 DWORD WINAPI watchdog(LPVOID parameter) {
     const DWORD result = WaitForSingleObject(static_cast<HANDLE>(parameter), 30000);
     if (result != WAIT_OBJECT_0) {
-        constexpr char message[] = "producer-delegation-006 watchdog expired or failed\n";
+        constexpr char message[] = "producer-delegation-007 watchdog expired or failed\n";
         DWORD written = 0;
         WriteFile(GetStdHandle(STD_ERROR_HANDLE), message, sizeof(message) - 1, &written, nullptr);
         TerminateProcess(GetCurrentProcess(), 124);
@@ -972,7 +1132,7 @@ DWORD WINAPI watchdog(LPVOID parameter) {
 int wmain(int argc, wchar_t** argv) {
     if (argc == 6 && std::wcscmp(argv[1], L"--client") == 0) {
         emit_records = false;
-        try { return run_client(argv[2], argv[3], parsed_handle(argv[4]), parsed_handle(argv[5])); }
+        try { return run_client(argc, argv[2], argv[3], parsed_handle(argv[4]), parsed_handle(argv[5])); }
         catch (...) { return 3; }
     }
     if (argc != 2) return 3;
@@ -985,7 +1145,7 @@ int wmain(int argc, wchar_t** argv) {
         require(valid(stop.get()), "watchdog event created");
         watch = Handle(CreateThread(nullptr, 0, watchdog, stop.get(), 0, nullptr), "watchdog-thread");
         require(valid(watch.get()), "one auxiliary watchdog thread");
-        Record("scope").text("attempt", "producer-delegation-006").number("max_processes", 2)
+        Record("scope").text("attempt", "producer-delegation-007").number("max_processes", 2)
             .number("max_named_pipes", 8).number("protocol_channels", 2).number("cases", 4)
             .number("watchdog_seconds", 30).number("max_fixture_payload_bytes", 4096)
             .boolean("A1", false).boolean("A2", false).boolean("A4", false).boolean("deletion_enabled", false);
