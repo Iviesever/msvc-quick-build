@@ -1,6 +1,14 @@
 # Implement the first offline observation of refusal 012
 
-Status: `IMPLEMENTED_SYNTHETIC_VERIFIED_NOT_REGISTERED_NOT_EXECUTED`.
+Status: `CLOSED_LOCATED_REFUSAL_NO_STATIC_INDEX_HANDOFF_013`.
+
+Implementation, registration, observation and independent reviews are complete.
+This closure records step 9. The original checkpoint below retains its
+pre-registration timing. The [closed result](../20261011-013406-producer-handoff/native_startup_result_012.md)
+and [walkthrough](walkthrough.md) record the reviewed source commit,
+registration, one actual invocation, independent reviews and final 178-test
+synthetic validation. The [013 handoff](../20261011-013406-producer-handoff/native_startup_handoff_013.md)
+is the next separately reviewed slice; it has no implementation or invocation.
 
 This executes the accepted
 [012 handoff](../20261011-013406-producer-handoff/native_startup_handoff_012.md).
@@ -11,7 +19,8 @@ It does not reopen 011 or preselect a parser correction.
 Start from `3bf20f99414cfaf059564773db365f8aabccde5b`, tree
 `95f16e77b3d03f3066d11d4c9dedd84877311296`. Fresh remote checks retain main
 `87f86770cfc7e1941603074ace914e0c7faf10d3`, draft/HOLD PR250/248/207 and 11
-workflow runs, each attempt 1. There is no 012 registration or execution.
+workflow runs, each attempt 1. At this initial baseline there was no 012
+registration or execution.
 The existing linked worktree is clean and is not a submodule. Its 119 pure
 baseline tests pass. Fifteen retained input/source/review hashes match 011.
 
@@ -138,5 +147,6 @@ only jointly with a clean owner exit: a save/fsync/readback returning after the
 deadline produces a nonzero exit and consumes the call.
 
 Real-input calls, new native work, workflow allocations and objdump calls in
-012 remain zero at this checkpoint. Publication and registration do not follow
-until the independent source and current scope reviews pass.
+012 were zero at this checkpoint. Publication and registration followed the
+independent source and current scope reviews. The later actual observation
+consumed exactly one parser call; native/workflow/objdump counts remain zero.

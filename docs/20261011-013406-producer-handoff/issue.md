@@ -1,6 +1,6 @@
 # Current-session producer handoff: implementation entry gate
 
-Status: `BCRYPT_SNAPSHOT_011_CLOSED_PE_REFUSED_OFFLINE_HANDOFF_012`. Attempt 005 ran
+Status: `BCRYPT_REFUSAL_CONTEXT_012_CLOSED_COMPATIBILITY_HANDOFF_013`. Attempt 005 ran
 the necessary native primitive checks and demonstrated an attribute-writer
 counterexample. See [the closed result and next gate](native_probe_result_005.md).
 Product implementation, full native qualification, and C01 positive handoff
@@ -33,14 +33,22 @@ and five matching identities; the original outer Job total 3 still fails the
 required 2, leaving INCONCLUSIVE with no native_summary in result.json. The
 frozen pure PE parser then refused the image with UNWIND_OPCODE_INVALID. The
 offline phase made no objdump call, loaded or executed no DLL, and performed
-no parser retry or alternate-image substitution. The [012 handoff](native_startup_handoff_012.md) reuses these exact
-bytes for a bounded offline refusal-context and parser-compatibility diagnosis;
-no new Windows/native run is needed. All 119 final source unit tests passed,
-but that does not turn the real-input PE refusal into an accepted index.
+no parser retry or alternate-image substitution. Its 119 final source unit
+tests passed without admitting the refused real-input index.
+[012 is now closed](native_startup_result_012.md): its separately registered
+single offline observation located frozen guard 438, version-1 UWOP_SET_FPREG,
+OpInfo 6 with nonzero frame register 5. Root entry index 11 covers
+`[0x1830, 0x19BE)`, outside the observed init RVA `0xA590`. Independent raw-byte
+and invocation-budget reviews pass. Four minimal synthetic regressions and
+the final 178-test pure suite pass; the actual PE index remains unadmitted.
+The [013 handoff](native_startup_handoff_013.md) proposes a separately versioned,
+version-1/opcode-3-only compatibility change supported by primary Microsoft
+format and consumer evidence. It needs its own source, output-budget and
+invocation admission. There was no new native run, DLL execution or objdump call.
 The historical 010/011 proposals and execution plans retain their original
 pre-execution status and are superseded by their closed results and issue
 registrations/closures. All token/ACL restrictions and qualification limits
-remain. Completed 001-011 records are not rerun or reclassified.
+remain. Completed 001-012 records are not rerun or reclassified.
 
 ## Intended outcome
 
@@ -66,6 +74,8 @@ runs, ten compiler-driver invocations, compiler Job TotalProcesses summing to
 twenty-three, and seven native fixture invocations. The 006-011 native outer
 Job totals of 3 are incomplete results with no additional process identity.
 No ordinary MQB producer ran.
+012 adds one separately registered offline parser observation; it changes none
+of those native counts. Its durable consumed marker remains spent.
 
 ## Concrete implementation blocker
 

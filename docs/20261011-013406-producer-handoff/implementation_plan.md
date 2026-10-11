@@ -1,6 +1,6 @@
 # Implementation plan: actual producer-to-cleaner handoff
 
-Status: `BCRYPT_SNAPSHOT_011_CLOSED_PE_REFUSED_OFFLINE_HANDOFF_012`.
+Status: `BCRYPT_REFUSAL_CONTEXT_012_CLOSED_COMPATIBILITY_HANDOFF_013`.
 Prepared against main `87f86770cfc7e1941603074ace914e0c7faf10d3`.
 No product implementation has been performed. The bounded prerequisite fixture
 ran in attempt 005 and disqualified the metadata-seal dependency below. See
@@ -36,14 +36,22 @@ and five matching identities; the original outer Job total 3 still fails the
 required 2, leaving INCONCLUSIVE with no native_summary in result.json. The
 frozen pure PE parser then refused the image with UNWIND_OPCODE_INVALID. The
 offline phase made no objdump call, loaded or executed no DLL, and performed
-no parser retry or alternate-image substitution. The [012 handoff](native_startup_handoff_012.md) reuses these exact
-bytes for a bounded offline refusal-context and parser-compatibility diagnosis;
-no new Windows/native run is needed. All 119 final source unit tests passed,
-but that does not turn the real-input PE refusal into an accepted index.
+no parser retry or alternate-image substitution. Its 119 final source unit
+tests passed without admitting the refused real-input index.
+[012 is now closed](native_startup_result_012.md): its separately registered
+single offline observation located frozen guard 438, version-1 UWOP_SET_FPREG,
+OpInfo 6 with nonzero frame register 5. Root entry index 11 covers
+`[0x1830, 0x19BE)`, outside the observed init RVA `0xA590`. Independent raw-byte
+and invocation-budget reviews pass. Four minimal synthetic regressions and
+the final 178-test pure suite pass; the actual PE index remains unadmitted.
+The [013 handoff](native_startup_handoff_013.md) proposes a separately versioned,
+version-1/opcode-3-only compatibility change supported by primary Microsoft
+format and consumer evidence. It needs its own source, output-budget and
+invocation admission. There was no new native run, DLL execution or objdump call.
 The historical 010/011 proposals and execution plans retain their original
 pre-execution status and are superseded by their closed results and issue
 registrations/closures. All token/ACL restrictions and qualification limits
-remain. Completed 001-011 records are not rerun or reclassified.
+remain. Completed 001-012 records are not rerun or reclassified.
 
 ## 1. Decision required before product changes
 
@@ -275,23 +283,31 @@ closes the reviewed bounded collector and its one registered execution: the
 actual event-object bytes, identity/retention chain and same-run loader init
 association are admitted for raw diagnostic use. The unchanged outer Job
 gate still fails, and the once-invoked frozen PE parser refuses the image
-with UNWIND_OPCODE_INVALID. No disassembly is admitted. The next slice is
-the [012 offline handoff](native_startup_handoff_012.md), a bounded failure-context
-wrapper around the frozen parser using these same retained bytes, before
-any evidence-based compatibility correction. The
-[011 walkthrough](../20261011-115555-bcrypt-snapshot-011/walkthrough.md) indexes
-actual verification and the retained branch; the original [walkthrough](walkthrough.md)
-remains historical. After the startup blocker is understood, the actual IPC
+with UNWIND_OPCODE_INVALID. No disassembly is admitted. The separately
+registered [012 observation](native_startup_result_012.md) is now complete:
+one clean owner exit, one parser call, a verified 36-byte envelope and 12-byte
+root entry, exact guard/slot binding, and 178 passing synthetic tests. Its
+source and actual output are frozen. The [013 next slice](native_startup_handoff_013.md)
+is a separately versioned compatibility indexer with a change restricted to
+version-1 UWOP_SET_FPREG's unused OpInfo field. Source review, unchanged
+negative guards, a proven full-index output budget and a new registered
+single-call manifest must precede any new actual-image invocation. No 013
+implementation or call has occurred. The
+[012 walkthrough](../20261011-135424-bcrypt-refusal-012/walkthrough.md) indexes
+the current result and verification. Earlier walkthroughs remain historical.
+After the startup blocker is understood, the actual IPC
 capability-lifetime prerequisite still must run under its own admitted scope.
 Startup alone cannot qualify it.
 
 The product handoff remains: provide the concrete participant/isolation owner
 described in section 1, review its actual access and completion argument, then
 implement and qualify the A1/A2/A4 path above. Retain the current refusal and
-all original evidence until that owner exists. After 011, the prerequisite
+all original evidence until that owner exists. After 012, the native prerequisite
 totals are eleven workflow runs, ten compiler drivers, compiler Job
 TotalProcesses summing to twenty-three, and seven native fixture invocations.
 There have been zero ordinary MQB executions in this work.
+012's one offline refusal-context observation changes none of those native
+totals and does not identify the internal DLL initialization failure.
 
 Sources: the unchanged repository at the pinned main commit; PR256 and #198
 comment 6095001403; docs/EXPLICIT_CLEAN_CONTRACT.md; docs/PROCESS_LIFETIME.md;
