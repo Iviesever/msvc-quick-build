@@ -1,6 +1,6 @@
 # Current-session producer handoff: implementation entry gate
 
-Status: `STARTUP_DEBUG_DIAGNOSTIC_SOURCE_PREPARATION`. Attempt 005 ran
+Status: `STARTUP_DEBUG_DIAGNOSTIC_009_CLOSED_NEXT_HANDOFF_RECORDED`. Attempt 005 ran
 the necessary native primitive checks and demonstrated an attribute-writer
 counterexample. See [the closed result and next gate](native_probe_result_005.md).
 Product implementation, full native qualification, and C01 positive handoff
@@ -14,10 +14,15 @@ observed actual C exit `0xC0000142 / STATUS_DLL_INIT_FAILED` before owned
 cleanup. [008 applied the single default-DACL grant](native_delegation_result_008.md)
 and verified it on actual C while S stayed unchanged, but C again exited
 DLL_INIT_FAILED before startup. No IPC case was observed. The specific DLL
-or failed access remains unidentified. The next [009 startup event diagnosis](native_startup_plan_009.md)
-observes actual C under a separately bounded debugger environment, with all
-token/ACL restrictions retained and every qualification authority false.
-Completed 001-008 records are not rerun or reclassified.
+or failed access remains unidentified. [009 startup event diagnosis is closed](native_startup_result_009.md):
+all 15 observed debug events were continued successfully, but C still exited
+`0xC0000142` before any startup frame or debug string. The sole exception was
+the initial breakpoint. Raw diagnostic capture was complete; outer Job total
+3 still fails the exact-total-2 gate before the runner parses that summary.
+The [next 010 handoff](native_startup_handoff_010.md) is a child-image loader-snaps
+proposal, explicitly not implemented, registered or executed. All token/ACL
+restrictions and qualification limits remain. Completed 001-009 records are
+not rerun or reclassified.
 
 ## Intended outcome
 
@@ -38,9 +43,9 @@ moving prior worktrees or making any remote Git mutation.
 Three separate initial source audits examined the actual production path, Windows
 completion/physical boundaries, and verification scope. No product, project
 test, analyzer, compiler, MSVC, MQB or workload was executed in those initial
-audits. Subsequent attempts 001-008 are distinct: eight prerequisite workflow
-runs, seven compiler-driver invocations, compiler Job TotalProcesses summing to
-seventeen, and four native fixture invocations. The 006-008 native outer
+audits. Subsequent attempts 001-009 are distinct: nine prerequisite workflow
+runs, eight compiler-driver invocations, compiler Job TotalProcesses summing to
+nineteen, and five native fixture invocations. The 006-009 native outer
 Job totals of 3 are incomplete results with no additional process identity.
 No ordinary MQB producer ran.
 
@@ -84,7 +89,8 @@ service delegation were not exercised by this necessary-primitive fixture.
 The replacement gate is concrete control of write capabilities from their
 creation through their complete lifetime, including legitimate IPC delegation.
 WRITE_RESTRICTED plus a unique restricting SID is selected only for the bounded
-006 read-only IPC falsification, not as a qualified producer owner. Write
+006 read-only IPC falsification, not as a qualified producer owner. The IPC
+cases remain unobserved through the separately scoped 009 diagnosis. Write
 restrictions alone do not yet close NULL-DACL endpoints, read-only IPC that
 can delegate identity, or the relevant ALPC access mapping. Do not rerun
 the disproved RWH dependency or promote a token type name to completion.

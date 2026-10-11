@@ -1,6 +1,6 @@
 # Implementation plan: actual producer-to-cleaner handoff
 
-Status: `STARTUP_DEBUG_DIAGNOSTIC_SOURCE_PREPARATION`.
+Status: `STARTUP_DEBUG_DIAGNOSTIC_009_CLOSED_NEXT_HANDOFF_RECORDED`.
 Prepared against main `87f86770cfc7e1941603074ace914e0c7faf10d3`.
 No product implementation has been performed. The bounded prerequisite fixture
 ran in attempt 005 and disqualified the metadata-seal dependency below. See
@@ -17,10 +17,16 @@ or IPC case was observed. The candidate remains unqualified; its exact
 DLL/access failure must be investigated without weakening existing gates.
 [008's exact R default-DACL grant was tested](native_delegation_result_008.md):
 all readbacks passed, but actual C again exited DLL_INIT_FAILED before startup.
-The single grant was not sufficient. The next [009 diagnosis](native_startup_plan_009.md)
-records actual C startup debug events, actual process/thread DACLs and bounded
-module/string/exception evidence. It changes no ACL and supplies no IPC or
-production qualification, even if startup advances under observation.
+The single grant was not sufficient. [009 diagnosis is closed](native_startup_result_009.md):
+the actual process/thread DACLs and 15-event debug chain were observed, with
+15 successful continuations. C exited `0xC0000142` before any startup frame or
+debug string; only the initial breakpoint was reported. Raw diagnostic
+capture completed, but the outer Job total 3 failed the exact-total-2 gate
+before summary parsing. No initializer or failed access was identified.
+The [next 010 handoff](native_startup_handoff_010.md) proposes a single PE
+Load Config flag change in a fresh child copy to obtain loader snaps. Its
+state is NOT_IMPLEMENTED_NOT_REGISTERED_NOT_EXECUTED. It must acquire its own
+exact source, fixed bounds, review and registration before activation.
 
 ## 1. Decision required before product changes
 
@@ -243,10 +249,19 @@ This record provides exact integration locations and the replacement design
 gate. It is not another consumer/cost necessity study, a delivered cleaner,
 full native qualification, or a merged feature.
 
-The next engineering handoff is: provide the concrete participant/isolation
-owner described in section 1, review its actual access and completion argument,
-then implement and qualify the A1/A2/A4 path above. Retain the current refusal
-and all original evidence until that owner exists.
+The immediate handoff is the [010 loader-snaps proposal](native_startup_handoff_010.md).
+009 has closed its diagnostic event capture without locating the failed
+initializer; 010 has not yet been implemented or activated. After any startup
+blocker is understood, the actual IPC capability-lifetime prerequisite still
+must run under its own admitted scope. Startup alone cannot qualify it.
+
+The product handoff remains: provide the concrete participant/isolation owner
+described in section 1, review its actual access and completion argument, then
+implement and qualify the A1/A2/A4 path above. Retain the current refusal and
+all original evidence until that owner exists. After 009, the prerequisite
+totals are nine workflow runs, eight compiler drivers, compiler Job
+TotalProcesses summing to nineteen, and five native fixture invocations.
+There have been zero ordinary MQB executions in this work.
 
 Sources: the unchanged repository at the pinned main commit; PR256 and #198
 comment 6095001403; docs/EXPLICIT_CLEAN_CONTRACT.md; docs/PROCESS_LIFETIME.md;
