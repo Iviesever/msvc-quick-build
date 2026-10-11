@@ -1,10 +1,16 @@
 # Current-session producer handoff: implementation entry gate
 
-Status: `CANDIDATE_DISQUALIFIED_REPLACEMENT_NOT_SELECTED`. Attempt 005 ran
+Status: `REPLACEMENT_IPC_PREREQUISITE_SOURCE_READY`. Attempt 005 ran
 the necessary native primitive checks and demonstrated an attribute-writer
 counterexample. See [the closed result and next gate](native_probe_result_005.md).
 Product implementation, full native qualification, and C01 positive handoff
 are not complete.
+
+The next concrete source is now prepared: [prerequisite 006](native_delegation_plan_006.md)
+tests WRITE_RESTRICTED with actual named-pipe delegation and retained WA use
+after client Job completion and ACL revocation. It has four fixed cases and
+independent controls. Review and immutable registration precede its single
+new execution; the completed 001-005 records are not rerun or reclassified.
 
 ## Intended outcome
 
@@ -68,9 +74,10 @@ service delegation were not exercised by this necessary-primitive fixture.
 
 The replacement gate is concrete control of write capabilities from their
 creation through their complete lifetime, including legitimate IPC delegation.
-WRITE_RESTRICTED plus a unique restricting SID remains an unselected direction:
-write restrictions alone do not yet close NULL-DACL endpoints, read-only IPC
-that can delegate identity, or the relevant ALPC access mapping. Do not rerun
+WRITE_RESTRICTED plus a unique restricting SID is selected only for the bounded
+006 read-only IPC falsification, not as a qualified producer owner. Write
+restrictions alone do not yet close NULL-DACL endpoints, read-only IPC that
+can delegate identity, or the relevant ALPC access mapping. Do not rerun
 the disproved RWH dependency or promote a token type name to completion.
 
 A proposed native/physical owner must demonstrate admission before effects,
