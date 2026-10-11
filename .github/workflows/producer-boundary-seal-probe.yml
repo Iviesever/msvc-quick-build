@@ -1,4 +1,4 @@
-name: Producer boundary seal prerequisite 004
+name: Producer boundary seal prerequisite 005
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   necessary-primitives:
-    if: github.run_number == 4 && github.run_attempt == 1
+    if: github.run_number == 5 && github.run_attempt == 1
     runs-on: windows-2022
     timeout-minutes: 5
     steps:
@@ -28,15 +28,15 @@ jobs:
         run: >-
           python -B tests/native/run_producer_boundary_seal_probe.py
           --expected-probe-sha256 1b62df9b7cc1253fc1a208f2a84154eba75907b7b2fef2d1fc72ed2f0423febd
-          --expected-runner-sha256 6e6208de2e2ea746bf3d06950a7321b480f95a72c3d12c03cb166a890333ff98
+          --expected-runner-sha256 696ce809f173aa4a04ff90c37d9c87de9883385a242d576740cbe2bf448688e0
           --expected-job-runner-sha256 417b93124c949e52cf2b6ed48445b4f1b275798b99105500d7c2bff8523bdd30
       - name: Retain complete original attempt
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: producer-seal-004-${{ github.run_id }}-${{ github.run_attempt }}
+          name: producer-seal-005-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            producer-seal-004-*/**
+            producer-seal-005-*/**
             tests/native/producer_boundary_seal_probe.cpp
             tests/native/run_producer_boundary_seal_probe.py
             tests/native/producer_probe_job.py

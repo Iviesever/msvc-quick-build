@@ -1,4 +1,4 @@
-"""One-shot, non-product Windows seal-prerequisite capture (attempt 004).
+"""One-shot, non-product Windows seal-prerequisite capture (attempt 005).
 
 This deliberately cannot issue a producer receipt. Source review and the exact
 commit registration must precede activating its branch-only workflow.
@@ -7,6 +7,7 @@ commit registration must precede activating its branch-only workflow.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import ctypes
 from ctypes import wintypes
 from datetime import datetime, timezone
@@ -24,12 +25,19 @@ BRANCH = "refs/heads/feat/producer-clean-handoff-20261011"
 PROBE = "tests/native/producer_boundary_seal_probe.cpp"
 RUNNER = "tests/native/run_producer_boundary_seal_probe.py"
 WORKFLOW = ".github/workflows/producer-boundary-seal-probe.yml"
-PLAN = "docs/20261011-013406-producer-handoff/native_probe_plan_004.md"
+PLAN = "docs/20261011-013406-producer-handoff/native_probe_plan_005.md"
 JOB_RUNNER = "tests/native/producer_probe_job.py"
+TELEMETRY_IMAGE_LIMIT = 16 * 1024 * 1024
 
 
-def identity(path: Path) -> dict:
-    data = path.read_bytes()
+def identity(path: Path, *, maximum_bytes: int | None = None) -> dict:
+    if maximum_bytes is None:
+        data = path.read_bytes()
+    else:
+        with path.open("rb") as stream:
+            data = stream.read(maximum_bytes + 1)
+        if len(data) > maximum_bytes:
+            raise RuntimeError("Selected identity exceeds its explicit read bound")
     return {"path": str(path), "bytes": len(data),
             "sha256": hashlib.sha256(data).hexdigest()}
 
@@ -76,6 +84,121 @@ def require_local_ntfs(existing: Path) -> dict:
             "filesystem": filesystem.value, "serial": serial.value}
 
 
+@contextmanager
+def hold_fixture_telemetry_image(path: Path, expected: dict, row: dict):
+    """Temporary read-only sharing control for the selected fixture tool image.
+
+    No execution attempt, file mutation, registry edit or product authority.
+    Every control handle is noninheritable; all close failures remain errors.
+    """
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    for name, arguments, result_type in (
+        ("CreateFileW", [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+            ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE], wintypes.HANDLE),
+        ("GetFileInformationByHandle", [wintypes.HANDLE, ctypes.c_void_p], wintypes.BOOL),
+        ("ReadFile", [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p], wintypes.BOOL),
+        ("CloseHandle", [wintypes.HANDLE], wintypes.BOOL),
+    ):
+        function = getattr(kernel, name)
+        function.argtypes, function.restype = arguments, result_type
+    invalid = ctypes.c_void_p(-1).value
+    pin = None
+    row.update(path=str(path), access=0x80000000, share=0, max_bytes=TELEMETRY_IMAGE_LIMIT,
+               acquired=False, released=False, errors=[], controls=[], A2=False)
+
+    def checked(value):
+        if not value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return value
+
+    def file_info(handle):
+        # BY_HANDLE_FILE_INFORMATION: 13 DWORDs, including three FILETIMEs.
+        info = (ctypes.c_uint32 * 13)()
+        checked(kernel.GetFileInformationByHandle(handle, ctypes.byref(info)))
+        if info[0] & (0x10 | 0x400) or info[10] != 1:
+            raise RuntimeError("Fixture telemetry image is not a regular single-link file")
+        return {"volume_serial": info[7],
+                "file_id_decimal": str((info[11] << 32) | info[12]),
+                "bytes": (info[8] << 32) | info[9]}
+
+    def execute_open_control(label, must_conflict):
+        control = {"label": label, "desired_access": 0x20000000, "share": 7,
+                   "opened": False, "close_ok": None}
+        row["controls"].append(control)
+        handle = kernel.CreateFileW(str(path), 0x20000000, 7, None, 3, 0x00200000, None)
+        if handle == invalid:
+            error = ctypes.get_last_error()
+            control.update(opened=False, winerror=error)
+            if not must_conflict or error != 32:
+                raise ctypes.WinError(error)
+            return None
+        try:
+            control["opened"] = True
+            control["identity"] = file_info(handle)
+            if must_conflict:
+                raise RuntimeError("Execute-access open unexpectedly crossed the image pin")
+            return control["identity"]
+        except BaseException as error:
+            control["operation_error"] = f"{type(error).__name__}: {error}"
+            raise
+        finally:
+            closed = kernel.CloseHandle(handle)
+            control["close_ok"] = bool(closed)
+            if not closed:
+                control["close_winerror"] = ctypes.get_last_error()
+                raise ctypes.WinError(control["close_winerror"])
+
+    try:
+        row["volume"] = require_local_ntfs(path)
+        before = execute_open_control("before-pin", False)
+        pin = kernel.CreateFileW(str(path), 0x80000000, 0, None, 3, 0x00200000, None)
+        if pin == invalid:
+            pin = None
+            raise ctypes.WinError(ctypes.get_last_error())
+        row["acquired"] = True
+        physical = file_info(pin)
+        if physical != before or not 0 < physical["bytes"] <= row["max_bytes"]:
+            raise RuntimeError("Telemetry image identity changed or exceeds read bound")
+        digest = hashlib.sha256()
+        buffer = ctypes.create_string_buffer(65536)
+        total = 0
+        saw_eof = False
+        row["hash_read_calls"] = 0
+        for _ in range((physical["bytes"] + 65535) // 65536 + 1):
+            got = wintypes.DWORD()
+            row["hash_read_calls"] += 1
+            checked(kernel.ReadFile(pin, buffer, min(65536, physical["bytes"] - total + 1),
+                                    ctypes.byref(got), None))
+            if not got.value:
+                saw_eof = True
+                break
+            total += got.value
+            if total > physical["bytes"]:
+                raise RuntimeError("Telemetry image exceeds its observed size")
+            digest.update(buffer.raw[:got.value])
+        actual = {"path": str(path), "bytes": total, "sha256": digest.hexdigest()}
+        row["hash_eof_seen"] = saw_eof
+        if not saw_eof or actual != expected or total != physical["bytes"]:
+            raise RuntimeError("Held telemetry image does not match selected tool bytes")
+        row.update(identity=physical, held_bytes=actual)
+        execute_open_control("while-pin", True)
+        yield
+    except BaseException as error:
+        row["errors"].append(f"{type(error).__name__}: {error}")
+        raise
+    finally:
+        if pin is not None:
+            try:
+                checked(kernel.CloseHandle(pin))
+                row["released"] = True
+                after = execute_open_control("after-release", False)
+                if after != row.get("identity"):
+                    raise RuntimeError("Telemetry image identity changed across release")
+            except BaseException as error:
+                row["errors"].append(f"{type(error).__name__}: {error}")
+
+
 def selected_tools() -> tuple[Path, dict, list[dict]]:
     # Deterministic fixture-tool selection, no VS discovery/bootstrap program.
     install = Path(os.environ["ProgramFiles"]) / "Microsoft Visual Studio/2022/Enterprise"
@@ -102,7 +225,7 @@ def selected_tools() -> tuple[Path, dict, list[dict]]:
     includes = [vc / "include", *sdk_includes]
     libraries = [vc / "lib/x64", *sdk_libraries]
     tool_paths = [binary / name for name in
-                  ("cl.exe", "link.exe", "c1xx.dll", "c2.dll", "mspdbcore.dll")]
+                  ("cl.exe", "link.exe", "c1xx.dll", "c2.dll", "mspdbcore.dll", "vctip.exe")]
     library_names = ["libcmt.lib", "libcpmt.lib", "libvcruntime.lib", "oldnames.lib",
                      "libucrt.lib", "kernel32.lib", "advapi32.lib"]
     for name in library_names:
@@ -122,7 +245,8 @@ def selected_tools() -> tuple[Path, dict, list[dict]]:
                 "include": list(map(str, includes)), "lib": list(map(str, libraries)),
                 "default_version_file": identity(version_file)}
     return binary / "cl.exe", {"environment": inherited, "selection": selected}, [
-        identity(path) for path in [version_file, *tool_paths]]
+        identity(path, maximum_bytes=TELEMETRY_IMAGE_LIMIT if path.name.lower() == "vctip.exe"
+                 else None) for path in [version_file, *tool_paths]]
 
 
 def capture_once(argv: list[str], cwd: Path, env: dict, timeout: int,
@@ -158,9 +282,10 @@ def main() -> int:
     args = parser.parse_args()
     expected = {"GITHUB_REPOSITORY": "Iviesever/msvc-quick-build",
                 "GITHUB_REF": BRANCH, "GITHUB_EVENT_NAME": "push",
-                "GITHUB_RUN_NUMBER": "4", "GITHUB_RUN_ATTEMPT": "1"}
+                "GITHUB_RUN_NUMBER": "5", "GITHUB_RUN_ATTEMPT": "1",
+                "RUNNER_ENVIRONMENT": "github-hosted"}
     if os.name != "nt" or any(os.environ.get(k) != v for k, v in expected.items()):
-        raise RuntimeError("Attempt 004 workflow admission mismatch")
+        raise RuntimeError("Attempt 005 workflow admission mismatch")
     if not re.fullmatch(r"[1-9][0-9]*", os.environ.get("GITHUB_RUN_ID", "")):
         raise RuntimeError("Missing actual workflow run identity")
     if not os.environ.get("ImageVersion") or os.environ.get("ImageOS") != "win22":
@@ -176,9 +301,9 @@ def main() -> int:
                          (JOB_RUNNER, args.expected_job_runner_sha256)):
         if not re.fullmatch(r"[a-f0-9]{64}", digest) or identity(repo / path)["sha256"] != digest:
             raise RuntimeError(f"Reviewed source hash mismatch: {path}")
-    output = repo / f"producer-seal-004-{os.environ['GITHUB_RUN_ID']}-1"
+    output = repo / f"producer-seal-005-{os.environ['GITHUB_RUN_ID']}-1"
     output.mkdir(exist_ok=False)
-    result = {"schema": 1, "attempt": "producer-seal-004", "source_head": actual_head,
+    result = {"schema": 1, "attempt": "producer-seal-005", "source_head": actual_head,
               "started_utc": datetime.now(timezone.utc).isoformat(),
               "status": "INCONCLUSIVE", "fixture_builds": 0, "fixture_invocations": 0,
               "A1": False, "A2": False, "A4": False, "A3": False, "A5": False,
@@ -203,11 +328,18 @@ def main() -> int:
             "volume": volume, "os": platform.platform(),
             "windows_version": list(sys.getwindowsversion()),
             "image_os": os.environ.get("ImageOS"), "image_version": os.environ.get("ImageVersion"),
-            "run": os.environ["GITHUB_RUN_ID"], "run_number": 4, "run_attempt": 1,
+            "run": os.environ["GITHUB_RUN_ID"], "run_number": 5, "run_attempt": 1,
             "fixture_wall_seconds": 30, "fixture_processes": 1, "helper_processes": 0,
             "ordinary_mqb_calls": 0, "cost_calls": 0, "etw_calls": 0})
-        result["fixture_builds"] = 1
-        compiled = capture_once(argv, repo, selected["environment"], 90, "compile", output)
+        telemetry_image = compiler.with_name("vctip.exe")
+        telemetry_identity = next(row for row in tool_rows if row["path"] == str(telemetry_image))
+        result["fixture_telemetry_image_pin"] = pin_record = {}
+        with hold_fixture_telemetry_image(telemetry_image, telemetry_identity, pin_record):
+            result["fixture_builds"] = 1
+            compiled = capture_once(argv, repo, selected["environment"], 90, "compile", output)
+        if pin_record["errors"] or pin_record["released"] is not True:
+            result["status"] = "FIXTURE_IMAGE_PIN_FAILED"
+            return 1
         if (compiled.get("timed_out") or compiled.get("exit_code") != 0
                 or compiled.get("job_members_completed") is not True or compiled.get("errors")
                 or compiled.get("job_total_processes") not in (1, 2)):
@@ -255,7 +387,9 @@ def main() -> int:
         readback_errors = []
         for row in source_rows + tool_rows:
             try:
-                if identity(Path(row["path"])) != row:
+                path = Path(row["path"])
+                if identity(path, maximum_bytes=TELEMETRY_IMAGE_LIMIT
+                            if path.name.lower() == "vctip.exe" else None) != row:
                     changed.append(row["path"])
             except Exception as error:
                 readback_errors.append({"path": row["path"],
@@ -284,7 +418,7 @@ def main() -> int:
         result["retained_files_before_result"] = retained
         result["finished_utc"] = datetime.now(timezone.utc).isoformat()
         write_json(output / "result.json", result)
-        print(json.dumps({"attempt": "producer-seal-004", "status": result["status"],
+        print(json.dumps({"attempt": "producer-seal-005", "status": result["status"],
                           "A1": False, "A2": False, "A4": False}), flush=True)
         if changed or readback_errors:
             raise RuntimeError("Exact identity/readback unavailable; attempt invalid")
