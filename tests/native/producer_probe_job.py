@@ -47,6 +47,16 @@ class _Accounting(ctypes.Structure):
                 ("ActiveProcesses", DWORD), ("TotalTerminatedProcesses", DWORD)]
 
 
+class _ProcessIds(ctypes.Structure):
+    _fields_ = [("NumberOfAssignedProcesses", DWORD),
+                ("NumberOfProcessIdsInList", DWORD),
+                ("ProcessIdList", ctypes.c_size_t * 8)]
+
+
+class _FileTime(ctypes.Structure):
+    _fields_ = [("low", DWORD), ("high", DWORD)]
+
+
 def run_captured_in_job(argv: list[str], cwd: Path, env: dict,
                         timeout_seconds: int, stdout_path: Path,
                         stderr_path: Path) -> dict:
@@ -65,6 +75,7 @@ def run_captured_in_job(argv: list[str], cwd: Path, env: dict,
                job_total_processes=None, job_active_processes=None,
                job_members_completed=False, cleanup_seconds=0.0,
                completion_scope="job-active-accounting-and-root-handle-only",
+               live_member_diagnostic=None,
                A2=False, errors=[])
     captures, inherited = [], []
     stdin = api = kernel = job = process = thread = None
@@ -95,6 +106,67 @@ def run_captured_in_job(argv: list[str], cwd: Path, env: dict,
         elif status != 258:
             raise ctypes.WinError(ctypes.get_last_error())
 
+    def diagnose_live_members(deadline):
+        # One bounded diagnostic snapshot of this exact owned Job. It is not
+        # a complete lifetime census, an image-file hash, or A2 authority.
+        snapshot = dict(capacity=8, assigned=None, returned=None, members=[],
+                        scope="one-owned-job-snapshot-before-existing-termination")
+        row["live_member_diagnostic"] = snapshot
+        ids = _ProcessIds()
+        checked(kernel.QueryInformationJobObject(job, 3, ctypes.byref(ids),
+                                                 ctypes.sizeof(ids), None))
+        snapshot["assigned"] = ids.NumberOfAssignedProcesses
+        snapshot["returned"] = ids.NumberOfProcessIdsInList
+        if (ids.NumberOfAssignedProcesses != ids.NumberOfProcessIdsInList or
+                ids.NumberOfProcessIdsInList > 8):
+            raise RuntimeError("Owned Job diagnostic list incomplete or over cap")
+        for pid in ids.ProcessIdList[:ids.NumberOfProcessIdsInList]:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Owned Job diagnostic exhausted existing cleanup deadline")
+            member = dict(listed_pid=pid, owned_job_member=None)
+            snapshot["members"].append(member)
+            handle = None
+            where = "open"
+            try:
+                if not 0 < pid <= 0xFFFFFFFF:
+                    raise RuntimeError("Invalid diagnostic process identifier")
+                # QUERY_LIMITED_INFORMATION | SYNCHRONIZE; never inheritable.
+                handle = checked(kernel.OpenProcess(0x00101000, False, pid))
+                where = "job-membership"
+                belongs = ctypes.c_int()
+                checked(kernel.IsProcessInJob(handle, job, ctypes.byref(belongs)))
+                member["owned_job_member"] = bool(belongs.value)
+                if not belongs.value:
+                    raise RuntimeError("Listed PID no longer belongs to this owned Job")
+                where = "process-id"
+                member["handle_pid"] = checked(kernel.GetProcessId(handle))
+                if member["handle_pid"] != pid:
+                    raise RuntimeError("Diagnostic process-handle PID mismatch")
+                where = "creation-time"
+                creation, exited, kernel_time, user_time = (_FileTime() for _ in range(4))
+                checked(kernel.GetProcessTimes(handle, ctypes.byref(creation),
+                    ctypes.byref(exited), ctypes.byref(kernel_time), ctypes.byref(user_time)))
+                member["creation_filetime"] = (creation.high << 32) | creation.low
+                where = "image-name"
+                image = ctypes.create_unicode_buffer(32768)
+                length = DWORD(len(image))
+                checked(kernel.QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(length)))
+                member["image_path"] = image[:length.value]
+                where = "signal-observation"
+                member["wait_status"] = kernel.WaitForSingleObject(handle, 0)
+                if member["wait_status"] not in (0, 258):
+                    raise ctypes.WinError(ctypes.get_last_error())
+            except BaseException as error:
+                member["error_stage"] = where
+                member["error"] = f"{type(error).__name__}: {error}"
+                record("live-member-diagnostic-" + where, error)
+            finally:
+                if handle is not None:
+                    try:
+                        api.CloseHandle(handle)
+                    except BaseException as error:
+                        record("close-live-member-diagnostic", error)
+
     try:
         for label, path in (("stdout", stdout_path), ("stderr", stderr_path)):
             captures.append((label, Path(path).open("xb", buffering=0)))
@@ -121,6 +193,12 @@ def run_captured_in_job(argv: list[str], cwd: Path, env: dict,
             "TerminateJobObject": ([HANDLE, DWORD], ctypes.c_int),
             "TerminateProcess": ([HANDLE, DWORD], ctypes.c_int),
             "WaitForSingleObject": ([HANDLE, DWORD], DWORD),
+            "OpenProcess": ([DWORD, ctypes.c_int, DWORD], HANDLE),
+            "IsProcessInJob": ([HANDLE, HANDLE, ctypes.POINTER(ctypes.c_int)], ctypes.c_int),
+            "GetProcessId": ([HANDLE], DWORD),
+            "GetProcessTimes": ([HANDLE] + [ctypes.POINTER(_FileTime)] * 4, ctypes.c_int),
+            "QueryFullProcessImageNameW": ([HANDLE, DWORD, ctypes.c_wchar_p,
+                                            ctypes.POINTER(DWORD)], ctypes.c_int),
         }
         for name, (arguments, result) in signatures.items():
             function = getattr(kernel, name)
@@ -184,6 +262,10 @@ def run_captured_in_job(argv: list[str], cwd: Path, env: dict,
                         row["job_termination_requested"] = True
                         if row["root_signaled"] and not row["timed_out"]:
                             record("root-exit-live-members", RuntimeError("Root exited with live Job members"))
+                            try:
+                                diagnose_live_members(deadline)
+                            except BaseException as error:
+                                record("live-member-diagnostic", error)
                         checked(kernel.TerminateJobObject(job, 0xC000013A))
                     while True:
                         observe_root()
