@@ -1,4 +1,4 @@
-"""One-shot Windows WRITE_RESTRICTED IPC qualification capture (attempt 007).
+"""One-shot Windows WRITE_RESTRICTED IPC qualification capture (attempt 008).
 
 This fixture cannot issue a producer receipt. A new source review and exact
 commit registration must precede activating the branch-only workflow. The
@@ -19,14 +19,14 @@ import subprocess
 import sys
 
 
-ATTEMPT = "producer-delegation-007"
+ATTEMPT = "producer-delegation-008"
 BRANCH = "refs/heads/feat/producer-clean-handoff-20261011"
 PROBE = "tests/native/producer_delegation_probe.cpp"
 RUNNER = "tests/native/run_producer_delegation_probe.py"
 COMMON_RUNNER = "tests/native/run_producer_boundary_seal_probe.py"
 JOB_RUNNER = "tests/native/producer_probe_job.py"
 WORKFLOW = ".github/workflows/producer-boundary-seal-probe.yml"
-PLAN = "docs/20261011-013406-producer-handoff/native_delegation_plan_007.md"
+PLAN = "docs/20261011-013406-producer-handoff/native_delegation_plan_008.md"
 SOURCE_PATHS = (PROBE, RUNNER, COMMON_RUNNER, JOB_RUNNER, WORKFLOW, PLAN)
 NATIVE_CODES = {"WRITE_RESTRICTED_IPC_DISQUALIFIED": 2,
                 "FIXED_ROUTES_REFUSED_ONLY": 0, "INCONCLUSIVE": 3}
@@ -114,12 +114,12 @@ def main() -> int:
     expected = {
         "GITHUB_REPOSITORY": "Iviesever/msvc-quick-build",
         "GITHUB_REF": BRANCH, "GITHUB_EVENT_NAME": "push",
-        "GITHUB_RUN_NUMBER": "7", "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_RUN_NUMBER": "8", "GITHUB_RUN_ATTEMPT": "1",
         "RUNNER_ENVIRONMENT": "github-hosted",
         "GITHUB_WORKFLOW_REF": "Iviesever/msvc-quick-build/" + WORKFLOW + "@" + BRANCH,
     }
     if os.name != "nt" or any(os.environ.get(key) != value for key, value in expected.items()):
-        raise RuntimeError("Attempt 007 workflow admission mismatch")
+        raise RuntimeError("Attempt 008 workflow admission mismatch")
     if not re.fullmatch(r"[1-9][0-9]*", os.environ.get("GITHUB_RUN_ID", "")):
         raise RuntimeError("Missing actual workflow run identity")
     if not os.environ.get("ImageVersion") or os.environ.get("ImageOS") != "win22":
@@ -176,7 +176,7 @@ def main() -> int:
             "volume": volume, "os": platform.platform(),
             "windows_version": list(sys.getwindowsversion()),
             "image_os": os.environ.get("ImageOS"), "image_version": os.environ.get("ImageVersion"),
-            "run": os.environ["GITHUB_RUN_ID"], "run_number": 7, "run_attempt": 1,
+            "run": os.environ["GITHUB_RUN_ID"], "run_number": 8, "run_attempt": 1,
             "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
             "registered_workflow_id": "380958963",
             "compiler_root_wait_seconds": 90, "compiler_job_process_counts": [1, 2],

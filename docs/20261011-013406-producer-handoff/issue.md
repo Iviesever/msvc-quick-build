@@ -1,6 +1,6 @@
 # Current-session producer handoff: implementation entry gate
 
-Status: `IPC_STARTUP_DIAGNOSTIC_SOURCE_PREPARATION`. Attempt 005 ran
+Status: `DEFAULT_DACL_HYPOTHESIS_SOURCE_PREPARATION`. Attempt 005 ran
 the necessary native primitive checks and demonstrated an attribute-writer
 counterexample. See [the closed result and next gate](native_probe_result_005.md).
 Product implementation, full native qualification, and C01 positive handoff
@@ -9,10 +9,13 @@ are not complete.
 [Prerequisite 006 closed before IPC](native_delegation_result_006.md): its
 compiler passed, the first child-report ReadFile failed with error 109, and
 the outer Job total was 3 instead of 2. The actual child exit was not queried.
-The next concrete source is [007 startup diagnostics](native_delegation_plan_007.md),
-which preserves all original conditions while observing the actual child and
-its Job before cleanup. Review and immutable registration precede its single
-new execution; the completed 001-006 records are not rerun or reclassified.
+[007 startup diagnostics completed](native_delegation_result_007.md) and
+observed actual C exit `0xC0000142 / STATUS_DLL_INIT_FAILED` before owned
+cleanup. Its specific DLL/access dependency remains unidentified. The next
+operation is the single-variable [008 default-DACL hypothesis](native_delegation_plan_008.md),
+adding only R's default grant to the new C token and reading it back.
+Original IPC conditions remain in force. Completed 001-007 records are not
+rerun or reclassified.
 
 ## Intended outcome
 
@@ -33,10 +36,10 @@ moving prior worktrees or making any remote Git mutation.
 Three separate initial source audits examined the actual production path, Windows
 completion/physical boundaries, and verification scope. No product, project
 test, analyzer, compiler, MSVC, MQB or workload was executed in those initial
-audits. Subsequent attempts 001-006 are distinct: six prerequisite workflow
-runs, five compiler-driver invocations, thirteen observed compiler Job
-total-count units, and two native fixture invocations. The 006 native outer
-Job total of 3 is an incomplete result with no third process identity.
+audits. Subsequent attempts 001-007 are distinct: seven prerequisite workflow
+runs, six compiler-driver invocations, compiler Job TotalProcesses summing to
+fifteen, and three native fixture invocations. Both 006 and 007 native outer
+Job totals of 3 are incomplete results with no additional process identity.
 No ordinary MQB producer ran.
 
 ## Concrete implementation blocker

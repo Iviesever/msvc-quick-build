@@ -7,6 +7,7 @@
 #include <aclapi.h>
 #include <sddl.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -160,6 +161,146 @@ bool within(const std::vector<std::byte>& buffer, const void* pointer, std::size
     const auto first = reinterpret_cast<std::uintptr_t>(buffer.data());
     const auto actual = reinterpret_cast<std::uintptr_t>(pointer);
     return actual >= first && actual - first <= buffer.size() && bytes <= buffer.size() - (actual - first);
+}
+
+std::string bytes_hex(const std::vector<std::byte>& bytes) {
+    static constexpr char digits[] = "0123456789abcdef";
+    require(bytes.size() <= 65536, "bounded ACL bytes for exact recording");
+    std::string result;
+    result.reserve(bytes.size() * 2);
+    for (const auto value : bytes) {
+        const auto ch = std::to_integer<unsigned char>(value);
+        result += digits[ch >> 4]; result += digits[ch & 15];
+    }
+    return result;
+}
+
+struct DefaultDacl {
+    std::vector<std::byte> bytes;
+    ACL_SIZE_INFORMATION size{};
+    bool contains_restricting_sid_bytes = false;
+};
+
+DefaultDacl inspect_default_dacl(std::vector<std::byte> bytes, PSID restricting_sid, const char* label) {
+    require(bytes.size() >= sizeof(ACL) && bytes.size() <= 65536, "bounded complete default ACL bytes");
+    DefaultDacl result;
+    result.bytes = std::move(bytes);
+    auto* acl = reinterpret_cast<ACL*>(result.bytes.data());
+    require(acl->AclSize == result.bytes.size() &&
+        (acl->AclRevision == ACL_REVISION || acl->AclRevision == ACL_REVISION_DS) &&
+        acl->AceCount <= 128, "default ACL size, revision and ACE-count bounds");
+    require(IsValidAcl(acl) != FALSE, "valid bounded default ACL");
+    checked(GetAclInformation(acl, &result.size, sizeof(result.size), AclSizeInformation),
+        "GetAclInformation", label);
+    require(result.size.AceCount == acl->AceCount && result.size.AclBytesInUse >= sizeof(ACL) &&
+        result.size.AclBytesInUse <= result.bytes.size() &&
+        result.size.AclBytesFree == result.bytes.size() - result.size.AclBytesInUse,
+        "default ACL complete size accounting");
+    require(IsValidSid(restricting_sid) != FALSE, "valid fresh restricting SID for default ACL");
+    const auto sid_bytes = static_cast<const std::byte*>(restricting_sid);
+    const DWORD sid_length = GetLengthSid(restricting_sid);
+    require(sid_length > 0 && sid_length <= SECURITY_MAX_SID_SIZE, "bounded restricting SID bytes");
+    std::size_t cursor = sizeof(ACL);
+    for (DWORD i = 0; i < result.size.AceCount; ++i) {
+        void* raw_ace = nullptr;
+        checked(GetAce(acl, i, &raw_ace), "GetAce", label);
+        require(within(result.bytes, raw_ace, sizeof(ACE_HEADER)), "default ACE header within ACL");
+        ACE_HEADER header{};
+        std::memcpy(&header, raw_ace, sizeof(header));
+        require(cursor <= result.size.AclBytesInUse && raw_ace == result.bytes.data() + cursor && header.AceSize >= sizeof(ACE_HEADER) &&
+            header.AceSize % sizeof(DWORD) == 0 && within(result.bytes, raw_ace, header.AceSize) &&
+            header.AceSize <= result.size.AclBytesInUse - cursor, "complete contiguous bounded default ACE");
+        const auto first = static_cast<const std::byte*>(raw_ace);
+        const auto end = first + header.AceSize;
+        // A conservative byte-presence refusal, not a simulated access check.
+        // All original ACE types and payloads remain opaque and byte-exact.
+        const bool contains_sid = std::search(first, end, sid_bytes, sid_bytes + sid_length) != end;
+        result.contains_restricting_sid_bytes = result.contains_restricting_sid_bytes || contains_sid;
+        Record("token_default_dacl_ace").text("label", label).number("index", i)
+            .number("offset", cursor).number("type", header.AceType).number("flags", header.AceFlags)
+            .number("bytes", header.AceSize).boolean("contains_restricting_sid_bytes", contains_sid);
+        cursor += header.AceSize;
+    }
+    require(cursor == result.size.AclBytesInUse, "all default ACE bytes accounted exactly");
+    const auto exact_hex = bytes_hex(result.bytes);
+    Record("token_default_dacl").text("label", label).number("bytes", result.bytes.size())
+        .number("revision", acl->AclRevision).number("ace_count", result.size.AceCount)
+        .number("bytes_in_use", result.size.AclBytesInUse).number("bytes_free", result.size.AclBytesFree)
+        .boolean("contains_restricting_sid_bytes", result.contains_restricting_sid_bytes)
+        .text("acl_hex", exact_hex);
+    return result;
+}
+
+DefaultDacl token_default_dacl(HANDLE token, PSID restricting_sid, const char* label) {
+    const auto buffer = token_information(token, TokenDefaultDacl);
+    require(buffer.size() >= sizeof(TOKEN_DEFAULT_DACL), "TOKEN_DEFAULT_DACL header");
+    TOKEN_DEFAULT_DACL info{};
+    std::memcpy(&info, buffer.data(), sizeof(info));
+    require(info.DefaultDacl != nullptr && within(buffer, info.DefaultDacl, sizeof(ACL)),
+        "non-NULL default DACL header inside bounded token query");
+    ACL header{};
+    std::memcpy(&header, info.DefaultDacl, sizeof(header));
+    require(header.AclSize >= sizeof(ACL) && within(buffer, info.DefaultDacl, header.AclSize),
+        "complete default DACL inside bounded token query");
+    std::vector<std::byte> bytes(header.AclSize);
+    std::memcpy(bytes.data(), info.DefaultDacl, bytes.size());
+    Record("token_default_dacl_read").text("label", label).text("token_handle_decimal", handle_decimal(token))
+        .number("query_bytes", buffer.size()).number("acl_bytes", bytes.size());
+    return inspect_default_dacl(std::move(bytes), restricting_sid, label);
+}
+
+bool same_default_dacl_aces(const DefaultDacl& first, const DefaultDacl& second) {
+    const auto* left = reinterpret_cast<const ACL*>(first.bytes.data());
+    const auto* right = reinterpret_cast<const ACL*>(second.bytes.data());
+    // Both snapshots were already validated ACE by ACE. Allocation capacity
+    // and unused tail bytes are recorded, but are not security content.
+    return left->AclRevision == right->AclRevision && left->Sbz1 == right->Sbz1 && left->Sbz2 == right->Sbz2 &&
+        first.size.AceCount == second.size.AceCount && first.size.AclBytesInUse == second.size.AclBytesInUse &&
+        std::memcmp(first.bytes.data() + sizeof(ACL), second.bytes.data() + sizeof(ACL),
+            first.size.AclBytesInUse - sizeof(ACL)) == 0;
+}
+
+DefaultDacl add_restricted_default_dacl_sid(HANDLE restricted, PSID restricting_sid) {
+    const auto before = token_default_dacl(restricted, restricting_sid, "restricted-default-before");
+    require(!before.contains_restricting_sid_bytes && before.size.AceCount < 128,
+        "fresh restricting SID absent from all original default ACE bytes");
+    const DWORD sid_length = GetLengthSid(restricting_sid);
+    const std::size_t added_ace_bytes = offsetof(ACCESS_ALLOWED_ACE, SidStart) + sid_length;
+    const std::size_t required = before.size.AclBytesInUse + added_ace_bytes;
+    const std::size_t capacity = (std::max)(before.bytes.size(), required);
+    require(capacity <= 65536 - sizeof(TOKEN_DEFAULT_DACL), "updated ACL and token readback fit 64 KiB");
+    auto expected_bytes = before.bytes;
+    expected_bytes.resize(capacity);
+    auto* expected_acl = reinterpret_cast<ACL*>(expected_bytes.data());
+    const auto* original_acl = reinterpret_cast<const ACL*>(before.bytes.data());
+    expected_acl->AclSize = static_cast<WORD>(capacity);
+    checked(AddAccessAllowedAceEx(expected_acl, expected_acl->AclRevision, 0, GENERIC_ALL, restricting_sid),
+        "AddAccessAllowedAceEx", "append only fresh restricting SID GENERIC_ALL to copied default DACL");
+    require(expected_acl->AceCount == before.size.AceCount + 1 &&
+        expected_acl->AclRevision == original_acl->AclRevision && expected_acl->Sbz1 == original_acl->Sbz1 &&
+        expected_acl->Sbz2 == original_acl->Sbz2 &&
+        std::memcmp(expected_bytes.data() + sizeof(ACL), before.bytes.data() + sizeof(ACL),
+            before.size.AclBytesInUse - sizeof(ACL)) == 0, "all original default ACEs preserved byte-for-byte in order");
+    auto expected = inspect_default_dacl(std::move(expected_bytes), restricting_sid, "restricted-default-expected");
+    require(expected.size.AclBytesInUse == required && expected.contains_restricting_sid_bytes,
+        "exactly one appended default ACE consumes expected bytes");
+    void* raw_added = nullptr;
+    checked(GetAce(reinterpret_cast<ACL*>(expected.bytes.data()), before.size.AceCount, &raw_added),
+        "GetAce", "only appended default ACE");
+    const auto* added = static_cast<const ACCESS_ALLOWED_ACE*>(raw_added);
+    require(added->Header.AceType == ACCESS_ALLOWED_ACE_TYPE && added->Header.AceFlags == 0 &&
+        added->Header.AceSize == added_ace_bytes && added->Mask == GENERIC_ALL &&
+        std::memcmp(&added->SidStart, restricting_sid, sid_length) == 0, "appended ACE is exact non-inheriting R GENERIC_ALL");
+    TOKEN_DEFAULT_DACL replacement{reinterpret_cast<ACL*>(expected.bytes.data())};
+    Record("token_default_dacl_update").text("token_handle_decimal", handle_decimal(restricted))
+        .number("mask", GENERIC_ALL).number("ace_flags", 0).number("old_ace_count", before.size.AceCount)
+        .number("new_ace_count", expected.size.AceCount).boolean("original_aces_preserved", true);
+    checked(SetTokenInformation(restricted, TokenDefaultDacl, &replacement, sizeof(replacement)),
+        "SetTokenInformation", "only new restricted token default DACL");
+    const auto readback = token_default_dacl(restricted, restricting_sid, "restricted-default-immediate-readback");
+    require(same_default_dacl_aces(readback, expected),
+        "restricted token default DACL immediate revision and complete ordered ACE readback");
+    return expected;
 }
 
 std::wstring sid_string(PSID sid) {
@@ -845,8 +986,10 @@ void run_server(const std::wstring& root, Summary& summary) {
     checked(CreateDirectoryW(root.c_str(), nullptr), "CreateDirectoryW", "fresh fixture root");
     const std::wstring leaf = root + L"\\delegated-metadata.bin";
     HANDLE raw_token = nullptr;
+    // CreateRestrictedToken returns the input handle's access rights. Only the
+    // new restricted token is passed to SetTokenInformation(TokenDefaultDacl).
     checked(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY |
-        TOKEN_ADJUST_PRIVILEGES, &raw_token), "OpenProcessToken", "server actual primary token");
+        TOKEN_ADJUST_PRIVILEGES | TOKEN_ADJUST_DEFAULT, &raw_token), "OpenProcessToken", "server actual primary token");
     Handle host_token(raw_token, "server-primary-token");
     const auto host_claim = actual_claim(host_token.get(), "server-primary-before-filter");
     const auto user = token_user(host_token.get());
@@ -863,6 +1006,7 @@ void run_server(const std::wstring& root, Summary& summary) {
     PSID raw_sid = nullptr;
     checked(ConvertStringSidToSidW(restricting_sid.c_str(), &raw_sid), "ConvertStringSidToSidW", "fresh restricting SID");
     LocalMemory sid_owner; sid_owner.value = raw_sid;
+    const auto host_default_before = token_default_dacl(host_token.get(), raw_sid, "server-default-before-filter");
     SID_AND_ATTRIBUTES restriction{raw_sid, 0};
     HANDLE raw_restricted = nullptr;
     constexpr DWORD restriction_flags = DISABLE_MAX_PRIVILEGE | WRITE_RESTRICTED;
@@ -875,6 +1019,7 @@ void run_server(const std::wstring& root, Summary& summary) {
     const auto before_restrictions = token_sids(restricted.get(), TokenRestrictedSids, "pre-birth-restrictions");
     require(before_restrictions.size() == 1 && before_restrictions[0] == restricting_sid,
         "exact single restricting SID before process birth");
+    const auto expected_default_dacl = add_restricted_default_dacl_sid(restricted.get(), raw_sid);
 
     Handle job(CreateJobObjectW(nullptr, nullptr), "client-only-job");
     require(valid(job.get()), "create owned client-only Job");
@@ -916,7 +1061,7 @@ void run_server(const std::wstring& root, Summary& summary) {
     const DWORD image_length = GetModuleFileNameW(nullptr, image_buffer.data(), static_cast<DWORD>(image_buffer.size()));
     require(image_length > 0 && image_length < image_buffer.size(), "exact current fixture image path");
     const std::wstring image(image_buffer.data(), image_length);
-    const auto stem = L"\\\\.\\pipe\\mqb-delegation-007-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+    const auto stem = L"\\\\.\\pipe\\mqb-delegation-008-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
         std::to_wstring(static_cast<DWORD>(unique.HighPart)) + L"-" + std::to_wstring(unique.LowPart);
     auto command_line = quote_argument(image) + L" --client " + quote_argument(leaf) + L" " + quote_argument(stem) + L" " +
         std::to_wstring(reinterpret_cast<std::uintptr_t>(command_read.get())) + L" " +
@@ -951,6 +1096,9 @@ void run_server(const std::wstring& root, Summary& summary) {
     require(child_type == TokenPrimary, "actual child token is primary");
     require(enabled_privileges(child_token.get(), "actual-child-privileges", true) <= 1,
         "child has no extra enabled privilege");
+    const auto actual_child_default = token_default_dacl(child_token.get(), raw_sid, "actual-child-default-before-resume");
+    require(same_default_dacl_aces(actual_child_default, expected_default_dacl),
+        "actual C primary default DACL equals expected revision and complete ordered ACE bytes");
     require(command_read.close() && report_write.close(), "parent closes child protocol ends");
     require(restricted.close() && child_token.close(), "no pre-birth or actual-client token handle retained for impersonation");
 
@@ -979,6 +1127,9 @@ void run_server(const std::wstring& root, Summary& summary) {
     require(disabled && disabled_error == ERROR_SUCCESS, "disable all privileges in this fixture server only");
     require(enabled_privileges(host_token.get(), "server-before-IPC") == 0, "no server privilege enabled for IPC");
     require(actual_claim(host_token.get(), "server-after-disabling-privileges") == host_claim, "server claim unchanged by privilege disable");
+    const auto host_default_after = token_default_dacl(host_token.get(), raw_sid, "server-default-before-client-resume");
+    require(same_default_dacl_aces(host_default_after, host_default_before),
+        "server primary default DACL revision and complete ordered ACE bytes unchanged");
     no_thread_token("server before client resume");
     record_client_job_snapshot(job.get(), "before-client-resume");
     const DWORD suspend_count = ResumeThread(thread.get());
@@ -1120,7 +1271,7 @@ void run_server(const std::wstring& root, Summary& summary) {
 DWORD WINAPI watchdog(LPVOID parameter) {
     const DWORD result = WaitForSingleObject(static_cast<HANDLE>(parameter), 30000);
     if (result != WAIT_OBJECT_0) {
-        constexpr char message[] = "producer-delegation-007 watchdog expired or failed\n";
+        constexpr char message[] = "producer-delegation-008 watchdog expired or failed\n";
         DWORD written = 0;
         WriteFile(GetStdHandle(STD_ERROR_HANDLE), message, sizeof(message) - 1, &written, nullptr);
         TerminateProcess(GetCurrentProcess(), 124);
@@ -1145,7 +1296,7 @@ int wmain(int argc, wchar_t** argv) {
         require(valid(stop.get()), "watchdog event created");
         watch = Handle(CreateThread(nullptr, 0, watchdog, stop.get(), 0, nullptr), "watchdog-thread");
         require(valid(watch.get()), "one auxiliary watchdog thread");
-        Record("scope").text("attempt", "producer-delegation-007").number("max_processes", 2)
+        Record("scope").text("attempt", "producer-delegation-008").number("max_processes", 2)
             .number("max_named_pipes", 8).number("protocol_channels", 2).number("cases", 4)
             .number("watchdog_seconds", 30).number("max_fixture_payload_bytes", 4096)
             .boolean("A1", false).boolean("A2", false).boolean("A4", false).boolean("deletion_enabled", false);

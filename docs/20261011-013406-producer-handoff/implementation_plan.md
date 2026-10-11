@@ -1,6 +1,6 @@
 # Implementation plan: actual producer-to-cleaner handoff
 
-Status: `IPC_STARTUP_DIAGNOSTIC_SOURCE_PREPARATION`.
+Status: `DEFAULT_DACL_HYPOTHESIS_SOURCE_PREPARATION`.
 Prepared against main `87f86770cfc7e1941603074ace914e0c7faf10d3`.
 No product implementation has been performed. The bounded prerequisite fixture
 ran in attempt 005 and disqualified the metadata-seal dependency below. See
@@ -10,9 +10,15 @@ unexecuted C01-C28 scenarios as passed.
 The [006 IPC prerequisite closed before its first case](native_delegation_result_006.md).
 The fixture compiled, but the report pipe broke before any child report and
 outer Job total 3 exceeded 2. The actual child exit was not observed.
-The next source is [007 startup/exit diagnostics](native_delegation_plan_007.md),
-pending independent source review and immutable one-shot registration. The
-candidate remains unqualified; the diagnostic preserves its original gates.
+[007 startup/exit diagnostics ran](native_delegation_result_007.md) and
+obtained actual C exit `0xC0000142 / STATUS_DLL_INIT_FAILED` before cleanup,
+with inner Job 1/1/0 before resume and 2/0/0 before cleanup. No startup frame
+or IPC case was observed. The candidate remains unqualified; its exact
+DLL/access failure must be investigated without weakening existing gates.
+The next [008 hypothesis](native_delegation_plan_008.md) adds only the fresh
+restricting SID grant to C's default DACL. All explicit object ACLs and the
+desktop setup remain unchanged; this is a testable source-backed hypothesis,
+not an identified DLL cause or qualified owner.
 
 ## 1. Decision required before product changes
 

@@ -1,4 +1,4 @@
-name: Producer boundary IPC prerequisite 007
+name: Producer boundary IPC prerequisite 008
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   necessary-primitives:
-    if: github.run_number == 7 && github.run_attempt == 1
+    if: github.run_number == 8 && github.run_attempt == 1
     runs-on: windows-2022
     timeout-minutes: 5
     steps:
@@ -24,21 +24,21 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: One reviewed fixture build and one native diagnostic invocation
+      - name: One reviewed fixture build and one default-DACL hypothesis invocation
         shell: pwsh
         run: >-
           python -B tests/native/run_producer_delegation_probe.py
-          --expected-probe-sha256 d6a01fa5b82405a9f0f0455b79039066eba4cc807a33ff4f9aa8bb48d908f69e
-          --expected-runner-sha256 450838c79fef32807d1be4167e79203c0ae114d907514eaa208622b2109dc73e
+          --expected-probe-sha256 6ad2568211b3afb54f403c1ec0bd423fd59e0dd79ca060cfa5e52773195d51bb
+          --expected-runner-sha256 735239e4a9ef2c4f608b19911d409cf07fa013e0889c469953f1d283995a191a
           --expected-common-runner-sha256 696ce809f173aa4a04ff90c37d9c87de9883385a242d576740cbe2bf448688e0
           --expected-job-runner-sha256 417b93124c949e52cf2b6ed48445b4f1b275798b99105500d7c2bff8523bdd30
       - name: Retain complete original attempt
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: producer-delegation-007-${{ github.run_id }}-${{ github.run_attempt }}
+          name: producer-delegation-008-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            producer-delegation-007-*/**
+            producer-delegation-008-*/**
             tests/native/producer_delegation_probe.cpp
             tests/native/run_producer_delegation_probe.py
             tests/native/run_producer_boundary_seal_probe.py
