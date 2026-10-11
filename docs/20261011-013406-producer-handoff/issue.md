@@ -1,6 +1,6 @@
 # Current-session producer handoff: implementation entry gate
 
-Status: `LOADER_SNAPS_010_CLOSED_BCRYPT_ATTACH_FAILURE_NEXT_011_RECORDED`. Attempt 005 ran
+Status: `BCRYPT_SNAPSHOT_011_IMPLEMENTED_FINAL_REVIEW_NOT_REGISTERED_NOT_EXECUTED`. Attempt 005 ran
 the necessary native primitive checks and demonstrated an attribute-writer
 counterexample. See [the closed result and next gate](native_probe_result_005.md).
 Product implementation, full native qualification, and C01 positive handoff
@@ -26,11 +26,14 @@ loader explicitly reported bcrypt.dll initialization failure during
 DLL_PROCESS_ATTACH, followed by actual exit 0xC0000142. Its internal failed API
 or access remains unidentified. Outer Job total 3 still fails the unchanged
 exact-total-2 gate; no native summary is admitted into result.json.
-The [011 handoff](native_startup_handoff_011.md) proposes actual loaded-DLL
-identity/byte acquisition and bounded offline analysis. Its first unresolved
-gate is combined collector byte/row/operation accounting; the 8 MiB hex
-candidate exceeds the retained envelope under the existing conservative proof.
-011 is not implemented, registered or executed. The old 010 proposal and plan
+The [011 execution plan](native_startup_plan_011.md) resolves the first
+budget gate in the immutable [011 handoff](native_startup_handoff_011.md):
+1 MiB whole DLL, two 64 KiB-chunk passes, at most 34 reads and 58 primary APIs,
+with 16,371 rows / 28,699,648 bytes inside the original 16,384-row / 32 MiB
+envelope. New isolated collector, strict snapshot validator and pure PE parser
+are implemented. Final source review, exact immutable commit registration and
+full readback precede the single number-11/attempt-1 activation. It has not yet
+been registered or executed; no old experiment is rerun. The old 010 proposal and plan
 remain immutable pre-execution snapshots; the result and closure supersede
 their historical status. All token/ACL restrictions and qualification limits
 remain. Completed 001-010 records are not rerun or reclassified.

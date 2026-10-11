@@ -1,6 +1,6 @@
 # Implementation plan: actual producer-to-cleaner handoff
 
-Status: `LOADER_SNAPS_010_CLOSED_BCRYPT_ATTACH_FAILURE_NEXT_011_RECORDED`.
+Status: `BCRYPT_SNAPSHOT_011_IMPLEMENTED_FINAL_REVIEW_NOT_REGISTERED_NOT_EXECUTED`.
 Prepared against main `87f86770cfc7e1941603074ace914e0c7faf10d3`.
 No product implementation has been performed. The bounded prerequisite fixture
 ran in attempt 005 and disqualified the metadata-seal dependency below. See
@@ -29,11 +29,14 @@ physical-image bindings matched. All 646 debug events were continued; actual
 C's loader explicitly identified bcrypt.dll's failed DLL_PROCESS_ATTACH.
 The internal failed API/access is still unknown. Outer Job total 3 preserves
 INCONCLUSIVE/NATIVE_EXECUTION_INCOMPLETE with no admitted native summary.
-The [011 handoff](native_startup_handoff_011.md) proposes exact actual-DLL
-byte/identity collection and bounded offline initializer analysis. It is not
-implemented, registered or executed. First prove combined collector budgets
-under the unchanged 32 MiB / 16,384-row envelope; the proposed 8 MiB hex
-candidate does not fit the current conservative proof. The frozen 010 proposal
+The [011 execution plan](native_startup_plan_011.md) resolves the first
+budget gate in the immutable [011 handoff](native_startup_handoff_011.md):
+1 MiB whole DLL, two 64 KiB-chunk passes, at most 34 reads and 58 primary APIs,
+with 16,371 rows / 28,699,648 bytes inside the original 16,384-row / 32 MiB
+envelope. New isolated collector, strict snapshot validator and pure PE parser
+are implemented. Final source review, exact immutable commit registration and
+full readback precede the single number-11/attempt-1 activation. It has not yet
+been registered or executed; no old experiment is rerun. The frozen 010 proposal
 and execution plan retain their historical pre-execution status, superseded
 by the closed result and #198 closure 6108033087.
 
