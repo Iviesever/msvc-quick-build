@@ -1,9 +1,15 @@
-name: Producer startup diagnostic 009
+name: Producer loader snaps diagnostic 010
 
 on:
   push:
     branches: ['feat/producer-clean-handoff-20261011']
     paths:
+      - 'tests/native/producer_loader_snaps_probe.cpp'
+      - 'tests/native/run_producer_loader_snaps_probe.py'
+      - 'tests/native/producer_loader_snaps_pe.py'
+      - 'tests/native/producer_loader_snaps_image.py'
+      - 'tests/native/test_producer_loader_snaps_pe.py'
+      - 'tests/native/test_producer_loader_snaps_capture.py'
       - 'tests/native/producer_startup_probe.cpp'
       - 'tests/native/run_producer_startup_probe.py'
       - 'tests/native/producer_delegation_probe.cpp'
@@ -18,7 +24,7 @@ permissions:
 
 jobs:
   necessary-primitives:
-    if: github.run_number == 9 && github.run_attempt == 1
+    if: github.run_number == 10 && github.run_attempt == 1
     runs-on: windows-2022
     timeout-minutes: 5
     steps:
@@ -26,22 +32,30 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: One reviewed fixture build and one diagnostic-only startup invocation
+      - name: One reviewed fixture build, one fresh child-image flag and one startup capture
         shell: pwsh
         run: >-
-          python -B tests/native/run_producer_startup_probe.py
-          --expected-probe-sha256 1007705524ae2e4d041aa5d64a734cb9b9d16c01ebc63b1a9811a3faec328dd8
+          python -B tests/native/run_producer_loader_snaps_probe.py
+          --expected-probe-sha256 28e76ee784fbb66d678cf0a2806a61e2184d942b0a4fad4c5959a204c0c4b78a
           --expected-base-probe-sha256 6ad2568211b3afb54f403c1ec0bd423fd59e0dd79ca060cfa5e52773195d51bb
-          --expected-runner-sha256 c9f8b72c8cfebbe3067628f49e2cadabb4b2f0004c45f6e51f95305db351807d
+          --expected-runner-sha256 25953d401e8292787d75c7138b7f89102362ce0d91dfa20bf767bebaff07dd80
+          --expected-pe-helper-sha256 3121669412f1b8471198c17f01b8a133f24b18a0e8044a40b1b0779e0fd0896a
+          --expected-image-helper-sha256 80520a3710a5f94870002389f71e25cc5db686d4fc19c1e22ae74c05a25a1a39
           --expected-common-runner-sha256 696ce809f173aa4a04ff90c37d9c87de9883385a242d576740cbe2bf448688e0
           --expected-job-runner-sha256 417b93124c949e52cf2b6ed48445b4f1b275798b99105500d7c2bff8523bdd30
       - name: Retain complete original attempt
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: producer-startup-009-${{ github.run_id }}-${{ github.run_attempt }}
+          name: producer-loader-snaps-010-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            producer-startup-009-*/**
+            producer-loader-snaps-010-*/**
+            tests/native/producer_loader_snaps_probe.cpp
+            tests/native/run_producer_loader_snaps_probe.py
+            tests/native/producer_loader_snaps_pe.py
+            tests/native/producer_loader_snaps_image.py
+            tests/native/test_producer_loader_snaps_pe.py
+            tests/native/test_producer_loader_snaps_capture.py
             tests/native/producer_startup_probe.cpp
             tests/native/run_producer_startup_probe.py
             tests/native/producer_delegation_probe.cpp

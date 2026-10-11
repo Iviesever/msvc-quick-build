@@ -1,6 +1,6 @@
 # Current-session producer handoff: implementation entry gate
 
-Status: `STARTUP_DEBUG_DIAGNOSTIC_009_CLOSED_NEXT_HANDOFF_RECORDED`. Attempt 005 ran
+Status: `LOADER_SNAPS_010_IMPLEMENTED_REVIEW_IN_PROGRESS_NOT_EXECUTED`. Attempt 005 ran
 the necessary native primitive checks and demonstrated an attribute-writer
 counterexample. See [the closed result and next gate](native_probe_result_005.md).
 Product implementation, full native qualification, and C01 positive handoff
@@ -19,9 +19,12 @@ all 15 observed debug events were continued successfully, but C still exited
 `0xC0000142` before any startup frame or debug string. The sole exception was
 the initial breakpoint. Raw diagnostic capture was complete; outer Job total
 3 still fails the exact-total-2 gate before the runner parses that summary.
-The [next 010 handoff](native_startup_handoff_010.md) is a child-image loader-snaps
-proposal, explicitly not implemented, registered or executed. All token/ACL
-restrictions and qualification limits remain. Completed 001-009 records are
+The [010 implementation plan](native_startup_plan_010.md) now makes the prior
+[handoff proposal](native_startup_handoff_010.md) concrete: one fresh child copy,
+one existing Load Config DWORD changed 0 to 2, held full-byte/physical identity
+checks, and bounded loader-string capture. Source review is in progress; no
+010 registration or execution has happened yet. All token/ACL restrictions and
+qualification limits remain. Completed 001-009 records are
 not rerun or reclassified.
 
 ## Intended outcome

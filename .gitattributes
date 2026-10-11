@@ -25,3 +25,12 @@ install.bat binary
 /docs/20261011-013406-producer-handoff/native_probe_plan_003.md text eol=lf
 docs/20261011-013406-producer-handoff/native_probe_plan_004.md text eol=lf
 docs/20261011-013406-producer-handoff/native_probe_plan_005.md text eol=lf
+/tests/native/producer_loader_snaps_probe.cpp text eol=lf
+/tests/native/run_producer_loader_snaps_probe.py text eol=lf
+/tests/native/producer_loader_snaps_pe.py text eol=lf
+/tests/native/producer_loader_snaps_image.py text eol=lf
+/tests/native/test_producer_loader_snaps_pe.py text eol=lf
+/tests/native/test_producer_loader_snaps_capture.py text eol=lf
+/docs/20261011-013406-producer-handoff/native_startup_plan_010.md text eol=lf
+/docs/20261011-013406-producer-handoff/native_startup_handoff_010.md text eol=lf
+/docs/20261011-013406-producer-handoff/native_startup_result_009.md text eol=lf

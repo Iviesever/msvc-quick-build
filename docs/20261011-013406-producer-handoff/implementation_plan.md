@@ -249,9 +249,11 @@ This record provides exact integration locations and the replacement design
 gate. It is not another consumer/cost necessity study, a delivered cleaner,
 full native qualification, or a merged feature.
 
-The immediate handoff is the [010 loader-snaps proposal](native_startup_handoff_010.md).
+The active slice is the [010 loader-snaps plan](native_startup_plan_010.md),
+implementing the prior [010 proposal](native_startup_handoff_010.md).
 009 has closed its diagnostic event capture without locating the failed
-initializer; 010 has not yet been implemented or activated. After any startup
+initializer. The 010 source is implemented and under review, with registration
+and execution still pending. After any startup
 blocker is understood, the actual IPC capability-lifetime prerequisite still
 must run under its own admitted scope. Startup alone cannot qualify it.
 
