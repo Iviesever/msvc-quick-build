@@ -1,0 +1,46 @@
+name: Producer boundary seal prerequisite 001
+
+on:
+  push:
+    branches: ['feat/producer-clean-handoff-20261011']
+    paths:
+      - 'tests/native/producer_boundary_seal_probe.cpp'
+      - 'tests/native/run_producer_boundary_seal_probe.py'
+      - 'tests/native/producer_probe_job.py'
+      - '.github/workflows/producer-boundary-seal-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  necessary-primitives:
+    if: github.run_number == 1 && github.run_attempt == 1
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: One reviewed fixture build and one native invocation
+        shell: pwsh
+        run: >-
+          python -B tests/native/run_producer_boundary_seal_probe.py
+          --expected-probe-sha256 1b62df9b7cc1253fc1a208f2a84154eba75907b7b2fef2d1fc72ed2f0423febd
+          --expected-runner-sha256 894daa75693dcc7c01bd816eb367fb51500e8af2a6c974fb50dd26414e2e4f5b
+          --expected-job-runner-sha256 ba2dff1452112d31dfaafa01c8a15b985539317867f3c791aed9dc3eaf24fce9
+      - name: Retain complete original attempt
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: producer-seal-001-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            producer-seal-001-*/**
+            tests/native/producer_boundary_seal_probe.cpp
+            tests/native/run_producer_boundary_seal_probe.py
+            tests/native/producer_probe_job.py
+            .github/workflows/producer-boundary-seal-probe.yml
+            docs/20261011-013406-producer-handoff/*.md
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
