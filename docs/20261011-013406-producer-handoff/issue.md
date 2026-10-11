@@ -1,8 +1,10 @@
 # Current-session producer handoff: implementation entry gate
 
-Status: `CANDIDATE_SELECTED_PENDING_NATIVE_PRIMITIVE_CHECK`. This is an implementation
-preparation record. Product implementation, native qualification, and C01
-positive handoff are not complete.
+Status: `CANDIDATE_DISQUALIFIED_REPLACEMENT_NOT_SELECTED`. Attempt 005 ran
+the necessary native primitive checks and demonstrated an attribute-writer
+counterexample. See [the closed result and next gate](native_probe_result_005.md).
+Product implementation, full native qualification, and C01 positive handoff
+are not complete.
 
 ## Intended outcome
 
@@ -20,9 +22,12 @@ no new PR that implements this handoff. PR250 and PR248 remain separate drafts.
 A clean sibling worktree was prepared from the exact actual main object without
 moving prior worktrees or making any remote Git mutation.
 
-Three separate source audits examined the actual production path, Windows
+Three separate initial source audits examined the actual production path, Windows
 completion/physical boundaries, and verification scope. No product, project
-test, analyzer, compiler, MSVC, MQB or workload was executed in this review.
+test, analyzer, compiler, MSVC, MQB or workload was executed in those initial
+audits. Subsequent attempts 001-005 are distinct: five prerequisite workflow
+runs, four compiler-driver invocations, eleven observed compiler Job processes,
+and one native primitive invocation. No ordinary MQB producer ran.
 
 ## Concrete implementation blocker
 
@@ -54,13 +59,19 @@ The existing source already acknowledges these limits:
 
 ## Acceptance to unlock implementation
 
-Independent review has now selected a concrete conditional-ACE / retained-object
-candidate for bounded qualification. It distinguishes normal same-user file
-writers using actual token attributes, accounts real IPC delegation, and tests
-the final seal rather than inferring completion from a root exit. The first
-necessary-primitive fixture is being written under `native_probe_plan.md`.
-This is engineering progress beyond the initial audit; it is not a positive
-producer receipt and does not establish that the candidate will qualify.
+The previously selected conditional-ACE / retained-object candidate depended
+on excluding old metadata writers at its final seal. Attempt 005 disproved that
+dependency: a preverified FILE_WRITE_ATTRIBUTES handle completed SetFileTime
+while the final data-read/share-READ handle and pending RWH remained held.
+The original candidate must not issue a receipt. Its conditional ACL and actual
+service delegation were not exercised by this necessary-primitive fixture.
+
+The replacement gate is concrete control of write capabilities from their
+creation through their complete lifetime, including legitimate IPC delegation.
+WRITE_RESTRICTED plus a unique restricting SID remains an unselected direction:
+write restrictions alone do not yet close NULL-DACL endpoints, read-only IPC
+that can delegate identity, or the relevant ALPC access mapping. Do not rerun
+the disproved RWH dependency or promote a token type name to completion.
 
 A proposed native/physical owner must demonstrate admission before effects,
 exclusive or fully participating writers for the exact selected boundary,

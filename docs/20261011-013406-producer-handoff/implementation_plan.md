@@ -1,9 +1,10 @@
 # Implementation plan: actual producer-to-cleaner handoff
 
-Status: `CANDIDATE_SELECTED_PENDING_NATIVE_PRIMITIVE_CHECK`.
+Status: `CANDIDATE_DISQUALIFIED_REPLACEMENT_NOT_SELECTED`.
 Prepared against main `87f86770cfc7e1941603074ace914e0c7faf10d3`.
-No product implementation or new native run has been performed. A bounded
-qualification fixture is now being written under the separate native probe plan.
+No product implementation has been performed. The bounded prerequisite fixture
+ran in attempt 005 and disqualified the metadata-seal dependency below. See
+[the exact result, limits and next gate](native_probe_result_005.md).
 This plan preserves PR256's accepted scope and does not reclassify its
 unexecuted C01-C28 scenarios as passed.
 
@@ -33,9 +34,9 @@ The outcome is not that a future implementation is impossible. It is that no
 qualified A2 owner exists at the reviewed base and a specific enforcement
 design remains necessary.
 
-### Selected engineering candidate, revision 003
+### Historical selected candidate, revision 003: disqualified dependency
 
-The candidate now selected for qualification uses existing OS token security
+The candidate selected for qualification used existing OS token security
 attributes (`TSA://ProcUnique`) in conditional allow ACEs. It does not issue or
 modify a token attribute. A fresh existing-layout `.mqb` directory is created
 with its protected DACL from the outset; existing output roots are preserved.
@@ -56,7 +57,8 @@ final data-read/no-WRITE/no-DELETE parent and EXE pins, then request an exclusiv
 RWH oplock on the same final EXE handle. Old write/mapping/attribute and namespace
 capabilities must cause refusal or be proved unable to affect that boundary.
 
-The claim is not yet qualified. Chromium supplies concrete attribute-query and
+The composite claim is disqualified by the old-WRITE_ATTRIBUTES counterexample
+in attempt 005; the conditional ACL itself was not tested. Chromium supplies concrete attribute-query and
 conditional-ACL implementations, while Microsoft documents the ACL, sharing
 and oplock primitives. Those sources do not establish the composite MQB
 completion guarantee. In particular, attribute-only opens do not break an
@@ -70,9 +72,35 @@ administrator privileges or kernel compromise as new acceptance requirements.
 The existing MQB owner may participate if its ordinary path has not delegated
 its write identity outside the accountable owners.
 
-The next action is the necessary-primitive falsification probe in
-`native_probe_plan.md`. Passing it only permits the subsequent conditional-ACL,
-delegated-service and actual ordinary-MSVC tests; it cannot issue a receipt.
+The necessary-primitive falsification probe in `native_probe_plan.md` is now
+closed. Its granted pending RWH did not prevent a preverified old attribute
+writer from modifying the file. Keep the original plan and raw failure records;
+do not count a repeated identical probe as progress toward a receipt.
+
+### Replacement design gate after attempt 005
+
+No replacement owner is selected. The next implementation decision must name
+the exact access checks which permit actual cl/link and host parent/cache writes
+while preventing unaccounted actors from obtaining or retaining relevant write
+capabilities. The argument must include initial CREATE_NEW handles, later opens,
+necessary metadata rights, process/handle inheritance and legitimate IPC
+impersonation or delegation. Later ACL revocation cannot simply stand in for
+completion of already-open handles.
+
+CreateRestrictedToken(WRITE_RESTRICTED) with a unique restricting SID is a
+concrete direction for preserving existing input/tool reads while restricting
+writes. It is not adopted: a write-only restriction is not yet a demonstrated
+IPC boundary. NULL-DACL endpoints, read-only connections which can delegate
+identity, and the write mapping of relevant ALPC connect rights remain open.
+Before another native allocation, specify one exact mechanism and discriminating
+control for the real delegation route, including desired access, effective
+security descriptor and impersonation level. This is a design-adoption gate,
+not a requirement to qualify unwritten product code before implementing it.
+
+Do not replace this work with a generic owner class, another PID census, a
+candidate-recipe collector, an always-refusing CLI, or a repetition of consumer
+or cost studies. The existing engineering authorization remains sufficient to
+continue a concrete in-scope design; the missing authority is technical.
 
 ## 2. Preserve the actual production chain
 
@@ -136,7 +164,9 @@ lifetimes; it must not invent a claim that all mappings bypass sharing.
 
 ## 4. Concrete acceptance obligations for the new design
 
-All entries below are `NOT_EXECUTED`. They are obligations, not an allocated
+All product entries below remain `NOT_EXECUTED`. The 005 same-process primitive
+counterexample is separate and does not execute these product scenarios.
+These are obligations, not an allocated
 run matrix. First select the exact enforcing owner and supported profile, then
 register the smallest discriminating native attempt for that mechanism.
 
@@ -187,9 +217,11 @@ Do not change a pinned hash solely to make a violated historical contract pass.
 
 ## 6. Completion and handoff status
 
-The implementation remains pending. This record provides exact integration
-locations and the technical design gate. It is not another consumer/cost
-necessity study, a delivered cleaner, native qualification, or a merged feature.
+The implementation remains pending. Attempt 005 has completed and independently
+confirmed a native counterexample to the selected metadata-seal dependency.
+This record provides exact integration locations and the replacement design
+gate. It is not another consumer/cost necessity study, a delivered cleaner,
+full native qualification, or a merged feature.
 
 The next engineering handoff is: provide the concrete participant/isolation
 owner described in section 1, review its actual access and completion argument,
