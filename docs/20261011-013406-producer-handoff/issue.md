@@ -1,6 +1,6 @@
 # Current-session producer handoff: implementation entry gate
 
-Status: `LOADER_SNAPS_010_IMPLEMENTED_REVIEW_IN_PROGRESS_NOT_EXECUTED`. Attempt 005 ran
+Status: `LOADER_SNAPS_010_CLOSED_BCRYPT_ATTACH_FAILURE_NEXT_011_RECORDED`. Attempt 005 ran
 the necessary native primitive checks and demonstrated an attribute-writer
 counterexample. See [the closed result and next gate](native_probe_result_005.md).
 Product implementation, full native qualification, and C01 positive handoff
@@ -13,19 +13,27 @@ the outer Job total was 3 instead of 2. The actual child exit was not queried.
 observed actual C exit `0xC0000142 / STATUS_DLL_INIT_FAILED` before owned
 cleanup. [008 applied the single default-DACL grant](native_delegation_result_008.md)
 and verified it on actual C while S stayed unchanged, but C again exited
-DLL_INIT_FAILED before startup. No IPC case was observed. The specific DLL
-or failed access remains unidentified. [009 startup event diagnosis is closed](native_startup_result_009.md):
+DLL_INIT_FAILED before startup. No IPC case was observed. Those 008 observations
+did not identify the specific DLL or failed access. [009 startup event diagnosis is closed](native_startup_result_009.md):
 all 15 observed debug events were continued successfully, but C still exited
 `0xC0000142` before any startup frame or debug string. The sole exception was
 the initial breakpoint. Raw diagnostic capture was complete; outer Job total
 3 still fails the exact-total-2 gate before the runner parses that summary.
-The [010 implementation plan](native_startup_plan_010.md) now makes the prior
-[handoff proposal](native_startup_handoff_010.md) concrete: one fresh child copy,
-one existing Load Config DWORD changed 0 to 2, held full-byte/physical identity
-checks, and bounded loader-string capture. Source review is in progress; no
-010 registration or execution has happened yet. All token/ACL restrictions and
-qualification limits remain. Completed 001-009 records are
-not rerun or reclassified.
+[010 is now closed](native_startup_result_010.md): its reviewed fresh child
+copy changed only the existing Load Config GlobalFlagsSet DWORD from 0 to 2.
+All image bindings and 646 event continuations were verified. Actual C's
+loader explicitly reported bcrypt.dll initialization failure during
+DLL_PROCESS_ATTACH, followed by actual exit 0xC0000142. Its internal failed API
+or access remains unidentified. Outer Job total 3 still fails the unchanged
+exact-total-2 gate; no native summary is admitted into result.json.
+The [011 handoff](native_startup_handoff_011.md) proposes actual loaded-DLL
+identity/byte acquisition and bounded offline analysis. Its first unresolved
+gate is combined collector byte/row/operation accounting; the 8 MiB hex
+candidate exceeds the retained envelope under the existing conservative proof.
+011 is not implemented, registered or executed. The old 010 proposal and plan
+remain immutable pre-execution snapshots; the result and closure supersede
+their historical status. All token/ACL restrictions and qualification limits
+remain. Completed 001-010 records are not rerun or reclassified.
 
 ## Intended outcome
 
@@ -46,9 +54,9 @@ moving prior worktrees or making any remote Git mutation.
 Three separate initial source audits examined the actual production path, Windows
 completion/physical boundaries, and verification scope. No product, project
 test, analyzer, compiler, MSVC, MQB or workload was executed in those initial
-audits. Subsequent attempts 001-009 are distinct: nine prerequisite workflow
-runs, eight compiler-driver invocations, compiler Job TotalProcesses summing to
-nineteen, and five native fixture invocations. The 006-009 native outer
+audits. Subsequent attempts 001-010 are distinct: ten prerequisite workflow
+runs, nine compiler-driver invocations, compiler Job TotalProcesses summing to
+twenty-one, and six native fixture invocations. The 006-010 native outer
 Job totals of 3 are incomplete results with no additional process identity.
 No ordinary MQB producer ran.
 
@@ -93,7 +101,7 @@ The replacement gate is concrete control of write capabilities from their
 creation through their complete lifetime, including legitimate IPC delegation.
 WRITE_RESTRICTED plus a unique restricting SID is selected only for the bounded
 006 read-only IPC falsification, not as a qualified producer owner. The IPC
-cases remain unobserved through the separately scoped 009 diagnosis. Write
+cases remain unobserved through the separately scoped 010 diagnosis. Write
 restrictions alone do not yet close NULL-DACL endpoints, read-only IPC that
 can delegate identity, or the relevant ALPC access mapping. Do not rerun
 the disproved RWH dependency or promote a token type name to completion.
