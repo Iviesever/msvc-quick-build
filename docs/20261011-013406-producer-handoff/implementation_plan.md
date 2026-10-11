@@ -1,6 +1,6 @@
 # Implementation plan: actual producer-to-cleaner handoff
 
-Status: `BCRYPT_SNAPSHOT_011_IMPLEMENTED_FINAL_REVIEW_NOT_REGISTERED_NOT_EXECUTED`.
+Status: `BCRYPT_SNAPSHOT_011_CLOSED_PE_REFUSED_OFFLINE_HANDOFF_012`.
 Prepared against main `87f86770cfc7e1941603074ace914e0c7faf10d3`.
 No product implementation has been performed. The bounded prerequisite fixture
 ran in attempt 005 and disqualified the metadata-seal dependency below. See
@@ -29,16 +29,21 @@ physical-image bindings matched. All 646 debug events were continued; actual
 C's loader explicitly identified bcrypt.dll's failed DLL_PROCESS_ATTACH.
 The internal failed API/access is still unknown. Outer Job total 3 preserves
 INCONCLUSIVE/NATIVE_EXECUTION_INCOMPLETE with no admitted native summary.
-The [011 execution plan](native_startup_plan_011.md) resolves the first
-budget gate in the immutable [011 handoff](native_startup_handoff_011.md):
-1 MiB whole DLL, two 64 KiB-chunk passes, at most 34 reads and 58 primary APIs,
-with 16,371 rows / 28,699,648 bytes inside the original 16,384-row / 32 MiB
-envelope. New isolated collector, strict snapshot validator and pure PE parser
-are implemented. Final source review, exact immutable commit registration and
-full readback precede the single number-11/attempt-1 activation. It has not yet
-been registered or executed; no old experiment is rerun. The frozen 010 proposal
-and execution plan retain their historical pre-execution status, superseded
-by the closed result and #198 closure 6108033087.
+[011 is closed](native_startup_result_011.md): its one registered run 11 /
+attempt 1 acquired the exact file from its actual C's bcrypt LOAD_DLL event.
+Both independent raw reviews admit 170,984 bytes, two complete reads with EOF
+and five matching identities; the original outer Job total 3 still fails the
+required 2, leaving INCONCLUSIVE with no native_summary in result.json. The
+frozen pure PE parser then refused the image with UNWIND_OPCODE_INVALID. The
+offline phase made no objdump call, loaded or executed no DLL, and performed
+no parser retry or alternate-image substitution. The [012 handoff](native_startup_handoff_012.md) reuses these exact
+bytes for a bounded offline refusal-context and parser-compatibility diagnosis;
+no new Windows/native run is needed. All 119 final source unit tests passed,
+but that does not turn the real-input PE refusal into an accepted index.
+The historical 010/011 proposals and execution plans retain their original
+pre-execution status and are superseded by their closed results and issue
+registrations/closures. All token/ACL restrictions and qualification limits
+remain. Completed 001-011 records are not rerun or reclassified.
 
 ## 1. Decision required before product changes
 
@@ -128,14 +133,15 @@ retained-handle use after revocation. An explicitly R-admitted duplex route
 provides an end-to-end positive control; ordinary write and read-only routes do
 not grant R. NULL-DACL endpoints and relevant ALPC mapping are outside this
 finite test. A refusal of its fixed routes cannot qualify a complete owner.
-006-010 did not reach any IPC case, so they supply no result for these routes.
+006-011 did not reach any IPC case, so they supply no result for these routes.
 007 observed actual C's pre-cleanup DLL initialization failure. 008 verified
 the single additive default-DACL grant and showed it was not sufficient for
-startup. 009 and 010 are separately closed startup diagnostics, not replacement
+startup. 009-011 are separately closed startup diagnostics, not replacement
 completion owners or repeated finite-route tests. Each had independent source
-review and immutable registration before its one activation. Only 010's
-loader-snaps conditions yielded the explicit bcrypt attach-failure association;
-do not retroactively assign that module to the older runs.
+review and immutable registration before its one activation. 010 and 011's
+loader-snaps conditions yielded their own explicit bcrypt attach-failure
+associations; do not retroactively assign that module to the older runs. 011
+adds its own exact-event file bytes but its pure PE index was refused.
 
 Do not replace this work with a generic owner class, another PID census, a
 candidate-recipe collector, an always-refusing CLI, or a repetition of consumer
@@ -263,23 +269,28 @@ This record provides exact integration locations and the replacement design
 gate. It is not another consumer/cost necessity study, a delivered cleaner,
 full native qualification, or a merged feature.
 
-The [010 result](native_startup_result_010.md) closes its one reviewed,
-registered execution and independent artifact/event/image reviews. The failed
-module/stage is now bcrypt DLL_PROCESS_ATTACH under 010's conditions, while
-its internal cause and the extra counted process remain unknown. The next
-slice is the [011 design handoff](native_startup_handoff_011.md), beginning with
-the unresolved combined-budget proof before any collector implementation or
-activation. The [walkthrough](walkthrough.md) indexes actual verification and
-the retained branch. After the startup blocker is understood, the actual IPC
+The [010 result](native_startup_result_010.md) preserves its bcrypt
+DLL_PROCESS_ATTACH association. The [011 result](native_startup_result_011.md)
+closes the reviewed bounded collector and its one registered execution: the
+actual event-object bytes, identity/retention chain and same-run loader init
+association are admitted for raw diagnostic use. The unchanged outer Job
+gate still fails, and the once-invoked frozen PE parser refuses the image
+with UNWIND_OPCODE_INVALID. No disassembly is admitted. The next slice is
+the [012 offline handoff](native_startup_handoff_012.md), a bounded failure-context
+wrapper around the frozen parser using these same retained bytes, before
+any evidence-based compatibility correction. The
+[011 walkthrough](../20261011-115555-bcrypt-snapshot-011/walkthrough.md) indexes
+actual verification and the retained branch; the original [walkthrough](walkthrough.md)
+remains historical. After the startup blocker is understood, the actual IPC
 capability-lifetime prerequisite still must run under its own admitted scope.
 Startup alone cannot qualify it.
 
 The product handoff remains: provide the concrete participant/isolation owner
 described in section 1, review its actual access and completion argument, then
 implement and qualify the A1/A2/A4 path above. Retain the current refusal and
-all original evidence until that owner exists. After 010, the prerequisite
-totals are ten workflow runs, nine compiler drivers, compiler Job
-TotalProcesses summing to twenty-one, and six native fixture invocations.
+all original evidence until that owner exists. After 011, the prerequisite
+totals are eleven workflow runs, ten compiler drivers, compiler Job
+TotalProcesses summing to twenty-three, and seven native fixture invocations.
 There have been zero ordinary MQB executions in this work.
 
 Sources: the unchanged repository at the pinned main commit; PR256 and #198
