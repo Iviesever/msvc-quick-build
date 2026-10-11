@@ -1,6 +1,6 @@
 # Current-session producer handoff: implementation entry gate
 
-Status: `DEFAULT_DACL_HYPOTHESIS_SOURCE_PREPARATION`. Attempt 005 ran
+Status: `STARTUP_DEBUG_DIAGNOSTIC_SOURCE_PREPARATION`. Attempt 005 ran
 the necessary native primitive checks and demonstrated an attribute-writer
 counterexample. See [the closed result and next gate](native_probe_result_005.md).
 Product implementation, full native qualification, and C01 positive handoff
@@ -11,11 +11,13 @@ compiler passed, the first child-report ReadFile failed with error 109, and
 the outer Job total was 3 instead of 2. The actual child exit was not queried.
 [007 startup diagnostics completed](native_delegation_result_007.md) and
 observed actual C exit `0xC0000142 / STATUS_DLL_INIT_FAILED` before owned
-cleanup. Its specific DLL/access dependency remains unidentified. The next
-operation is the single-variable [008 default-DACL hypothesis](native_delegation_plan_008.md),
-adding only R's default grant to the new C token and reading it back.
-Original IPC conditions remain in force. Completed 001-007 records are not
-rerun or reclassified.
+cleanup. [008 applied the single default-DACL grant](native_delegation_result_008.md)
+and verified it on actual C while S stayed unchanged, but C again exited
+DLL_INIT_FAILED before startup. No IPC case was observed. The specific DLL
+or failed access remains unidentified. The next [009 startup event diagnosis](native_startup_plan_009.md)
+observes actual C under a separately bounded debugger environment, with all
+token/ACL restrictions retained and every qualification authority false.
+Completed 001-008 records are not rerun or reclassified.
 
 ## Intended outcome
 
@@ -36,9 +38,9 @@ moving prior worktrees or making any remote Git mutation.
 Three separate initial source audits examined the actual production path, Windows
 completion/physical boundaries, and verification scope. No product, project
 test, analyzer, compiler, MSVC, MQB or workload was executed in those initial
-audits. Subsequent attempts 001-007 are distinct: seven prerequisite workflow
-runs, six compiler-driver invocations, compiler Job TotalProcesses summing to
-fifteen, and three native fixture invocations. Both 006 and 007 native outer
+audits. Subsequent attempts 001-008 are distinct: eight prerequisite workflow
+runs, seven compiler-driver invocations, compiler Job TotalProcesses summing to
+seventeen, and four native fixture invocations. The 006-008 native outer
 Job totals of 3 are incomplete results with no additional process identity.
 No ordinary MQB producer ran.
 

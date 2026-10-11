@@ -8,10 +8,14 @@ install.bat binary
 /tests/native/producer_probe_job.py text eol=lf
 /tests/native/producer_delegation_probe.cpp text eol=lf
 /tests/native/run_producer_delegation_probe.py text eol=lf
+/tests/native/producer_startup_probe.cpp text eol=lf
+/tests/native/run_producer_startup_probe.py text eol=lf
 /docs/20261011-013406-producer-handoff/native_delegation_plan_006.md text eol=lf
 /docs/20261011-013406-producer-handoff/native_delegation_plan_007.md text eol=lf
 /docs/20261011-013406-producer-handoff/native_delegation_plan_008.md text eol=lf
 /docs/20261011-013406-producer-handoff/native_delegation_result_007.md text eol=lf
+/docs/20261011-013406-producer-handoff/native_delegation_result_008.md text eol=lf
+/docs/20261011-013406-producer-handoff/native_startup_plan_009.md text eol=lf
 /docs/20261011-013406-producer-handoff/native_delegation_result_006.md text eol=lf
 /docs/20261011-013406-producer-handoff/native_probe_result_005.md text eol=lf
 /docs/20261011-013406-producer-handoff/issue.md text eol=lf

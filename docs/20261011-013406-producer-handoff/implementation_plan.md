@@ -1,6 +1,6 @@
 # Implementation plan: actual producer-to-cleaner handoff
 
-Status: `DEFAULT_DACL_HYPOTHESIS_SOURCE_PREPARATION`.
+Status: `STARTUP_DEBUG_DIAGNOSTIC_SOURCE_PREPARATION`.
 Prepared against main `87f86770cfc7e1941603074ace914e0c7faf10d3`.
 No product implementation has been performed. The bounded prerequisite fixture
 ran in attempt 005 and disqualified the metadata-seal dependency below. See
@@ -15,10 +15,12 @@ obtained actual C exit `0xC0000142 / STATUS_DLL_INIT_FAILED` before cleanup,
 with inner Job 1/1/0 before resume and 2/0/0 before cleanup. No startup frame
 or IPC case was observed. The candidate remains unqualified; its exact
 DLL/access failure must be investigated without weakening existing gates.
-The next [008 hypothesis](native_delegation_plan_008.md) adds only the fresh
-restricting SID grant to C's default DACL. All explicit object ACLs and the
-desktop setup remain unchanged; this is a testable source-backed hypothesis,
-not an identified DLL cause or qualified owner.
+[008's exact R default-DACL grant was tested](native_delegation_result_008.md):
+all readbacks passed, but actual C again exited DLL_INIT_FAILED before startup.
+The single grant was not sufficient. The next [009 diagnosis](native_startup_plan_009.md)
+records actual C startup debug events, actual process/thread DACLs and bounded
+module/string/exception evidence. It changes no ACL and supplies no IPC or
+production qualification, even if startup advances under observation.
 
 ## 1. Decision required before product changes
 
@@ -108,10 +110,12 @@ retained-handle use after revocation. An explicitly R-admitted duplex route
 provides an end-to-end positive control; ordinary write and read-only routes do
 not grant R. NULL-DACL endpoints and relevant ALPC mapping are outside this
 finite test. A refusal of its fixed routes cannot qualify a complete owner.
-006 did not reach any IPC case, so it supplies no result for these routes.
-007 adds only fixed startup/first-command observations and actual child/Job
-failure snapshots before cleanup. Independent source review and immutable
-registration still precede the new activation.
+006-008 did not reach any IPC case, so they supply no result for these routes.
+007 observed actual C's pre-cleanup DLL initialization failure. 008 verified
+the single additive default-DACL grant and showed it was not sufficient for
+startup. 009 is a separate startup diagnostic, not a replacement completion
+owner or repeated finite-route test. Independent source review and immutable
+registration precede its one new activation.
 
 Do not replace this work with a generic owner class, another PID census, a
 candidate-recipe collector, an always-refusing CLI, or a repetition of consumer

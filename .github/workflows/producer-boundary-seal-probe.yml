@@ -1,9 +1,11 @@
-name: Producer boundary IPC prerequisite 008
+name: Producer startup diagnostic 009
 
 on:
   push:
     branches: ['feat/producer-clean-handoff-20261011']
     paths:
+      - 'tests/native/producer_startup_probe.cpp'
+      - 'tests/native/run_producer_startup_probe.py'
       - 'tests/native/producer_delegation_probe.cpp'
       - 'tests/native/run_producer_delegation_probe.py'
       - 'tests/native/run_producer_boundary_seal_probe.py'
@@ -16,7 +18,7 @@ permissions:
 
 jobs:
   necessary-primitives:
-    if: github.run_number == 8 && github.run_attempt == 1
+    if: github.run_number == 9 && github.run_attempt == 1
     runs-on: windows-2022
     timeout-minutes: 5
     steps:
@@ -24,21 +26,24 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: One reviewed fixture build and one default-DACL hypothesis invocation
+      - name: One reviewed fixture build and one diagnostic-only startup invocation
         shell: pwsh
         run: >-
-          python -B tests/native/run_producer_delegation_probe.py
-          --expected-probe-sha256 6ad2568211b3afb54f403c1ec0bd423fd59e0dd79ca060cfa5e52773195d51bb
-          --expected-runner-sha256 735239e4a9ef2c4f608b19911d409cf07fa013e0889c469953f1d283995a191a
+          python -B tests/native/run_producer_startup_probe.py
+          --expected-probe-sha256 1007705524ae2e4d041aa5d64a734cb9b9d16c01ebc63b1a9811a3faec328dd8
+          --expected-base-probe-sha256 6ad2568211b3afb54f403c1ec0bd423fd59e0dd79ca060cfa5e52773195d51bb
+          --expected-runner-sha256 c9f8b72c8cfebbe3067628f49e2cadabb4b2f0004c45f6e51f95305db351807d
           --expected-common-runner-sha256 696ce809f173aa4a04ff90c37d9c87de9883385a242d576740cbe2bf448688e0
           --expected-job-runner-sha256 417b93124c949e52cf2b6ed48445b4f1b275798b99105500d7c2bff8523bdd30
       - name: Retain complete original attempt
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: producer-delegation-008-${{ github.run_id }}-${{ github.run_attempt }}
+          name: producer-startup-009-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            producer-delegation-008-*/**
+            producer-startup-009-*/**
+            tests/native/producer_startup_probe.cpp
+            tests/native/run_producer_startup_probe.py
             tests/native/producer_delegation_probe.cpp
             tests/native/run_producer_delegation_probe.py
             tests/native/run_producer_boundary_seal_probe.py
