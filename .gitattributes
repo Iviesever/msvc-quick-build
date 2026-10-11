@@ -1,1 +1,12 @@
 install.bat binary
+
+# The registered native prerequisite compares complete checkout bytes to Git.
+/.gitattributes text eol=lf
+/.github/workflows/producer-boundary-seal-probe.yml text eol=lf
+/tests/native/producer_boundary_seal_probe.cpp text eol=lf
+/tests/native/run_producer_boundary_seal_probe.py text eol=lf
+/tests/native/producer_probe_job.py text eol=lf
+/docs/20261011-013406-producer-handoff/issue.md text eol=lf
+/docs/20261011-013406-producer-handoff/implementation_plan.md text eol=lf
+/docs/20261011-013406-producer-handoff/native_probe_plan.md text eol=lf
+/docs/20261011-013406-producer-handoff/native_probe_plan_002.md text eol=lf

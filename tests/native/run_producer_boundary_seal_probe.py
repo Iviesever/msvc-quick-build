@@ -1,4 +1,4 @@
-"""One-shot, non-product Windows seal-prerequisite capture (attempt 001).
+"""One-shot, non-product Windows seal-prerequisite capture (attempt 002).
 
 This deliberately cannot issue a producer receipt. Source review and the exact
 commit registration must precede activating its branch-only workflow.
@@ -24,7 +24,7 @@ BRANCH = "refs/heads/feat/producer-clean-handoff-20261011"
 PROBE = "tests/native/producer_boundary_seal_probe.cpp"
 RUNNER = "tests/native/run_producer_boundary_seal_probe.py"
 WORKFLOW = ".github/workflows/producer-boundary-seal-probe.yml"
-PLAN = "docs/20261011-013406-producer-handoff/native_probe_plan.md"
+PLAN = "docs/20261011-013406-producer-handoff/native_probe_plan_002.md"
 JOB_RUNNER = "tests/native/producer_probe_job.py"
 
 
@@ -158,9 +158,9 @@ def main() -> int:
     args = parser.parse_args()
     expected = {"GITHUB_REPOSITORY": "Iviesever/msvc-quick-build",
                 "GITHUB_REF": BRANCH, "GITHUB_EVENT_NAME": "push",
-                "GITHUB_RUN_NUMBER": "1", "GITHUB_RUN_ATTEMPT": "1"}
+                "GITHUB_RUN_NUMBER": "2", "GITHUB_RUN_ATTEMPT": "1"}
     if os.name != "nt" or any(os.environ.get(k) != v for k, v in expected.items()):
-        raise RuntimeError("Attempt 001 workflow admission mismatch")
+        raise RuntimeError("Attempt 002 workflow admission mismatch")
     if not re.fullmatch(r"[1-9][0-9]*", os.environ.get("GITHUB_RUN_ID", "")):
         raise RuntimeError("Missing actual workflow run identity")
     if not os.environ.get("ImageVersion") or os.environ.get("ImageOS") != "win22":
@@ -176,9 +176,9 @@ def main() -> int:
                          (JOB_RUNNER, args.expected_job_runner_sha256)):
         if not re.fullmatch(r"[a-f0-9]{64}", digest) or identity(repo / path)["sha256"] != digest:
             raise RuntimeError(f"Reviewed source hash mismatch: {path}")
-    output = repo / f"producer-seal-001-{os.environ['GITHUB_RUN_ID']}-1"
+    output = repo / f"producer-seal-002-{os.environ['GITHUB_RUN_ID']}-1"
     output.mkdir(exist_ok=False)
-    result = {"schema": 1, "attempt": "producer-seal-001", "source_head": actual_head,
+    result = {"schema": 1, "attempt": "producer-seal-002", "source_head": actual_head,
               "started_utc": datetime.now(timezone.utc).isoformat(),
               "status": "INCONCLUSIVE", "fixture_builds": 0, "fixture_invocations": 0,
               "A1": False, "A2": False, "A4": False, "A3": False, "A5": False,
@@ -203,7 +203,7 @@ def main() -> int:
             "volume": volume, "os": platform.platform(),
             "windows_version": list(sys.getwindowsversion()),
             "image_os": os.environ.get("ImageOS"), "image_version": os.environ.get("ImageVersion"),
-            "run": os.environ["GITHUB_RUN_ID"], "run_number": 1, "run_attempt": 1,
+            "run": os.environ["GITHUB_RUN_ID"], "run_number": 2, "run_attempt": 1,
             "fixture_wall_seconds": 30, "fixture_processes": 1, "helper_processes": 0,
             "ordinary_mqb_calls": 0, "cost_calls": 0, "etw_calls": 0})
         result["fixture_builds"] = 1
@@ -275,7 +275,7 @@ def main() -> int:
         result["retained_files_before_result"] = retained
         result["finished_utc"] = datetime.now(timezone.utc).isoformat()
         write_json(output / "result.json", result)
-        print(json.dumps({"attempt": "producer-seal-001", "status": result["status"],
+        print(json.dumps({"attempt": "producer-seal-002", "status": result["status"],
                           "A1": False, "A2": False, "A4": False}), flush=True)
         if changed or readback_errors:
             raise RuntimeError("Exact identity/readback unavailable; attempt invalid")
