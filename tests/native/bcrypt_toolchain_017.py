@@ -9,6 +9,7 @@ from collections import deque
 import hashlib
 import os
 from pathlib import Path
+import re
 import stat
 import time
 
@@ -84,7 +85,8 @@ def search_paths(metadata, source_path, defaults):
     need(len(paths) <= 16 and all(paths), 'empty or excessive dynamic search paths')
     expanded = []
     for path in paths:
-        value = path.replace('${ORIGIN}', origin).replace('$ORIGIN', origin)
+        # gABI 8.4.1 uses the longest token name; ORIGIN_suffix is not ORIGIN.
+        value = re.sub(r'\$\{ORIGIN\}|\$ORIGIN(?![A-Za-z0-9_])', lambda _: origin, path)
         need('$' not in value and Path(value).is_absolute(), 'unsupported relative/token loader path')
         need(len(value) <= 4096, 'expanded loader path cap')
         expanded.append(os.path.normpath(value))
@@ -117,6 +119,7 @@ def collect(python_path, decoder_path, *, defaults=DEFAULT_DIRS,
     budget = Budget()
     queue = deque((('python', python_path), ('decoder', decoder_path)))
     records, roots, edges, aliases, candidates = {}, {}, [], {}, set(defaults)
+    selections = []
     while queue:
         budget.checkpoint()
         role, request = queue.popleft()
@@ -138,6 +141,7 @@ def collect(python_path, decoder_path, *, defaults=DEFAULT_DIRS,
             queue.append(('loader', loader))
         for name in metadata['needed']:
             provider, found = resolve_needed(name, dirs)
+            selections.append((name, dirs, provider, found))
             for item in found: aliases[item['path']] = item['target']
             edges.append(dict(source=resolved, kind='DT_NEEDED', name=name, provider=provider))
             queue.append(('dependency', provider))
@@ -153,6 +157,12 @@ def collect(python_path, decoder_path, *, defaults=DEFAULT_DIRS,
         again, _ = snapshot(record['path'], budget)
         for key in ('bytes', 'sha256', 'state'):
             need(again[key] == record[key], 'host drift during inventory: '+record['path'])
+    # Re-evaluate the complete candidate policy, including formerly absent paths.
+    # Byte checks of selected files alone cannot detect a new ambiguous provider.
+    for name, dirs, provider, found in selections:
+        budget.checkpoint()
+        current, current_aliases = resolve_needed(name, dirs)
+        need(current == provider and current_aliases == found, 'dependency selection drift')
     for path, target in aliases.items():
         need(canonical(path) == target, 'alias drift during inventory')
     for item in absence:

@@ -39,7 +39,7 @@ def parse_elf(data: bytes) -> dict:
                 need((va-offset) % align == 0, 'LOAD address alignment')
             loads.append((offset, va, size))
         elif ptype == 2:
-            dynamic.append((offset, size))
+            dynamic.append((offset, va, size))
         elif ptype == 3:
             need(1 <= size <= TEXT_CAP, 'INTERP size')
             raw = data[offset:offset+size]
@@ -53,7 +53,10 @@ def parse_elf(data: bytes) -> dict:
         elif ptype == 4:
             notes.append((offset, size))
     need(loads and len(dynamic) == 1 and len(interpreters) <= 1, 'missing/duplicate ELF segments')
-    off, size = dynamic[0]
+    off, address, size = dynamic[0]
+    mapped = [o+address-v for o, v, n in loads
+              if v <= address and size <= n-(address-v)]
+    need(mapped == [off], 'dynamic segment mapping not unique/consistent')
     need(size % 16 == 0 and 1 <= size // 16 <= DYN_CAP, 'dynamic dimensions')
     tags: dict[int, list[int]] = {}
     terminated = False
@@ -87,8 +90,9 @@ def parse_elf(data: bytes) -> dict:
         need(all(32 <= ord(ch) < 127 for ch in value), 'dynamic string control character')
         return value
 
-    needed = [text(i) for i in tags.get(1, [])]
-    need(len(needed) <= NEED_CAP, 'too many dependencies')
+    indexes = tags.get(1, [])
+    need(len(indexes) <= NEED_CAP, 'too many dependencies')
+    needed = [text(i) for i in indexes]
     need(all(x and '/' not in x and '$' not in x for x in needed), 'unsupported dependency name')
     optional = lambda t: text(tags[t][0]) if t in tags else None
     build_ids, note_count = [], 0
