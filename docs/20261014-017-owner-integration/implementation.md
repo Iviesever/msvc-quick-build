@@ -93,7 +93,7 @@ Popen、killpg、set/getrlimit、旧文件存储和旧parser均用替身，真�
 上一会话的导入组件做了源码复核；新代码是本轮作者实现/测试，**没有第二位独立
 审阅者签署**。全部source/module/loader/original-lineage/observation资格仍为false。
 
-## 准确下一接手点
+## 8373874 阶段接手点（由下文更新）
 
 主体和原生/证据桥接不必再重写。下一项是**外层准确准入与回执**：把五份固定元
 数据、两份独立准备结果、源码/模块/loader闭集接到verify和固定依赖；预加载所有
@@ -110,3 +110,81 @@ VERSION5.6.0、HOLD/DEFER、清理/删除权限或release。完整017和v5.7.0�
 - https://docs.python.org/3.11/library/resource.html ：候选RLIMIT语义，非本次实际资格证明。
 - https://docs.python.org/3/reference/import.html ：cache优先与meta-path边界。
 - https://sourceware.org/binutils/docs/binutils/objdump.html ：binary target、VMA及显示选项，非机器码运行证据。
+
+
+## 2026-10-15：外层请求绑定与完成回执核对（本地修订，尚未发布）
+
+接续 `83738741713310a0da23f90770fde7321540a6a5` / tree
+`cd089f990587cbc5f8e69d6ff039e6ce89ab61b3`。新增三个实现、两个测试；更新本文，
+不新建另一套 owner/backend，不修改原 149 项测试或已有实现。此次没有远端提交：
+当前会话的 GitHub 工具目录只暴露读取动作，查询已安装插件也未提供可调用的写入
+入口。不是认定账号无写权限；没有使用本地 push，也没有假造 commit 或 Issue 评论。
+
+### 新增代码及真实能力
+
+`bcrypt_admission_contract_017.py` 定义有界规范 JSON 请求和证据关联。请求绑定
+完整 source commit、唯一 `017-static-1`、固定目标几何/摘要、五份原元数据身份、
+解释器/decoder/loader/controller、源码和模块完整字节清单、别名/absence、环境及
+候选资源限制。五份元数据沿用 `bcrypt_preflight_017.preflight`，没有可替换历史
+PINS 的公开参数。先核对全部八份输入的长度/摘要，再进入语义检查。
+
+两份准备回执必须分别对应 primary/independent，具有不同 producer 和 attempt ID，
+绑定同一上下文、原图像身份、目标、原 CALL、pdata/unwind 核查和各一次完整图像
+准备声明。qualification 回执还绑定两份准备的完整摘要、审阅者/作者和六项审核范围。
+这些都是**由外部可信账本固定的材料之间的一致性检查**；不同字符串不证明独立
+人员，摘要也不是签名。不能自行对不可信输入计算 expected_sha 再声称取得授权。
+
+`bcrypt_bound_observation_017.py` 将上述关联接到旧执行主体：不再接受任意 verify
+回调，使用实际有限文件 snapshot 在 before/after 各核对一次全部声明文件及别名、
+absence、环境、解释器路径和 Python 线程数；保留精确文件/字节/EOF 计数。它不会
+自动发现或学习新的宿主清单。导入模块是否真正由这些字节加载、原生线程/dlopen
+以及完整 writer 闭集仍须有外部资格证据，不能从两轮哈希推导出来。
+
+Backend 必须是原类，绑定同一请求/output/tool/target，使用预加载且固定的旧存储/
+解析对象和本次有界 encoder。方法不能被实例字段遮蔽，函数对象/参数在两轮校验
+和最终关闭后再次检查。成功候选及返回的不可变最终 JSON 都携带 request/context
+摘要及两轮核查计数；后续失败不覆盖候选，不覆盖最初失败。
+
+`bcrypt_completion_receipt_017.py` 联合核对六项输入：原 backend 的五个文件，及
+位于外层的 `owner-final.json`；后者不是给旧五文件目录增添写入资格。还需独立固定
+摘要的 controller 回执，核对全部 artifact 完整字节、controller 身份、包含 owner 的
+进程零退出/reap、无超时/中断、写者静止及读回声明。候选必须恰好是五个结尾字段
+尚未完成的早期记录，不能拿最终返回覆盖它，也不能把候选当最终返回。
+
+成功只输出 `CONSISTENT_TRANSPORT_REQUIRES_RESULT_REVIEW`。它核对原始输出
+摘要、两份指令记录一致、103 B 连续覆盖，不重新解码汇编文本、不独立认证指令语义。
+`observation_accepted / native_execution_performed / clears_hold` 仍为 false。
+这个模块**消费**外层退出回执，不会亲自启动、观察或持久化那个外层控制器。
+
+### 资源与测试边界
+
+请求 ≤262144 B，单回执 ≤32768 B；规范 JSON 在解析/编码前检查深度 ≤16、节点
+≤32768，并拒绝重复键、浮点/非有限数、超长整数、非规范编码和 bool/int 混淆。
+身份清单合计 ≤384 文件、每文件 ≤64 MiB、每轮 ≤96 MiB、每轮协作式4秒，恰好两轮；
+snapshot 使用既有64 KiB分块。原主体/child限制不变。外层16秒是待外部控制器执行的
+候选契约，本核对器只检查其声明的 elapsed_ns，**没有实现16秒OS硬终止**。
+元数据读取、外层引导/模块预加载、Python对象开销和持久化仍由完整调用契约核算。
+
+本轮实际执行：原149项 + 新33项绑定/codec + 新24项完成核对 =
+**206 PASS / 0 FAIL / 0 SKIP**，Linux / Python 3.13；不是 Windows 或全仓库验收。
+新联测确实读取/哈希自身临时目录的有限文件；元数据PINS/preflight、解释器/module
+状态、Popen、旧存储/解析器及外层退出回执是明确的合成替身。公开生产入口没有
+synthetic 模式；测试解除补丁后，合成元数据无法通过原始历史 PINS。
+
+本轮初版三项补充反例失败：运行中 backend 参数变化、实例方法遮蔽、关闭后参数
+变化没有被外层拒绝；修复后同断言通过。另一次结尾中断被误归 PREPARATION，
+固定反例复现并修正为 INTERRUPTED。两份修复前源码和四项 RED 记录均保留；
+这些是本轮新代码的问题，不倒写成上一轮原代码已经有这些检查。
+
+### 后续顺序与未完成项
+
+先用交付补丁的完整字节经 Connector 发布到原 feature（expected-old仍需当场再读），
+再独立审阅本次三个模块和资源边界。之后补齐/绑定实际外层 controller 的启动、
+异常终止、owner-final 保存与退出后独立读回，冻结其源码和准确调用；不能由本
+核对器给自己生成“已观察零退出”。在被允许保存的宿主内获得真实来源、两次独立
+准备和模块/loader资格材料后，才登记唯一正式观察。不得把测试生成的根摘要、
+假回执或标签迁移成正式材料，也不得自动启动另一尝试。
+
+本次没有真实原图像/103 B目标读取，真实目标SHA仍null；没有主准备、独立准备、
+GNU观察、Windows/MQB/MSVC/ETW或workflow分配。没有独立第三方签署；现有
+main、PR、VERSION5.6.0、HOLD/DEFER、旧证据和清理/删除/release边界保持。
