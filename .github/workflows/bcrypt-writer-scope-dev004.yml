@@ -1,0 +1,116 @@
+name: 017 writer-scope isolated dev004 (single run)
+on:
+  push:
+    branches: [feat/producer-clean-handoff-20261011]
+    paths: ['.github/workflows/bcrypt-writer-scope-dev004.yml']
+permissions:
+  contents: read
+concurrency:
+  group: bcrypt-writer-scope-dev004
+  cancel-in-progress: false
+jobs:
+  development:
+    if: >-
+      github.repository == 'Iviesever/msvc-quick-build' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/feat/producer-clean-handoff-20261011' &&
+      github.run_number == 1 && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7, same pin as repository contracts
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Require registered parent; no retry or replacement head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = d80859101cb500e403db94f7561f23d5779b06a3
+          test "$GITHUB_RUN_NUMBER" = 1
+          test "$GITHUB_RUN_ATTEMPT" = 1
+      - name: Verify exact sources, run units, then one isolated five-case supervisor
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I -S -B - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os, shutil, subprocess, sys, time
+          root = Path.cwd()
+          out = root / 'writer-scope-dev004-evidence'
+          out.mkdir(mode=0o700)
+          def save(name, value):
+              raw = (json.dumps(value, sort_keys=True, indent=2) + '\n').encode()
+              with (out / name).open('xb') as f:
+                  f.write(raw); f.flush(); os.fsync(f.fileno())
+          def digest(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+          raw = (root/'docs/20261015-017-transport/dev004-source.json').read_bytes()
+          if hashlib.sha256(raw).hexdigest() != 'e950b8e9f12fe6f1b066578f610a70fbce7da1c33b96e2e456278b358d54e286':
+              raise ValueError('Source registration changed')
+          plan = json.loads(raw)
+          for name, sha in plan['sources'].items():
+              path = root / name
+              if path.is_symlink() or digest(path) != sha:
+                  raise ValueError('Reviewed source changed: ' + name)
+              dest = out / 'source' / name
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(path, dest)
+          save('registration.json', plan)
+          save('identity.json', dict(
+              github={k:os.environ.get(k) for k in ('GITHUB_SHA','GITHUB_RUN_ID',
+                  'GITHUB_RUN_NUMBER','GITHUB_RUN_ATTEMPT','GITHUB_WORKFLOW_SHA',
+                  'RUNNER_OS','RUNNER_ARCH','ImageOS','ImageVersion')},
+              python_path=os.path.realpath(sys.executable), python_version=sys.version,
+              python_sha256=digest(Path(sys.executable).resolve()),
+              source_manifest_sha256=hashlib.sha256(raw).hexdigest(),
+              formal_observations=0, original_image_reads=0, new_gnu=0))
+          unit_code = '''import sys, unittest
+          sys.path.insert(0, 'tests/native')
+          suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in sys.argv[1:])
+          if suite.countTestCases()!=258: raise SystemExit('Unexpected test inventory')
+          result=unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(0 if result.wasSuccessful() and not result.skipped else 1)
+          '''
+          with (out/'units.log').open('xb') as f:
+              units=subprocess.run([sys.executable,'-I','-S','-B','-c',unit_code,*plan['unit_modules']],
+                  stdin=subprocess.DEVNULL,stdout=f,stderr=subprocess.STDOUT,timeout=60,check=False)
+          save('units-exit.json',dict(exit_code=units.returncode,expected_tests=258))
+          if units.returncode: raise SystemExit('Unit test failure; no smoke started')
+          argv=[os.path.realpath(sys.executable),'-I','-S','-B',
+                str(root/plan['smoke_script']),str(out/'smoke')]
+          env={'LANG':'C','LC_ALL':'C','TZ':'UTC','DEBUGINFOD_URLS':''}
+          save('supervisor-launch.json',dict(argv=argv,environment=env,timeout_seconds=20))
+          start=time.monotonic_ns(); timed_out=False
+          with (out/'supervisor.stdout').open('xb') as stdout,(out/'supervisor.stderr').open('xb') as stderr:
+              process=subprocess.Popen(argv,cwd=root,env=env,stdin=subprocess.DEVNULL,
+                  stdout=stdout,stderr=stderr,close_fds=True,start_new_session=True)
+              try: code=process.wait(timeout=20)
+              except subprocess.TimeoutExpired:
+                  timed_out=True; process.kill(); code=process.wait(timeout=3)
+          save('supervisor-exit.json',dict(exit_code=code,outer_timed_out=timed_out,
+              reaped=True,elapsed_ns=time.monotonic_ns()-start,invocations=1,retry_performed=False))
+          for name,sha in plan['sources'].items():
+              if digest(root/name)!=sha: raise ValueError('Source changed during run: '+name)
+          if code or timed_out: raise SystemExit('Stopped; retain prefix, do not rerun')
+          results=json.loads((out/'smoke/results.json').read_bytes())
+          if len(results['cases'])!=5 or not all(x['passed'] is True for x in results['cases']):
+              raise ValueError('Incomplete development cases')
+          save('completed.json',dict(completed=True,cases=results['cases'],
+              supervisor_runs=1,popen_roots=5,explicit_fork_children=5,
+              formal_observations=0,original_image_reads=0,new_gnu=0,
+              writers_quiescent=False,observation_accepted=False,clears_hold=False))
+          print(json.dumps(results,sort_keys=True))
+          PY
+      - name: Preserve first results, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7, same pin as repository contracts
+        with:
+          name: bcrypt-writer-scope-dev004
+          path: writer-scope-dev004-evidence/
+          if-no-files-found: error
+          retention-days: 30
+# A single separately registered development run, not a formal target observation.
+# No workflow_dispatch, schedule, pull_request trigger, secrets, sudo or retry.

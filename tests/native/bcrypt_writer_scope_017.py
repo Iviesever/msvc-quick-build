@@ -27,6 +27,12 @@ def _policy():
         first = next(tasks, None)
         need(first is not None and first.name == str(os.getpid()) and
              next(tasks, None) is None, 'SCOPE_THREADS')
+    # This optional procfs interface must exist BEFORE any workload starts.
+    # Its contents are only candidates; empty text is never ECHILD proof.
+    try:
+        _children()
+    except OSError:
+        raise Refused('SCOPE_CHILD_INTERFACE_UNAVAILABLE') from None
 
 
 def _prctl():
