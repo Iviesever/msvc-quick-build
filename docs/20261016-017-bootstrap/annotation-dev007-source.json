@@ -9,7 +9,7 @@
   ],
   "decoder_launches": 0,
   "formal_observations": 0,
-  "parent": "24810b55dfc946d979df3f1ed790cef8d44d2e93",
+  "parent": "bd4ec0260f6e2d33faed20254302669cda595eba",
   "probe_roles": [
     "owner",
     "controller"
@@ -23,7 +23,7 @@
     12,
     3
   ],
-  "schema": "bcrypt-annotation-dev007-registration-v1",
+  "schema": "bcrypt-annotation-dev007-correction-registration-v1",
   "source_blobs": {
     "tests/native/bcrypt_admission_contract_017.py": "17f9edc3e38614462c7394059b5619ae8f310f23",
     "tests/native/bcrypt_bootstrap_plan_017.py": "6f136178a5ecffb914918daf7fe2c5ec22dfe619",
@@ -62,6 +62,7 @@
     "tests/native/test_bcrypt_writer_scope_017.py": "a0e6f12c82ec382fc5ba80b7e5386bc7e21db089",
     "tests/native/test_bcrypt_writer_scope_preflight_017.py": "6ac2abf9fa95d03e3330aecf48042c3bc4dfbc69"
   },
+  "supersedes_failed_run": 38862226375,
   "target_reads": 0,
   "unit_modules": [
     "test_bcrypt_bound_observation_017",
@@ -80,5 +81,6 @@
     "test_bcrypt_runtime_evidence_017",
     "test_bcrypt_annotation_preload_017"
   ],
-  "unit_tests": 345
+  "unit_tests": 345,
+  "workflow_run_number": 2
 }

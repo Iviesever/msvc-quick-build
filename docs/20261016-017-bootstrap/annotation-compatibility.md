@@ -53,3 +53,16 @@ collector仍是观察器，不是正式bootstrap模块集；干净的兼容性�
 
 实际结果须以新run和原件核对为准。兼容性收口后继续绑定已观察运行文件与真正的
 准备/资格材料，不重复改写guard或把“无blocker”升级成正式103B观察放行。
+
+## dev007 工作流启动修正（不同提交的 push，不是 rerun）
+
+初始执行提交bd4ec026…的常规bootstrap319项通过。dev007 run38862226375 / attempt1
+在单测和collector之前因新workflow漏import sys而NameError，输出目录为空，artifact上传
+因此失败；不是预加载结果。保留原workflow与原日志引用，不声称有不存在的原ZIP。
+本地以真实workflow的import与interpreter赋值前缀复现NameError，补import后通过，
+没有启动子进程。生产修复/测试/collector及36个source blobs逐字不变，345项不变。
+
+修正登记只允许本工作流run_number2 / attempt1，准确parent为bd4ec026…，使用新的
+correction输出目录及artifact名；失败记录不覆盖，旧run不点Rerun。先保存started
+记录，再进行原身份检查。解释器版本/摘要与两个采集角色及预算均不放宽。此修正
+独立登记后才推进分支；它不是偷偷恢复已消耗的一次运行。
