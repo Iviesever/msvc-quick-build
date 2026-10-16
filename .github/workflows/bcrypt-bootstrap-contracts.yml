@@ -17,6 +17,8 @@ on:
       - 'tests/native/test_bcrypt_current_file_binding_017.py'
       - 'tests/native/test_bcrypt_annotation_preload_017.py'
       - 'tests/native/test_bcrypt_bootstrap_review_017.py'
+      - 'tests/native/check_bcrypt_writer_handoff_017.py'
+      - 'tests/native/test_bcrypt_writer_handoff_017.py'
       - '.github/workflows/bcrypt-bootstrap-contracts.yml'
 permissions:
   contents: read
@@ -50,7 +52,8 @@ jobs:
                  'check_bcrypt_decoder_loading_017','test_bcrypt_decoder_loading_017',
                  'test_bcrypt_empty_package_binding_017','test_bcrypt_entry_inventory_017',
                  'check_bcrypt_entry_binding_017','test_bcrypt_entry_binding_017',
-                 'test_bcrypt_current_file_binding_017']
+                 'test_bcrypt_current_file_binding_017',
+                 'check_bcrypt_writer_handoff_017', 'test_bcrypt_writer_handoff_017', 'bcrypt_disassembly_io_014', 'bcrypt_disassembly_model_014', 'bcrypt_disassembly_listing_014']
           paths=list(manifest['sources'])+['tests/native/'+n+'.py' for n in added]
           # The consumed dev004 manifest stays immutable. Only the reviewed
           # runtime files supersede their old source pins; all other pins still apply.
@@ -62,6 +65,7 @@ jobs:
               'd46b1e61e04386c1991155e3fc1ea141008401b5753d9bbe17af8382342701a7'}
           superseded.update({'tests/native/bcrypt_bootstrap_plan_017.py': '9db07c09d44c55a74e76a70d89f42a1fa8f764874e84555a6ff3b3b1a5ad55ea', 'tests/native/bcrypt_fixed_bootstrap_017.py': 'aa41c18c1e7df22895020cf20f65161793ddb89afe85fc963600958d16a0092f', 'tests/native/bcrypt_observation_controller_017.py': '578dfc4a72c939f90ee012e4101517c07dc6054d8f3da1fade0e1c5ece61a547'})
           superseded['tests/native/check_bcrypt_entry_binding_017.py']='83f8bb81fea392d4fb9c8058224717947d7766a680cb60b447592e25724e6f3e'
+          superseded.update({'tests/native/check_bcrypt_writer_handoff_017.py': 'cd103072fa6269cbcd2601210dff213534c2ca5ea33955c4958342a259976bb5', 'tests/native/test_bcrypt_writer_handoff_017.py': '91d9efa94a567bf0d6a63c50b70e97cde0b3738aeaad409cb0f496a747e446c2', 'tests/native/bcrypt_disassembly_io_014.py': '18596e673d8f352a7b49c1955e608e931d69c7dd01d7b9ded47ee402fe90e72e', 'tests/native/bcrypt_disassembly_model_014.py': '3b355306adfdc1ac13c2b193663bc36fb702784779b34891bf4b1a585dc55f12', 'tests/native/bcrypt_disassembly_listing_014.py': 'f21cd65291e7a079885b6c7dc76b65f309ca311d06f3904cd1b145968b8e8e6a'})
           hashes={}
           for name in paths:
               path=root/name
@@ -81,9 +85,10 @@ jobs:
           modules=manifest['unit_modules']+['test_bcrypt_bootstrap_017','test_bcrypt_bootstrap_review_017','test_bcrypt_annotation_preload_017',
               'test_bcrypt_runtime_evidence_017','test_bcrypt_decoder_loading_017',
               'test_bcrypt_empty_package_binding_017','test_bcrypt_entry_inventory_017',
-              'test_bcrypt_entry_binding_017','test_bcrypt_current_file_binding_017']
+              'test_bcrypt_entry_binding_017','test_bcrypt_current_file_binding_017',
+              'test_bcrypt_writer_handoff_017']
           suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in modules)
-          if suite.countTestCases()!=448: raise ValueError('Unexpected test inventory')
+          if suite.countTestCases()!=460: raise ValueError('Unexpected test inventory')
           with (out/'units.log').open('x') as stream:
               result=unittest.TextTestRunner(stream=stream,verbosity=2).run(suite)
           (out/'result.json').write_text(json.dumps(dict(tests=result.testsRun,
@@ -292,6 +297,43 @@ jobs:
               candidate_sha256=roots['candidate']['sha256'],formal_observations=0,decoder_processes=0,qualification_admitted=False))
           print('Fixed candidate file identities matched on this host; no execution qualification')
           HOSTCHECK
+      - name: Verify writer handoff assumptions once, using four toy children
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I -S -B - <<'HANDOFF'
+          from pathlib import Path
+          import hashlib,json,os,subprocess,sys
+          root=Path.cwd();out=root/'bootstrap-contract-evidence'/'writer-handoff'
+          parent=subprocess.check_output(['/usr/bin/git','rev-parse','HEAD^'],text=True,timeout=5).strip()
+          if parent!='2cf6bde63de06e527cc79cc4f09928982ae592a0':
+              out.mkdir()
+              (out/'skipped.json').write_text(json.dumps(dict(reason='different_parent',toy_children=0))+'\n')
+              raise SystemExit(0)
+          if os.environ['GITHUB_RUN_ATTEMPT']!='1':raise ValueError('No repeat allocation')
+          python=Path('/usr/bin/python3').resolve(strict=True)
+          if list(sys.version_info[:3])!=[3,12,3] or hashlib.sha256(python.read_bytes()).hexdigest()!='e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f':
+              raise ValueError('Interpreter identity differs; no toy child')
+          source=root/'tests/native/check_bcrypt_writer_handoff_017.py'
+          if hashlib.sha256(source.read_bytes()).hexdigest()!='cd103072fa6269cbcd2601210dff213534c2ca5ea33955c4958342a259976bb5':raise ValueError('Unreviewed probe')
+          prefix=root/'bootstrap-contract-evidence'
+          argv=[str(python),'-I','-S','-B',str(source),'--execute-registered-toy-check',str(out)]
+          env={'LANG':'C','LC_ALL':'C','TZ':'UTC','DEBUGINFOD_URLS':''}
+          with (prefix/'writer-handoff-launch.json').open('x') as f:
+              json.dump(dict(argv=argv,environment=env,timeout_seconds=20,max_toy_children=4,
+                  head=os.environ['GITHUB_SHA'],parent=parent,attempt=os.environ['GITHUB_RUN_ATTEMPT']),f)
+          with (prefix/'writer-handoff.stdout').open('xb') as so,(prefix/'writer-handoff.stderr').open('xb') as se:
+              result=subprocess.run(argv,cwd=root,env=env,stdin=subprocess.DEVNULL,
+                  stdout=so,stderr=se,timeout=20,check=False)
+          with (prefix/'writer-handoff-exit.json').open('x') as f:
+              json.dump(dict(exit_code=result.returncode,reaped=True,retry=False),f)
+          if result.returncode:raise ValueError('Writer handoff stopped; preserve prefix, no rerun')
+          record=json.loads((out/'completed.json').read_bytes())
+          if (record['status']!='HANDOFF_CONTROLS_MATCHED_NOT_WRITER_QUALIFIED' or
+              record['toy_children']!=4 or record['writer_domain_qualified'] is not False or
+              (prefix/'writer-handoff.stderr').stat().st_size):raise ValueError('Incomplete writer controls')
+          HANDOFF
       - name: Preserve original contract results, including failures
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
