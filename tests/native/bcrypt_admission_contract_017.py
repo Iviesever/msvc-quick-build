@@ -129,6 +129,34 @@ def identity(record, cap=FILE_CAP):
     return record
 
 
+def _runtime_identity(record):
+    """Zero content is not absence. Only runtime files can reach this branch.
+
+    Package/source association is checked after the complete module/alias schema.
+    Programs, metadata and receipts still use the nonempty identity contract.
+    """
+    fields(record, ('path','bytes','sha256'))
+    if type(record['bytes']) is int and record['bytes'] == 0:
+        absolute(record['path'])
+        equal(record['sha256'], fingerprint(b'')['sha256'])
+    else:
+        identity(record)
+
+
+def _empty_package_paths(modules, aliases):
+    paths = set()
+    for name, row in modules.items():
+        path = row['file']
+        if (name not in SOURCES and name != '__main__' and type(path) is str and
+                path.endswith('/__init__.py') and row['origin'] == path and
+                row['spec_name'] == row['package'] == name and
+                row['search'] == row['path'] == (path.rsplit('/', 1)[0],)):
+            resolved = aliases.get(path, path)
+            if resolved.endswith('/__init__.py'):
+                paths.add(resolved)
+    return paths
+
+
 def target(sha):
     sha256_text(sha)
     return dict(runtime_function_index=302, section_index=0, file_start=0x1117C,
@@ -160,15 +188,17 @@ def validate_request(raw, expected_sha):
         equal([ref['bytes'],ref['sha256']], list(provenance.PINS[role]))
     files=c['files']
     need(type(files) is dict and 1 <= len(files) <= FILE_COUNT, 'BINDING_FILES')
-    for name, ref in files.items(): label(name); identity(ref)
+    for name, ref in files.items(): label(name); _runtime_identity(ref)
     fields(c['programs'], ('python','decoder','loader','controller'))
     paths={ref['path']:ref for ref in files.values()}
     need(len(paths) == len(files), 'BINDING_DUPLICATE_PATH')
-    for path in c['programs'].values(): absolute(path); need(path in paths, 'BINDING_PROGRAM')
+    for path in c['programs'].values():
+        absolute(path); need(path in paths, 'BINDING_PROGRAM'); identity(paths[path])
     modules=module_manifest(c['modules'])
     for name in SOURCES:
         need(name in modules and modules[name]['file'] in paths and
              modules[name]['file'].endswith('/'+name+'.py'), 'BINDING_SOURCE')
+        identity(paths[modules[name]['file']])
     need(type(c['aliases']) is list and len(c['aliases']) <= 256 and
          type(c['absent_paths']) is list and len(c['absent_paths']) <= 256, 'BINDING_PATHS')
     aliases={}
@@ -176,16 +206,21 @@ def validate_request(raw, expected_sha):
         fields(a,('path','target')); absolute(a['path']); absolute(a['target'])
         need(a['path'] not in paths and a['path'] not in aliases and a['target'] in paths,
              'BINDING_ALIAS'); aliases[a['path']]=a['target']
+    empty_packages = _empty_package_paths(modules, aliases)
+    for ref in files.values():
+        need(ref['bytes'] > 0 or ref['path'] in empty_packages, 'BINDING_EMPTY_PACKAGE')
     absent=c['absent_paths']
     for path in absent: absolute(path)
     need(len(set(absent)) == len(absent) and not (set(absent) & (paths.keys() | aliases.keys())),
          'BINDING_ABSENCE')
-    for m in modules.values():
+    for name, m in modules.items():
         for kind in ('origin','file','cached'):
             path=m[kind]
             if path is None or (kind == 'origin' and path in ('built-in','frozen')): continue
             need(path in paths or path in aliases or (kind == 'cached' and path in absent),
                  'BINDING_MODULE_BYTES')
+            if (kind == 'cached' or name == '__main__') and aliases.get(path, path) in paths:
+                identity(paths[aliases.get(path, path)])
     fields(request['receipts'], ('primary','independent','qualification'))
     for ref in request['receipts'].values(): identity(ref, RECEIPT_CAP)
     refs=[*files.values(), *c['metadata'].values(), *request['receipts'].values()]

@@ -9,6 +9,8 @@ on:
       - 'tests/native/test_bcrypt_bootstrap_017.py'
       - 'tests/native/bcrypt_owner_backend_017.py'
       - 'tests/native/bcrypt_preflight_017.py'
+      - 'tests/native/bcrypt_admission_contract_017.py'
+      - 'tests/native/test_bcrypt_empty_package_binding_017.py'
       - 'tests/native/test_bcrypt_annotation_preload_017.py'
       - 'tests/native/test_bcrypt_bootstrap_review_017.py'
       - '.github/workflows/bcrypt-bootstrap-contracts.yml'
@@ -38,14 +40,18 @@ jobs:
           added=['bcrypt_bootstrap_plan_017','bcrypt_fixed_bootstrap_017',
                  'bcrypt_observation_controller_017','test_bcrypt_bootstrap_017',
                  'test_bcrypt_bootstrap_review_017','test_bcrypt_annotation_preload_017',
-                 'check_bcrypt_runtime_evidence_017']
+                 'check_bcrypt_runtime_evidence_017','test_bcrypt_runtime_evidence_017',
+                 'check_bcrypt_decoder_loading_017','test_bcrypt_decoder_loading_017',
+                 'test_bcrypt_empty_package_binding_017']
           paths=list(manifest['sources'])+['tests/native/'+n+'.py' for n in added]
           # The consumed dev004 manifest stays immutable. Only the reviewed
           # runtime files supersede their old source pins; all other pins still apply.
           superseded={'tests/native/bcrypt_owner_backend_017.py':
               'b81cd8665c82abd5470771ded3e0aba5d003a7ed6be014e4d73eee53cce45044',
               'tests/native/bcrypt_preflight_017.py':
-              '2380f61fd1befa220a361331e9e0f992afe149f7058b782482bf816aa1432d7c'}
+              '2380f61fd1befa220a361331e9e0f992afe149f7058b782482bf816aa1432d7c',
+              'tests/native/bcrypt_admission_contract_017.py':
+              'd46b1e61e04386c1991155e3fc1ea141008401b5753d9bbe17af8382342701a7'}
           hashes={}
           for name in paths:
               path=root/name
@@ -62,9 +68,11 @@ jobs:
               run_id=os.environ['GITHUB_RUN_ID'],attempt=os.environ['GITHUB_RUN_ATTEMPT'],
               python=sys.version,sources=hashes,native_workloads=0,formal_observations=0),indent=2)+'\n')
           sys.path.insert(0,str(root/'tests/native'))
-          modules=manifest['unit_modules']+['test_bcrypt_bootstrap_017','test_bcrypt_bootstrap_review_017','test_bcrypt_annotation_preload_017']
+          modules=manifest['unit_modules']+['test_bcrypt_bootstrap_017','test_bcrypt_bootstrap_review_017','test_bcrypt_annotation_preload_017',
+              'test_bcrypt_runtime_evidence_017','test_bcrypt_decoder_loading_017',
+              'test_bcrypt_empty_package_binding_017']
           suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in modules)
-          if suite.countTestCases()!=319: raise ValueError('Unexpected test inventory')
+          if suite.countTestCases()!=389: raise ValueError('Unexpected test inventory')
           with (out/'units.log').open('x') as stream:
               result=unittest.TextTestRunner(stream=stream,verbosity=2).run(suite)
           (out/'result.json').write_text(json.dumps(dict(tests=result.testsRun,
