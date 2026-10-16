@@ -1,0 +1,74 @@
+name: 017 fixed bootstrap contracts
+on:
+  push:
+    branches: [feat/producer-clean-handoff-20261011]
+    paths:
+      - 'tests/native/bcrypt_bootstrap_plan_017.py'
+      - 'tests/native/bcrypt_fixed_bootstrap_017.py'
+      - 'tests/native/bcrypt_observation_controller_017.py'
+      - 'tests/native/test_bcrypt_bootstrap_017.py'
+      - '.github/workflows/bcrypt-bootstrap-contracts.yml'
+permissions:
+  contents: read
+concurrency:
+  group: bcrypt-bootstrap-contracts
+  cancel-in-progress: false
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Explicit units and synthetic integration only; no workload launch
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I -S -B - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os, shutil, sys, unittest
+          root=Path.cwd(); out=root/'bootstrap-contract-evidence'; out.mkdir()
+          manifest=json.loads((root/'docs/20261015-017-transport/dev004-source.json').read_bytes())
+          added=['bcrypt_bootstrap_plan_017','bcrypt_fixed_bootstrap_017',
+                 'bcrypt_observation_controller_017','test_bcrypt_bootstrap_017']
+          paths=list(manifest['sources'])+['tests/native/'+n+'.py' for n in added]
+          hashes={}
+          for name in paths:
+              path=root/name
+              if path.is_symlink(): raise ValueError('Source symlink')
+              raw=path.read_bytes(); digest=hashlib.sha256(raw).hexdigest()
+              if name in manifest['sources'] and digest!=manifest['sources'][name]:
+                  raise ValueError('Retained baseline source changed')
+              hashes[name]=digest
+              target=out/'source'/name; target.parent.mkdir(parents=True,exist_ok=True)
+              target.write_bytes(raw)
+          (out/'identity.json').write_text(json.dumps(dict(
+              head=os.environ['GITHUB_SHA'],workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'],
+              run_id=os.environ['GITHUB_RUN_ID'],attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+              python=sys.version,sources=hashes,native_workloads=0,formal_observations=0),indent=2)+'\n')
+          sys.path.insert(0,str(root/'tests/native'))
+          modules=manifest['unit_modules']+['test_bcrypt_bootstrap_017']
+          suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in modules)
+          if suite.countTestCases()!=292: raise ValueError('Unexpected test inventory')
+          with (out/'units.log').open('x') as stream:
+              result=unittest.TextTestRunner(stream=stream,verbosity=2).run(suite)
+          (out/'result.json').write_text(json.dumps(dict(tests=result.testsRun,
+              failures=len(result.failures),errors=len(result.errors),skips=len(result.skipped),
+              success=result.wasSuccessful(),native_workloads=0,formal_observations=0),indent=2)+'\n')
+          for name,digest in hashes.items():
+              if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
+                  raise ValueError('Source changed during contracts')
+          print((out/'result.json').read_text())
+          raise SystemExit(0 if result.wasSuccessful() and not result.skipped else 1)
+          PY
+      - name: Preserve original contract results, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: bcrypt-bootstrap-contracts
+          path: bootstrap-contract-evidence/
+          if-no-files-found: error
+          retention-days: 30
+# No formal registration, developer smoke, workflow_dispatch, schedule or retry.
