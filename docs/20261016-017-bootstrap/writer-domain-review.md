@@ -73,3 +73,49 @@ job5分钟。同步I/O及强制失去宿主仍可能妨碍完整退出/保存，
   https://docs.python.org/3.12/library/os.html#inheritance-of-file-descriptors
 - GitHub托管runner：标准非单CPU job通常使用新VM；不是排除VM内runner agent或root的证明。
   https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+
+## 本次已完成的真实验收
+
+执行提交 `ce91f75e86f8b58be57da4ed1ff42efbcb1ccfc7`，parent为本文基线；
+workflow386262890，run38939851585 / run_number8 / attempt1，job117104454346。
+2026-10-16 17:27:44–17:28:05 UTC（东京10月17日02:27:44–02:28:05），
+所有步骤及run completed/success。没有重新运行这次工作负载。
+
+原artifact12062049560，**187796 B、81个唯一安全文件成员、48份归档源码**。
+ZIP SHA256 `4fd06137d271417019aa3af8f8bbf1329526c443143c30f6a426e950f58ef7ce`。
+大小、CRC、48份源码与本地字节/登记摘要、CI身份、460条逐项ok、准确argv/env、
+生成的两份toy程序、退出及原始文件关联均已核对。原448+新12共460项全部通过，
+无失败/错误/跳过；本地、CI与交付重放是同一集合，不重复相加。
+
+| 实际检查 | 观察结果 |
+|---|---|
+| 故意可继承的FD敏感性对照 | 两个自有文件身份均继承，[true,true]，退出0 |
+| 原OwnerTransport | 两个额外身份均不继承，[false,false]，退出0/reaped，完整捕获/读回/关闭 |
+| 原PreparedNativeBackend | 同样[false,false]，退出0/reaped；原存储/重定向路径实际执行，parser未调用 |
+| 同UID独立路径写者 | 关闭额外继承后仍将哨兵改成peer-write，退出0；证明路径访问不是继承问题 |
+
+解释器仍为/usr/bin/python3.12，原固定摘要e50d468e…；一个专用验证解释器真实启动
+四个不fork的toy进程。第3项以Python脚本替代工具，保留原适配层完整参数和限制，
+它不是GNU调用，不解析/执行合成机器码。没有实际目标或图像读取。
+
+transport落盘的process-exit仍记录output_closed=false；关闭后的单独返回记录才
+为true，二者除关闭状态和elapsed_ns外一致。它们的writers_quiescent始终false。
+backend只保留consumed、合成target、stdout/stderr；parse_called=false。验证进程
+本身退出0/reaped/no-retry，stderr为空。相邻的旧入口检查和文件复验均留下
+不同parent、实际调用0的skip记录；这些不是单测跳过。
+
+同UID反例只访问本次独占创建的哨兵，不是检测到历史CI被篡改或真实宿主存在恶意
+写者。结果不能外推为所有FD类型/IPC/动态分支已经验证，也不证实不存在特权写者。
+本轮没有产品缺陷修复或失败后重跑；新单测和该CI首次均通过，无虚构RED记录。
+
+## 下一接手点（覆盖上文待验收状态）
+
+**两条现有启动路径的额外FD继承验证与同UID反例已经完成，不再重写或重复跑。**
+writer-domain剩余问题已具体化为：应对正式执行生命周期固定受信supervisor、
+runner管理者和root边界，排除同UID非后代工作负载的路径访问或提供真正隔离。
+若依赖“专用受信宿主无其他写者”，必须提供可审核的管理/生命周期依据，不能
+用0700/0600、close_fds或本次结果替代，也不能伪造一份authority.json。
+
+然后才绑定两份真正独立的目标准备记录与已有完整request/退出回执。历史候选与
+程序保持，不增加另一层重复文件采集器。本轮没有签发writer authority、没有第二
+位独立审阅者签署、没有正式准备或观察。完整017与v5.7.0仍未验收完成。
