@@ -96,10 +96,20 @@ def parse_maps(raw):
 
 
 def own_maps():
+    # Raw procfs reads can be short before EOF. A single read is not a snapshot.
+    raw = bytearray()
     with open('/proc/self/maps', 'rb', buffering=0) as stream:
-        raw = stream.read(MAP_CAP + 1)
-    # No raw mapping/addresses are written to artifacts or logs.
-    return parse_maps(raw)
+        for calls in range(1, 129):
+            requested = min(4096, MAP_CAP + 1 - len(raw))
+            chunk = stream.read(requested)
+            need(type(chunk) is bytes and len(chunk) <= requested, 'MAP_READ')
+            if not chunk:
+                result = parse_maps(bytes(raw))
+                result.update(eof_verified=True, read_calls=calls)
+                return result
+            raw.extend(chunk)
+            need(len(raw) <= MAP_CAP, 'MAP_BYTES')
+    raise EvidenceError('MAP_READ_CALLS')
 
 
 def observed_modules(mapping):
@@ -222,6 +232,8 @@ def run(role, out):
             python_pt_interp_mapped=loader_mapped, static_toolchain_nodes=graph['node_count'],
             static_hooks_absent=graph['hooks_absent'],
             probe_module_set_stable=True, file_mappings_stable=True,
+            mapping_eof_verified=before['eof_verified'] and after['eof_verified'],
+            mapping_read_calls=[before['read_calls'], after['read_calls']],
             own_task_single=True, own_children_empty=True,
             decoder_runtime_observed=False, writer_domain_qualified=False,
             python_formal_closure_qualified=False, execution_admitted=False,

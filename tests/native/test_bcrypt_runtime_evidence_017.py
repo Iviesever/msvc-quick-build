@@ -137,4 +137,48 @@ class RuntimeEvidenceTests(unittest.TestCase):
         self.assertIn('execution_admitted=False',text)
 
 
+class ShortReadTests(unittest.TestCase):
+    def read(self, chunks):
+        from unittest.mock import patch
+        class Stream:
+            def __init__(self): self.requests=[]; self.chunks=iter(chunks)
+            def __enter__(self): return self
+            def __exit__(self,*args): pass
+            def read(self,n): self.requests.append(n); return next(self.chunks)
+        stream=Stream()
+        with patch.object(q,'open',return_value=stream,create=True): value=q.own_maps()
+        return value,stream.requests
+
+    def test_short_non_eof_chunk_keeps_later_loader(self):
+        value,_=self.read([line(b'/usr/bin/python3.12'),line(b'/usr/lib/ld-linux.so'),b''])
+        self.assertIn('/usr/lib/ld-linux.so',value['files'])
+
+    def test_line_split_across_short_reads(self):
+        raw=line(); value,_=self.read([raw[:7],raw[7:],b''])
+        self.assertEqual(value['files'],q.parse_maps(raw)['files'])
+
+    def test_later_invalid_row_is_not_ignored(self):
+        with self.assertRaises(q.EvidenceError):self.read([line(),b'invalid row\n',b''])
+
+    def test_no_data_none_is_not_eof(self):
+        with self.assertRaises(q.EvidenceError):self.read([line(),None])
+
+    def test_eof_is_explicitly_recorded(self):
+        value,requests=self.read([line(),b''])
+        self.assertIs(value.get('eof_verified'),True)
+        self.assertEqual(value.get('read_calls'),2)
+        self.assertEqual(len(requests),2)
+
+    def test_reader_call_cap_prevents_unbounded_short_reads(self):
+        with self.assertRaisesRegex(q.EvidenceError,'MAP_READ_CALLS'):
+            self.read([b'x']*129)
+
+    def test_total_cap_cannot_be_hidden_after_valid_first_chunk(self):
+        with self.assertRaises(q.EvidenceError):
+            self.read([line()]+[b'x'*4096]*17)
+
+    def test_empty_stream_refused(self):
+        with self.assertRaises(q.EvidenceError):self.read([b''])
+
+
 if __name__=='__main__':unittest.main(verbosity=2)

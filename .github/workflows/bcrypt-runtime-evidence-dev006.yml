@@ -1,0 +1,101 @@
+name: 017 runtime evidence dev006 (single collection)
+on:
+  push:
+    branches: [feat/producer-clean-handoff-20261011]
+    paths: ['.github/workflows/bcrypt-runtime-evidence-dev006.yml']
+permissions:
+  contents: read
+concurrency:
+  group: bcrypt-runtime-evidence-dev006
+  cancel-in-progress: false
+jobs:
+  evidence:
+    if: >-
+      github.repository == 'Iviesever/msvc-quick-build' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/feat/producer-clean-handoff-20261011' &&
+      github.run_number == 1 && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Require registered source parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = 0dac6501c73252b76d6b281ee485ea18a00ca1f2
+          test "$GITHUB_RUN_NUMBER" = 1
+          test "$GITHUB_RUN_ATTEMPT" = 1
+      - name: Units then two bounded preload collectors; no target or decoder execution
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I -S -B - <<'PY'
+          from pathlib import Path
+          import hashlib,json,os,subprocess,time
+          root=Path.cwd();out=root/'runtime-dev006-evidence';out.mkdir(mode=0o700)
+          def save(name,value):
+              with (out/name).open('x') as f:
+                  json.dump(value,f,sort_keys=True,indent=2);f.write('\n');f.flush();os.fsync(f.fileno())
+          raw=(root/'docs/20261016-017-bootstrap/runtime-dev006-source.json').read_bytes()
+          if hashlib.sha256(raw).hexdigest()!='686876c6a7636e2b08dd06a499ea5512741ff54ee69b0eb98b16ffa955d3049f':raise ValueError('Registration changed')
+          plan=json.loads(raw);sources={}
+          for name,expected in plan['source_blobs'].items():
+              path=root/name
+              if path.is_symlink():raise ValueError('Source symlink')
+              data=path.read_bytes()
+              actual=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+              if actual!=expected:raise ValueError('Source mismatch: '+name)
+              dest=out/'source'/name;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(data)
+              sources[name]=hashlib.sha256(data).hexdigest()
+          save('registration.json',plan)
+          save('identity.json',dict(head=os.environ['GITHUB_SHA'],workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'],
+              run_id=os.environ['GITHUB_RUN_ID'],run_number=os.environ['GITHUB_RUN_NUMBER'],
+              attempt=os.environ['GITHUB_RUN_ATTEMPT'],image=os.environ.get('ImageVersion'),sources=sources))
+          code="""import sys,unittest
+          sys.path.insert(0,'tests/native')
+          suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in sys.argv[1:])
+          if suite.countTestCases()!=335:raise SystemExit('Wrong inventory')
+          r=unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(0 if r.wasSuccessful() and not r.skipped else 1)
+          """
+          with (out/'units.log').open('xb') as stream:
+              result=subprocess.run(['/usr/bin/python3','-I','-S','-B','-c',code,*plan['unit_modules']],
+                  stdout=stream,stderr=subprocess.STDOUT,timeout=60,check=False)
+          save('units-exit.json',dict(exit_code=result.returncode,tests=335))
+          if result.returncode:raise SystemExit('Units failed; no collector')
+          env={'LANG':'C','LC_ALL':'C','TZ':'UTC','DEBUGINFOD_URLS':''};rows=[]
+          for role in plan['probe_roles']:
+              argv=['/usr/bin/python3','-I','-S','-B',str(root/plan['probe_script']),role,str(out/role)]
+              save(role+'-launch.json',dict(argv=argv,environment=env,timeout_seconds=50))
+              start=time.monotonic_ns();timed_out=False
+              with (out/(role+'.stdout')).open('xb') as so,(out/(role+'.stderr')).open('xb') as se:
+                  try: result=subprocess.run(argv,cwd=root,env=env,stdin=subprocess.DEVNULL,
+                          stdout=so,stderr=se,timeout=50,check=False)
+                  except subprocess.TimeoutExpired:
+                      save(role+'-exit.json',dict(timed_out=True,completed=False,retry=False))
+                      raise SystemExit('Collector stopped; no retry')
+              save(role+'-exit.json',dict(exit_code=result.returncode,timed_out=False,reaped=True,
+                  elapsed_ns=time.monotonic_ns()-start,invocations=1,retry=False))
+              if result.returncode:raise SystemExit('Collector failed; retain prefix')
+              rows.append(json.loads((out/role/'summary.json').read_bytes()))
+          for name,sha in sources.items():
+              if hashlib.sha256((root/name).read_bytes()).hexdigest()!=sha:raise ValueError('Source drift')
+          save('completed.json',dict(collection_completed=True,qualification_admitted=False,
+              collectors=rows,collector_processes=2,decoder_processes=0,formal_observations=0))
+          print('Two runtime evidence records retained; no execution qualification granted')
+          PY
+      - name: Preserve first evidence including refusals
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: bcrypt-runtime-dev006
+          path: runtime-dev006-evidence/
+          if-no-files-found: error
+          retention-days: 30
+# No workflow_dispatch, rerun admission, native decoder or target access.
