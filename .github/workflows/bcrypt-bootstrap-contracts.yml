@@ -14,11 +14,13 @@ on:
       - 'tests/native/test_bcrypt_entry_inventory_017.py'
       - 'tests/native/check_bcrypt_entry_binding_017.py'
       - 'tests/native/test_bcrypt_entry_binding_017.py'
+      - 'tests/native/test_bcrypt_current_file_binding_017.py'
       - 'tests/native/test_bcrypt_annotation_preload_017.py'
       - 'tests/native/test_bcrypt_bootstrap_review_017.py'
       - '.github/workflows/bcrypt-bootstrap-contracts.yml'
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: bcrypt-bootstrap-contracts
   cancel-in-progress: false
@@ -47,7 +49,8 @@ jobs:
                  'check_bcrypt_runtime_evidence_017','test_bcrypt_runtime_evidence_017',
                  'check_bcrypt_decoder_loading_017','test_bcrypt_decoder_loading_017',
                  'test_bcrypt_empty_package_binding_017','test_bcrypt_entry_inventory_017',
-                 'check_bcrypt_entry_binding_017','test_bcrypt_entry_binding_017']
+                 'check_bcrypt_entry_binding_017','test_bcrypt_entry_binding_017',
+                 'test_bcrypt_current_file_binding_017']
           paths=list(manifest['sources'])+['tests/native/'+n+'.py' for n in added]
           # The consumed dev004 manifest stays immutable. Only the reviewed
           # runtime files supersede their old source pins; all other pins still apply.
@@ -58,6 +61,7 @@ jobs:
               'tests/native/bcrypt_admission_contract_017.py':
               'd46b1e61e04386c1991155e3fc1ea141008401b5753d9bbe17af8382342701a7'}
           superseded.update({'tests/native/bcrypt_bootstrap_plan_017.py': '9db07c09d44c55a74e76a70d89f42a1fa8f764874e84555a6ff3b3b1a5ad55ea', 'tests/native/bcrypt_fixed_bootstrap_017.py': 'aa41c18c1e7df22895020cf20f65161793ddb89afe85fc963600958d16a0092f', 'tests/native/bcrypt_observation_controller_017.py': '578dfc4a72c939f90ee012e4101517c07dc6054d8f3da1fade0e1c5ece61a547'})
+          superseded['tests/native/check_bcrypt_entry_binding_017.py']='83f8bb81fea392d4fb9c8058224717947d7766a680cb60b447592e25724e6f3e'
           hashes={}
           for name in paths:
               path=root/name
@@ -77,9 +81,9 @@ jobs:
           modules=manifest['unit_modules']+['test_bcrypt_bootstrap_017','test_bcrypt_bootstrap_review_017','test_bcrypt_annotation_preload_017',
               'test_bcrypt_runtime_evidence_017','test_bcrypt_decoder_loading_017',
               'test_bcrypt_empty_package_binding_017','test_bcrypt_entry_inventory_017',
-              'test_bcrypt_entry_binding_017']
+              'test_bcrypt_entry_binding_017','test_bcrypt_current_file_binding_017']
           suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in modules)
-          if suite.countTestCases()!=426: raise ValueError('Unexpected test inventory')
+          if suite.countTestCases()!=448: raise ValueError('Unexpected test inventory')
           with (out/'units.log').open('x') as stream:
               result=unittest.TextTestRunner(stream=stream,verbosity=2).run(suite)
           (out/'result.json').write_text(json.dumps(dict(tests=result.testsRun,
@@ -153,6 +157,141 @@ jobs:
           save('completed.json',dict(entry_invocations=2,entries=rows,formal_observations=0,
               execution_admitted=False,full_execution_closure_verified=False))
           PYCODE
+      - name: Revalidate the frozen runtime files once on this host
+        timeout-minutes: 2
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I -S -B - <<'HOSTCHECK'
+          # Workflow coordinator: exactly two pinned artifact downloads, one file-check child.
+          from pathlib import Path, PurePosixPath
+          import hashlib, io, json, os, stat, subprocess, sys, time, urllib.error, urllib.parse, urllib.request, zipfile
+          root=Path.cwd(); out=root/'bootstrap-contract-evidence'/'current-file-binding'
+          out.mkdir(mode=0o700)
+          def save(name,value):
+              with (out/name).open('x') as stream:
+                  json.dump(value,stream,sort_keys=True,indent=2); stream.write('\n')
+                  stream.flush(); os.fsync(stream.fileno())
+          parent=subprocess.check_output(['/usr/bin/git','rev-parse','HEAD^'],timeout=5,text=True).strip()
+          if parent!='0056916d235c09f30a6c356a75b01e087b8ecbb8':
+              save('skipped.json',dict(reason='different_parent',file_check_invocations=0))
+              raise SystemExit(0)
+          save('started.json',dict(head=os.environ['GITHUB_SHA'],parent=parent,
+              run_id=os.environ['GITHUB_RUN_ID'],attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+              maximum_file_check_invocations=1,formal_observations=0,execution_admitted=False))
+          if os.environ['GITHUB_RUN_ATTEMPT']!='1':raise ValueError('No retry allocation')
+          # One fixed candidate; all roots were recorded before this workflow existed.
+          roots={'candidate':{'bytes':49116,'sha256':'8a5206cd8a1947030a6e4b11139fea4de748b0def0f418bda5b5df541e800f38'},
+           'owner':{'bytes':78690,'sha256':'eebeda034a24d1bb60841464a282b7359f8e52c4389c0ce0e31dd4ab27454fd6'},
+           'controller':{'bytes':73897,'sha256':'1de115ae3114a8edb4278d02d98eb60b4c34063ef366d2dba4981e824ee0bee8'},
+           'toolchain':{'bytes':17738,'sha256':'8a27beafcf2d87f0514138df4528a701da18a2f1a44df74b58af752eee862bba'}}
+          artifacts=[(12054111874,176262,'4144be42807874305035cb8b1a17e3bea8f1f5c879da8e1192c25af3a212929c'),
+                     (12051460385,154775,'eb0c6d21aa029ceaef43dd17696d05a82ae9b5f27051346644eabb7ab989224d')]
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,req,fp,code,msg,headers,newurl):return None
+          def download(aid):
+              url=f'https://api.github.com/repos/Iviesever/msvc-quick-build/actions/artifacts/{aid}/zip'
+              request=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_READ_TOKEN'],
+                  'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
+              try:
+                  response=urllib.request.build_opener(NoRedirect).open(request,timeout=20)
+              except urllib.error.HTTPError as error:
+                  if error.code!=302:raise
+                  location=error.headers['Location']; error.close()
+                  if urllib.parse.urlsplit(location).scheme!='https':raise ValueError('Non-HTTPS artifact redirect')
+                  # Signed download request has NO GitHub credential header.
+                  response=urllib.request.urlopen(urllib.request.Request(location),timeout=20)
+              data=bytearray()
+              with response:
+                  for _ in range(32):
+                      block=response.read(65536)
+                      if not block:return bytes(data)
+                      data.extend(block)
+                      if len(data)>1048576:raise ValueError('Compressed artifact cap')
+              raise ValueError('Artifact EOF not reached')
+          selected={}
+          for aid,size,digest in artifacts:
+              data=download(aid)
+              if len(data)!=size or hashlib.sha256(data).hexdigest()!=digest:raise ValueError('Original artifact changed')
+              with (out/f'original-{aid}.zip').open('xb') as stream:stream.write(data)
+              with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                  names=archive.namelist()
+                  if len(names)!=len(set(names)) or archive.testzip() is not None:raise ValueError('Artifact member/CRC')
+                  if len(names)>128 or sum(m.file_size for m in archive.infolist())>4194304:raise ValueError('Archive cap')
+                  for member in archive.infolist():
+                      p=PurePosixPath(member.filename)
+                      if p.is_absolute() or '..' in p.parts or '\\' in member.filename or stat.S_ISLNK(member.external_attr>>16):raise ValueError('Unsafe member')
+                  picks=({'owner':'entry-inventory/owner.json','controller':'entry-inventory/controller.json'}
+                         if aid==12054111874 else {'toolchain':'pair/toolchain-before.json'})
+                  for role,name in picks.items():
+                      raw=archive.read(name); expected=roots[role]
+                      if len(raw)!=expected['bytes'] or hashlib.sha256(raw).hexdigest()!=expected['sha256']:raise ValueError('Recorded JSON root changed')
+                      selected[role]=raw
+                      with (out/(role+'.json')).open('xb') as stream:stream.write(raw)
+          # Reconstitute the already-frozen candidate from originals; byte root must be
+          # EXACTLY the previous 49,116-byte artifact, not a fresh selection from this host.
+          sys.path.insert(0,str(root/'tests/native'))
+          import check_bcrypt_entry_binding_017 as checker
+          values={k:checker.decode(v) for k,v in selected.items()}; o,c,g=(values[k] for k in checker.ROLES)
+          files={}
+          for row in [*o['files'].values(),*c['files'].values(),*g['nodes'],g['cache']]:
+              ref={k:row[k] for k in ('path','bytes','sha256')}
+              if ref['path'] in files and files[ref['path']]!=ref:raise ValueError('Conflicting retained file')
+              files[ref['path']]=ref
+          aliases={}
+          for p,t in [*o['aliases'].items(),*c['aliases'].items(),*((a['path'],a['target']) for a in g['aliases'])]:
+              if p==t:continue
+              if p in aliases and aliases[p]!=t:raise ValueError('Conflicting retained alias')
+              aliases[p]=t
+          absent=set(o['absent_cached'])|set(c['absent_cached'])|{a['path'] for a in g['absence_checks']}
+          loaders={e['provider'] for e in g['edges'] if e['kind']=='PT_INTERP'}
+          if len(loaders)!=1:raise ValueError('Loader join')
+          runtime=dict(programs=dict(python=o['python_file'],decoder=g['roots']['decoder'],
+              loader=next(iter(loaders)),controller=c['entry_file']),modules=o['modules'],
+              files={f'f{i:03}':files[p] for i,p in enumerate(sorted(files))},
+              aliases=[dict(path=p,target=t) for p,t in sorted(aliases.items())],absent_paths=sorted(absent))
+          candidate=checker.encode(dict(schema='bcrypt-runtime-binding-candidate-017-v1',
+              basis={k:roots[k] for k in checker.ROLES},runtime=runtime))
+          checker.review_binding(candidate,selected,roots)  # checks exact prior candidate before host I/O.
+          with (out/'candidate.json').open('xb') as stream:stream.write(candidate)
+          with (out/'roots.json').open('xb') as stream:stream.write(checker.encode(roots))
+          python=Path('/usr/bin/python3').resolve(strict=True)
+          python_sha=hashlib.sha256(python.read_bytes()).hexdigest()
+          save('python.json',dict(path=str(python),version=sys.version,sha256=python_sha))
+          if list(sys.version_info[:3])!=[3,12,3] or python_sha!='e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f':raise ValueError('Interpreter differs; no live check')
+          code="""from pathlib import Path
+          import sys
+          sys.path.insert(0,str(Path.cwd()/'tests/native'))
+          import check_bcrypt_entry_binding_017 as b
+          out=Path(sys.argv[1])
+          def read(name):
+              with (out/name).open('rb') as stream:raw=stream.read(b.REQUEST_CAP+1)
+              if not 0<len(raw)<=b.REQUEST_CAP:raise ValueError('Bounded input')
+              return raw
+          result=b.verify_current_files(read('candidate.json'),{r:read(r+'.json') for r in b.ROLES},b.decode(read('roots.json')))
+          sys.stdout.buffer.write(b.encode(result));sys.stdout.buffer.flush()
+          raise SystemExit(0 if result['current_files_verified'] else 2)
+          """
+          env={'LANG':'C','LC_ALL':'C','TZ':'UTC','DEBUGINFOD_URLS':''}
+          argv=[str(python),'-I','-S','-B','-c',code,str(out)]
+          save('launch.json',dict(argv=argv,environment=env,timeout_seconds=30,maximum_invocations=1))
+          start=time.monotonic_ns()
+          with (out/'result.json').open('xb') as so,(out/'stderr.txt').open('xb') as se:
+              try: result=subprocess.run(argv,cwd=root,env=env,stdin=subprocess.DEVNULL,stdout=so,stderr=se,timeout=30,check=False)
+              except subprocess.TimeoutExpired:
+                  save('exit.json',dict(timed_out=True,retry=False,completed=False));raise
+          save('exit.json',dict(exit_code=result.returncode,reaped=True,timed_out=False,retry=False,elapsed_ns=time.monotonic_ns()-start))
+          if result.returncode:raise ValueError('Current file check refused; keep original candidate and first result')
+          checked=checker.decode((out/'result.json').read_bytes())
+          if (checked['status']!='CURRENT_RUNTIME_FILES_MATCHED_NOT_QUALIFIED' or
+              checked['reads']!={'passes':256,'eof_requests':256,'declared_content_bytes':36214558} or
+              checked['completed_passes']!=2 or (out/'stderr.txt').stat().st_size):raise ValueError('Unexpected file-check evidence')
+          save('completed.json',dict(file_check_invocations=1,current_files_verified=True,original_candidate_preserved=True,
+              candidate_sha256=roots['candidate']['sha256'],formal_observations=0,decoder_processes=0,qualification_admitted=False))
+          print('Fixed candidate file identities matched on this host; no execution qualification')
+          HOSTCHECK
       - name: Preserve original contract results, including failures
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

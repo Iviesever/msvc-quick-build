@@ -1,17 +1,25 @@
-"""Offline review of an explicit runtime candidate against retained 017 evidence.
+"""Review an explicit recorded runtime candidate; separately recheck its files.
 
-No discovery, filesystem reads, target, request signing or execution. All four
+review_binding has no filesystem reads. verify_current_files reads only the
+previously bound paths, never discovers replacements or launches a target. All four
 byte roots must be pinned by the caller's external review record before this
-function is called. A matching candidate is NOT a complete/admitted request.
+functions are called. A matching candidate is NOT a complete/admitted request.
 Different process snapshots are joined by content, never by inode or timestamp.
 """
+import os
+import stat
+import sys
+from pathlib import Path
+
+from bcrypt_toolchain_017 import Budget, snapshot, state
+from bcrypt_owner_backend_017 import ENV, _single_native_thread
 from bcrypt_admission_contract_017 import (
     REQUEST_CAP, FILE_COUNT, PASS_CAP, SOURCES, decode, encode, fields, equal,
     fingerprint, identity, label, _runtime_identity, _empty_package_paths)
 from bcrypt_bootstrap_plan_017 import BOOTSTRAP_NAME, CONTROLLER_NAME
 from bcrypt_import_boundary_017 import manifest
 from bcrypt_owner_backend_017 import absolute, sha256_text
-from bcrypt_guarded_owner_017 import need
+from bcrypt_guarded_owner_017 import need, Refused
 
 ROLES = ('owner', 'controller', 'toolchain')
 RUNTIME_FIELDS = ('programs', 'modules', 'files', 'aliases', 'absent_paths')
@@ -168,3 +176,88 @@ def review_binding(candidate_raw, evidence, expected_roots):
         complete_request=False, current_host_verified=False, snapshots_atomic=False,
         writer_domain_qualified=False, preparations_verified=False,
         independent_review_signed=False, execution_admitted=False, clears_hold=False)
+
+
+def verify_current_files(candidate_raw, evidence, expected_roots):
+    """Revalidate the pinned candidate on this host, without promoting authority.
+
+    Complete the unchanged four-input offline review BEFORE reading any candidate
+    path. Check the running interpreter and fixed environment, then read exactly
+    two passes of the declared files under one 20-second cooperative budget.
+    Compare this host's own per-file states across passes, not historical inodes.
+    Stop on the first failure, retain completed read accounting, never substitute
+    a new path/digest, and never remove an unexpected file or broken symlink.
+
+    This is a file-identity check, not an actual owner execution, atomic snapshot,
+    loader trace, process-writer census or proof of independence. Even a successful
+    result cannot be submitted as a formal request or qualification receipt.
+    """
+    reviewed = review_binding(candidate_raw, evidence, expected_roots)
+    runtime = decode(candidate_raw)['runtime']
+    refs = runtime['files']; total = sum(r['bytes'] for r in refs.values())
+    budget = Budget(seconds=20, limit=2*total)
+    result = dict(schema='bcrypt-current-file-binding-017-v1',
+        status='CURRENT_RUNTIME_FILES_REFUSED',
+        candidate_sha256=reviewed['candidate_sha256'],
+        runtime_sha256=reviewed['runtime_sha256'],
+        current_files_verified=False, interpreter_identity_checked=False,
+        completed_passes=0, last_file=None, failure_stage=None, interrupted=False,
+        passes=[], reads=None, snapshots_atomic=False, current_host_qualified=False,
+        runtime_module_closure_verified=False, writer_domain_qualified=False,
+        preparations_verified=False, independent_review_signed=False,
+        execution_admitted=False, clears_hold=False)
+    stage = 'runtime'; first = {}
+
+    def runtime_check():
+        budget.checkpoint()
+        need(str(Path(sys.executable).resolve(strict=True)) == runtime['programs']['python'],
+             'ENTRY_HOST_PYTHON')
+        equal(dict(os.environ), ENV)
+        _single_native_thread()
+
+    def paths():
+        nonlocal stage
+        stage = 'aliases'
+        for item in runtime['aliases']:
+            budget.checkpoint()
+            need(str(Path(item['path']).resolve(strict=True)) == item['target'], 'ENTRY_HOST_ALIAS')
+        stage = 'absence'
+        for path in runtime['absent_paths']:
+            budget.checkpoint()
+            # lexists, not exists: even a dangling symlink violates absence.
+            need(not os.path.lexists(path), 'ENTRY_HOST_ABSENCE')
+
+    try:
+        runtime_check()
+        for index in range(2):
+            paths(); stage = 'files'; observed = {}
+            for name, ref in refs.items():
+                result['last_file'] = name
+                budget.checkpoint()
+                before = os.lstat(ref['path'])
+                need(stat.S_ISREG(before.st_mode) and before.st_size == ref['bytes'], 'ENTRY_HOST_FILE')
+                record, _ = snapshot(ref['path'], budget)
+                equal({k:record[k] for k in ('path', 'bytes', 'sha256')}, ref)
+                equal(record['state'], state(before))
+                observed[name] = record['state']
+                if index:
+                    equal(observed[name], first[name])
+            paths(); stage = 'runtime'; runtime_check()
+            if not index: first = observed
+            result['passes'].append(dict(files=len(observed), content_bytes=total,
+                eof_requests=len(observed), states_sha256=fingerprint(encode(observed))['sha256']))
+            result['completed_passes'] += 1
+        stage = 'accounting'; budget.checkpoint()
+        need(budget.file_passes == budget.eof_requests == 2*len(refs) and
+             budget.content_bytes == 2*total, 'ENTRY_HOST_READS')
+        result['interpreter_identity_checked'] = True
+        result['current_files_verified'] = True
+        result['status'] = 'CURRENT_RUNTIME_FILES_MATCHED_NOT_QUALIFIED'
+    except (KeyboardInterrupt, SystemExit):
+        result['failure_stage'], result['interrupted'] = stage, True
+    except (OSError, ValueError, Refused):
+        # Neither host paths nor arbitrary exception text become public errors.
+        result['failure_stage'] = stage
+    result['reads'] = dict(passes=budget.file_passes, eof_requests=budget.eof_requests,
+                          declared_content_bytes=budget.content_bytes)
+    return result
