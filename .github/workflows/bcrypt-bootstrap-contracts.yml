@@ -11,6 +11,7 @@ on:
       - 'tests/native/bcrypt_preflight_017.py'
       - 'tests/native/bcrypt_admission_contract_017.py'
       - 'tests/native/test_bcrypt_empty_package_binding_017.py'
+      - 'tests/native/test_bcrypt_entry_inventory_017.py'
       - 'tests/native/test_bcrypt_annotation_preload_017.py'
       - 'tests/native/test_bcrypt_bootstrap_review_017.py'
       - '.github/workflows/bcrypt-bootstrap-contracts.yml'
@@ -27,6 +28,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 2
       - name: Explicit units and synthetic integration only; no workload launch
         timeout-minutes: 2
         shell: bash
@@ -42,7 +44,7 @@ jobs:
                  'test_bcrypt_bootstrap_review_017','test_bcrypt_annotation_preload_017',
                  'check_bcrypt_runtime_evidence_017','test_bcrypt_runtime_evidence_017',
                  'check_bcrypt_decoder_loading_017','test_bcrypt_decoder_loading_017',
-                 'test_bcrypt_empty_package_binding_017']
+                 'test_bcrypt_empty_package_binding_017','test_bcrypt_entry_inventory_017']
           paths=list(manifest['sources'])+['tests/native/'+n+'.py' for n in added]
           # The consumed dev004 manifest stays immutable. Only the reviewed
           # runtime files supersede their old source pins; all other pins still apply.
@@ -52,6 +54,7 @@ jobs:
               '2380f61fd1befa220a361331e9e0f992afe149f7058b782482bf816aa1432d7c',
               'tests/native/bcrypt_admission_contract_017.py':
               'd46b1e61e04386c1991155e3fc1ea141008401b5753d9bbe17af8382342701a7'}
+          superseded.update({'tests/native/bcrypt_bootstrap_plan_017.py': '9db07c09d44c55a74e76a70d89f42a1fa8f764874e84555a6ff3b3b1a5ad55ea', 'tests/native/bcrypt_fixed_bootstrap_017.py': 'aa41c18c1e7df22895020cf20f65161793ddb89afe85fc963600958d16a0092f', 'tests/native/bcrypt_observation_controller_017.py': '578dfc4a72c939f90ee012e4101517c07dc6054d8f3da1fade0e1c5ece61a547'})
           hashes={}
           for name in paths:
               path=root/name
@@ -70,9 +73,9 @@ jobs:
           sys.path.insert(0,str(root/'tests/native'))
           modules=manifest['unit_modules']+['test_bcrypt_bootstrap_017','test_bcrypt_bootstrap_review_017','test_bcrypt_annotation_preload_017',
               'test_bcrypt_runtime_evidence_017','test_bcrypt_decoder_loading_017',
-              'test_bcrypt_empty_package_binding_017']
+              'test_bcrypt_empty_package_binding_017','test_bcrypt_entry_inventory_017']
           suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in modules)
-          if suite.countTestCases()!=389: raise ValueError('Unexpected test inventory')
+          if suite.countTestCases()!=408: raise ValueError('Unexpected test inventory')
           with (out/'units.log').open('x') as stream:
               result=unittest.TextTestRunner(stream=stream,verbosity=2).run(suite)
           (out/'result.json').write_text(json.dumps(dict(tests=result.testsRun,
@@ -84,6 +87,68 @@ jobs:
           print((out/'result.json').read_text())
           raise SystemExit(0 if result.wasSuccessful() and not result.skipped else 1)
           PY
+      - name: Inspect the two fixed entries once at the registered parent
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I -S -B - <<'PYCODE'
+          from pathlib import Path
+          import hashlib, json, os, subprocess, sys, time
+          root=Path.cwd(); out=root/'bootstrap-contract-evidence'/'entry-inventory'
+          out.mkdir(mode=0o700)
+          def save(name,value):
+              with (out/name).open('x') as stream:
+                  json.dump(value,stream,sort_keys=True,indent=2);stream.write('\n')
+                  stream.flush();os.fsync(stream.fileno())
+          parent=subprocess.check_output(['/usr/bin/git','rev-parse','HEAD^'],timeout=5,text=True).strip()
+          if parent!='948af32d77218c96688b8a3854803b08f38d44aa':
+              save('skipped.json',dict(reason='different_parent',entry_invocations=0))
+              raise SystemExit(0)
+          save('started.json',dict(head=os.environ['GITHUB_SHA'],parent=parent,
+              run_id=os.environ['GITHUB_RUN_ID'],attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+              evidence_only=True,maximum_entry_invocations=2,formal_observations=0))
+          if os.environ['GITHUB_RUN_ATTEMPT']!='1':raise ValueError('No retry allocation')
+          python=Path('/usr/bin/python3').resolve(strict=True)
+          expected='e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f'
+          if list(sys.version_info[:3])!=[3,12,3] or hashlib.sha256(python.read_bytes()).hexdigest()!=expected:
+              raise ValueError('Registered Python identity changed')
+          env={'LANG':'C','LC_ALL':'C','TZ':'UTC','DEBUGINFOD_URLS':''}
+          rows=[]
+          for role,filename in [('owner','bcrypt_fixed_bootstrap_017.py'),('controller','bcrypt_observation_controller_017.py')]:
+              entry=root/'tests/native'/filename
+              argv=[str(python),'-I','-S','-B',str(entry),'--inspect-preload']
+              save(role+'-launch.json',dict(argv=argv,environment=env,timeout_seconds=30))
+              start=time.monotonic_ns()
+              with (out/(role+'.json')).open('xb') as so,(out/(role+'.stderr')).open('xb') as se:
+                  try:
+                      result=subprocess.run(argv,cwd=entry.parent,env=env,stdin=subprocess.DEVNULL,
+                          stdout=so,stderr=se,timeout=30,check=False)
+                  except subprocess.TimeoutExpired:
+                      save(role+'-exit.json',dict(timed_out=True,retry=False))
+                      raise
+              save(role+'-exit.json',dict(exit_code=result.returncode,reaped=True,timed_out=False,
+                  elapsed_ns=time.monotonic_ns()-start,retry=False))
+              if result.returncode:raise ValueError('Entry refused; preserve prefix')
+              path=out/(role+'.json')
+              if not 0<path.stat().st_size<=262144 or (out/(role+'.stderr')).stat().st_size:
+                  raise ValueError('Entry output size/stderr')
+              evidence=json.loads(path.read_bytes())
+              if (evidence['schema']!='bcrypt-entry-preload-evidence-017-v1' or evidence['role']!=role or
+                  evidence['phase']!='before_request_read' or evidence['status']!='ENTRY_PRELOAD_RECORDED_NOT_QUALIFIED' or
+                  evidence['entry_file']!=str(entry) or evidence['modules']['__main__']['file']!=str(entry) or
+                  evidence['modules']['__main__']['spec_name'] is not None):raise ValueError('Wrong entry evidence')
+              for key in ('expected_modules_generated','execution_admitted','source_independently_reviewed',
+                          'runtime_loader_verified','writer_domain_qualified','full_execution_closure_verified'):
+                  if evidence[key] is not False:raise ValueError('Unexpected qualification')
+              for key in ('request_reads','target_reads','decoder_processes','formal_observations'):
+                  if type(evidence[key]) is not int or evidence[key]!=0:raise ValueError('Unexpected workload')
+              if evidence['files'][str(python)]['sha256']!=expected:raise ValueError('Entry interpreter mismatch')
+              rows.append(dict(role=role,modules=len(evidence['modules']),files=len(evidence['files']),
+                               raw_sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+          save('completed.json',dict(entry_invocations=2,entries=rows,formal_observations=0,
+              execution_admitted=False,full_execution_closure_verified=False))
+          PYCODE
       - name: Preserve original contract results, including failures
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -92,4 +157,5 @@ jobs:
           path: bootstrap-contract-evidence/
           if-no-files-found: error
           retention-days: 30
-# No formal registration, developer smoke, workflow_dispatch, schedule or retry.
+# No formal observation. Entry inspection only on the exact registered parent, first attempt.
+# No old developer smoke, workflow_dispatch, schedule or retry.

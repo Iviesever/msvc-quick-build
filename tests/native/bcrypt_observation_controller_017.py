@@ -16,7 +16,7 @@ if __name__ == '__main__':
         raise SystemExit('CONTROLLER_ISOLATION_REQUIRED')
     sys.path.insert(0,str(Path(__file__).resolve().parent))
 
-from bcrypt_bootstrap_plan_017 import BootstrapInputs
+from bcrypt_bootstrap_plan_017 import BootstrapInputs, record_entry_preload
 from bcrypt_admission_contract_017 import encode, equal, fingerprint, RECEIPT_CAP
 from bcrypt_completion_receipt_017 import evaluate_completion
 from bcrypt_guarded_owner_017 import Refused, need
@@ -211,7 +211,14 @@ class ObservationController:
 
 def main(argv):
     try:
-        need(type(argv) is list and len(argv) == 3, 'CONTROL_ARGV')
+        need(type(argv) is list and len(argv) in (2, 3), 'CONTROL_ARGV')
+        if len(argv) == 2:
+            need(argv[1] == '--inspect-preload' and
+                 os.path.realpath(argv[0]) == os.path.realpath(__file__), 'CONTROL_ARGV')
+            raw = record_entry_preload('controller', __file__)
+            need(os.write(1, raw) == len(raw), 'CONTROL_STDOUT')
+            return 0
+        need(argv[1] != '--inspect-preload', 'CONTROL_ARGV')
         result = ObservationController(argv[1],argv[2]).run()
         raw = encode(result,RECEIPT_CAP)
         need(os.write(1,raw) == len(raw),'CONTROL_STDOUT')

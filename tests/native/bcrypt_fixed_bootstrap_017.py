@@ -13,19 +13,24 @@ if __name__ == '__main__':
         raise SystemExit('BOOTSTRAP_ISOLATION_REQUIRED')
     sys.path.insert(0,str(Path(__file__).resolve().parent))
 
-from bcrypt_bootstrap_plan_017 import BootstrapInputs, BOOTSTRAP_NAME
+from bcrypt_bootstrap_plan_017 import BootstrapInputs, BOOTSTRAP_NAME, record_entry_preload
 from bcrypt_bound_observation_017 import BoundObservation
 from bcrypt_admission_contract_017 import encode, decode, equal, REPORT_CAP
 from bcrypt_guarded_owner_017 import need
 from bcrypt_owner_backend_017 import PreparedNativeBackend
 
 
+def preload_owner():
+    """The same fixed imports on the normal route and the evidence-only route."""
+    from bcrypt_disassembly_io_014 import OutputDirectory
+    from bcrypt_disassembly_listing_014 import parse_listing
+    return OutputDirectory, parse_listing
+
+
 def run_owner(inputs):
     """Use fixed legacy dependencies; no replaceable verifier or owner factory."""
     need(type(inputs) is BootstrapInputs, 'BOOT_INPUT_TYPE')
-    # Only two fixed imports, before ImportBoundary activation. Failures never launch.
-    from bcrypt_disassembly_io_014 import OutputDirectory
-    from bcrypt_disassembly_listing_014 import parse_listing
+    OutputDirectory, parse_listing = preload_owner()
     inputs.verify_control_sources()
     c,p = inputs.request['context'],inputs.plan
     need(os.path.realpath(__file__) == p['bootstrap']['path'] and
@@ -44,10 +49,18 @@ def run_owner(inputs):
 
 def main(argv):
     try:
-        need(type(argv) is list and len(argv) == 3, 'BOOT_ARGV')
+        need(type(argv) is list and len(argv) in (2, 3), 'BOOT_ARGV')
         need(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode and
              not sys.flags.optimize and os.path.realpath(argv[0]) == os.path.realpath(__file__),
              'BOOT_ISOLATION')
+        if len(argv) == 2:
+            need(argv[1] == '--inspect-preload', 'BOOT_ARGV')
+            preload_owner()
+            raw = record_entry_preload('owner', __file__)
+            need(os.write(1, raw) == len(raw), 'BOOT_STDOUT')
+            return 0
+        need(argv[1] != '--inspect-preload', 'BOOT_ARGV')
+        preload_owner()
         inputs = BootstrapInputs(argv[1],argv[2])
         raw, code = run_owner(inputs)
         need(os.write(1,raw) == len(raw), 'BOOT_STDOUT')

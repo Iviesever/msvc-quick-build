@@ -1,18 +1,21 @@
 """Fixed bootstrap inputs and externally authenticated writer-domain premises.
 
-No discovery or authorization generator. The root digest comes from the trusted
-registration, never from an arbitrary submitted plan. A pinned authority is an
+Normal execution does not discover or generate authority. Its root digest comes
+from trusted registration, never from an arbitrary submitted plan. The explicit
+pre-request inventory reports evidence only and does not build an allowed set. A pinned authority is an
 external review statement, not a kernel observation or a cryptographic signature.
 """
 from __future__ import annotations
 import os
+import sys
 from pathlib import Path
 import time
 
 from bcrypt_admission_contract_017 import (REQUEST_CAP, RECEIPT_CAP, encode, decode,
     fields, equal, fingerprint, identity, join_evidence, validate_request)
 from bcrypt_guarded_owner_017 import Refused, need, prepared_target
-from bcrypt_owner_backend_017 import absolute, sha256_text
+from bcrypt_owner_backend_017 import absolute, sha256_text, _single_native_thread
+from bcrypt_import_boundary_017 import describe, references, manifest, MODULE_CAP
 from bcrypt_scoped_transport_017 import _read_directory
 from bcrypt_toolchain_017 import Budget, snapshot
 
@@ -172,3 +175,89 @@ class BootstrapInputs:
         equal(current.plan,self.plan)
         equal(current.binding,self.binding)
         return current
+
+
+def record_entry_preload(role, source):
+    """Inspect this exact script before reading ANY request, receipt or target.
+
+    Diagnostic output is evidence, never an expected-module allowlist. Both the
+    normal and diagnostic routes import these helpers before branching. No
+    alternate module loader, runpy, cache deletion or per-module filtering.
+    """
+    names = {'owner': BOOTSTRAP_NAME, 'controller': CONTROLLER_NAME}
+    need(role in names and sys.platform == 'linux' and sys.flags.isolated and
+         sys.flags.no_site and sys.dont_write_bytecode and not sys.flags.optimize,
+         'ENTRY_ISOLATION')
+    source = str(Path(source).absolute())
+    need(Path(source).name == names[role] and os.path.realpath(source) == source,
+         'ENTRY_SOURCE')
+    root = str(Path(source).parent)
+    mapping = sys.modules
+    need(type(mapping) is dict and 0 < len(mapping) <= MODULE_CAP, 'ENTRY_MODULE_COUNT')
+    modules = mapping.copy()
+    rows = {name: describe(mod) for name, mod in modules.items()}
+    manifest(rows)  # The existing name/text/object bounds, not a new policy.
+    pins = {name: references(mod) for name, mod in modules.items()}
+    main = rows.get('__main__')
+    need(main is not None and main['file'] == source and main['spec_name'] is None
+         and main['origin'] is None and main['cached'] is None, 'ENTRY_MAIN')
+    _single_native_thread()
+
+    def stable():
+        need(sys.modules is mapping and mapping.keys() == modules.keys(), 'ENTRY_MODULE_DRIFT')
+        for name, mod in modules.items():
+            need(mapping[name] is mod and describe(mod) == rows[name] and
+                 all(a is b for a, b in zip(references(mod), pins[name])), 'ENTRY_MODULE_DRIFT')
+
+    def path_allowed(path):
+        need(type(path) is str and 0 < len(path) <= 4096 and path.startswith('/')
+             and os.path.normpath(path) == path and not path.startswith('//')
+             and all(32 <= ord(c) < 127 for c in path), 'ENTRY_FILE_PATH')
+        roots = (root, '/usr/lib', '/usr/local/lib', '/lib', '/usr/bin', '/usr/local/bin')
+        need(any(path.startswith(prefix + '/') for prefix in roots), 'ENTRY_FILE_ROOT')
+
+    candidates, absent = {os.path.realpath(sys.executable)}, set()
+    for row in rows.values():
+        for kind in ('file', 'origin', 'cached'):
+            path = row[kind]
+            if path is None or path in ('built-in', 'frozen'):
+                continue
+            path_allowed(path)
+            if kind == 'cached' and not os.path.lexists(path):
+                absent.add(path)
+            else:
+                candidates.add(path)
+    need(len(candidates) + len(absent) <= 256, 'ENTRY_FILE_COUNT')
+    budget = Budget(seconds=20, limit=96*1024*1024)
+    files, aliases = {}, {}
+    for path in sorted(candidates):
+        path_allowed(path)
+        canonical = str(Path(path).resolve(strict=True)); path_allowed(canonical)
+        if canonical not in files:
+            files[canonical], _ = snapshot(canonical, budget)
+        aliases[path] = canonical
+    second = Budget(seconds=20, limit=budget.content_bytes)
+    second.deadline = budget.deadline  # One common deadline, not a renewed window.
+    for path, previous in files.items():
+        current, _ = snapshot(path, second)
+        need(current == previous, 'ENTRY_FILE_DRIFT')
+    for path, canonical in aliases.items():
+        budget.checkpoint()
+        need(str(Path(path).resolve(strict=True)) == canonical, 'ENTRY_ALIAS_DRIFT')
+    need(all(not os.path.lexists(path) for path in absent), 'ENTRY_CACHE_DRIFT')
+    stable(); _single_native_thread(); budget.checkpoint()
+    result = dict(schema='bcrypt-entry-preload-evidence-017-v1', role=role,
+        status='ENTRY_PRELOAD_RECORDED_NOT_QUALIFIED', phase='before_request_read',
+        entry_file=source, python_file=os.path.realpath(sys.executable), python_version=sys.version,
+        modules={n:{k:list(v) if type(v) is tuple else v for k,v in row.items()}
+                 for n,row in rows.items()}, files=files, aliases=aliases, absent_cached=sorted(absent),
+        reads=dict(passes=budget.file_passes+second.file_passes,
+                   content_bytes=budget.content_bytes+second.content_bytes,
+                   eof_requests=budget.eof_requests+second.eof_requests),
+        expected_modules_generated=False, execution_admitted=False,
+        source_independently_reviewed=False, runtime_loader_verified=False,
+        writer_domain_qualified=False, full_execution_closure_verified=False,
+        request_reads=0, target_reads=0, decoder_processes=0, formal_observations=0)
+    raw = encode(result, REQUEST_CAP)
+    stable(); budget.checkpoint()
+    return raw
