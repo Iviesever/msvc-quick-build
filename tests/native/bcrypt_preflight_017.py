@@ -10,7 +10,7 @@ import hashlib
 import json
 import math
 import struct
-from typing import Any, Mapping
+from collections.abc import Mapping
 
 BASELINE = "f63c3eca924e6f2a3a4f30e95f3381bdee64dffc"
 SOURCE_016 = "51bbce58ae37b36521be6425de55e784e8ceee72"
@@ -38,7 +38,7 @@ def require(condition: bool, reason: str) -> None:
         raise Refused(reason)
 
 
-def same(actual: Any, expected: Any, reason: str) -> None:
+def same(actual: object, expected: object, reason: str) -> None:
     """Typed equality: JSON true must not impersonate integer one."""
     if type(actual) is not type(expected):
         raise Refused(reason)
@@ -54,9 +54,9 @@ def same(actual: Any, expected: Any, reason: str) -> None:
         require(actual == expected, reason)
 
 
-def strict_json(raw: bytes) -> dict[str, Any]:
-    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
+def strict_json(raw: bytes) -> dict[str, object]:
+    def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
         for key, value in items:
             require(key not in result, "duplicate JSON key")
             result[key] = value
@@ -78,7 +78,7 @@ def strict_json(raw: bytes) -> dict[str, Any]:
     return value
 
 
-def _mapped(index: dict[str, Any], rva: int, size: int) -> tuple[int, dict[str, Any]]:
+def _mapped(index: dict[str, object], rva: int, size: int) -> tuple[int, dict[str, object]]:
     require(type(rva) is int and type(size) is int and size > 0, "invalid extent")
     matches = []
     for section in index["sections"]:
@@ -92,7 +92,7 @@ def _mapped(index: dict[str, Any], rva: int, size: int) -> tuple[int, dict[str, 
     return matches[0]
 
 
-def _validate(documents: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
+def _validate(documents: Mapping[str, dict[str, object]]) -> dict[str, object]:
     """Internal semantic checker. Public admission always verifies PINS first."""
     report, caller = documents["index"], documents["caller"]
     runtime, closure, proposal = (documents[k] for k in ("runtime", "closure", "proposal"))
@@ -206,7 +206,7 @@ def _validate(documents: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
             "qualification": "Only archived metadata was checked; target bytes and callee behavior remain unknown."}
 
 
-def preflight(inputs: Mapping[str, bytes]) -> dict[str, Any]:
+def preflight(inputs: Mapping[str, bytes]) -> dict[str, object]:
     """Check all five immutable inputs before parsing any of their JSON."""
     require(set(inputs) == set(PINS), "missing or extra input role")
     for role, (size, digest) in PINS.items():
