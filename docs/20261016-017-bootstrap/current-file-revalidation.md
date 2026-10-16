@@ -61,3 +61,37 @@ SHA。若宿主不匹配，保留固定候选并停止，不自动更新摘要�
 
 接口依据：Python3.12 os.lstat/lexists及文件描述符语义；GitHub REST Actions
 artifact下载的302响应。该文档不是这些系统接口的额外安全保证。
+
+## 已执行结果：当前宿主文件复验已收口
+
+执行前登记：#198/6219699712。实现/执行提交：
+`f8ee708b6023a7a66d701ce5acbbae0ab6569a8c`，parent为0056916d…。
+workflow386262890，run38931001405/run_number7/attempt1，job117074659767，
+所有步骤与run均completed/success；UTC 2026-10-16 16:19:13–16:19:28。
+
+**原426+新增22=448项单测，本地和CI均PASS、0错误/失败/跳过。**
+随后真实启动一份文件复验解释器，使用原Python3.12.3二进制摘要与固定四项环境。
+它不是模拟snapshot：128个当前宿主文件实际读两遍，256完整pass、256 EOF、
+36214558 B；16别名和22缺失路径在边界复查通过。两遍当前状态摘要同为
+`42ca83f81861ae0d2f0e818e245f819e461ed1e158c0eaa8633312d7a1beaa98`。
+它仅是该进程的状态集合摘要，不把历史inode与新宿主inode强行相等。
+
+实际结果为CURRENT_RUNTIME_FILES_MATCHED_NOT_QUALIFIED，failure_stage=null，
+current_files_verified/interpreter_identity_checked=true，其余资格标志仍false。
+父记录exit0、reaped=true、无timeout/retry，stderr为空；264178524ns仅为耗时记录，
+不是产品性能分数。入口inspect写明different_parent、entry_invocations=0，没有
+重复之前实际入口检查，没有GNU或原目标执行。CI控制解释器、单测和git parent
+读取是额外基础设施操作，不混入这一个文件复验进程计数。
+
+原artifact12059145721，516735 B、61个唯一安全成员；SHA256：
+`73e888a8e9622498b438ca4e55fbe6531844fbbc3e78481a56f6ba6cbf71b68d`。
+CRC、43份归档源码、448条逐项ok、head/workflow_sha、launch/exit、两个pass和
+completed记录均已核对。两个旧ZIP确实原样下载保留，三份JSON和49116 B候选
+逐字等于上一交付；不是自行修改候选来适应新宿主。系统库payload不上传，离线
+核对的是源码与记录关联，不把当前工作容器当作CI宿主再哈希。
+
+**本项不再需要重写、重新采集或单独重跑。** 下一接手点转到尚缺的真实writer-domain
+审核依据、两份独立准备回执与完整request的绑定，在同一受控执行生命周期里接通
+现有前后身份检查和controller外层退出。禁止仅凭此文件匹配把非后代写者/FD外传、
+完整动态模块闭集或人类独立审阅标为已完成，也不复制临时runner的资格到下一宿主。
+目标/原图像读取、正式准备和观察仍0，main/HOLD/DEFER/删除/release不变。
