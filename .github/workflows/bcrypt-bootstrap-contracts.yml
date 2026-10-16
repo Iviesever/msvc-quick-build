@@ -12,6 +12,8 @@ on:
       - 'tests/native/bcrypt_admission_contract_017.py'
       - 'tests/native/test_bcrypt_empty_package_binding_017.py'
       - 'tests/native/test_bcrypt_entry_inventory_017.py'
+      - 'tests/native/check_bcrypt_entry_binding_017.py'
+      - 'tests/native/test_bcrypt_entry_binding_017.py'
       - 'tests/native/test_bcrypt_annotation_preload_017.py'
       - 'tests/native/test_bcrypt_bootstrap_review_017.py'
       - '.github/workflows/bcrypt-bootstrap-contracts.yml'
@@ -44,7 +46,8 @@ jobs:
                  'test_bcrypt_bootstrap_review_017','test_bcrypt_annotation_preload_017',
                  'check_bcrypt_runtime_evidence_017','test_bcrypt_runtime_evidence_017',
                  'check_bcrypt_decoder_loading_017','test_bcrypt_decoder_loading_017',
-                 'test_bcrypt_empty_package_binding_017','test_bcrypt_entry_inventory_017']
+                 'test_bcrypt_empty_package_binding_017','test_bcrypt_entry_inventory_017',
+                 'check_bcrypt_entry_binding_017','test_bcrypt_entry_binding_017']
           paths=list(manifest['sources'])+['tests/native/'+n+'.py' for n in added]
           # The consumed dev004 manifest stays immutable. Only the reviewed
           # runtime files supersede their old source pins; all other pins still apply.
@@ -73,9 +76,10 @@ jobs:
           sys.path.insert(0,str(root/'tests/native'))
           modules=manifest['unit_modules']+['test_bcrypt_bootstrap_017','test_bcrypt_bootstrap_review_017','test_bcrypt_annotation_preload_017',
               'test_bcrypt_runtime_evidence_017','test_bcrypt_decoder_loading_017',
-              'test_bcrypt_empty_package_binding_017','test_bcrypt_entry_inventory_017']
+              'test_bcrypt_empty_package_binding_017','test_bcrypt_entry_inventory_017',
+              'test_bcrypt_entry_binding_017']
           suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in modules)
-          if suite.countTestCases()!=408: raise ValueError('Unexpected test inventory')
+          if suite.countTestCases()!=426: raise ValueError('Unexpected test inventory')
           with (out/'units.log').open('x') as stream:
               result=unittest.TextTestRunner(stream=stream,verbosity=2).run(suite)
           (out/'result.json').write_text(json.dumps(dict(tests=result.testsRun,
