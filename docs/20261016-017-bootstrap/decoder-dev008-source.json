@@ -1,0 +1,144 @@
+{
+  "attempt": 1,
+  "cases": [
+    "baseline",
+    "diagnostic"
+  ],
+  "decoder_processes_max": 2,
+  "environment_delta": {
+    "LD_DEBUG": "libs"
+  },
+  "fixture": {
+    "bytes": 103,
+    "kind": "self-created 102 NOP bytes then RET, never executed as instructions",
+    "sha256": "aacfbb4f595210a9e5bac8e895de7639ab4f1f2644b33cbdcfcb8a9188bf6b76"
+  },
+  "formal_observations": 0,
+  "formal_preparations": 0,
+  "main_unchanged": true,
+  "original_image_reads": 0,
+  "parent": "ba39f933103c07946d0fe6a8e32371d0ec831121",
+  "python": "/usr/bin/python3",
+  "python_sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+  "python_version": [
+    3,
+    12,
+    3
+  ],
+  "reference_artifact": 12030386446,
+  "reference_zip_sha256": "ebed9674b15415d64c528504d14177919a92534bf333f1ec4af1c61857646bb3",
+  "schema": "bcrypt-decoder-dev008-registration-v1",
+  "script": "tests/native/check_bcrypt_decoder_loading_017.py",
+  "source_blobs": {
+    "tests/native/bcrypt_admission_contract_017.py": "17f9edc3e38614462c7394059b5619ae8f310f23",
+    "tests/native/bcrypt_bootstrap_plan_017.py": "6f136178a5ecffb914918daf7fe2c5ec22dfe619",
+    "tests/native/bcrypt_bound_observation_017.py": "7f7cebabef85bffc89f5657f36585bfde685cb6a",
+    "tests/native/bcrypt_completion_receipt_017.py": "caaa94f06ccca834507a6834dcf394a736af8137",
+    "tests/native/bcrypt_disassembly_io_014.py": "44dbe51fee51b242630266ac0b51004477f7e3c7",
+    "tests/native/bcrypt_disassembly_listing_014.py": "8a60ce70b64308538e0fc83fddd1548d85e1a6ff",
+    "tests/native/bcrypt_disassembly_model_014.py": "485cb70a2f62525c540ef365d7ef70b5b5696355",
+    "tests/native/bcrypt_elf_inventory_017.py": "f92e5227a5628e375ccbcf299a76b5c381f695ce",
+    "tests/native/bcrypt_fixed_bootstrap_017.py": "5e125a6be416ab57220146cb60e2bebac993e7f9",
+    "tests/native/bcrypt_guarded_owner_017.py": "c7aad42b6a8ad40d22a73d538ee99f901682a359",
+    "tests/native/bcrypt_import_boundary_017.py": "1169b6a2edeb53d80aef19f85bf3b4f1bd189826",
+    "tests/native/bcrypt_observation_controller_017.py": "2540951d8091d854167e898b6a4c9957eff05b4b",
+    "tests/native/bcrypt_outer_transport_017.py": "b61e4a8d7b08b3282973bf7f7b1de8673915cc36",
+    "tests/native/bcrypt_owner_backend_017.py": "5cc1d977f6b821cb689a51ab3c65a2cabe3070ea",
+    "tests/native/bcrypt_preflight_017.py": "bee8a1037432c5cd99585c6a20d8c120ac6a4e89",
+    "tests/native/bcrypt_scoped_transport_017.py": "cdd92dd48c5e9b299c949c971024bc144c81d902",
+    "tests/native/bcrypt_toolchain_017.py": "ce8115e01240d69b7fb898176cbdb980853c5a4b",
+    "tests/native/bcrypt_writer_scope_017.py": "830a7dc821c8bb86c0b830ba9e0a79428fea5789",
+    "tests/native/check_bcrypt_decoder_loading_017.py": "5d09db434b5bb4960d63d0ad3c09c621fd11c212",
+    "tests/native/check_bcrypt_outer_transport_smoke_017.py": "26d271c8811637fa26e86eddc9d0af5839c21e99",
+    "tests/native/check_bcrypt_runtime_evidence_017.py": "66c127cf8b2a408eac543677b635ac0195dda1d1",
+    "tests/native/check_bcrypt_writer_scope_smoke_017.py": "af781adb84e20a1a40b16e2fbde0af34d439912c",
+    "tests/native/test_bcrypt_annotation_preload_017.py": "5f3e439c406cfb9e01a396301d8e0b2e6db72fc9",
+    "tests/native/test_bcrypt_bootstrap_017.py": "460d35079497f37fcea9ad3dde453ac879c3cf92",
+    "tests/native/test_bcrypt_bootstrap_review_017.py": "28328e9c5017292c4ebce6726a5b128f019946b9",
+    "tests/native/test_bcrypt_bound_observation_017.py": "fe7a854dc9101b77ea181dc0b40fae547221372e",
+    "tests/native/test_bcrypt_completion_receipt_017.py": "c92709c5cced23829587759cd3b9fc5f09e7349d",
+    "tests/native/test_bcrypt_decoder_loading_017.py": "9df5a5f5e017f4f8c53ad56d2b076c45fad0c507",
+    "tests/native/test_bcrypt_elf_inventory_017.py": "f8b8e87ee9328888d3b232f40a4f98c55499c354",
+    "tests/native/test_bcrypt_guarded_owner_017.py": "e25f1adc6c3593994c23d2a305a959193b7e2a73",
+    "tests/native/test_bcrypt_import_boundary_017.py": "08ebe9d3b4e4aadb67083f25266bccd61148f2eb",
+    "tests/native/test_bcrypt_outer_transport_017.py": "458611cecaca05271fbad3b5a9d373de4311d974",
+    "tests/native/test_bcrypt_owner_backend_017.py": "8740d4b256b67876c9db4d7d03cb35a3a0f25088",
+    "tests/native/test_bcrypt_runtime_evidence_017.py": "440d350011dd2c14055ed81a10a9050f2c89fe8b",
+    "tests/native/test_bcrypt_toolchain_017.py": "2a345dec6c4bef99b645d5995cdc366928605ab4",
+    "tests/native/test_bcrypt_toolchain_review_017.py": "767805763427794ed91fe11cf2b980baea88171a",
+    "tests/native/test_bcrypt_writer_scope_017.py": "a0e6f12c82ec382fc5ba80b7e5386bc7e21db089",
+    "tests/native/test_bcrypt_writer_scope_preflight_017.py": "6ac2abf9fa95d03e3330aecf48042c3bc4dfbc69"
+  },
+  "supervisor_processes_max": 1,
+  "supervisor_timeout_seconds": 60,
+  "toolchain_files": {
+    "/usr/bin/python3.12": {
+      "bytes": 8020928,
+      "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f"
+    },
+    "/usr/bin/x86_64-linux-gnu-objdump": {
+      "bytes": 390848,
+      "sha256": "325c4205a4c658a9d1e1ebc469ae55975a2b897a3d3c1e79d9b158612d37f745"
+    },
+    "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2": {
+      "bytes": 236616,
+      "sha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da"
+    },
+    "/usr/lib/x86_64-linux-gnu/libbfd-2.42-system.so": {
+      "bytes": 1479888,
+      "sha256": "11f084bc6ff5fc64e91c0b6422040fab1245419e7ff29560a95c1176ce1b9ff4"
+    },
+    "/usr/lib/x86_64-linux-gnu/libc.so.6": {
+      "bytes": 2129424,
+      "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+    },
+    "/usr/lib/x86_64-linux-gnu/libctf.so.0.0.0": {
+      "bytes": 220384,
+      "sha256": "25c8f765c259d05b59a3dc3634d711912a7f5ce9be8a28ace081507b925b3ad1"
+    },
+    "/usr/lib/x86_64-linux-gnu/libexpat.so.1.9.1": {
+      "bytes": 186624,
+      "sha256": "286682ecbc5e59a638963b1a4e6351e65eb32fcf4bdcb9cb7569b6a61fe06a8d"
+    },
+    "/usr/lib/x86_64-linux-gnu/libm.so.6": {
+      "bytes": 952616,
+      "sha256": "fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0"
+    },
+    "/usr/lib/x86_64-linux-gnu/libopcodes-2.42-system.so": {
+      "bytes": 911656,
+      "sha256": "ae25756860f6974663c19bf9b32e6f88f42db266384fc1264f233c6c2f3a3d75"
+    },
+    "/usr/lib/x86_64-linux-gnu/libsframe.so.1.0.0": {
+      "bytes": 35168,
+      "sha256": "1693a2dbd77c909d279ae34aa9b5d8d08d97f116f8d0ed724063df11151b3c69"
+    },
+    "/usr/lib/x86_64-linux-gnu/libz.so.1.3": {
+      "bytes": 113000,
+      "sha256": "86200da370f20476a2507e9097a789b5ef97269b4ca8d5e164ad82dab9d99892"
+    },
+    "/usr/lib/x86_64-linux-gnu/libzstd.so.1.5.5": {
+      "bytes": 755864,
+      "sha256": "0a2128bc10841fb29e76d08d945864dfb0b6a66da5df6df5d8299197439e54bb"
+    }
+  },
+  "unit_modules": [
+    "test_bcrypt_bound_observation_017",
+    "test_bcrypt_completion_receipt_017",
+    "test_bcrypt_elf_inventory_017",
+    "test_bcrypt_guarded_owner_017",
+    "test_bcrypt_import_boundary_017",
+    "test_bcrypt_outer_transport_017",
+    "test_bcrypt_owner_backend_017",
+    "test_bcrypt_toolchain_017",
+    "test_bcrypt_toolchain_review_017",
+    "test_bcrypt_writer_scope_017",
+    "test_bcrypt_writer_scope_preflight_017",
+    "test_bcrypt_bootstrap_017",
+    "test_bcrypt_bootstrap_review_017",
+    "test_bcrypt_runtime_evidence_017",
+    "test_bcrypt_annotation_preload_017",
+    "test_bcrypt_decoder_loading_017"
+  ],
+  "unit_tests": 367,
+  "workflow_run_number": 1
+}

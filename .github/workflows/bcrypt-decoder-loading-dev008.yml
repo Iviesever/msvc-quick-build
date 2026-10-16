@@ -1,0 +1,103 @@
+name: 017 decoder loading dev008 (single synthetic pair)
+on:
+  push:
+    branches: [feat/producer-clean-handoff-20261011]
+    paths: ['.github/workflows/bcrypt-decoder-loading-dev008.yml']
+permissions:
+  contents: read
+concurrency:
+  group: bcrypt-decoder-loading-dev008
+  cancel-in-progress: false
+jobs:
+  evidence:
+    if: >-
+      github.repository == 'Iviesever/msvc-quick-build' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/feat/producer-clean-handoff-20261011' &&
+      github.run_number == 1 && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify fixed parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = ba39f933103c07946d0fe6a8e32371d0ec831121
+      - name: Units then two synthetic GNU calls, no formal observation
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I -S -B - <<'PYCODE'
+          from pathlib import Path
+          import hashlib,json,os,subprocess,sys,time
+          root=Path.cwd();out=root/'decoder-dev008-evidence';out.mkdir(mode=0o700)
+          def save(name,value):
+              raw=(json.dumps(value,sort_keys=True,indent=2)+'\n').encode()
+              with (out/name).open('xb') as f:
+                  f.write(raw);f.flush();os.fsync(f.fileno())
+          save('started.json',dict(head=os.environ['GITHUB_SHA'],run=os.environ['GITHUB_RUN_ID'],attempt=os.environ['GITHUB_RUN_ATTEMPT']))
+          raw=(root/'docs/20261016-017-bootstrap/decoder-dev008-source.json').read_bytes()
+          if hashlib.sha256(raw).hexdigest()!='95d3ad8aaebd88b2152ca702f25e8ec19e6f5d624d533a851c3fcbd4e7324542':raise ValueError('Registration changed')
+          plan=json.loads(raw)
+          python=Path(os.path.realpath(sys.executable));python_sha=hashlib.sha256(python.read_bytes()).hexdigest()
+          save('python.json',dict(path=str(python),sha256=python_sha,version=sys.version))
+          if list(sys.version_info[:3])!=plan['python_version'] or python_sha!=plan['python_sha256']:
+              raise ValueError('Interpreter changed; no native process')
+          sources={}
+          for name,pin in plan['source_blobs'].items():
+              path=root/name
+              if path.is_symlink():raise ValueError('Source symlink')
+              data=path.read_bytes()
+              if hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()!=pin:raise ValueError('Source mismatch')
+              dest=out/'source'/name;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(data)
+              sources[name]=hashlib.sha256(data).hexdigest()
+          save('registration.json',plan)
+          save('identity.json',dict(head=os.environ['GITHUB_SHA'],workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'],
+               run=os.environ['GITHUB_RUN_ID'],attempt=os.environ['GITHUB_RUN_ATTEMPT'],image=os.environ.get('ImageVersion'),sources=sources))
+          code="""import sys,unittest
+          sys.path.insert(0,'tests/native')
+          suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in sys.argv[1:])
+          if suite.countTestCases()!=367:raise SystemExit('Wrong inventory')
+          r=unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(0 if r.wasSuccessful() and not r.skipped else 1)
+          """
+          with (out/'units.log').open('xb') as f:
+              result=subprocess.run([str(python),'-I','-S','-B','-c',code,*plan['unit_modules']],stdin=subprocess.DEVNULL,
+                  stdout=f,stderr=subprocess.STDOUT,timeout=60,check=False)
+          save('units-exit.json',dict(exit_code=result.returncode,tests=367))
+          if result.returncode:raise SystemExit('Units failed; no GNU')
+          argv=[str(python),'-I','-S','-B',str(root/plan['script']),str(out/'pair')]
+          env={'LANG':'C','LC_ALL':'C','TZ':'UTC','DEBUGINFOD_URLS':''}
+          save('supervisor-launch.json',dict(argv=argv,environment=env,timeout_seconds=60))
+          start=time.monotonic_ns();timed_out=False
+          with (out/'supervisor.stdout').open('xb') as so,(out/'supervisor.stderr').open('xb') as se:
+              process=subprocess.Popen(argv,cwd=root,env=env,stdin=subprocess.DEVNULL,stdout=so,stderr=se,
+                   close_fds=True,start_new_session=True)
+              try:exit_code=process.wait(timeout=60)
+              except subprocess.TimeoutExpired:
+                  timed_out=True;process.kill();exit_code=process.wait(timeout=3)
+          save('supervisor-exit.json',dict(exit_code=exit_code,timed_out=timed_out,reaped=True,
+               elapsed_ns=time.monotonic_ns()-start,retry=False))
+          if exit_code or timed_out:raise SystemExit('Stopped; preserve first attempt')
+          for name,pin in sources.items():
+              if hashlib.sha256((root/name).read_bytes()).hexdigest()!=pin:raise ValueError('Source drift')
+          result=json.loads((out/'pair/completed.json').read_bytes())
+          if result['status']!='DECODER_LOADING_EVIDENCE_NOT_QUALIFIED' or result['decoder_processes']!=2:
+              raise ValueError('Incomplete pair')
+          save('completed.json',dict(pair_complete=True,formal_observations=0,decoder_processes=2,qualification=False))
+          PYCODE
+      - name: Preserve originals including refused prefixes
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: bcrypt-decoder-dev008
+          path: decoder-dev008-evidence/
+          if-no-files-found: error
+          retention-days: 30
+# No workflow_dispatch, retry, credentials, image input, or formal execution slot.
