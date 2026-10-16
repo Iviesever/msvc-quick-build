@@ -30,6 +30,7 @@ class ControllerRecords:
     """Five bounded immutable local records. No overwrite, delete, or cleanup retry."""
     def __init__(self,path):
         self.path = Path(path); self.fd = None; self.closed = False
+        self.saved = {}  # Owned bytes and post-write identity, at most five records.
         need(str(self.path.parent.resolve(strict=True)) == str(self.path.parent), 'CONTROL_PATH')
         parent = os.open(self.path.parent,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
         try:
@@ -46,6 +47,15 @@ class ControllerRecords:
         need(not self.closed and self.fd is not None and os.path.realpath(self.path) == str(self.path),
              'CONTROL_CLOSED')
         need(self.identity == _stamp(os.fstat(self.fd))[:4] == _stamp(self.path.lstat())[:4], 'CONTROL_PATH')
+        # A permitted filename is not evidence that this instance created it.
+        with os.scandir(self.fd) as entries:
+            found = set()
+            for entry in entries:
+                need(entry.name in self.saved and entry.name not in found, 'CONTROL_MEMBERS')
+                found.add(entry.name)
+        need(found == self.saved.keys(), 'CONTROL_MEMBERS')
+        for name, (_, stamp) in self.saved.items():
+            need(_stamp(os.stat(name,dir_fd=self.fd,follow_symlinks=False)) == stamp, 'CONTROL_FILE')
 
     def save(self,name,raw):
         self.check()
@@ -61,14 +71,40 @@ class ControllerRecords:
             need(os.pread(fd,len(raw)+1,0) == raw, 'CONTROL_READBACK')
             need(_stamp(os.fstat(fd)) == _stamp(os.stat(name,dir_fd=self.fd,follow_symlinks=False)),
                  'CONTROL_FILE')
+            self.saved[name] = (raw, _stamp(os.fstat(fd)))
         finally: os.close(fd)
         os.fsync(self.fd); self.check()
 
+    def verify(self):
+        """One final content pass, <=5 files / 163840 bytes plus five EOF bytes.
+
+        Existing per-save fsync/readback is retained. Recheck ALL earlier files
+        before reporting directory closure, not only the last-written record.
+        This is bounded change detection, not an atomic external-writer lock.
+        """
+        self.check()
+        for name, (raw, stamp) in self.saved.items():
+            fd = os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=self.fd)
+            try:
+                need(_stamp(os.fstat(fd)) == stamp, 'CONTROL_FILE')
+                need(os.pread(fd,len(raw)+1,0) == raw, 'CONTROL_READBACK')
+                need(_stamp(os.fstat(fd)) == stamp ==
+                     _stamp(os.stat(name,dir_fd=self.fd,follow_symlinks=False)), 'CONTROL_FILE')
+            finally: os.close(fd)
+        self.check()
+
     def close(self):
         need(not self.closed, 'CONTROL_CLOSED')
+        failure = None
+        try: self.verify()
+        except BaseException as error: failure = error
         self.closed = True
         fd,self.fd = self.fd,None
-        if fd is not None: os.close(fd)
+        try:
+            if fd is not None: os.close(fd)
+        except BaseException as error:
+            if failure is None: failure = error
+        if failure is not None: raise failure
 
 
 def _observed_success(result):

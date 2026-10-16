@@ -37,6 +37,23 @@ def sha256_text(value):
     return value
 
 
+def _single_native_thread():
+    """Bounded self-task check immediately before the single-threaded preexec.
+
+    Python thread bookkeeping alone cannot exclude native-library threads.
+    Missing procfs evidence fails closed. This snapshot does not prevent a
+    trusted library from creating a thread later; frozen preload policy remains
+    an external prerequisite, not a sandbox guarantee.
+    """
+    try:
+        with os.scandir('/proc/self/task') as tasks:
+            first = next(tasks, None)
+            need(first is not None and first.name == str(os.getpid()) and
+                 next(tasks, None) is None, 'PREPARATION')
+    except OSError:
+        raise Refused('PREPARATION') from None
+
+
 def child_limits():
     """Candidate limits: single-threaded preexec only; no parent limit mutation."""
     need(resource is not None, 'CLEANUP')
@@ -163,6 +180,7 @@ class PreparedNativeBackend:
                 '--visualize-jumps=off', '--disassembler-color=off',
                 f'--adjust-vma={start:#x}', f'--start-address={start:#x}',
                 f'--stop-address={end:#x}', 'target.bin']
+        _single_native_thread()
         process = subprocess.Popen(argv, cwd=self.output_path, env=dict(ENV),
             stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, shell=False,
             close_fds=True, start_new_session=True, restore_signals=True,

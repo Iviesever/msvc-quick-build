@@ -7,6 +7,8 @@ on:
       - 'tests/native/bcrypt_fixed_bootstrap_017.py'
       - 'tests/native/bcrypt_observation_controller_017.py'
       - 'tests/native/test_bcrypt_bootstrap_017.py'
+      - 'tests/native/bcrypt_owner_backend_017.py'
+      - 'tests/native/test_bcrypt_bootstrap_review_017.py'
       - '.github/workflows/bcrypt-bootstrap-contracts.yml'
 permissions:
   contents: read
@@ -32,14 +34,20 @@ jobs:
           root=Path.cwd(); out=root/'bootstrap-contract-evidence'; out.mkdir()
           manifest=json.loads((root/'docs/20261015-017-transport/dev004-source.json').read_bytes())
           added=['bcrypt_bootstrap_plan_017','bcrypt_fixed_bootstrap_017',
-                 'bcrypt_observation_controller_017','test_bcrypt_bootstrap_017']
+                 'bcrypt_observation_controller_017','test_bcrypt_bootstrap_017',
+                 'test_bcrypt_bootstrap_review_017']
           paths=list(manifest['sources'])+['tests/native/'+n+'.py' for n in added]
+          # The consumed dev004 manifest stays immutable. Only this reviewed
+          # runtime file supersedes its old source pin; all other pins still apply.
+          superseded={'tests/native/bcrypt_owner_backend_017.py':
+              'b81cd8665c82abd5470771ded3e0aba5d003a7ed6be014e4d73eee53cce45044'}
           hashes={}
           for name in paths:
               path=root/name
               if path.is_symlink(): raise ValueError('Source symlink')
               raw=path.read_bytes(); digest=hashlib.sha256(raw).hexdigest()
-              if name in manifest['sources'] and digest!=manifest['sources'][name]:
+              expected=superseded.get(name,manifest['sources'].get(name))
+              if expected is not None and digest!=expected:
                   raise ValueError('Retained baseline source changed')
               hashes[name]=digest
               target=out/'source'/name; target.parent.mkdir(parents=True,exist_ok=True)
@@ -49,9 +57,9 @@ jobs:
               run_id=os.environ['GITHUB_RUN_ID'],attempt=os.environ['GITHUB_RUN_ATTEMPT'],
               python=sys.version,sources=hashes,native_workloads=0,formal_observations=0),indent=2)+'\n')
           sys.path.insert(0,str(root/'tests/native'))
-          modules=manifest['unit_modules']+['test_bcrypt_bootstrap_017']
+          modules=manifest['unit_modules']+['test_bcrypt_bootstrap_017','test_bcrypt_bootstrap_review_017']
           suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in modules)
-          if suite.countTestCases()!=292: raise ValueError('Unexpected test inventory')
+          if suite.countTestCases()!=309: raise ValueError('Unexpected test inventory')
           with (out/'units.log').open('x') as stream:
               result=unittest.TextTestRunner(stream=stream,verbosity=2).run(suite)
           (out/'result.json').write_text(json.dumps(dict(tests=result.testsRun,
